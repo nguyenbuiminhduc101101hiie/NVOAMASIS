@@ -1,0 +1,675 @@
+﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@using System.Globalization﻿
+
+<PageTitle>@Localizer["Debt_due_to_customers"]</PageTitle>
+<MudContainer MaxWidth=MaxWidth.False>
+
+    <MudStack Row="true" Justify="Justify.FlexStart" Class="pa-2 gap-12">
+        <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+        <MudIconButton HtmlTag="label"
+                       OnClick="@(()=>Refresh(frmtoDate))" Disabled="_loading"
+                       Size="Size.Small" Color="Color.Primary" Variant="Variant.Text"
+                       Icon="@Icons.Material.Filled.Search" />
+
+        <MudStack Row Spacing="3">
+            <MudAutocomplete @bind-Value="_SaleName" Label="Search By Sales" Clearable ResetValueOnEmptyText Disabled="@(!chkSearchSales)" SearchFunc="SearchFuncSales" />
+            <MudCheckBox @bind-Value="chkSearchSales" Color="Color.Primary" Size="Size.Medium" Disabled="@isSale" />
+        </MudStack>
+        <MudSwitch @bind-Value="chkSI" Label="SI" Color="Color.Primary" Size="Size.Medium" />
+        <MudSwitch @bind-Value="chkSE" Label="SE" Color="Color.Primary" Size="Size.Medium" />
+        <MudSwitch @bind-Value="chkAI" Label="AI" Color="Color.Primary" Size="Size.Medium" />
+        <MudSwitch @bind-Value="chkAE" Label="AE" Color="Color.Primary" Size="Size.Medium" />
+        <MudSwitch @bind-Value="chkTruck" Label="Truck" Color="Color.Primary" Size="Size.Medium" />
+        <MudSwitch @bind-Value="chkCustoms" Label="Customs" Color="Color.Primary" Size="Size.Medium" />
+    </MudStack>
+    <MudDataGrid T="M_Job" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-shipment-bg"
+                 FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="calc(100vh - 40vh);" QuickFilter="_quickFilter"
+                 FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap" RowClassFunc="@SelectedRowClassFunc"
+                 RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true" RowClass="no-wrap-cell"
+                 ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+        <ToolBarContent>
+            <MudButton Disabled="_processingUpload" Style="margin-left:20px;"
+                       OnClick="@(()=>ExportReport(false))"
+                       Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.Download">
+                @if (_processingUpload)
+                {
+                    <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                    <MudText Class="ms-2">Processing</MudText>
+                }
+                else
+                {
+                    <MudText>@Localizer["Export HBL"]</MudText>
+                }
+            </MudButton>
+            <MudButton Disabled="_processingUpload" Style="margin-left:20px;"
+            OnClick="@(()=>ExportReport(true))"
+            Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+            StartIcon="@Icons.Material.Filled.Download">
+                @if (_processingUpload)
+                {
+                    <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                    <MudText Class="ms-2">Processing</MudText>
+                }
+                else
+                {
+                    <MudText>@Localizer["Export MBL"]</MudText>
+                }
+            </MudButton>
+            <MudRadioGroup @bind-Value="chkUSD" Style="margin-left:10px;">
+                <MudRadio Value="@true" Color="Color.Primary" Size="Size.Small">USD</MudRadio>
+                <MudRadio Value="@false" Color="Color.Primary" Size="Size.Small">VND</MudRadio>
+            </MudRadioGroup>
+            <MudCheckBox @bind-Checked="chkVAT" Label="VAT" Color="Color.Primary" Size="Size.Medium" />
+            <MudSpacer />
+            <MudTextField @bind-Value="_searchString" Placeholder="Search By JobNo, MBL, HBL" Adornment="Adornment.Start" Immediate="true"
+            AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0"></MudTextField>
+        </ToolBarContent>
+        <Columns>
+            <HierarchyColumn T="M_Job" />
+            <PropertyColumn Property="x => x.JobNo" Title="@Localizer["Job No"]" Required CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    Total
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => TDebit_Job(x.JobID)" Title="@Localizer["Debit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => TDebit_Job(x.JobID))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => TCredit_Job(x.JobID)" Title="@Localizer["Credit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => TCredit_Job(x.JobID))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => TCMS_Job(x.JobID)" Title="@Localizer["Commission"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => TCMS_Job(x.JobID))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => TDuty_Job(x.JobID)" Title="@Localizer["Refund Duty (COM.)"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => TDuty_Job(x.JobID))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="@(x => TProfit_Job(x.JobID, "FREIGHT"))" Title="@Localizer["Profit (Freight)"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @(mudTable.FilteredItems.Sum(x => TProfit_Job(x.JobID, "FREIGHT"))!.Value.ToString("##,##0.##", _en))
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="@(x => TProfit_Job(x.JobID, "LOCAL"))" Title="@Localizer["Profit (Local)"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @(mudTable.FilteredItems.Sum(x => TProfit_Job(x.JobID, "LOCAL"))!.Value.ToString("##,##0.##", _en))
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="@(x => TProfit_Job(x.JobID, ""))" Title="@Localizer["Profit (All)"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @(mudTable.FilteredItems.Sum(x => TProfit_Job(x.JobID, ""))!.Value.ToString("##,##0.##", _en))
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="@(x => TProfit_Job(x.JobID, "notCOM"))" Title="@Localizer["Profit (not COM.)"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @(mudTable.FilteredItems.Sum(x => TProfit_Job(x.JobID, "notCOM"))!.Value.ToString("##,##0.##", _en))
+                </FooterTemplate>
+            </PropertyColumn>
+        </Columns>
+        <ChildRowContent>
+            <Profit_MBL JobDetail="context.Item" ListHBLs="ListHBLs" ListCredit="ListCredit" ListDebit="ListDebit" ListCus="ListCus"
+            chkVAT="chkVAT" chkUSD="chkUSD" chkVND="chkVND" />
+        </ChildRowContent>
+    </MudDataGrid>
+    <MudChart ChartType="ChartType.Bar"
+    ChartSeries="@Series"
+    XAxisLabels="@XAxisLabels"
+    Height="350px" Width="100%"
+    ChartOptions="options" />
+</MudContainer>
+
+@code {
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    string usr;
+    AuthUser userdetail;
+    List<string> trangthais = new List<string>();
+    List<TrangThai> tts = new List<TrangThai>();
+    List<ChargeModel> charges = new List<ChargeModel>();
+    List<M_Customer> ListCus = new List<M_Customer>();
+    CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    bool isSale = false;
+    protected async override Task OnInitializedAsync()
+    {
+
+        _loading = true;
+        userdetail = asv.GetUserDetail();
+        if (!string.IsNullOrEmpty(userdetail.Department) && userdetail.Department.ToUpper().Contains("SALES"))
+        {
+            isSale = true;
+            _SaleName = userdetail.Usr;
+        }
+        tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude.ToLower() == "job").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        charges = await supsv.GetListCharge();
+        ListSales = await supsv.GetListSale();
+        ListCus = await csv.GetList();
+        _loading = false;
+    }
+
+    bool _loading = false;
+    List<M_Job> Listdata = new List<M_Job>();
+    List<M_MBL> ListMBLs = new List<M_MBL>();
+    List<M_HBL> ListHBLs = new List<M_HBL>();
+    List<M_Debit> ListDebit = new List<M_Debit>();
+    List<M_Credit> ListCredit = new List<M_Credit>();
+    List<string> ListSales = new();
+    M_Job jobdetail;
+    async Task Refresh(DateRange frmtoDate)
+    {
+        try
+        {
+            _loading = true;
+            Listdata.Clear();
+            jobdetail = null;
+            await Task.Delay(500);
+            StateHasChanged();
+            if (!await ssv.CheckPermission(usr, "View", "Profit"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            ListMBLs = await shipsv.GetListMBLALL();
+            ListHBLs = await shipsv.GetListHBLALL();
+            ListDebit = await shipsv.GetListDebitALL();
+            ListCredit = await shipsv.GetListCreditALL();
+            Listdata = await shipsv.GetListJob(frmtoDate);
+            if (!string.IsNullOrEmpty(_SaleName)) // nếu có sale chỉ lấy sale
+            {
+                var mblIdsWithSale = ListHBLs
+                   .Where(h => h.SaleName == _SaleName)
+                   .Select(h => h.mblid)
+                   .Distinct()
+                   .ToHashSet();
+
+                var jobIdsWithSale = ListMBLs
+                    .Where(m => mblIdsWithSale.Contains(m.MblID))
+                    .Select(m => m.Jobid)
+                    .Distinct()
+                    .ToHashSet();
+
+                Listdata = Listdata.Where(job => jobIdsWithSale.Contains(job.JobID)).ToList();
+
+            }
+            CalDataChart();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_Job> mudTable;
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_Job Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_Job> args)
+    {
+        jobdetail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_Job> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private Func<M_Job, string> _cellStyleFunc => x =>
+    {
+        var profitFreight = TProfit_Job(x.JobID, "FREIGHT");
+        var profitLocal = TProfit_Job(x.JobID, "LOCAL");
+        var profitAll = TProfit_Job(x.JobID, "");
+        var profitNotCom = TProfit_Job(x.JobID, "notCOM");
+
+        if (profitFreight < 0 || profitLocal < 0 || profitAll < 0 || profitNotCom < 0)
+            return "color: #FF5733";
+
+        return "color: #087210"; // XANH
+
+    };
+    string formatDate(DateTime? date)
+    {
+        if (date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MMM/yyyy");
+    }
+    private bool DisableButton(M_Job item)
+    {
+        return item.Loai == "Customs";
+    }
+    bool chkSI = false, chkSE = false, chkAI = false, chkAE = false, chkTruck = false, chkCustoms = false, chkVAT = false, chkUSD = false, chkVND = false, chkSearchSales = false;
+    string? _SaleName;
+    private string _searchString;
+    private Func<M_Job, bool> _quickFilter => x =>
+    {
+        // 1. Kiểm tra theo loại (checkbox)
+        bool matchLoai = !chkSI && !chkSE && !chkAI && !chkAE && !chkTruck && !chkCustoms
+                         || (chkSI && x.Loai?.Equals("SI", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkSE && x.Loai?.Equals("SE", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkAI && x.Loai?.Equals("AI", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkAE && x.Loai?.Equals("AE", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkTruck && x.Loai?.Equals("Truck", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkCustoms && x.Loai?.Equals("Customs", StringComparison.OrdinalIgnoreCase) == true);
+
+        // 2. Kiểm tra theo search
+        bool matchSearch = true;
+
+        if (!string.IsNullOrWhiteSpace(_searchString))
+        {
+            matchSearch =
+                (x.JobNo?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true) ||
+                (ListMBLs.Any(m => m.Jobid == x.JobID &&
+                                   m.Mbl?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true)) ||
+                (ListHBLs.Any(h =>
+                    ListMBLs.Any(m =>
+                        m.Jobid == x.JobID &&
+                        m.MblID == h.mblid &&
+                        h.hbl?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true)));
+        }
+
+        return matchLoai && matchSearch;
+    };
+
+    DateRange frmtoDate = new DateRange(new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-1),
+                                        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
+
+    string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    string CharidtoLoaidv(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.loaidichvu_charge}"!;
+    }
+    double? TDebit_Job(Guid? jobid)
+    {
+        var mbls = ListMBLs.Where(x => x.Jobid == jobid).ToList();
+        var hbls = ListHBLs.Where(x => mbls.Select(m => m.MblID).Contains(x.mblid)).ToList();
+        var debit = ListDebit.Where(x => (mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)) )
+                        .ToList();
+        return debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien;
+        });
+    }
+    double? TCredit_Job(Guid? jobid)
+    {
+        var mbls = ListMBLs.Where(x => x.Jobid == jobid).ToList();
+        var hbls = ListHBLs.Where(x => mbls.Select(m => m.MblID).Contains(x.mblid)).ToList();
+        var credit = ListCredit.Where(x => (mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)) )
+                        .ToList();
+        return credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiacredit;
+            }
+            return tien;
+        });
+    }
+    double? TCMS_Job(Guid? jobid)
+    {
+        var mbls = ListMBLs.Where(x => x.Jobid == jobid).ToList();
+        var hbls = ListHBLs.Where(x => mbls.Select(m => m.MblID).Contains(x.mblid)).ToList();
+        var credit = ListCredit.Where(x => (mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)) &&
+                        Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION"))
+                        .ToList();
+        return credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiacredit;
+            }
+            return tien;
+        });
+    }
+    double? TDuty_Job(Guid? jobid)
+    {
+        var mbls = ListMBLs.Where(x => x.Jobid == jobid).ToList();
+        var hbls = ListHBLs.Where(x => mbls.Select(m => m.MblID).Contains(x.mblid)).ToList();
+        var debit = ListDebit.Where(x => (mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)) &&
+                        Charidtocharge(x.itemid).ToUpper().Contains("DUTY"))
+                        .ToList();
+        return debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien;
+        });
+    }
+    double? TProfit_Job(Guid? jobid, string type)
+    {
+
+
+        var mbls = ListMBLs.Where(x => x.Jobid == jobid).ToList();
+        var hbls = ListHBLs.Where(x => mbls.Select(m => m.MblID).Contains(x.mblid)).ToList();
+        var debit = ListDebit;
+        var credit = ListCredit;
+        if (type == "FREIGHT" || type == "LOCAL")
+        {
+            debit = ListDebit.Where(x => (mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)) &&
+                        CharidtoLoaidv(x.itemid).ToUpper().Contains(type)).ToList();
+            credit = ListCredit.Where(x => (mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)) &&
+                        CharidtoLoaidv(x.itemid).ToUpper().Contains(type)).ToList();
+        }
+        else if (type == "notCOM")
+        {
+            debit = ListDebit.Where(x => (mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)) &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("DUTY")).ToList();
+            credit = ListCredit.Where(x => (mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)) &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION")).ToList();
+        }
+        else
+        {
+            debit = ListDebit.Where(x => mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)).ToList();
+            credit = ListCredit.Where(x => mbls.Select(m => m.MblID).Contains(x.mblid) || hbls.Select(h => h.hblID).Contains(x.hblid)).ToList();
+        }
+        var totaldebit = debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien;
+        });
+        var totalcredit = credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiacredit;
+            }
+            return tien;
+        });
+        return totaldebit - totalcredit;
+    }
+    private bool _processingUpload = false;
+    async Task ExportReport(bool isMBL)
+    {
+        try
+        {
+            var optionsdialog = new DialogOptions
+                {
+                    ClassBackground = "class-dialog-custom",
+                    FullWidth = true,
+                    MaxWidth = MaxWidth.Small,
+                    CloseOnEscapeKey = false,
+                    DisableBackdropClick = true,
+                };
+            _processingUpload = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if (jobdetail == null)
+            {
+                CallSnackBar("you must select 1 Job", MudBlazor.Severity.Warning);
+                return;
+            }
+            var mbls = await shipsv.GetListMBL(jobdetail.JobID);
+            var cur_type = chkUSD ? "USD" : "VND";
+            if (isMBL)
+            {
+                var parameters = new DialogParameters<ComboboxMBL> { { x => x.ListMBL, mbls } };
+                var dialog = await DialogService.ShowAsync<ComboboxMBL>("Selected MBL", parameters, optionsdialog);
+                var result = await dialog.Result;
+
+                if (result.Canceled) return;
+                var mbldetail = (M_MBL)result.Data;
+                var rs = await shipsv.ExportProfitMBL(mbldetail, cur_type);
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            }
+            else
+            {
+                var Listcmb = new List<M_HBL>();
+                foreach (var mbl in mbls)
+                {
+                    var hbls = await shipsv.GetListHBL(mbl.MblID);
+                    Listcmb.AddRange(hbls);
+                }
+                var hblsCustoms = await shipsv.GetListHBLByJobid(jobdetail.JobID); // Customs (HQ)
+                Listcmb.AddRange(hblsCustoms);
+
+                var parameters = new DialogParameters<ComboboxHBL> { { x => x.ListHBL, Listcmb } };
+                var dialog = await DialogService.ShowAsync<ComboboxHBL>("Selected HBL", parameters, optionsdialog);
+                var result = await dialog.Result;
+
+                if (result.Canceled) return;
+                var hbldetail = (M_HBL)result.Data;
+                var rs = await shipsv.ExportProfitHBL(hbldetail, cur_type);
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFuncSales(string? text)
+    {
+        try
+        {
+            var rs = ListSales.Where(s => !string.IsNullOrEmpty(s))
+                   .Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    public List<ChartSeries> Series = new List<ChartSeries>
+    {
+        new ChartSeries() { Name = "Profit", Data = new double[] { 0, 1, 2, 3, 4, 5, 6, 7, 8 } }
+    };
+    public string[] XAxisLabels = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+    void CalDataChart()
+    {
+        // Lấy danh sách các JobID từ Listdata
+        var validJobIds = Listdata.Select(j => j.JobID).ToHashSet();
+
+        // Lọc MBL theo các job này
+        var validMBLs = ListMBLs.Where(m => validJobIds.Contains(m.Jobid ?? Guid.Empty)).ToList();
+        var validMBLIds = validMBLs.Select(m => m.MblID).ToHashSet();
+
+        // Lọc HBL theo các MBL hợp lệ
+        var validHBLs = ListHBLs.Where(h => validMBLIds.Contains(h.mblid) && !string.IsNullOrEmpty(h.SaleName)).ToList();
+
+        // Tính profit theo salename từ HBL hợp lệ
+        var saleProfitList = validHBLs
+            .GroupBy(h => h.SaleName)
+            .Select(group =>
+            {
+                var hbls = group.ToList();
+                var mblIds = hbls.Select(h => h.mblid).Distinct().ToList();
+                var jobIds = validMBLs.Where(m => mblIds.Contains(m.MblID)).Select(m => m.Jobid).Distinct().ToList();
+
+                var allMBLs = validMBLs.Where(m => jobIds.Contains(m.Jobid)).ToList();
+                var allMBLIDs = allMBLs.Select(m => m.MblID).ToList();
+                var allHBLs = ListHBLs.Where(h => allMBLIDs.Contains(h.mblid)).ToList();
+                var allHBLIDs = allHBLs.Select(h => h.hblID).ToList();
+
+                var debit = ListDebit.Where(d => allMBLIDs.Contains(d.mblid) || allHBLIDs.Contains(d.hblid)).ToList();
+                var credit = ListCredit.Where(c => allMBLIDs.Contains(c.mblid) || allHBLIDs.Contains(c.hblid)).ToList();
+
+                var totaldebit = debit.Sum(x =>
+                {
+                    var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+                    return chkUSD
+                        ? (x.tiente == "USD" ? tien : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit))
+                        : (x.tiente == "VND" ? tien : tien * x.tigiadebit);
+                });
+
+                var totalcredit = credit.Sum(x =>
+                {
+                    var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+                    return chkUSD
+                        ? (x.tiente == "USD" ? tien : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit))
+                        : (x.tiente == "VND" ? tien : tien * x.tigiacredit);
+                });
+
+                return new
+                {
+                    Sale = group.Key,
+                    Profit = totaldebit - totalcredit,
+                    Debit = totaldebit,
+                    Credit = totalcredit
+                };
+            })
+            .ToList();
+        var salelable = saleProfitList.Select(x => x.Sale).ToList();
+        salelable.Insert(0, "SaleName");
+        XAxisLabels = salelable.ToArray();
+        // Tách Profit, Debit, Credit
+        var profitData = saleProfitList.Select(x => (double)Math.Round(x.Profit ?? 0)).ToList();
+        var debitData = saleProfitList.Select(x => (double)Math.Round(x.Debit ?? 0)).ToList();
+        var creditData = saleProfitList.Select(x => (double)Math.Round(x.Credit ?? 0)).ToList();
+
+        // Chèn cột đầu tiên là 0 (bỏ trống cột đầu tiên)
+        profitData.Insert(0, 0);
+        debitData.Insert(0, 0);
+        creditData.Insert(0, 0);
+
+        // Gán vào series
+        Series = new List<ChartSeries>
+        {
+            new ChartSeries
+            {
+                Name = "Profit",
+                Data = profitData.ToArray()
+            },
+            new ChartSeries
+            {
+                Name = "Debit",
+                Data = debitData.ToArray()
+            },
+            new ChartSeries
+            {
+                Name = "Credit",
+                Data = creditData.ToArray()
+            }
+        };
+    }
+
+    private ChartOptions options = new ChartOptions
+        {
+            YAxisFormat = "#,##0"
+        };
+}

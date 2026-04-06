@@ -1,0 +1,606 @@
+﻿﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@using System.Globalization﻿
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+@inject IJSRuntime JSRuntime
+<MudTabs SliderColor="Color.Primary">
+    <MudTabPanel Text="@($"HBL [{(hbldetail != null ? hbldetail.hbl : null)}]")" Class="custom-tab">
+        <MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-hbl-bg"
+
+        FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Bordered="true"
+        FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+        ReadOnly="false" RowClassFunc="@SelectedRowClassFunc"
+        RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" EditDialogOptions="optionsdialog"
+        ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false">
+            <Columns>
+                <TemplateColumn CellClass="d-flex justify-end" Filterable="false" ShowColumnOptions="false" Sortable="false">
+                    <HeaderTemplate>
+                        <MudStack Row="true" Justify="Justify.FlexStart" Spacing="2">
+
+                            <!-- Nút Reload -->
+                            <MudTooltip Text="@Localizer["Reload"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="Refresh"
+                                Variant="Variant.Filled"
+                                Class="btn-compact" />
+                            </MudTooltip>
+                        </MudStack>
+                    </HeaderTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.hbl" Title="@Localizer["HBL"]" />
+
+                <PropertyColumn Property="x => x.release" Title="@Localizer["Release"]" Required="false" Filterable="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.release" Label="@Localizer["Release"]"  />
+                    </EditTemplate>
+                    <CellTemplate>
+                        <MudCheckBox Value="context.Item.release.HasValue ? context.Item.release.Value : false" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.releaseNote" Title="@Localizer["Release Note"]" Required="false" Filterable="false"  />
+                <PropertyColumn Property="x => TDebit_(x.hblID)" Title="@Localizer["Debit"]" Required="false" Filterable="false" Format="##,##0.##" Culture="@(CultureInfo.GetCultureInfo("en-US"))" CellStyle="text-align: right;" />
+                <PropertyColumn Property="x => TCredit_(x.hblID)" Title="@Localizer["Credit"]" Required="false" Filterable="false" Format="##,##0.##" Culture="@(CultureInfo.GetCultureInfo("en-US"))" CellStyle="text-align: right;" />
+                <PropertyColumn Property="x => TProfit_(x.hblID)" Title="@Localizer["Profit"]" Required="false" Filterable="false" Sortable="false" Format="##,##0.##" Culture="@(CultureInfo.GetCultureInfo("en-US"))" CellStyle="text-align: right;">
+                    <HeaderTemplate>
+                        <div class="mud-data-grid mud-table-cell column-header table-hbl-bg">
+                            @Localizer["Profit"]
+                            <MudRadioGroup @bind-Value="chkUSD" Style="margin-left:10px;">
+                                <MudRadio Value="@true" Color="Color.Inherit" Size="Size.Small">USD</MudRadio>
+                                <MudRadio Value="@false" Color="Color.Inherit" Size="Size.Small">VND</MudRadio>
+                            </MudRadioGroup>
+                            <MudCheckBox @bind-Checked="chkVAT" Label="VAT" Color="Color.Inherit" Size="Size.Small" />
+                        </div>
+                    </HeaderTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x=>x.approve" Title="@Localizer["Approve"]" IsEditable="false" Required="false">
+                    <CellTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.approve" @bind-Value="context.Item.approve" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
+                    </CellTemplate>
+                    <EditTemplate>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.issueinvoice" Title="@Localizer["Invoice Issued"]" Required="false" Filterable="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.issueinvoice" Label="@Localizer["Invoice Issued"]" />
+                    </EditTemplate>
+                    <CellTemplate>
+                        <MudCheckBox Value="context.Item.issueinvoice.HasValue ? context.Item.issueinvoice.Value : false" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.dathudebit" Title="@Localizer["Debit Received"]" Required="false" Filterable="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.dathudebit" Label="@Localizer["Debit Received"]" />
+                    </EditTemplate>
+                    <CellTemplate>
+                        <MudCheckBox Value="context.Item.dathudebit.HasValue ? context.Item.dathudebit.Value : false" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.dachicredit" Title="@Localizer["Spent Credit"]" Required="false" Filterable="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.dachicredit" Label="@Localizer["Spent Credit"]" />
+                    </EditTemplate>
+                    <CellTemplate>
+                        <MudCheckBox Value="context.Item.dachicredit.HasValue ? context.Item.dachicredit.Value : false" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.dathuchidaily" Title="@Localizer["Received & Spent Agent"]" Required="false" Filterable="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.dathuchidaily" Label="@Localizer["Received & Spent Agent"]" />
+                    </EditTemplate>
+                    <CellTemplate>
+                        <MudCheckBox Value="context.Item.dathuchidaily.HasValue ? context.Item.dathuchidaily.Value : false" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => formatDate(x.ETA)" Title="@Localizer["ETA"]">
+                    <EditTemplate>
+                        <MudDatePicker @bind-Date="context.Item.ETA" @bind-Date:after="@(()=>SetActualdeldate(context.Item))" Label="@Localizer["ETA"]" DateFormat="dd/MMM/yyyy" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => formatDate(x.ETD)" Title="@Localizer["ETD"]">
+                    <EditTemplate>
+                        <MudDatePicker @bind-Date="context.Item.ETD" @bind-Date:after="@(()=>SetActualdeldate(context.Item))" Label="@Localizer["ETD"]" DateFormat="dd/MMM/yyyy" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => formatDate(x.ActualDelDate)" Title="@Localizer["ActualDel Date"]">
+                    <EditTemplate>
+                        <MudDatePicker @bind-Date="context.Item.ActualDelDate" Label="@Localizer["ActualDel Date"]" DateFormat="dd/MMM/yyyy" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => formatDate(x.datereport)" Title="@Localizer["Date Report"]">
+                    <EditTemplate>
+                        <MudDatePicker @bind-Date="context.Item.datereport" Label="@Localizer["Date Report"]" DateFormat="dd/MMM/yyyy" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => CusidtoCusCode(x.CustomerID)" Title="@Localizer["Main Customer"]" Required CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.CustomerID" Label="@Localizer["Main Customer"]" Required
+                        SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => AgentidtoName(x.AgentID)" Title="@Localizer["Agent"]" Required CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.AgentID" Label="@Localizer["Agent"]" Required
+                        SearchFunc="SearchAgent" ToStringFunc="AgentidtoName" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.bkno" Title="@Localizer["Bkno"]" />
+                <PropertyColumn Property="x => x.Air_wareHouse" Title="@Localizer["Warehouse"]">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.Air_wareHouse" Label="@Localizer["Warehouse"]" Required
+                        SearchFunc="SearchWHouse" CoerceValue />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Air_type" Title="@Localizer["LoaiHang"]" >
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.Air_type" Label="@Localizer["LoaiHang"]" Required
+                        SearchFunc="SearchCFS" CoerceValue/>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.shipper" Title="@Localizer["Shipper"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete T="string" @bind-Value="@search_shipper" Label="@Localizer["Shipper"]" AutoFocus="false" 
+                        SearchFunc="SearchShipper" MaxItems="50"/>
+
+                        <MudStack Row>
+                            <MudItem>
+                                <MudButton Class="pl-4 pa-10" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary" OnClick="() => Get_linkshipper(context.Item)">>>></MudButton>
+                            </MudItem>
+
+                            <MudTextField @bind-Value="context.Item.shipper" Label="@Localizer["Shipper"]" Lines="4" Required />
+                        </MudStack>
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.consignee" Title="@Localizer["Consignee"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+
+                        <MudAutocomplete T="string" @bind-Value="search_Consignee" Label="@Localizer["Consignee"]" 
+                        SearchFunc="SearchConsignee" MaxItems="50" AutoFocus="false" />
+                        <MudStack Row>
+                            <MudItem>
+                                <MudButton Class="pl-4 pa-10" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary" OnClick="() => Get_linkConsignee(context.Item)">>>></MudButton>
+                            </MudItem>
+
+                            <MudTextField @bind-Value="context.Item.consignee" Label="@Localizer["Consignee"]" Lines="4" Required />
+                        </MudStack>
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.notify1" Title="@Localizer["Notify"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+
+                        <MudAutocomplete T="string" @bind-Value="@search_Notify" Label="@Localizer["Notify"]" AutoFocus="false" 
+                        SearchFunc="SearchNotify" />
+                        <MudStack Row>
+                            <MudItem>
+                                <MudButton Class="pl-4 pa-10" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary" OnClick="() => Get_linkNotify(context.Item)">>>></MudButton>
+                            </MudItem>
+
+                            <MudTextField @bind-Value="context.Item.notify1" Label="@Localizer["Notify"]" Lines="4" Required />
+                        </MudStack>
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.SaleName" Title="@Localizer["Sale Name"]" Required CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudSelect @bind-Value="context.Item.SaleName" Label="@Localizer["Sale Name"]" Required>
+                            @foreach (var item in SaleNames)
+                            {
+                                <MudSelectItem Value="item">@item</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.statusHBL" Title="@Localizer["Status"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudSelect @bind-Value="context.Item.statusHBL" Label="@Localizer["Status"]">
+                            @foreach (var item in trangthais)
+                            {
+                                <MudSelectItem Value="item">@item</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </EditTemplate>
+                </PropertyColumn>
+
+            </Columns>
+        </MudDataGrid>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    [Parameter] public List<M_MBL>? MBLDetails { get; set; } = default!;
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    [Parameter] public List<M_Customer>? Customers { get; set; } = default!;
+    M_HBL detail;
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private void Submit()
+    {
+        MudDialog!.Close();
+    }
+
+    void Cancel() => MudDialog!.Cancel();
+    string usr;
+    List<string> trangthais = new List<string>();
+    List<string> SaleNames = new List<string>();
+    List<string> Shippers = new List<string>();
+    List<string> Consignees = new List<string>();
+    List<string> Notify = new List<string>();
+    List<string> CFS = new List<string>();
+    List<string> Warehouse = new List<string>();
+
+    string search_shipper ="";
+    string search_Consignee = "";
+    string search_Notify = "";
+
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+
+            // var tts = await supsv.GetListTrangThai();
+            // trangthais = tts.Where(x => x.Tieude == "HBL").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+            // usr = asv.GetAuth().Result.User.Identity!.Name!;
+            // Shippers = Customers.Select(x => x.EnglishName + "\n" + x.addresstiengviet + "\n" + x.Tel + "\n" + x.Fax).Distinct().ToList();
+            // Consignees = Customers.Select(x => x.EnglishName + "\n" + x.addresstiengviet + "\n" + x.Tel + "\n" + x.Fax).Distinct().ToList();
+            // Notify = Customers.Select(x => x.EnglishName + "\n" + x.addresstiengviet + "\n" + x.Tel + "\n" + x.Fax).Distinct().ToList();
+            // CFS = await supsv.GetlistCFS();
+            // Warehouse = await supsv.GetlistWhouse();
+            // SaleNames = await supsv.GetListSale();
+            await Refresh();
+
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+    }
+    DialogOptions optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraLarge,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true,
+        };
+    bool _loading = false;
+    List<M_HBL> Listdata = new List<M_HBL>();
+    M_HBL hbldetail = new M_HBL();
+    async Task Refresh()
+    {
+        try
+        {
+            hbldetail = null!;
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (MBLDetails == null || !MBLDetails.Any())
+            {
+                CallSnackBar("MBL no row", MudBlazor.Severity.Info);
+                return;
+            }
+
+            //var allHBLs = await shipsv.GetListHBLALL();
+            //Listdata = allHBLs.Where(x => MBLDetails.Select(m => m.MblID).Contains(x.mblid)).ToList();
+            foreach(var mbl in MBLDetails)
+                if(mbl.HBLs != null)
+                    Listdata.AddRange(mbl.HBLs);
+
+            ListDebit = await shipsv.GetListDebitALL();
+            ListCredit = await shipsv.GetListCreditALL();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Error went loading: " + ex.Message, MudBlazor.Severity.Error);
+
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_HBL> mudTable;
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_HBL Sis, int rowNumber)
+    {
+        if (Sis.approve.HasValue && Sis.approve.Value)
+        {
+            return "custom-disable"; // Gán class "disable" nếu Approve = true
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            return "selected"; // Giữ lớp "selected" cho dòng đã chọn
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_HBL> args)
+    {
+        if(args.Item.approve.HasValue && args.Item.approve.Value)
+            CallSnackBar("This HBL is approved!", MudBlazor.Severity.Info);
+        else hbldetail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_HBL> args)
+    {
+
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+    string AgentidtoName(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == id);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+    string formatDate(DateTime? date)
+    {
+        if (date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MM/yyyy");
+    }
+
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<Guid>> SearchAgent(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Where(x => !string.IsNullOrWhiteSpace(x.MainCode) && x.MainCode.Contains("Agent")).Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchCFS(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return CFS;
+            }
+            return CFS.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchWHouse(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Warehouse;
+            }
+            return Warehouse.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> SearchConsignee(string? text)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return Consignees;
+            }
+            await Task.Delay(10);
+            // MBL.Porname = mst_Consignee;
+            return Consignees.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string>> SearchNotify(string? text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Consignees;
+            }
+            // MBL.Porname = mst_Consignee;
+            return Consignees.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> SearchShipper(string? text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Notify;
+            }
+            // MBL.Porname = mst_Consignee;
+            return Notify.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task Get_linkshipper(M_HBL item)
+    {
+        item.shipper = search_shipper;
+    }
+    private async Task Get_linkConsignee(M_HBL item)
+    {
+        item.consignee = search_Consignee;
+    }
+
+    private async Task Get_linkNotify(M_HBL item)
+    {
+        item.notify1 = search_Notify;
+    }
+    async Task SetActualdeldate(M_HBL item)
+    {
+        var loaihang = await shipsv.GetTypeByMBLID(item.mblid);
+        //e là xuất, k là nhập
+        item.ActualDelDate = loaihang.Contains("E") ? item.ETA : item.ETD ;
+    }
+    async Task UpdatebyCheckboxClick(M_HBL item)
+    {
+        if (!await ssv.CheckPermission(usr, "Approve", "HBL"))
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        item.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", new CultureInfo("en-US"));
+        item.userupdate = usr;
+        var rs = await shipsv.UpdateHBLDetail_approve(item);
+        if (!rs.Flag) CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+    List<M_Debit> ListDebit = new();
+    List<M_Credit> ListCredit = new();
+    bool chkUSD = false, chkVAT = false;
+    double? TProfit_(Guid id)
+    {
+        var debit = ListDebit;
+        var credit = ListCredit;
+        
+        debit = ListDebit.Where(x => x.hblid == id).ToList();
+        credit = ListCredit.Where(x => x.hblid == id).ToList();
+        var totaldebit = debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien;
+        });
+        var totalcredit = credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiacredit;
+            }
+            return tien;
+        });
+        return totaldebit - totalcredit;
+    }
+    double? TDebit_(Guid id)
+    {
+        var debit = ListDebit.Where(x => x.hblid == id).ToList();
+        return debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien;
+        });
+    }
+    double? TCredit_(Guid id)
+    {
+        var credit = ListCredit.Where(x => x.hblid == id).ToList();
+        return credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiacredit;
+            }
+            return tien;
+        });
+    }
+}

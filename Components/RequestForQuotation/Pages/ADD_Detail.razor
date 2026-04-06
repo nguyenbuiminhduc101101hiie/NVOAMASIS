@@ -1,0 +1,247 @@
+﻿@using System.Globalization
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject CustomerService Cussv
+@inject QuotationService QuoSV
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+@inject SupportServices supsv
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItemMarketInfo())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+</MudStack>
+
+<MudDataGrid T="M_RFQ_Log" Items="@listImport.ToList()" Filterable="true" @ref="mudRFQ_Log" Style="background-color: lightblue;"
+             Dense="true" Virtualize="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItemRFQ_LogInfo"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)">
+
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit"
+                               OnClick="@(() => {
+                           
+                                 detail = JsonSerializer.Deserialize<M_RFQ_Log>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+                           
+                       })" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItemRFQ_Loginfo(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x => x.StatusBefore" Title="@Localizer["StatusBefore"]"  Required="false">
+            <EditTemplate>
+         
+                <MudSelect @bind-Value="context.Item.StatusBefore" Label="@Localizer["StatusBefore"]" class="custom-label">
+                    @foreach (var item in trangthais)
+                    {
+                        <MudSelectItem Value="item">@item</MudSelectItem>
+                    }
+                </MudSelect>
+
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => x.StatusAfter" Title="@Localizer["StatusAfter"]" Required="false">
+            <EditTemplate>
+           
+                <MudSelect @bind-Value="context.Item.StatusAfter" Label="@Localizer["StatusAfter"]" class="custom-label">
+                    @foreach (var item in trangthais)
+                    {
+                        <MudSelectItem Value="item">@item</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.ActionBy" Title="@Localizer["ActionBy"]" Required="false">
+            <EditTemplate>
+   
+                <MudAutocomplete Class=" labelCustomColor custom-label" T="string"
+                                 @bind-Value="context.Item.ActionBy"
+                                 Label="@Localizer["ActionBy"]"
+                                 SearchFunc="Search_User"
+                                 Immediate="true"
+                                 CoerceText="true"
+                                 Clearable="true"
+                                 MaxItems="100">
+                </MudAutocomplete>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.ActionDate" Title="@Localizer["ActionDate"]" Format="dd/MMM/yyyy" Required="false">
+            <EditTemplate>
+
+                <MudDatePicker Class="custom-label" @bind-Date="context.Item.ActionDate"
+                               For="@(() => context.Item.ActionDate)"
+                               Label="@Localizer["ActionDate"]"
+                               DateFormat="dd/MM/yyyy"
+                               Required="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Notes" Title="@Localizer["ghichu"]" Required="false">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Notes" Label="@Localizer["ghichu"]" Class="custom-label" />
+
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+        <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+    </Columns>
+</MudDataGrid>
+@code {
+    private MudDataGrid<Models.M_RFQ_Log> mudRFQ_Log;
+    private List<Models.M_RFQ_Log> listImport = new List<Models.M_RFQ_Log>();
+    [Parameter] public M_RFQ _RFQ_LogDetail { get; set; }
+    List<string> nhoms = new List<string>();
+        private bool _resizeColumn;
+    [Parameter] public List<M_Customer> customers { get; set; }
+    bool cusmarket_loading = false;
+        List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private List<string> ListUser { get; set; } = new List<string>();
+    M_RFQ_Log detail;
+
+
+    async Task AddItemMarketInfo()
+    {
+
+        if (_RFQ_LogDetail.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var item = new M_RFQ_Log();
+        listImport.Add(item);
+
+        await mudRFQ_Log.SetEditingItemAsync(listImport.LastOrDefault()!);
+    }
+    private string searchText = "";
+    private string searchText_item = "";
+    private List<M_Customer> filteredCustomers = new List<M_Customer>();
+    private List<ChargeModel> filteredCharges = new List<ChargeModel>();
+    private List<Models.ChargeModel> charges = new List<Models.ChargeModel>();
+    public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    protected async override Task OnInitializedAsync()
+    {
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "RFQ_LOG").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        await Refresh();
+    }
+
+    async Task CommittedItemRFQ_LogInfo(M_RFQ_Log item)
+    {
+        item.RFQID = _RFQ_LogDetail.RFQ_ID;
+
+        item.dateupdate = DateTime.Now.ToString();
+
+        item.userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        var rs = item.RFQ_logID != Guid.Empty ? await QuoSV.UpdateRFQ_Log(item,detail) : await QuoSV.CreateRFQ_Log(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+    async Task DeleteItemRFQ_Loginfo(M_RFQ_Log item)
+    {
+        if (_RFQ_LogDetail.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "Delete", "RFQ_Log"))
+        {
+            CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await QuoSV.DeleteRFQ_Log(item);
+            string RFQNo = await QuoSV.GetMaQuo_ByID(item.RFQID);
+            string usr = asv.GetAuth().Result.User.Identity!.Name!;
+            await HistoryLogService.LogAsync(usr, "DeleteDetails", "RFQ_Log", item.RFQ_logID, RFQNo, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    async Task Refresh()
+    {
+        try
+        {
+            cusmarket_loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            listImport.Clear();
+            StateHasChanged();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "RFQ_Log"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            listImport = await QuoSV.GetListRFQ_Log(_RFQ_LogDetail.RFQ_ID);
+        }
+        finally
+        {
+            cusmarket_loading = false;
+        }
+
+    }
+    string CusidtoCusCode(Guid? cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.Customer_Code!;
+    }
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    private async Task<IEnumerable<string>> Search_User(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return ListUser;
+
+        return ListUser.Where(x => x.Contains(value, StringComparison.InvariantCultureIgnoreCase));
+    }
+}

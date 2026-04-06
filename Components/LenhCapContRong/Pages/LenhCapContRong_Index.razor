@@ -1,0 +1,560 @@
+@using MudBlazor
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+
+@inject ShipmentService shipsv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Lenh Cấp Cont Rỗng</PageTitle>
+
+<MudStack Row="true" Class="mt-2 px-4" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Spacing="2">
+    <MudText Typo="Typo.h6" Class="fw-700">Lệnh Cấp Cont Rỗng</MudText>
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Secondary"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="NewItem"
+                   Disabled="_loading">
+            New
+        </MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Info"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Edit"
+                   OnClick="EditSelected"
+                   Disabled="_loading || _selected is null || IsExported(_selected)">
+            Edit
+        </MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Error"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Delete"
+                   OnClick="DeleteSelected"
+                   Disabled="_loading || _selected is null">
+            Delete
+        </MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Download"
+                   OnClick="ExportSelected"
+                   Disabled="_loading || _selected is null || IsExported(_selected)">
+            Export
+        </MudButton>
+        <MudTextField @bind-Value="_search"
+                      Placeholder="Search"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Margin="Margin.Dense"
+                      Variant="Variant.Outlined"
+                      Size="Size.Small"
+                      Immediate="true"
+                      DebounceInterval="250"
+                      Disabled="_loading" />
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   OnClick="Refresh"
+                   Disabled="_loading">
+            Refresh
+        </MudButton>
+    </MudStack>
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Class="mt-2" Color="Color.Primary" Indeterminate="true" />
+}
+
+<MudContainer Class="mt-4 px-4" MaxWidth="MaxWidth.False">
+    <MudDataGrid T="M_LenhCapContRong"
+                 Items="_items"
+                 Dense="true"
+                 Bordered="true"
+                 Striped="true"
+                 Hover="true"
+                 RowClick="OnRowClick"
+                 RowClassFunc="@RowClassFunc"
+                 Filterable="true"
+                 QuickFilter="@QuickFilter"
+                 FixedHeader="true"
+                 Height="calc(100vh - 240px)"
+                 SortMode="SortMode.Multiple">
+        <Columns>
+            <PropertyColumn Property="x => x.id" Title="Id" Hidden="true" />
+            <TemplateColumn Title="Booking No" SortBy="x => x.bookingid">
+                <CellTemplate>
+                    @GetBookingNo(context.Item.bookingid)
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.ContType" Title="Cont Type" />
+            <PropertyColumn Property="x => x.Quantity" Title="Quantity" />
+            <PropertyColumn Property="x => x.OrderNo" Title="OrderNo" />
+            <TemplateColumn Title="Hiệu lực lệnh" SortBy="x => x.HieuLucLenh">
+                <CellTemplate>
+                    @FormatDate(context.Item.HieuLucLenh)
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="Export Date" SortBy="x => x.ExportDate">
+                <CellTemplate>
+                    @FormatDate(context.Item.ExportDate)
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.UserExport" Title="User Export" />
+        </Columns>
+
+        <PagerContent>
+            <MudDataGridPager T="M_LenhCapContRong" PageSizeOptions="@(new int[] { 10, 20, 50 })" />
+        </PagerContent>
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+    private bool _loading;
+    private string? _search;
+    private List<M_LenhCapContRong> _items = new();
+    private M_LenhCapContRong? _selected;
+    private Dictionary<Guid, string?> _bookingNoById = new();
+    string usr;
+    protected override void OnInitialized()
+    {
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+
+        _ = LoadDataAsync();
+    }
+
+    private async Task Refresh()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            if (!await ssv.CheckPermission(usr, "View", "LenhCapContRong"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            _loading = true;
+            _selected = null;
+            StateHasChanged();
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.LenhCapContRong
+                .AsNoTracking()
+                .OrderByDescending(x => x.HieuLucLenh)
+                .ThenByDescending(x => x.id)
+                .ToListAsync();
+
+            var bookingIds = _items
+                .Select(x => x.bookingid)
+                .Where(x => x != Guid.Empty)
+                .Distinct()
+                .ToList();
+
+            _bookingNoById = bookingIds.Count == 0
+                ? new Dictionary<Guid, string?>()
+                : new Dictionary<Guid, string?>();
+
+            // Query từng booking theo id để tránh SQL sinh câu có `WITH` gây lỗi cú pháp.
+            foreach (var bookingId in bookingIds)
+            {
+                var bookingNo = await db.CONTAINEROUTBOUNDNOTIFY_sale
+                    .AsNoTracking()
+                    .Where(x => x.ContainerOutBoundNotifyId == bookingId)
+                    .Select(x => x.BookingNo)
+                    .FirstOrDefaultAsync();
+
+                _bookingNoById[bookingId] = bookingNo;
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không thể tải dữ liệu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_LenhCapContRong> args)
+    {
+        _selected = args.Item;
+    }
+
+    private async Task NewItem()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "LenhCapContRong"))
+        {
+            CallSnackBar("You have not access to ADD", MudBlazor.Severity.Warning);
+            return;
+        }
+        var dlg = DialogService.Show<LenhCapContRong_EditDialog>(
+            "New - Lệnh Cấp Cont Rỗng",
+            new DialogParameters
+            {
+                ["Model"] = new M_LenhCapContRong
+                {
+                    id = Guid.Empty,
+                    bookingid = Guid.Empty,
+                    HieuLucLenh = DateTime.Today
+                }
+            },
+            new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true });
+
+        var result = await dlg.Result;
+        if (result.Canceled || result.Data is not M_LenhCapContRong data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task EditSelected()
+    {
+        if (!await ssv.CheckPermission(usr, "Edit", "LenhCapContRong"))
+        {
+            CallSnackBar("You have not access to EDIT", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (_selected is null)
+        {
+            CallSnackBar("Vui lòng chọn 1 dòng để sửa.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (IsExported(_selected))
+        {
+            CallSnackBar("Dòng này đã được export, không thể sửa.", MudBlazor.Severity.Info);
+            return;
+        }
+
+        var dlg = DialogService.Show<LenhCapContRong_EditDialog>(
+            "Edit - Lệnh Cấp Cont Rỗng",
+            new DialogParameters { ["Model"] = _selected },
+            new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true });
+
+        var result = await dlg.Result;
+        if (result.Canceled || result.Data is not M_LenhCapContRong data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(M_LenhCapContRong data)
+    {
+        try
+        {
+            _loading = true;
+            StateHasChanged();
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (string.IsNullOrWhiteSpace(data.ContType))
+            {
+                CallSnackBar("Vui lòng chọn Cont Type.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            data.ContType = data.ContType.Trim().ToUpperInvariant();
+            data.Saycont = FormatSaycont(data.ContType, data.Quantity);
+
+            if (data.Quantity < 1)
+            {
+                CallSnackBar("Quantity phải >= 1.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Legacy safety: nếu cùng bookingid còn record chưa có ContType/Quantity, hệ thống không thể tính tồn đúng.
+            // Cho phép Edit record hiện tại, nhưng chặn khi còn record legacy khác cùng booking.
+            var hasOtherLegacy = await db.LenhCapContRong.AnyAsync(x =>
+                x.bookingid == data.bookingid
+                && x.id != data.id
+                && (string.IsNullOrWhiteSpace(x.ContType) || x.Quantity < 1));
+
+            if (hasOtherLegacy)
+            {
+                CallSnackBar("Booking này đang có lệnh cũ chưa cập nhật Cont Type/Quantity. Vui lòng Edit các lệnh cũ trước khi tạo/sửa lệnh mới.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Server-side validation: enforce Quantity <= remaining based on Booking totals.
+            var booking = await db.CONTAINEROUTBOUNDNOTIFY_sale
+                .AsNoTracking()
+                .Where(x => x.ContainerOutBoundNotifyId == data.bookingid)
+                .Select(x => new Booking
+                {
+                    ContainerOutBoundNotifyId = x.ContainerOutBoundNotifyId,
+                    DC20 = x.DC20,
+                    HC40 = x.HC40,
+                    RF20 = x.RF20,
+                    RF40 = x.RF40,
+                    DC40 = x.DC40,
+                    RH40 = x.RH40,
+                    HC45 = x.HC45,
+                    OT20 = x.OT20,
+                    OT40 = x.OT40,
+                    FR20 = x.FR20,
+                    FR40 = x.FR40
+                })
+                .FirstOrDefaultAsync();
+
+            if (booking == null)
+            {
+                CallSnackBar("Không tìm thấy Booking để tính tồn.", MudBlazor.Severity.Error);
+                return;
+            }
+
+            var bookingTotal = GetBookingTotalByContType(booking, data.ContType);
+
+            var allocated = await db.LenhCapContRong
+                .AsNoTracking()
+                .Where(x => x.bookingid == data.bookingid
+                            && x.ContType == data.ContType
+                            && x.id != data.id)
+                .Select(x => (int?)x.Quantity)
+                .SumAsync();
+
+            var allocatedValue = allocated ?? 0;
+            var remaining = bookingTotal - allocatedValue;
+            if (remaining < 0) remaining = 0;
+
+            if (data.Quantity > remaining)
+            {
+                CallSnackBar($"Số lượng vượt tồn. Còn lại: {remaining} {data.ContType}", MudBlazor.Severity.Error);
+                return;
+            }
+
+            if (data.id == Guid.Empty)
+            {
+                data.id = Guid.NewGuid();
+                db.LenhCapContRong.Add(data);
+            }
+            else
+            {
+                db.LenhCapContRong.Update(data);
+            }
+
+            await db.SaveChangesAsync();
+            CallSnackBar("Saved.", MudBlazor.Severity.Success);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không thể lưu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private static int GetBookingTotalByContType(Booking b, string contType)
+    {
+        return contType switch
+        {
+            "DC20" => b.DC20 ?? 0,
+            "HC40" => b.HC40 ?? 0,
+            "RF20" => b.RF20 ?? 0,
+            "RF40" => b.RF40 ?? 0,
+            "DC40" => b.DC40 ?? 0,
+            "RH40" => b.RH40 ?? 0,
+            "HC45" => b.HC45 ?? 0,
+            "OT20" => b.OT20 ?? 0,
+            "OT40" => b.OT40 ?? 0,
+            "FR20" => b.FR20 ?? 0,
+            "FR40" => b.FR40 ?? 0,
+            _ => 0
+        };
+    }
+
+    private static string FormatSaycont(string? contType, int quantity)
+    {
+        if (string.IsNullOrWhiteSpace(contType) || quantity < 1)
+            return string.Empty;
+
+        contType = contType.Trim().ToUpperInvariant();
+
+        var i = contType.Length - 1;
+        while (i >= 0 && char.IsDigit(contType[i]))
+            i--;
+
+        var sizePart = contType.Substring(i + 1);
+        if (!int.TryParse(sizePart, out var size))
+            return $"{quantity}x{contType}";
+
+        var kindPart = contType.Substring(0, i + 1);
+        if (string.IsNullOrWhiteSpace(kindPart))
+            kindPart = contType;
+
+        return $"{quantity}x{size}'{kindPart}";
+    }
+
+    private async Task DeleteSelected()
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "LenhCapContRong"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (_selected is null)
+        {
+            CallSnackBar("Vui lòng chọn 1 dòng để xoá.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Warning",
+            "Deleting can not be undone!",
+            yesText: "Delete!",
+            cancelText: "Cancel");
+
+        if (!confirm.HasValue)
+            return;
+
+        await DeleteAsync(_selected.id);
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        if (id == Guid.Empty)
+            return;
+
+        try
+        {
+            _loading = true;
+            StateHasChanged();
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.LenhCapContRong.FirstOrDefaultAsync(x => x.id == id);
+            if (entity is null)
+            {
+                CallSnackBar("Không tìm thấy dữ liệu để xoá.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.LenhCapContRong.Remove(entity);
+            await db.SaveChangesAsync();
+
+            CallSnackBar("Deleted.", MudBlazor.Severity.Success);
+            await LoadDataAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không thể xoá: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ExportSelected()
+    {
+        if (_selected is null)
+        {
+            CallSnackBar("Vui lòng chọn 1 dòng để export.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (IsExported(_selected))
+        {
+            CallSnackBar("Dòng này đã được export rồi.", MudBlazor.Severity.Info);
+            return;
+        }
+
+        if (_selected.bookingid == Guid.Empty)
+        {
+            CallSnackBar("BookingId không hợp lệ để export.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var rs = await shipsv.ExportLenhCapContRong(_selected.id,_selected.bookingid);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        if (!rs.Flag)
+            return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.LenhCapContRong.FirstOrDefaultAsync(x => x.id == _selected.id);
+            if (entity is null)
+            {
+                CallSnackBar("Không tìm thấy dữ liệu để cập nhật ExportDate.", MudBlazor.Severity.Error);
+                return;
+            }
+
+            entity.ExportDate = DateTime.Now;
+            entity.UserExport = usr;
+
+            await db.SaveChangesAsync();
+
+            // Cập nhật ngay trên UI (Items đang là reference của _selected)
+            _selected.ExportDate = entity.ExportDate;
+            _selected.UserExport = entity.UserExport;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không thể cập nhật ExportDate/UserExport: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private bool QuickFilter(M_LenhCapContRong row)
+    {
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var s = _search.Trim();
+        return (row.OrderNo?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+               || (GetBookingNo(row.bookingid)?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+               || row.bookingid.ToString().Contains(s, StringComparison.OrdinalIgnoreCase)
+               || row.id.ToString().Contains(s, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetBookingNo(Guid bookingId)
+    {
+        if (bookingId == Guid.Empty)
+            return string.Empty;
+        return _bookingNoById.TryGetValue(bookingId, out var no) ? (no ?? string.Empty) : bookingId.ToString();
+    }
+
+    private static string FormatDate(DateTime? dt)
+        => dt.HasValue ? dt.Value.ToString("dd/MM/yyyy HH:mm") : string.Empty;
+
+    private static bool IsExported(M_LenhCapContRong? item)
+        => item != null && (item.ExportDate.HasValue || !string.IsNullOrWhiteSpace(item.UserExport));
+
+    private string RowClassFunc(M_LenhCapContRong row, int rowNumber)
+    {
+        // Exported ưu tiên hiển thị màu đỏ dù có selected hay không
+        if (IsExported(row))
+            return "exported-row-lcr";
+
+        if (_selected != null && _selected.id == row.id)
+            return "selected-row-lcr";
+
+        return string.Empty;
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+}

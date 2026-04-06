@@ -1,0 +1,435 @@
+﻿@using MudBlazor
+@using System.Globalization
+@using System.Linq
+@using MudBlazor.Components
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject CustomerService Cussv
+@inject PhieuThu_Chi_Services thuchisv
+@inject ReportServices rpsv
+@inject QuotationService Quosv
+@inject IJSRuntime JSRuntime
+
+<style>
+    .class-dialog-custom {
+        backdrop-filter: blur(10px);
+        transition: none !important;
+        animation: none !important;
+    }
+
+    .selected {
+        background: #855ff3 !important;
+    }
+
+        .selected > td {
+            color: white !important;
+        }
+
+            .selected > td .mud-input {
+                color: white !important;
+            }
+
+    .labelCustomColor label {
+        font-weight: bold;
+        color: #118AB2 !important;
+    }
+
+    .mud-table thead {
+        background-color: #118AB2;
+    }
+
+    .mud-table th {
+        background-color: #118AB2 !important;
+        color: white !important;
+    }
+
+    .mud-table-foot tr {
+        background-color: #118AB2 !important;
+    }
+
+    .footer-cell {
+        background-color: #118AB2 !important;
+        color: white !important;
+    }
+
+    .filter-header-cell {
+        background-color: white !important;
+        color: black !important;
+    }
+
+    .mud-menu {
+        display: none;
+    }
+
+    .no-wrap {
+        white-space: nowrap;
+    }
+
+    .custom-label .mud-input-label {
+        color: blue !important;
+    }
+
+    .text-right input {
+        text-align: right !important;
+    }
+</style>
+
+<PageTitle>@Localizer["Cus_Report"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["Cus_Report"]</MudText>
+
+
+<MudGrid Class="pa-6">
+    <!-- Picker chiếm 4/12 cột -->
+    <MudItem xs="4">
+        <MudDateRangePicker Label="@Localizer["searchdatefromto"]"
+                            @bind-DateRange="_dateRange" />
+    </MudItem>
+
+    <MudItem xs="4">
+        <MudAutocomplete Class="labelCustomColor custom-label" T="string"
+                         @bind-Value="UserHanding"
+                         Label="@Localizer["SaleName"]"
+                         SearchFunc="Search_User"
+                         Immediate="true"
+                         CoerceText="true"
+                         Clearable="true"
+                         MaxItems="100">
+        </MudAutocomplete>
+    </MudItem>
+
+    <MudItem xs="1">
+        <MudCheckBox @bind-Checked="Chk_all" Label="@Localizer["ALL Users"]" />
+    </MudItem>
+
+    <MudItem xs="2">
+        <MudButton HtmlTag="label"
+                   OnClick="Search"
+                   Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Refresh">
+            @Localizer["Search"]
+        </MudButton>
+    </MudItem>
+
+</MudGrid>
+
+<MudContainer MaxWidth="MudBlazor.MaxWidth.False" Class="mt-4">
+    <MudGrid>
+
+        <MudItem xs="12">
+            <MudDataGrid T="MoveCustomer" Items="@Listdata_movecus" Bordered="true" Striped="true" Hover="true" Loading="_loading">
+                <Columns>
+
+                    <PropertyColumn Property="x => x.SaleName" Title="@Localizer["SaleName"]" CellStyleFunc="_cellStyleFunc" />
+                    <PropertyColumn Property="x => CustomerName(x.CustomerID)" Title="@Localizer["Customer"]" CellStyleFunc="_cellStyleFunc" />
+                    <PropertyColumn Property="x => CustomerMaincode(x.CustomerID)" Title="@Localizer["Main Code"]" CellStyleFunc="_cellStyleFunc" />
+                    <PropertyColumn Property="x => x.CustomerCode" Title="@Localizer["Customer_Code"]" CellStyleFunc="_cellStyleFunc" />
+                </Columns>
+
+                <PagerContent>
+                    <MudDataGridPager T="MoveCustomer" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+                </PagerContent>
+
+            </MudDataGrid>
+
+        </MudItem>
+
+    </MudGrid>
+    <MudGrid Justify="Justify.Center">
+
+
+                <MudChart ChartType="ChartType.Bar" ChartSeries="@Series" XAxisLabels="@XAxisLabels" Width="100%" Height="350px">
+                    <CustomGraphics>
+                        <style>
+                            .heavy {
+                                font: bold 30px Helvetica;
+                            }
+
+                            .Rrrrr {
+                                font: italic 40px Helvetica;
+                                fill: rgb(62,44,221);
+                            }
+                        </style>
+
+                    </CustomGraphics>
+                </MudChart>
+
+
+    </MudGrid>
+
+</MudContainer>
+
+@code {
+
+    List<MoveCustomer> Listdata_movecus = new List<MoveCustomer>();
+    private List<M_Customer> List_Cus = new List<M_Customer>();
+    private bool _processingUpload = false;
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    private List<M_SaleCustomerCount> List_SaleCustomerCount = new();
+    int from = 0;
+    int to = 0;
+    private DateRange _dateRange = new DateRange(DateTime.Now.Date, DateTime.Now.AddDays(5).Date);
+    private string? UserHanding;
+    private List<Models.ChargeModel> charges = new List<Models.ChargeModel>();
+    private List<string> ListUser { get; set; } = new List<string>();
+    private bool Chk_all = false;
+
+    protected async override Task OnInitializedAsync()
+    {
+        List_Cus = await Cussv.GetList();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+    }
+
+    public class M_SaleCustomerCount
+    {
+        public string SaleName { get; set; }
+        public int Year { get; set; }
+        public int Month { get; set; }
+        public int CustomerCount { get; set; }
+    }
+
+    private async Task<IEnumerable<string>> Search_User(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return ListUser;
+
+        return ListUser.Where(x => x.Contains(value, StringComparison.InvariantCultureIgnoreCase));
+    }
+
+    async Task Search()
+    {
+
+
+
+        var startDate = _dateRange.Start.Value;
+        var endDate = _dateRange.End.Value;
+        if (startDate != null && endDate != null)
+        {
+            if (Chk_all == true)
+            {
+                Listdata_movecus = await Cussv.GetMoveCustomersbytime_allsale(startDate, endDate);
+                if (Listdata_movecus.Count > 0)
+                {
+                    var dataByMonth = await Cussv.GetCustomerCount_ByMonth(startDate, endDate);
+
+                    // Tạo danh sách tháng (Year, Month)
+                    var rawMonthLabels = dataByMonth
+                        .Select(x => new { x.Year, x.Month })
+                        .Distinct()
+                        .OrderBy(x => x.Year).ThenBy(x => x.Month)
+                        .ToList();
+
+                    // Nếu số lượng tháng < 3, thêm 2 tháng rỗng: 1 trước và 1 sau để căn giữa
+                    if (rawMonthLabels.Count < 3 && rawMonthLabels.Count > 0)
+                    {
+                        var first = rawMonthLabels.First();
+                        var last = rawMonthLabels.Last();
+
+                        // Thêm tháng phía trước
+                        DateTime before = new DateTime(first.Year, first.Month, 1).AddMonths(-1);
+                        rawMonthLabels.Insert(0, new { Year = before.Year, Month = before.Month });
+
+                        // Thêm tháng phía sau
+                        DateTime after = new DateTime(last.Year, last.Month, 1).AddMonths(1);
+                        rawMonthLabels.Add(new { Year = after.Year, Month = after.Month });
+                    }
+
+                    // Tạo nhãn trục X
+                    var monthLabels = rawMonthLabels
+                        .Select(x => $"{x.Month:00}/{x.Year}")
+                        .ToList();
+
+                    // Lấy danh sách các saleName duy nhất
+                    var saleNames = dataByMonth
+                        .Select(x => x.SaleName)
+                        .Distinct()
+                        .OrderBy(x => x)
+                        .ToList();
+
+                    // Tạo Series cho biểu đồ
+                    Series.Clear();
+                    foreach (var sale in saleNames)
+                    {
+                        var saleData = rawMonthLabels.Select(m =>
+                        {
+                            var record = dataByMonth.FirstOrDefault(x => x.SaleName == sale && x.Month == m.Month && x.Year == m.Year);
+                            return record != null ? (double)record.CustomerCount : 0d;
+                        }).ToArray();
+
+                        Series.Add(new ChartSeries()
+                        {
+                            Name = sale,
+                            Data = saleData
+                        });
+                    }
+
+                    XAxisLabels = monthLabels.ToArray();
+                }
+                else
+                {
+                    // Xóa dữ liệu biểu đồ nếu không có dữ liệu
+                    Series.Clear();
+                    XAxisLabels = Array.Empty<string>();
+
+                    _loading = false;
+                    CallSnackBar("No Info", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                
+
+            }
+            else
+            {
+                if (UserHanding != null)
+                {
+                    Listdata_movecus = await Cussv.GetMoveCustomersbytime_By_sale(startDate, endDate, UserHanding);
+                    if (Listdata_movecus.Count > 0)
+                    {
+                        var dataByMonth = await Cussv.GetCustomerCount_ByMonth_bysale(startDate, endDate,UserHanding);
+
+                        // Tạo danh sách tháng (Year, Month)
+                        var rawMonthLabels = dataByMonth
+                            .Select(x => new { x.Year, x.Month })
+                            .Distinct()
+                            .OrderBy(x => x.Year).ThenBy(x => x.Month)
+                            .ToList();
+
+                        // Nếu số lượng tháng < 3, thêm 2 tháng rỗng: 1 trước và 1 sau để căn giữa
+                        if (rawMonthLabels.Count < 3 && rawMonthLabels.Count > 0)
+                        {
+                            var first = rawMonthLabels.First();
+                            var last = rawMonthLabels.Last();
+
+                            // Thêm tháng phía trước
+                            DateTime before = new DateTime(first.Year, first.Month, 1).AddMonths(-1);
+                            rawMonthLabels.Insert(0, new { Year = before.Year, Month = before.Month });
+
+                            // Thêm tháng phía sau
+                            DateTime after = new DateTime(last.Year, last.Month, 1).AddMonths(1);
+                            rawMonthLabels.Add(new { Year = after.Year, Month = after.Month });
+                        }
+
+                        // Tạo nhãn trục X
+                        var monthLabels = rawMonthLabels
+                            .Select(x => $"{x.Month:00}/{x.Year}")
+                            .ToList();
+
+                        // Lấy danh sách các saleName duy nhất
+                        var saleNames = dataByMonth
+                            .Select(x => x.SaleName)
+                            .Distinct()
+                            .OrderBy(x => x)
+                            .ToList();
+
+                        // Tạo Series cho biểu đồ
+                        Series.Clear();
+                        foreach (var sale in saleNames)
+                        {
+                            var saleData = rawMonthLabels.Select(m =>
+                            {
+                                var record = dataByMonth.FirstOrDefault(x => x.SaleName == sale && x.Month == m.Month && x.Year == m.Year);
+                                return record != null ? (double)record.CustomerCount : 0d;
+                            }).ToArray();
+
+                            Series.Add(new ChartSeries()
+                            {
+                                Name = sale,
+                                Data = saleData
+                            });
+                        }
+
+                        XAxisLabels = monthLabels.ToArray();
+                    }
+                    else
+                    {
+                        // Xóa dữ liệu biểu đồ nếu không có dữ liệu
+                        Series.Clear();
+                        XAxisLabels = Array.Empty<string>();
+                        _loading = false;
+                        CallSnackBar("No Info", MudBlazor.Severity.Warning);
+                        return;
+                    }
+                }
+                else
+                {
+                   
+
+                    _loading = false;
+                    CallSnackBar("Select Sale Name", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+            }
+
+
+        }
+        else
+        {
+
+            _loading = false;
+            CallSnackBar("Select Date Time Range", MudBlazor.Severity.Warning);
+            return;
+            
+        }
+
+       
+    }
+
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private double[] PieData = Array.Empty<double>();
+    private string[] PieLabels = Array.Empty<string>();
+    double[] inputData;
+    private string[] inputLabels;
+    bool _loading = false;
+
+    private List<ChartSeries> Series = new List<ChartSeries>()
+    {
+        new ChartSeries() { Name = "", Data = new double[] { 0, 0, 0, 0} }
+    };
+    private string[] XAxisLabels = { "", "", "", "" };
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = List_Cus.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.COMPANY! : "";
+    }
+
+    string CustomerMaincode(Guid? customerID)
+    {
+        var rs = List_Cus.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.MainCode! : "";
+    }
+
+    private Func<MoveCustomer, string> _cellStyleFunc => x =>
+     {
+         return "color: #000000";
+
+     };
+
+    private ChartOptions options = new ChartOptions
+        {
+            InterpolationOption = InterpolationOption.NaturalSpline,
+            YAxisFormat = "#,##0"
+        };
+}
+
+

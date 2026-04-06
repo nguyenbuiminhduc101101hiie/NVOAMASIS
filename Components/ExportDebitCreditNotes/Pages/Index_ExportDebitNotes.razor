@@ -1,0 +1,314 @@
+﻿@page "/payment/exportdebitnotes"
+
+@inject IDialogService Dialog
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject SupportServices supsv
+@inject SharedServices sv
+@inject ShipmentService shipsv
+@inject SharedServices ssv
+@inject CustomerService csv
+@attribute [Authorize]
+
+<PageTitle>@Localizer["Export_debit_notes"]</PageTitle>
+
+<div class="pa-4" style="margin-top:15px; margin-bottom:10px;">
+    <MudGrid>
+        <MudItem xs=6>
+            <MudAutocomplete T="Guid" ValueChanged="Refresh" Label="@Localizer["Search Customer"]"
+                             SearchFunc="SearchCus" ToStringFunc="CusidtoCusCode" MaxItems="10" Clearable />
+        </MudItem>
+        <MudItem xs=6></MudItem>
+        <MudItem xs=6>
+            <MudDataGrid T="M_HBL" Items="@HBLs" Filterable="true" MultiSelection="true" Class="custom-credit"
+                FilterMode="@DataGridFilterMode.Simple" Dense="true" Bordered="true" Virtualize Height="550px;"
+                         FixedHeader="true" HeaderClass="no-wrap" SelectOnRowClick="false" FooterClass="nondisplay"
+                ReadOnly="false" ColumnResizeMode="ResizeMode.Column" Loading="_loading" SelectedItemsChanged="SelectedItemsChangedHBL">
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">@Localizer["HBL List"]</MudText>
+                    <MudSpacer />
+                   <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                        StartIcon="@Icons.Material.Filled.Search" OnClick="RefreshDebit">
+                        @Localizer["Find Debits"]
+                    </MudButton>
+                </ToolBarContent>
+                <Columns>
+                    <SelectColumn T="M_HBL" />
+                    <PropertyColumn Property="x => Getjobno(x.mblid)" Title="@Localizer["Job No."]" Required="false" />
+                    <PropertyColumn Property="x => x.hbl" Title="@Localizer["HBL"]" />
+                    <PropertyColumn Property="x => x.dathudebit" Title="@Localizer["Debit_Received"]" Required="false" Filterable="false">
+                        <CellTemplate>
+                            <MudCheckBox Value="context.Item.dathudebit.HasValue ? context.Item.dathudebit.Value : false" ReadOnly />
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.dachicredit" Title="@Localizer["Spent_Credit"]" Required="false" Filterable="false">
+                        <CellTemplate>
+                            <MudCheckBox Value="context.Item.dachicredit.HasValue ? context.Item.dachicredit.Value : false" ReadOnly />
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.dathuchidaily" Title="@Localizer["Received_Spent_Agent"]" Required="false" Filterable="false">
+                        <CellTemplate>
+                            <MudCheckBox Value="context.Item.dathuchidaily.HasValue ? context.Item.dathuchidaily.Value : false" ReadOnly />
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => formatDate(x.ETA)" Title="@Localizer["ETA"]" />
+                    <PropertyColumn Property="x => formatDate(x.ETD)" Title="@Localizer["ETD"]" />
+                    <PropertyColumn Property="x => CusidtoCusCode(x.CustomerID)" Title="@Localizer["Main_Customer"]" Required CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => AgentidtoName(x.AgentID)" Title="@Localizer["Agent"]" Required CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.bkno" Title="@Localizer["No."]" />
+                    <PropertyColumn Property="x => x.Air_wareHouse" Title="@Localizer["Warehouse"]" />
+                    <PropertyColumn Property="x => x.Air_type" Title="@Localizer["CFS-CY"]" />
+                    <PropertyColumn Property="x => x.shipper" Title="@Localizer["Shipper"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.consignee" Title="@Localizer["consignee"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.notify1" Title="@Localizer["Notify"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.SaleName" Title="@Localizer["SaleName"]" Required CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.statusHBL" Title="@Localizer["status"]" Required="false" />
+                </Columns>
+            </MudDataGrid>
+        </MudItem>
+        <MudItem xs=6>
+            <MudDataGrid T="M_Debit" Items="@Listdata" Filterable="true" MultiSelection="true" SelectedItemsChanged="@SelectedItemsChanged"
+                         FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="550px;"
+                         FixedHeader="true" HeaderClass="no-wrap" SelectOnRowClick="false" FooterClass="nondisplay" Class="custom-credit"
+                         ReadOnly="true" Bordered="true" ColumnResizeMode="ResizeMode.Column" Loading="_loadingDebit">
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">@Localizer["Debits"]</MudText>
+                    <MudSpacer/>
+                    <MudSelect @bind-Value="cur_type" Label="@Localizer["Currency"]" Dense="true" Margin="Margin.Dense"
+                    Variant="Variant.Outlined" AdornmentColor="Color.Tertiary">
+                        <MudSelectItem Value="@("VND")">VND</MudSelectItem>
+                        <MudSelectItem Value="@("USD")">USD</MudSelectItem>
+                    </MudSelect>
+                    <MudButton Disabled="_processingUpload" Style="margin-left:15px; margin-right:15px;"
+                               OnClick="ExportBill"
+                               Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+                               StartIcon="@Icons.Material.Filled.Download">
+                        @if (_processingUpload)
+                        {
+                            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                            <MudText Class="ms-2">Processing</MudText>
+                        }
+                        else
+                        {
+                            <MudText>@Localizer["Export Debits"]</MudText>
+                        }
+                    </MudButton>
+                </ToolBarContent>
+                <Columns>
+                    <SelectColumn T="M_Debit" />
+                    <PropertyColumn Property="x => GetHBL(x.hblid)" Title="@Localizer["HBL"]" Required="false" />
+                    <PropertyColumn Property="x => x.debitno" Title="@Localizer["Debit No."]" Required="false" />
+                    <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x =>  Charidtocharge(x.itemid)" Title="@Localizer["Item"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.dongia" Title="@Localizer["Unit Price"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x=>x.type" Title="@Localizer["Type"]" Required="false" />
+                    <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["Total Amount"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" Required="false" />
+                    <PropertyColumn Property="x => x.thue" Title="@Localizer["VAT"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Amount Inc. VAT"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.thuho" Title="@Localizer["On Behalf"]" Required="false" />
+                    <PropertyColumn Property="x => x.tigiadebit" Title="@Localizer["Exchange Rate Debit"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.tigiahoandondaura" Title="@Localizer["Output Invoice Rate"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.ghichu" Title="@Localizer["Notes"]" Required="false" />
+                    <PropertyColumn Property="x => x.daIndebit" Title="@Localizer["Debit Printed"]" />
+                    <PropertyColumn Property="x => x.daXuatHoadon" Title="@Localizer["Invoice Printed"]" />
+                    <PropertyColumn Property="x => x.khoa" Title="@Localizer["Locked"]" />
+                    <PropertyColumn Property="x => x.InArrival" Title="@Localizer["Arrival Printed"]" />
+                    <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                    <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                    <PropertyColumn Property="x => x.continued" Title="@Localizer["Continued"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                </Columns>
+            </MudDataGrid>
+        </MudItem>
+        <MudItem xs=6></MudItem>
+        <MudItem xs=6>
+            <MudStack Row Class="pa-4">
+                
+            </MudStack>
+        </MudItem>
+    </MudGrid>
+</div>
+@code{
+    string usr;
+    List<M_Customer> Customers = new List<M_Customer>();
+    List<ChargeModel> charges = new List<ChargeModel>();
+    List<M_Debit> DebitSelecteds = new List<M_Debit>();
+    List<M_HBL> HBLSelecteds = new List<M_HBL>();
+    List<M_HBL> HBLs = new List<M_HBL>();
+    List<(M_Job job, Guid mblid)> Jobs = new List<(M_Job job, Guid mblid)>();
+    protected async override Task OnInitializedAsync()
+    {
+        charges = await supsv.GetListCharge();
+        Customers = await csv.GetList();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Jobs = await shipsv.GetListJobNoAndMBLID();
+        //await Refresh();
+    }
+    bool _loading = false;
+    List<M_Debit> Listdata = new List<M_Debit>();
+    async Task Refresh(Guid CustomerSelected)
+    {
+        try
+        {
+            if (CustomerSelected == null || CustomerSelected == Guid.Empty)
+            {
+                CallSnackBar("Nothing to search!", MudBlazor.Severity.Warning);
+                return;
+            }
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            HBLs.Clear();
+            HBLSelecteds.Clear();
+            Listdata.Clear();
+            DebitSelecteds.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "HBL"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            HBLs = await shipsv.GetListHBL_ByCus(CustomerSelected);
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar($"Somethings went wrong, {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    bool _loadingDebit = false;
+    async Task RefreshDebit()
+    {
+        try
+        {
+            if (HBLSelecteds.Count == 0)
+            {
+                CallSnackBar("Nothing to find!", MudBlazor.Severity.Warning);
+                return;
+            }
+            _loadingDebit = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            DebitSelecteds.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            Listdata = await shipsv.GetListDebitHBL(HBLSelecteds);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Somethings went wrong, {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loadingDebit = false;
+        }
+    }
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.shortname + "_" + rs.COMPANY!;
+    }
+    string Charidtocharge(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.DVT} - {rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+
+    void SelectedItemsChanged(HashSet<M_Debit> items)
+    {
+        DebitSelecteds = items.ToList();
+    }
+    void SelectedItemsChangedHBL(HashSet<M_HBL> items)
+    {
+        HBLSelecteds = items.ToList();
+    }
+    private async Task<IEnumerable<Guid>> SearchCus(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x=>x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => !string.IsNullOrEmpty(x.COMPANY) && !string.IsNullOrEmpty(x.shortname) && !string.IsNullOrEmpty(x.Customer_Code)
+            && (x.shortname + "_" + x.COMPANY + "_" + x.Customer_Code).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x=>x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private bool _processingUpload = false;
+    string cur_type = "VND"; // default
+    private async Task ExportBill()
+    {
+        try
+        {
+            _processingUpload = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if (DebitSelecteds.Count == 0)
+            {
+                CallSnackBar("Nothing to export!", MudBlazor.Severity.Warning);
+                return;
+            }
+            var rs = await shipsv.ExportDebitSI(DebitSelecteds, HBLSelecteds, cur_type);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+
+    string formatDate(DateTime? date)
+    {
+        if (date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MM/yyyy");
+    }
+
+    string AgentidtoName(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == id);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+    string Getjobno(Guid? mblid)
+    {
+        if (mblid == Guid.Empty) return string.Empty;
+        var rs = Jobs.FirstOrDefault(x => x.mblid != Guid.Empty && x.mblid == mblid);
+        return string.IsNullOrEmpty(rs.job.JobNo) ? string.Empty : rs.job.JobNo;
+    }
+    string GetHBL(Guid? hblid)
+    {
+        if (hblid == Guid.Empty) return string.Empty;
+        var rs = HBLs.FirstOrDefault(x => x.hblID != Guid.Empty && x.hblID == hblid);
+        return string.IsNullOrEmpty(rs.hbl) ? string.Empty : rs.hbl;
+    }
+}

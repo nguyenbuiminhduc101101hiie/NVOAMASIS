@@ -1,0 +1,277 @@
+﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@using System.Globalization﻿
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="M_HoaDonDauRa" Items="@Listdata" @ref="mudTable" Class="table-shipment-bg" Dense="true"
+                 FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+                 ReadOnly="false" RowClassFunc="@SelectedRowClassFunc"
+                 RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true" RowClass="no-wrap-cell"
+                 ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+        <Columns>
+            <PropertyColumn Property="x => GetHBL_(x.hblid)" Title="@Localizer["HBL"]" Required />
+            <PropertyColumn Property="x => GetSaleName_(x.hblid)" Title="@Localizer["Sale"]" Filterable="false" />
+            <PropertyColumn Property="x => GetCusName(x.customerid)" Title="@Localizer["Customer"]" Filterable="false" />
+            <PropertyColumn Property="x => TDebit_(x.hblid)" Title="@Localizer["Debit"]" Required Format="#,##0.##" Culture="@_en" CellStyle="text-align: right;" Filterable="false" />
+            <PropertyColumn Property="x => THDDaura(x.hblid,x.customerid)" Title="@Localizer["hoadondaura"]" Required Format="#,##0.##" Culture="@_en" CellStyle="text-align: right;" Filterable="false" />
+            <PropertyColumn Property="x => TCNHDDaura(x.hblid,x.customerid)" Title="@Localizer["congnohoadondaura"]" Required Format="#,##0.##" Culture="@_en" CellStyle="text-align: right;" Filterable="false" />
+            <PropertyColumn Property="x => GetDateRptHBL_(x.hblid)" Title="@Localizer["ngaybatdau"]" Format="dd/MM/yyyy" Filterable="false" />
+            <PropertyColumn Property="x => TsongayCongNo(x.customerid)" Title="@Localizer["songaycongno"]" Filterable="false" />
+        </Columns>
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    bool _loading = false;
+    List<M_HoaDonDauRa> Listdata = new List<M_HoaDonDauRa>();
+    [Parameter] public M_MBL MBLDetail { get; set; }
+    [Parameter] public List<M_Debit> ListDebit { get; set; }
+
+    [Parameter] public List<M_Credit> ListCredit { get; set; }
+    [Parameter] public List<M_Customer> ListCus { get; set; }
+    M_HoaDonDauRa detail;
+    [Parameter] public bool chkVAT { get; set; }
+    [Parameter] public bool chkUSD { get; set; }
+    [Parameter] public bool chkVND { get; set; }
+    MudDataGrid<M_HoaDonDauRa> mudTable;
+    List<M_HoaDonDauRa> List_HDDR = new List<M_HoaDonDauRa>();
+    List<M_CongNoHoaDonDauRa> List_CNHDDR = new List<M_CongNoHoaDonDauRa>();
+    List<M_HBL> List_HBL = new List<M_HBL>();
+    private int selectedRowNumber = -1;
+
+
+    List<ChargeModel> charges = new List<ChargeModel>();
+    CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    protected async override Task OnInitializedAsync()
+    {
+        _loading = true;
+        charges = await supsv.GetListCharge();
+       
+        List_CNHDDR = await shipsv.GetList_CongNoHoaDonDauRa();
+        List_HDDR = await shipsv.GetList_HoaDonDauRa();
+        List_HBL = await shipsv.GetListHBL(MBLDetail.MblID);
+        var hblidList = List_HBL.Select(h => h.hblID).ToList();
+        // Lọc List_HDDR để lấy những phần tử có hblid trong danh sách trên
+        Listdata = List_HDDR.Where(ddr => hblidList.Contains(ddr.hblid)).ToList();
+        var groupedData = Listdata
+            .GroupBy(x => x.customerid)
+            .Select(g => g.First())
+            .ToList();
+        // Bước 2: Lấy tất cả phần tử trong groupedData nối lại thành List<M_HoaDonDauRa>
+ 
+        Listdata = groupedData;
+
+        _loading = false;
+
+    }
+
+    private string SelectedRowClassFunc(M_HoaDonDauRa Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_HoaDonDauRa> args)
+    {
+        detail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_HoaDonDauRa> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    string formatDate(DateTime? date)
+    {
+        if(date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MMM/yyyy");
+    }
+
+
+
+
+    DateRange frmtoDate = new DateRange(DateTime.Now.AddMonths(-1), DateTime.Now);
+
+    string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    string CharidtoLoaidv(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.loaidichvu_charge}"!;
+    }
+    double? TDebit_(Guid id)
+    {
+        var debit = ListDebit.Where(x => x.hblid == id &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION") &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("DUTY"))
+                        .ToList();
+        return debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien; 
+        });
+    }
+
+
+    double? THDDaura(Guid id,Guid id_cus)
+    {
+        var ListHD_DauRa = List_HDDR.Where(x => x.hblid == id && x.customerid==id_cus).ToList();
+
+        return ListHD_DauRa.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigia == 0 ? 1 : x.tigia); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigia;
+            }
+            return tien;
+        });
+    }
+
+    double? TCNHDDaura(Guid id, Guid id_cus)
+    {
+        double? tien = 0;
+        var ListHD_DauRa = List_HDDR.Where(x => x.hblid == id && x.customerid==id_cus).ToList();
+
+        foreach (var item in ListHD_DauRa)
+
+        {
+            var List_CongNo_HDDR = List_CNHDDR.Where(x => x.hoadondauraid == item.hoadondauraid).ToList();
+            // Tính tổng tiền trong danh sách công nợ
+            tien += List_CongNo_HDDR.Sum(x =>
+            {
+                var tienItem = x.tongtien;
+                if (chkUSD)
+                {
+                    return x.tiente == "USD"
+                        ? tienItem
+                        : tienItem / (x.tigia == 0 ? 1 : x.tigia); // tránh chia 0
+                }
+                else // VND
+                {
+                    return x.tiente == "VND"
+                        ? tienItem
+                        : tienItem * x.tigia;
+                }
+            });
+        }
+
+        return tien;
+    }
+
+
+    string? TsongayCongNo(Guid id)
+
+    {
+
+        var hanCongNo = ListCus
+     .Where(x => x.Customer_ID == id)
+     .Select(x => x.hancongno)
+     .FirstOrDefault();
+   
+      
+
+        return hanCongNo;
+    }
+
+    string? GetCusName(Guid id)
+
+    {
+
+        var hanCongNo = ListCus
+     .Where(x => x.Customer_ID == id)
+     .Select(x => x.COMPANY)
+     .FirstOrDefault();
+
+
+
+        return hanCongNo;
+    }
+
+    string? GetHBL_(Guid id)
+    {
+        var HBL = List_HBL
+         .Where(x => x.hblID == id)
+         .Select(x => x.hbl)
+         .FirstOrDefault();
+
+        return HBL;
+    }
+    string? GetSaleName_(Guid id)
+    {
+        var SaleName = List_HBL
+         .Where(x => x.hblID == id)
+         .Select(x => x.SaleName)
+         .FirstOrDefault();
+
+        return SaleName;
+    }
+    DateTime? GetDateRptHBL_(Guid id)
+    {
+        var datereport = List_HBL
+         .Where(x => x.hblID == id)
+         .Select(x => x.datereport)
+         .FirstOrDefault();
+
+        return datereport;
+    }
+
+    
+}

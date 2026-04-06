@@ -1,0 +1,599 @@
+﻿@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject Bieugianangha_Services Bgnhsv
+@inject CustomerService Cussv
+@inject DNTUServices DNTUSV
+@inject ProductPriceServices prsv;
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+@inject ShipmentService shipsv;
+
+<style>
+    .text-right input {
+        text-align: right !important;
+    }
+
+    .custom-right-align {
+        text-align: right !important;
+    }
+
+    .highlight-row-red {
+        color: red !important; /* Màu chữ đỏ */
+        background-color: #ffe6e6; /* Tuỳ chọn: nền hồng nhạt */
+    }
+
+    .highlight-row-yellow {
+        background-color: yellow !important;
+    }
+</style>
+
+<PageTitle>@Localizer["Payment_Report"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["Payment_Report"]</MudText>
+
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+    <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+    <MudIconButton HtmlTag="label"
+                   OnClick="@(()=>Refresh(frmtoDate))" Disabled="_loading"
+                   Size="Size.Small" Color="Color.Primary" Variant="Variant.Text"
+                   Icon="@Icons.Material.Filled.Search" />
+
+    <MudStack Row Spacing="3">
+        <MudAutocomplete @bind-Value="_SaleName" Label="Search By Sales" Clearable ResetValueOnEmptyText Disabled="@(!chkSearchSales)" SearchFunc="SearchFuncSales" />
+        <MudCheckBox @bind-Value="chkSearchSales" Color="Color.Primary" Size="Size.Medium" Disabled="@isSale" />
+    </MudStack>
+    <MudSwitch @bind-Value="chkSI" Label="SI" Color="Color.Primary" Size="Size.Medium" />
+    <MudSwitch @bind-Value="chkSE" Label="SE" Color="Color.Primary" Size="Size.Medium" />
+    <MudSwitch @bind-Value="chkAI" Label="AI" Color="Color.Primary" Size="Size.Medium" />
+    <MudSwitch @bind-Value="chkAE" Label="AE" Color="Color.Primary" Size="Size.Medium" />
+    <MudSwitch @bind-Value="chkTruck" Label="Truck" Color="Color.Primary" Size="Size.Medium" />
+    <MudSwitch @bind-Value="chkCustoms" Label="Customs" Color="Color.Primary" Size="Size.Medium" />
+
+</MudStack>
+
+
+
+<MudDataGrid T="M_HoaDonDauVao" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4" Bordered="true"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" RowClassFunc="@SelectedRowClassFunc"
+             RowClick="@RowClicked" EditDialogOptions="@options"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" Loading="_loading">
+    <Columns>
+
+        <PropertyColumn Property="x => GetHBL_(x.hblid)" Title="@Localizer["HBL"]" Required>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => GetSaleName_(x.hblid)" Title="@Localizer["Sale"]" Filterable="false" />
+        <PropertyColumn Property="x => GetCusName(x.customerid)" Title="@Localizer["Customer"]" Filterable="false">
+            <FooterTemplate>
+                TOTAL
+            </FooterTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => Tcredit_(x.hblid)" Title="@Localizer["Credit"]" Required Format="#,##0.##" Culture="@_en" CellClass="custom-right-align" Filterable="false">
+            <FooterTemplate>
+                <div style="text-align: right;">
+                    @mudTable.FilteredItems.Sum(x => Tcredit_(x.hblid))!.Value.ToString("##,##0.##", _en)
+                </div>
+
+            </FooterTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => THDDaura(x.hblid,x.customerid)" Title="@Localizer["hoadondaura"]" Required Format="#,##0.##" Culture="@_en" CellClass="custom-right-align" Filterable="false">
+            <FooterTemplate>
+                <div style="text-align: right;">
+                    @mudTable.FilteredItems.Sum(x => THDDaura(x.hblid, x.customerid))!.Value.ToString("##,##0.##", _en)
+                </div>
+            </FooterTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => TCNHDDaura(x.hblid,x.customerid)" Title="@Localizer["congnohoadondaura"]" Required Format="#,##0.##" Culture="@_en" CellClass="custom-right-align" Filterable="false">
+            <FooterTemplate>
+                <div style="text-align: right;">
+                    @mudTable.FilteredItems.Sum(x => TCNHDDaura(x.hblid, x.customerid))!.Value.ToString("##,##0.##", _en)
+                </div>
+            </FooterTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => Hieu2cot(x.hblid,x.customerid)" Title="@Localizer["sotienconlai"]" Required Format="#,##0.##" Culture="@_en" CellClass="custom-right-align" Filterable="false">
+            <FooterTemplate>
+                <div style="text-align: right;">
+                    @mudTable.FilteredItems.Sum(x => Hieu2cot(x.hblid, x.customerid))!.Value.ToString("##,##0.##", _en)
+                </div>
+            </FooterTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => GetDateRptHBL_(x.hblid)" Title="@Localizer["ngaybatdau"]" Format="dd/MM/yyyy" Filterable="false" />
+        <PropertyColumn Property="x => TsongayCongNo(x.customerid)" Title="@Localizer["songaycongno"]" Filterable="false" />
+        <PropertyColumn Property="x => Songayconlai(x.hblid,x.customerid)" Title="@Localizer["songayconlai"]" Filterable="false" />
+    </Columns>
+
+    <PagerContent>
+        <MudDataGridPager T="M_HoaDonDauVao" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+<MudItem xs="12">
+
+    <MudChart ChartType="ChartType.Bar"
+              ChartSeries="@Series"
+              XAxisLabels="@XAxisLabels"
+              Height="350px" Width="100%"
+              ChartOptions="options_chart" />
+
+</MudItem>
+
+@code {
+    List<M_HoaDonDauVao> Listdata = new List<M_HoaDonDauVao>();
+    MudDataGrid<M_HoaDonDauVao> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    M_HoaDonDauVao detail;
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<M_DNTT_Logistics> DNTTs = new List<M_DNTT_Logistics>();
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    private List<ChargeModel> List_Charge = new List<ChargeModel>();
+    List<M_HoaDonDauVao> List_HDDV = new List<M_HoaDonDauVao>();
+    List<M_CongNoHoaDonDauVao> List_CNHDDV = new List<M_CongNoHoaDonDauVao>();
+    List<M_HBL> List_HBL = new List<M_HBL>();
+    List<M_Credit> ListCredit = new List<M_Credit>();
+    List<string> ListSales = new();
+    AuthUser userdetail;
+    private double? total_HDDV = 0;
+    private double? total_CNHDDV = 0;
+    private double? total_credit = 0;
+    DateRange frmtoDate = new DateRange(new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-1),
+                                       new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
+    bool isSale = false;
+    bool chkSI = false, chkSE = false, chkAI = false, chkAE = false, chkTruck = false, chkCustoms = false, chkVAT = false, chkUSD = false, chkVND = false, chkSearchSales = false;
+    string? _SaleName;
+    protected async override Task OnInitializedAsync()
+    {
+        _loading = true;
+        userdetail = asv.GetUserDetail();
+        CustomerList = await Cussv.GetList();
+        List_Charge = await supsv.GetListCharge();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        ListSales = await supsv.GetListSale();
+        if (!string.IsNullOrEmpty(userdetail.Department) && userdetail.Department.ToUpper().Contains("SALES"))
+        {
+            isSale = true;
+            _SaleName = userdetail.Usr;
+        }
+        _loading = false;
+    }
+
+    bool _loading = false;
+    async Task Refresh(DateRange frmtoDate)
+    {
+        try
+        {
+            total_HDDV = 0;
+            total_CNHDDV = 0;
+            total_credit = 0;
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "Debt_due_to_customers"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            ListCredit = await shipsv.GetListCreditALL();
+            List_HDDV = await shipsv.GetList_HoaDonDauVao();
+            List_HBL = await shipsv.GetListHBL_DateRange_whereLoai(frmtoDate, chkSI, chkSE, chkAI, chkAE, chkTruck, chkCustoms, chkSearchSales, _SaleName);
+            var hblidList = List_HBL.Select(h => h.hblID).ToList();
+
+            Listdata = List_HDDV.Where(ddr => hblidList.Contains(ddr.hblid)).ToList();
+            var groupedData = Listdata
+                .GroupBy(x => x.customerid)
+                .Select(g => g.First())
+                .ToList();
+            // Bước 2: Lấy tất cả phần tử trong groupedData nối lại thành List<M_HoaDonDauVao>
+
+            Listdata = groupedData;
+
+            List_CNHDDV = await shipsv.GetList_CongNoHoaDonDauVao();
+
+            await GetChart();
+            StateHasChanged();
+
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_HoaDonDauVao> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+
+
+    int? index_no;
+
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(M_HoaDonDauVao sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_HoaDonDauVao sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.sohoadonNoibo))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.sohoadonNoibo!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.sohoadonNoibo} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    private ChartOptions options_chart = new ChartOptions
+        {
+            YAxisFormat = "#,##0"
+        };
+
+    public List<ChartSeries> Series = new List<ChartSeries>
+    {
+        new ChartSeries() { Name = "", Data = new double[] { } }
+
+    };
+    public string[] XAxisLabels = { };
+
+
+    public async Task GetChart()
+    {
+        foreach (var item in Listdata)
+        {
+            var credit = ListCredit.Where(x => x.hblid == item.hblid &&
+                            !Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION") &&
+                            !Charidtocharge(x.itemid).ToUpper().Contains("DUTY"))
+                            .ToList();
+            total_credit += credit.Sum(x =>
+            {
+                var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+
+                return x.tiente == "VND"
+                ? tien * 1
+                : tien * x.tigiacredit;
+
+                return tien;
+            });
+
+        }
+
+        foreach (var item in Listdata)
+        {
+            var ListHD_DauRa = List_HDDV.Where(x => x.hblid == item.hblid && x.customerid == item.customerid).ToList();
+
+            total_HDDV += ListHD_DauRa.Sum(x =>
+                {
+                    var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+
+                    return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigia;
+
+                    return tien;
+                });
+
+
+        }
+
+        foreach (var item in Listdata)
+        {
+            var ListHD_DauRa = List_HDDV.Where(x => x.hblid == item.hblid && x.customerid == item.customerid).ToList();
+            double? thanhtien = 0;
+            double? tien = 0;
+            foreach (var item1 in ListHD_DauRa)
+
+            {
+                var List_CongNo_HDDV = List_CNHDDV.Where(x => x.hoadondauvaoid == item1.hoadondauvaoid).ToList();
+                // Tính tổng tiền trong danh sách công nợ
+                tien += List_CongNo_HDDV.Sum(x =>
+                {
+                    var tienItem = x.tongtien;
+                    thanhtien = x.tiente == "VND"
+                            ? tienItem
+                            : tienItem * x.tigia;
+                    total_CNHDDV += thanhtien;
+                    return thanhtien;
+
+                });
+
+            }
+        }
+
+
+        Series = new List<ChartSeries>()
+        {
+            new ChartSeries() { Name = "credit", Data = new double[] { 0,total_credit ?? 0,0 } },
+            new ChartSeries() { Name = "Hóa Đơn Đầu Ra", Data = new double[] { 0,total_HDDV ?? 0,0 } },
+            new ChartSeries() { Name = "Công Nợ Hóa Đơn Đầu Ra", Data = new double[] { 0,total_CNHDDV ?? 0,0 } },
+
+        };
+
+        XAxisLabels = new string[] { "", "Số Tiền", "" };
+        ;
+    }
+
+    string? GetHBL_(Guid id)
+    {
+        var HBL = List_HBL
+         .Where(x => x.hblID == id)
+         .Select(x => x.hbl)
+         .FirstOrDefault();
+
+        return HBL;
+    }
+    string? GetSaleName_(Guid id)
+    {
+        var SaleName = List_HBL
+         .Where(x => x.hblID == id)
+         .Select(x => x.SaleName)
+         .FirstOrDefault();
+
+        return SaleName;
+    }
+    DateTime? GetDateRptHBL_(Guid id)
+    {
+        var datereport = List_HBL
+         .Where(x => x.hblID == id)
+         .Select(x => x.datereport)
+         .FirstOrDefault();
+
+        return datereport;
+    }
+
+    double? Songayconlai(Guid idhbl, Guid id_cus)
+    {
+        var datereport = List_HBL
+            .Where(x => x.hblID == idhbl)
+            .Select(x => x.datereport)
+            .FirstOrDefault();
+
+        string hanCongNoStr = CustomerList
+            .Where(x => x.Customer_ID == id_cus)
+            .Select(x => x.hancongno)
+            .FirstOrDefault();
+
+
+        if (datereport == null || string.IsNullOrWhiteSpace(hanCongNoStr))
+            return null;
+
+        // Chuyển đổi hanCongNo sang double
+        if (!double.TryParse(hanCongNoStr, out double hanCongNo))
+            return null;
+
+        var datenow = DateTime.Now;
+
+        var songayconlai = (datenow.Date - datereport.Value.Date).TotalDays;
+
+        double songayxet = hanCongNo - songayconlai;
+
+        return songayxet;
+    }
+
+
+    string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = List_Charge.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+
+    double? Tcredit_(Guid id)
+    {
+        var credit = ListCredit.Where(x => x.hblid == id &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION") &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("DUTY"))
+                        .ToList();
+        return credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+
+            return x.tiente == "VND"
+            ? tien * 1
+            : tien * x.tigiacredit;
+
+            return tien;
+        });
+    }
+
+
+    double? THDDaura(Guid id, Guid id_cus)
+    {
+        var ListHD_DauRa = List_HDDV.Where(x => x.hblid == id && x.customerid == id_cus).ToList();
+
+        return ListHD_DauRa.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+
+            return x.tiente == "VND"
+            ? tien * 1
+            : tien * x.tigia;
+
+            return tien;
+        });
+    }
+
+    double? TCNHDDaura(Guid id, Guid id_cus)
+    {
+        double? tien = 0;
+        var ListHD_DauRa = List_HDDV.Where(x => x.hblid == id && x.customerid == id_cus).ToList();
+        double? thanhtien = 0;
+        foreach (var item in ListHD_DauRa)
+
+        {
+            var List_CongNo_HDDV = List_CNHDDV.Where(x => x.hoadondauvaoid == item.hoadondauvaoid).ToList();
+            // Tính tổng tiền trong danh sách công nợ
+            tien += List_CongNo_HDDV.Sum(x =>
+            {
+                var tienItem = x.tongtien;
+                thanhtien = x.tiente == "VND"
+                        ? tienItem
+                        : tienItem * x.tigia;
+
+                return thanhtien;
+
+            });
+
+        }
+
+        return tien;
+    }
+
+    double? Hieu2cot(Guid id, Guid id_cus)
+    {
+        double? cot1 = 0;
+        double? cot2 = 0;
+
+        var ListHD_DauRa = List_HDDV.Where(x => x.hblid == id && x.customerid == id_cus).ToList();
+
+        // Tính tổng cot1
+        cot1 = ListHD_DauRa.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            return x.tiente == "VND" ? tien : tien * x.tigia;
+        });
+
+        // Tính tổng cot2
+        foreach (var item in ListHD_DauRa)
+        {
+            var List_CongNo_HDDV = List_CNHDDV.Where(x => x.hoadondauvaoid == item.hoadondauvaoid).ToList();
+
+            cot2 += List_CongNo_HDDV.Sum(x =>
+            {
+                var tienItem = x.tongtien;
+                return x.tiente == "VND" ? tienItem : tienItem * x.tigia;
+            });
+        }
+
+        // Trả về hiệu 2 cột
+        return cot1 - cot2;
+    }
+
+    string? TsongayCongNo(Guid id)
+
+    {
+
+        var hanCongNo = CustomerList
+     .Where(x => x.Customer_ID == id)
+     .Select(x => x.hancongno)
+     .FirstOrDefault();
+
+
+
+        return hanCongNo;
+    }
+
+    string? GetCusName(Guid id)
+
+    {
+
+        var hanCongNo = CustomerList
+     .Where(x => x.Customer_ID == id)
+     .Select(x => x.COMPANY)
+     .FirstOrDefault();
+
+
+
+        return hanCongNo;
+    }
+    private async Task<IEnumerable<string?>> SearchFuncSales(string? text)
+    {
+        try
+        {
+            var rs = ListSales.Where(s => !string.IsNullOrEmpty(s))
+                   .Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private string SelectedRowClassFunc(M_HoaDonDauVao m, int rowNumber)
+    {
+        var classList = new List<string>();
+
+        // Kiểm tra nếu dòng được chọn
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            classList.Add("selected");
+        }
+
+        // Kiểm tra nếu Hieu2cot > 0 thì thêm màu đỏ
+        if (Hieu2cot(m.hblid, m.customerid) < 0)
+        {
+            classList.Add("highlight-row-red");
+        }
+
+        if (Songayconlai(m.hblid, m.customerid) < 0)
+        {
+            classList.Add("highlight-row-yellow");
+        }
+
+        return string.Join(" ", classList);
+    }
+
+}

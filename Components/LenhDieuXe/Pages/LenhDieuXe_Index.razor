@@ -1,0 +1,874 @@
+﻿@page "/LenhDieuXe"
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv 
+@inject LenhDieuXeServices ldxsv
+@inject YeuCauTruckingServices YCTKSv
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+
+<PageTitle>@Localizer["Lenh_Dieu_Xe"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["Lenh_Dieu_Xe"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+  @*   <MudButton HtmlTag="label"
+               @onclick="@(() => AddItem())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton> *@
+
+        <MudButton  HtmlTag="label"
+                 @onclick="@((e) => OpenCreateDialog(new Models.M_LenhDieuXe()))"
+                Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["new"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenEditDialog(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Edit">
+        @Localizer["edit"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenDuplicateDialog(detail))"
+               Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.CopyAll">
+        @Localizer["duplicate"]
+    </MudButton>
+
+     <MudButton Disabled="_processingUpload"
+        OnClick="ExportBill"
+        Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+        StartIcon="@Icons.Material.Filled.Download">
+        @if (_processingUpload)
+        {
+            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+            <MudText Class="ms-2">Processing</MudText>
+        }
+        else
+        {
+            <MudText>@Localizer["Export_Bill"]</MudText>
+        }
+    </MudButton>
+
+</MudStack>
+
+<MudDataGrid T="M_LenhDieuXe" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4" Bordered="true"
+FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+RowClick="@RowClicked" EditDialogOptions="@options"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" Loading="_loading">
+    <Columns>
+        <HierarchyColumn T="M_LenhDieuXe" />
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+             
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x=>x.Lenhdieuxeno" Title="Số Phiếu" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+
+                <MudStack Row>
+                    <MudItem>
+                        <MudButton Class="pl-4 pa-10 custom-label" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary"
+                        Disabled="@(status == "edit")"
+                        OnClick="() => GetT_ProductPriceNo(context.Item)">>>></MudButton>
+                    </MudItem>
+
+                    <MudTextField @bind-Value="context.Item.Lenhdieuxeno" Label="Số Phiếu." Disabled ="true" Required="true" />
+                </MudStack>
+
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => GetYCTKno(x.YeuCauTruckingId)" Title="@Localizer["yeucautruckingno"]" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.YeuCauTruckingId" Label="@Localizer["yeucautruckingno"]">
+                    @foreach (var item in YCTKs)
+                    {
+                        <MudSelectItem Value="@item.YeuCauTruckingID">@item.YeuCauTruckingNo</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Nvdieuxe" Title="NV điều xe" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.Nvdieuxe" Label="NV điều xe" class="custom-label" Required
+                SearchFunc="SearchNhanVien"/>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Taixe" Title="Tài xế" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.Taixe" Label="Tài xế"  class="custom-label"
+                SearchFunc="SearchTaixe"/>
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => x.Phuxe" Title="Phụ xe" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.Phuxe" Label="Phụ xe" class="custom-label"
+                SearchFunc="Searchphuxe"/>
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => x.Nhaxe" Title="Nhà xe" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.Nhaxe" Label="Nhà xe" class="custom-label" Required
+                SearchFunc="Searchnhaxe" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Ghichu" Title="Ghi chú" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Ghichu" Label="Ghi chú" InputType="InputType.Text" Lines="3"  class="custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Loaidhvc" Title="Loại ĐHVC" Required="false">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.Loaidhvc" Label="Loại ĐHVC" class="custom-label">
+                    <MudSelectItem Value="@("FCL")">FCL</MudSelectItem>
+                    <MudSelectItem Value="@("LCL")">LCL</MudSelectItem>
+                    <MudSelectItem Value="@("Consol")">Consol</MudSelectItem>
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Loaiphuongtien" Title="Loại phương tiện" Required="false">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.Loaiphuongtien" Label="Loại phương tiện" class="custom-label">
+                    <MudSelectItem Value="@("C20GP")">C20GP</MudSelectItem>
+                    <MudSelectItem Value="@("C40GP")">C40GP</MudSelectItem>
+                    <MudSelectItem Value="@("C40HC")">C40HC</MudSelectItem>
+                    <MudSelectItem Value="@("C45HC")">C45HC</MudSelectItem>
+                    <MudSelectItem Value="@("C20RF")">C20RF</MudSelectItem>
+                    <MudSelectItem Value="@("C40RF")">C40RF</MudSelectItem>
+                    <MudSelectItem Value="@("C20OT")">C20OT</MudSelectItem>
+                    <MudSelectItem Value="@("C40OT")">C40OT</MudSelectItem>
+                    <MudSelectItem Value="@("C20FL")">C20FL</MudSelectItem>
+                    <MudSelectItem Value="@("C40FL")">C40FL</MudSelectItem>
+                    <MudSelectItem Value="@("C20TK")">C20TK</MudSelectItem>
+                    <MudSelectItem Value="@("C40TK")">C40TK</MudSelectItem>
+                    <MudSelectItem Value="@("T2T")">T2T</MudSelectItem>
+                    <MudSelectItem Value="@("T5T")">T5T</MudSelectItem>
+                    <MudSelectItem Value="@("T10T")">T10T</MudSelectItem>
+                    <MudSelectItem Value="@("T15T")">T15T</MudSelectItem>
+                    <MudSelectItem Value="@("T20T")">T20T</MudSelectItem>
+                    <MudSelectItem Value="@("TRC")">TRC</MudSelectItem>
+                    <MudSelectItem Value="@("TRS")">TRS</MudSelectItem>
+                    <MudSelectItem Value="@("MOOCFL")">MOOCFL</MudSelectItem>
+                    <MudSelectItem Value="@("MOOCCL")">MOOCCL</MudSelectItem>
+                    <MudSelectItem Value="@("MOOCRT")">MOOCRT</MudSelectItem>
+                    <MudSelectItem Value="@("MOOCLT")">MOOCLT</MudSelectItem>
+                    <MudSelectItem Value="@("MOOCB")">MOOCB</MudSelectItem>
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Pol" Title="POL" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.Pol" Label="POL" class="custom-label" Required
+                SearchFunc="Searchpol" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Pod" Title="POD" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.Pod" Label="POD" class="custom-label" Required
+                SearchFunc="Searchpol" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Soxe" Title="Số xe" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.Soxe" Label="Số xe" class="custom-label" Required
+                SearchFunc="SearchSoxe" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Somooc" Title="Số Mooc" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.Somooc" Label="Số Mooc" class="custom-label" Required
+                SearchFunc="SearchSoxe" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Tongkm" Title="Tổng Km" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.Tongkm"
+                Label="Tổng Km" Format="#,##0.##" Culture="@_en" T="double?"
+                Class="text-right-input custom-label" />
+
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Dinhmucdau" Title="Định mức dầu" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.Dinhmucdau"
+                Label="Định mức dầu" Format="#,##0.##" Culture="@_en" T="double?"
+                Class="text-right-input custom-label" />
+
+            </EditTemplate>
+        </PropertyColumn>
+
+         <PropertyColumn Property="x => x.GiaCost" Title="Giá Cost" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.GiaCost"
+                                 Label="Giá Cost" Format="#,##0.##" Culture="@_en" T="double?"
+                                 class="text-right-input custom-label" />
+
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Tamung" Title="Tạm ứng" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.Tamung"
+                Label="Tạm ứng" Format="#,##0.##" Culture="@_en" T="double?"
+                Class="text-right-input custom-label" />
+
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => x.Ngaylap" Title="Ngày Lập" Required="false" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudDatePicker  @bind-Date="context.Item.Ngaylap" class="custom-label"
+                Label="Ngày Lập:"
+                Required="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Ngaynhanlenh" Title="Ngày nhận lệnh" Required="false" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudDatePicker  @bind-Date="context.Item.Ngaynhanlenh" class="custom-label"
+                Label="Ngày nhận lệnh:"
+                Required="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Ngaydi" Title="Ngày đi" Required="false" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudDatePicker  @bind-Date="context.Item.Ngaydi" class="custom-label"
+                Label="Ngày đi:"
+                Required="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Ngayve" Title="Ngày về" Required="false" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudDatePicker @bind-Date="context.Item.Ngayve" class="custom-label"
+                Label="Ngày về:"
+                Required="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.TrangthaiCt" Title="Trạng Thái CT" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.TrangthaiCt" Label="Trạng Thái CT" class="custom-label">
+                    @foreach (var item in trangthais)
+                    {
+                        <MudSelectItem Value="item">@item</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <TemplateColumn Title="@Localizer["Approve"]">
+            <CellTemplate>
+                <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                </MudCheckBox>
+            </CellTemplate>
+        </TemplateColumn>
+
+    </Columns>
+
+    <PagerContent>
+        <MudDataGridPager T="Models.M_LenhDieuXe" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    List<M_LenhDieuXe> Listdata = new List<M_LenhDieuXe>();
+    MudDataGrid<M_LenhDieuXe> mudTable;
+    AuthUser user;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    M_LenhDieuXe detail;
+    private List<M_Customer> List_nvdieuxe = new List<M_Customer>();
+    private List<M_Customer> List_Taixe= new List<M_Customer>();
+    private List<M_Customer> List_Phuxe = new List<M_Customer>();
+    private List<M_Customer> List_Nhaxe = new List<M_Customer>();
+    private List<M_Customer> List_soxe = new List<M_Customer>();
+    private List<PortModel> List_pod = new List<PortModel>();
+    private List<PortModel> List_pol = new List<PortModel>();
+    private string searchCarr = "";
+    private List<M_Customer> Cuss_Carr = new List<M_Customer>();
+    public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    private bool _processingUpload = false;
+    string status="";
+    private List<M_YeuCauTrucking> YCTKs = new List<M_YeuCauTrucking>();
+    private bool _resizeColumn;
+    protected async override Task OnInitializedAsync()
+    {
+        YCTKs = await YCTKSv.GetListYCTrucking();
+        status = "normal";
+        List_nvdieuxe = await ldxsv.GetList_Cus_Personal();
+        List_Taixe = await ldxsv.GetList_Cus_Driver();
+        List_Phuxe = await ldxsv.GetList_Cus_Driver();
+        List_Nhaxe = await ldxsv.GetList_Cus_Personal();
+        List_soxe = await ldxsv.GetList_Cus_Trucking();
+        List_pol = await ldxsv.GetList_port();
+        List_pod = await ldxsv.GetList_port();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Cuss_Carr = await lcsv.GetList_Customer_line();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "LenhDieuXe").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        // await Refresh();
+    }
+
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "LenhDieuXe"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await ldxsv.GetListLenhDieuXe();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_LenhDieuXe> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_LenhDieuXe m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(M_LenhDieuXe item)
+    {
+        item.Userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.Id != Guid.Empty ? await ldxsv.UpdateLenhDieuXe_Detail(item) : await ldxsv.CreateLenhDieuXe_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    int? lenhdieuxe_no;
+    async Task AddItem()
+    {
+
+        if (!await ssv.CheckPermission(usr, "Add", "LenhDieuXe"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_LenhDieuXe
+        {
+
+        };
+
+        item.Userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+    async Task DeleteItem(M_LenhDieuXe item)
+    {
+        if (item.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Delete", "LenhDieuXe"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await ldxsv.DeleteLenhDieuXe_Detail(item);
+            await HistoryLogService.LogAsync(usr, "Delete Lenh Dieu Xe", "LenhDieuXe", item.Id, item.Lenhdieuxeno, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(M_LenhDieuXe sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_LenhDieuXe sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.Lenhdieuxeno))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.Lenhdieuxeno!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.Lenhdieuxeno} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+        private Func<M_LenhDieuXe, string> _cellStyleFunc => x =>
+         {
+             string style = "";
+
+         if (string.IsNullOrEmpty(x.TrangthaiCt))
+                 return "color: #000000";
+
+             var rs = M_Trangthais
+             .Where(t => (t.Noidung).Contains(x.TrangthaiCt, StringComparison.InvariantCultureIgnoreCase)
+                 && t.Tieude.Equals("LenhDieuXe", StringComparison.InvariantCultureIgnoreCase))
+             .Select(t => t.Mamau)
+             .FirstOrDefault();
+             return "color: " + rs;
+
+
+         };
+    private async Task OpenCreateDialog(Models.M_LenhDieuXe tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "LenhDieuXe"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._LenhDieuXe_Detail, tr }, { x => x.Status, "add" } };
+            
+            var dialog = await DialogService.ShowAsync<ADD>(tr.Id == Guid.Empty ? "Lệnh Điều Xe Create" : "Lệnh Điều Xe Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                var data = (M_LenhDieuXe)result.Data;
+                var rs = await ldxsv.UpdateCreateLenhDieuXe(data);
+                await HistoryLogService.LogAsync(usr, "ADD Lenh Dieu Xe", "LenhDieuXe", data.Id, data.Lenhdieuxeno, data);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                await HandleRefresh_create(data.Id);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+            Listdata.Clear();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "LenhDieuXe"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await ldxsv.GetListLDX_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+    private async Task GetT_ProductPriceNo(M_LenhDieuXe item)
+    {
+
+        int formattedYear = DateTime.Now.Year;
+        int formattedMonth = DateTime.Now.Month;
+
+        string usr = asv.GetAuth().Result.User.Identity!.Name!;
+        var refno = await supsv.GetRefNoByFunc("LenhDieuXe", formattedMonth, formattedYear, usr);
+
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        item.Lenhdieuxeno = cn + "LDX" + formattedYear.ToString() + formattedMonth.ToString() + refno.Value.ToString("D4");
+
+    }
+    private async Task OpenEditDialog(Models.M_LenhDieuXe tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "LenhDieuXe"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_LenhDieuXe>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._LenhDieuXe_Detail, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.Id == Guid.Empty ? "Lệnh Điều Xe Edit" : "Lệnh Điều Xe Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_LenhDieuXe)result.Data;
+                var rs = await ldxsv.UpdateCreateLenhDieuXe(data);
+                await HistoryLogService.LogAsync(usr, "Update Lenh Dieu Xe", "LenhDieuXe", data.Id, data.Lenhdieuxeno, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+    private async Task OpenDuplicateDialog(Models.M_LenhDieuXe tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+      
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "LenhDieuXe"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_LenhDieuXe>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._LenhDieuXe_Detail, tr }, { x => x.Status, "Duplicate" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.Id == Guid.Empty ? "Lệnh Điều Xe Create" : "Lệnh Điều Xe Create", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_LenhDieuXe)result.Data;
+                var rs = await ldxsv.UpdateCreateLenhDieuXe(data);
+                await HistoryLogService.LogAsync(usr, "Duplicate Lenh Dieu Xe", "LenhDieuXe", data.Id, data.Lenhdieuxeno, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+                Listdata = await ldxsv.GetListLDX_create(data.Id);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+    private async Task<IEnumerable<string>> SearchNhanVien(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_nvdieuxe.Where(x => !string.IsNullOrEmpty(x.COMPANY))
+               .Select(x => x.COMPANY);
+            }
+            // MBL.Porname = mst_Consignee;
+            return List_nvdieuxe.Where(x => !string.IsNullOrEmpty(x.COMPANY) &&
+                            x.COMPANY.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.COMPANY);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string>> SearchTaixe(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_Taixe.Where(x => !string.IsNullOrEmpty(x.COMPANY))
+               .Select(x => x.COMPANY);
+            }
+            // MBL.Porname = mst_Consignee;
+            return List_Taixe.Where(x => !string.IsNullOrEmpty(x.COMPANY) &&
+                            x.COMPANY.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.COMPANY);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    
+      private async Task<IEnumerable<string>> Searchphuxe(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_Phuxe.Where(x => !string.IsNullOrEmpty(x.COMPANY))
+               .Select(x => x.COMPANY);
+            }
+            // MBL.Porname = mst_Consignee;
+            return List_Phuxe.Where(x => !string.IsNullOrEmpty(x.COMPANY) &&
+                            x.COMPANY.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.COMPANY);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string>> Searchnhaxe(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_Nhaxe.Where(x => !string.IsNullOrEmpty(x.COMPANY))
+               .Select(x => x.COMPANY);
+            }
+            // MBL.Porname = mst_Consignee;
+            return List_Nhaxe.Where(x => !string.IsNullOrEmpty(x.COMPANY) &&
+                            x.COMPANY.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.COMPANY);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string>> SearchSoxe(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_soxe.Where(x => !string.IsNullOrEmpty(x.COMPANY))
+               .Select(x => x.COMPANY);
+            }
+            // MBL.Porname = mst_Consignee;
+            return List_soxe.Where(x => !string.IsNullOrEmpty(x.COMPANY) &&
+                            x.COMPANY.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.COMPANY);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string>> Searchpol(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_pol.Where(x => !string.IsNullOrEmpty(x.PORT))
+               .Select(x => x.PORT);
+            }
+            // MBL.Porname = mst_Consignee;
+            return List_pol.Where(x => !string.IsNullOrEmpty(x.PORT) &&
+                            x.PORT.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.PORT);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> Searchpod(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_pod.Where(x => !string.IsNullOrEmpty(x.PORT))
+               .Select(x => x.PORT);
+            }
+        
+            return List_pod.Where(x => !string.IsNullOrEmpty(x.PORT) &&
+                            x.PORT.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.PORT);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    async Task ExportBill()
+    {
+       
+        if (detail == null)
+        {
+            CallSnackBar("you must select 1 data.", MudBlazor.Severity.Warning);
+            return;
+        }
+        _processingUpload = true;
+        var rs = await ldxsv.ExportLenhDieuXe(detail.Id!);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+       
+            _processingUpload = false;
+        
+    }
+
+    string GetYCTKno(Guid? customerID)
+    {
+        var rs = YCTKs.FirstOrDefault(x => x.YeuCauTruckingID == customerID);
+        return rs != null ? rs.YeuCauTruckingNo! : "";
+    }
+
+    private async Task OnApproveCheckboxWrapper(M_LenhDieuXe item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "LenhDieuXe"))
+        {
+            var rs = await ldxsv.UpdateCreateLenhDieuXe(item);
+            MudBlazor.Severity severity;
+            if (rs[1] == "1")
+                severity = MudBlazor.Severity.Success;
+
+            else
+                severity = MudBlazor.Severity.Error;
+
+            CallSnackBar(rs[0], severity);
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+}

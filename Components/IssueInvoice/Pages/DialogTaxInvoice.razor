@@ -1,0 +1,252 @@
+﻿<MudGrid Style="background-color:azure;">
+    <MudItem xs="5">
+        <MudGrid>
+            <MudItem xs="8">
+                <MudTextField @bind-Value="Detail.BillNumber" Label="@Localizer["Bill Number"]" />
+            </MudItem>
+            <MudItem xs="4">
+                <MudNumericField @bind-Value="Detail.SerialNo" Label="@Localizer["Serial No"]" HideSpinButtons/>
+            </MudItem>
+            <MudItem xs="10">
+                <MudTextField @bind-Value="Detail.InvoiceNo" Label="@Localizer["Invoice No"]" ReadOnly/>
+            </MudItem>
+            <MudItem xs="2">
+                
+            </MudItem>
+            <MudItem xs="4">
+                <MudCheckBox @bind-Checked="Detail.huy" Label="@Localizer["Destroy"]" />
+            </MudItem>
+            <MudItem xs="8">
+                <MudTextField @bind-Value="Detail.lyDoHuy" Label="@Localizer["Reason Destroy"]" Lines="3" AutoGrow Disabled="@(Detail.huy.HasValue ? !Detail.huy.Value : true)" Variant="Variant.Filled" />
+            </MudItem>
+            <MudItem xs="6">
+                <MudAutocomplete @bind-Value="Detail.branch" Label="@Localizer["Branch"]" SearchFunc="SearchBranch" CoerceValue Clearable ResetValueOnEmptyText />
+            </MudItem>
+            <MudItem xs=6></MudItem>
+            <MudStack Row>
+                <MudCheckBox @bind-Checked="Detail.Approve" Label="@Localizer["Approve"]" Disabled />
+                <MudCheckBox @bind-Checked="Detail.Editable" Label="@Localizer["Editable"]" Disabled/>
+                <MudCheckBox @bind-Checked="Detail.Continued" Label="@Localizer["Continued"]" Disabled />
+            </MudStack>
+            <MudStack Row>
+                <MudCheckBox @bind-Checked="Detail.daXuatHDDT" Label="@Localizer["daXuatHDDT"]" />
+                <MudCheckBox @bind-Checked="Detail.daKy" Label="@Localizer["Signed"]" />
+            </MudStack>
+            <MudTextField @bind-Value="Detail.ghichuNoibo" Label="@Localizer["Notes"]" Placeholder="Tỷ giá: ...." Lines="3" AutoGrow Variant="Variant.Filled"/>
+
+        </MudGrid>
+    </MudItem>
+    <MudItem xs="7">
+        <MudAutocomplete @bind-Value="Detail.Customer_ID" Label="@Localizer["Customer"]" SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" Clearable ResetValueOnEmptyText/>
+        <MudStack Row>
+            <MudTextField @bind-Value="Detail.Chungtu" Label="@Localizer["Documents"]" />
+            <MudTextField @bind-Value="Detail.REF" Label="@Localizer["REF"]" />
+        </MudStack>
+        <MudStack Row>
+            <MudAutocomplete @bind-Value="Detail.mbl" Label="@Localizer["MBL"]" SearchFunc="SearchMBL" Clearable ResetValueOnEmptyText />
+            <MudAutocomplete @bind-Value="Detail.hbl" Label="@Localizer["HBL"]" SearchFunc="SearchHBL" Clearable ResetValueOnEmptyText />
+        </MudStack>
+        <MudStack Row>
+            <MudDatePicker @bind-Date="Detail.DateInvoice" Label="@Localizer["Date Invoice"]" />
+            <MudAutocomplete @bind-Value="Detail.MethodPayment" Label="@Localizer["Method Payment"]" SearchFunc="SearchPaymentMethod" CoerceValue Clearable ResetValueOnEmptyText />
+        </MudStack>
+        <MudStack Row>
+            <MudAutocomplete @bind-Value="Detail.Exchange" Label="@Localizer["Ex Change"]" Format="##,##0.##" Culture="@(_en)" SearchFunc="SearchExchange" CoerceValue Clearable ResetValueOnEmptyText />
+            <MudAutocomplete @bind-Value="Detail.VAT" @bind-Value:after="@(()=>CalculateTongThue(Detail))" Label="@Localizer["VAT"]" Culture="@(_en)" SearchFunc="SearchVAT" CoerceValue Clearable ResetValueOnEmptyText />
+            <MudAutocomplete @bind-Value="Detail.VATShow" Label="@Localizer["VAT Show"]" Culture="@(_en)" SearchFunc="SearchVAT" CoerceValue Clearable ResetValueOnEmptyText/>
+        </MudStack>
+        <MudStack Row>
+            <MudTextField @bind-Value="Detail.tongTruocThue" Label="@Localizer["Total Not Inc VAT"]" Variant="Variant.Outlined" Format="##,##0.##" Culture="@(_en)" CellClass="text-right" ReadOnly/>
+            <MudTextField @bind-Value="Detail.tongThue" Label="@Localizer["Total VAT"]" Variant="Variant.Outlined" Format="##,##0.##" Culture="@(_en)" CellClass="text-right" ReadOnly/>
+            <MudTextField @bind-Value="Detail.tongSauThue" Label="@Localizer["Total Inc VAT"]" Variant="Variant.Outlined" Format="##,##0.##" Culture="@(_en)" CellClass="text-right" ReadOnly/>
+        </MudStack>
+        <MudStack Row>
+            <MudTextField @bind-Value="Detail.UserID" ReadOnly Label="@Localizer["User ID"]" Variant="Variant.Outlined"/>
+            <MudTextField @bind-Value="Detail.Updatetime" ReadOnly Label="@Localizer["Dateupdate"]" Variant="Variant.Outlined" />
+        </MudStack>
+    </MudItem>
+</MudGrid>
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ShipmentService shipsv
+@inject ISnackbar Snackbar
+@code {
+    [Parameter] public M_TaxInvoice Detail { get; set; } = default!;
+    [Parameter] public List<M_Customer> Customers { get; set; } = default!;
+    [Parameter] public List<M_TaxInvoice> Listdata { get; set; } = default!;
+    System.Globalization.CultureInfo _en = new System.Globalization.CultureInfo("en-US");
+    List<M_MBL> ListMBLs = new List<M_MBL>();
+    List<M_HBL> ListHBLs = new List<M_HBL>();
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            ListMBLs = await shipsv.GetListMBLALL();
+            ListHBLs = await shipsv.GetListHBLALL();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+
+    }
+    private async Task<IEnumerable<Guid?>> SearchCustomer(string text)
+    {
+        try
+        {
+            var rs = Customers.Select(x => (Guid?)x.Customer_ID).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.ToString().Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> SearchHBL(string text)
+    {
+        try
+        {
+            var rs = ListHBLs.Select(x => x.hbl).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> SearchMBL(string text)
+    {
+        try
+        {
+            var rs = ListMBLs.Select(x => x.Mbl).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> SearchPaymentMethod(string text)
+    {
+        try
+        {
+            var rs = Listdata.Select(x => x.MethodPayment).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string?>> SearchVAT(string text)
+    {
+        try
+        {
+            var rs = Listdata.Select(x => x.VAT).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string>> SearchBranch(string text)
+    {
+        try
+        {
+            var rs = Listdata.Select(x => x.branch).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.ToString().Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<double?>> SearchExchange(string text)
+    {
+        try
+        {
+            var rs = Listdata.Select(x => x.Exchange).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.HasValue && x.ToString()!.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private void CalculateTongThue(M_TaxInvoice item)
+    {
+        if (double.TryParse(item.VAT, out double VATparse) && item.tongTruocThue.HasValue)
+        {
+            var VAT = VATparse / 100;
+            item.tongThue = item.tongTruocThue.Value * VAT;
+            CalculateTongSauThue(item);
+        }
+        else
+        {
+            item.tongThue = 0; // Hoặc null, tùy theo yêu cầu của bạn
+        }
+    }
+    private void CalculateTongSauThue(M_TaxInvoice item)
+    {
+        if (item.tongTruocThue.HasValue && item.tongThue.HasValue)
+        {
+            item.tongSauThue = item.tongTruocThue + item.tongThue;
+        }
+        else
+        {
+            item.tongSauThue = 0; // Hoặc null, tùy theo yêu cầu của bạn
+        }
+    }
+    string CusidtoCusCode(Guid? cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : $"{rs.Customer_Code} - {rs.COMPANY!}";
+    }
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}

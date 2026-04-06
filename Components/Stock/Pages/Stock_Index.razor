@@ -1,0 +1,324 @@
+@page "/Stock"
+@attribute [Authorize]
+@inject StockService StockSvc
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject IStringLocalizer<SharedResource> Localizer
+@using Microsoft.AspNetCore.Components.Forms
+
+<PageTitle>Stock</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="pa-2">
+    <MudText Typo="Typo.h5" Class="mb-3">Stock</MudText>
+
+    <MudPaper Class="pa-3 mb-3" Elevation="1">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudSelect T="string?" @bind-Value="_filterLocation" Label="Location" Variant="Variant.Outlined" Dense="true" Clearable="true" Margin="Margin.Dense">
+                    <MudSelectItem T="string?" Value="@((string?)null)">— Tất cả —</MudSelectItem>
+                    @foreach (var loc in _locations)
+                    {
+                        <MudSelectItem T="string?" Value="@loc">@loc</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudTextField @bind-Value="_filterContainer" Label="Container No." Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudTextField @bind-Value="_filterConsignee" Label="Consignee" Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudTextField @bind-Value="_filterYom" Label="YOM" Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudDatePicker @bind-Date="_filterDateInFrom" Label="Date in (từ)" Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudDatePicker @bind-Date="_filterDateInTo" Label="Date in (đến)" Variant="Variant.Outlined" Dense="true" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" Class="d-flex flex-wrap gap-2 align-center">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Search" OnClick="SearchAsync" Disabled="_loading">Tìm kiếm</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="RefreshAsync" Disabled="_loading">Làm mới</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteSelectedAsync" Disabled="_loading || _selected is null">Xóa</MudButton>
+                <MudButton HtmlTag="label" Variant="Variant.Filled" Color="Color.Tertiary" Size="Size.Small" StartIcon="@Icons.Material.Filled.UploadFile" Disabled="_loading">
+                    Import Excel
+                    <InputFile OnChange="OnImportExcel" accept=".xlsx,.xlsm" style="display:none" />
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudText Typo="Typo.body2" Class="mb-2">@_items.Count bản ghi</MudText>
+
+    <div style="overflow-x: auto;">
+        <MudDataGrid T="M_Stock" Items="@_items" Dense="true" Bordered="true" Striped="true" Hover="true" Loading="_loading" Class="stock-grid-autofit" HeaderClass="no-wrap"
+                     RowClick="OnRowClick" RowClassFunc="@StockRowClassFunc">
+            <Columns>
+                <PropertyColumn Property="x => x.Container" Title="Container" />
+                <PropertyColumn Property="x => x.Type" Title="Type" />
+                <PropertyColumn Property="x => x.IsoType" Title="ISO Type" />
+                <PropertyColumn Property="x => x.Opr" Title="Opr" />
+                <PropertyColumn Property="x => x.FE" Title="F/E" />
+                <PropertyColumn Property="x => x.Move" Title="Move" />
+                <TemplateColumn Title="Date in">
+                    <CellTemplate>@context.Item.DateIn?.ToString("dd/MM/yyyy")</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Time">
+                    <CellTemplate>@FormatTime(context.Item.TimeIn)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.Consignee" Title="Consignee" />
+                <PropertyColumn Property="x => x.Position" Title="Position" />
+                <PropertyColumn Property="x => x.Days" Title="Days" />
+                <PropertyColumn Property="x => x.Location" Title="Location" />
+                <PropertyColumn Property="x => x.YOM" Title="YOM" />
+                <PropertyColumn Property="x => x.TareWeight" Title="Tare weight" />
+                <PropertyColumn Property="x => x.SealNo" Title="Seal No" />
+                <PropertyColumn Property="x => x.Note2" Title="Note2" />
+                <PropertyColumn Property="x => x.Note3" Title="Note3" />
+                <PropertyColumn Property="x => x.VGM" Title="VGM" />
+                <PropertyColumn Property="x => x.MaxGross" Title="Max gross" />
+                <PropertyColumn Property="x => x.Remark" Title="Remark" />
+                <PropertyColumn Property="x => x.Status" Title="Status" />
+                <PropertyColumn Property="x => x.Grade" Title="Grade" />
+                <PropertyColumn Property="x => x.CleanMethod" Title="Clean Method" />
+                <PropertyColumn Property="x => x.CleanStatus" Title="Clean Status" />
+                <TemplateColumn Title="PTI date">
+                    <CellTemplate>@context.Item.PtiDate?.ToString("dd/MM/yyyy")</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.PtiSetting" Title="PTI setting" />
+                <PropertyColumn Property="x => x.PtiStatus" Title="PTI status" />
+                <TemplateColumn Title="Estimated date">
+                    <CellTemplate>@context.Item.EstimatedDate?.ToString("dd/MM/yyyy")</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Approval date">
+                    <CellTemplate>@context.Item.ApprovalDate?.ToString("dd/MM/yyyy")</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Reject date">
+                    <CellTemplate>@context.Item.RejectDate?.ToString("dd/MM/yyyy")</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Repaired date">
+                    <CellTemplate>@context.Item.RepairedDate?.ToString("dd/MM/yyyy")</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Registered date">
+                    <CellTemplate>@context.Item.RegisteredDate?.ToString("dd/MM/yyyy")</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.Shipper" Title="Shipper" />
+                <PropertyColumn Property="x => x.Booking" Title="Booking" />
+                <TemplateColumn Title="Date import">
+                    <CellTemplate>@context.Item.DateImport?.ToString("dd/MM/yyyy HH:mm")</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.UserImport" Title="User import" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_Stock" PageSizeOptions="new int[] { 10, 25, 50, 100 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </div>
+</MudContainer>
+
+@code {
+    private List<M_Stock> _items = new();
+    private List<string> _locations = new();
+    private bool _loading;
+    private M_Stock? _selected;
+
+    private string? _filterLocation;
+    private string _filterContainer = string.Empty;
+    private string _filterConsignee = string.Empty;
+    private string _filterYom = string.Empty;
+    private DateTime? _filterDateInFrom;
+    private DateTime? _filterDateInTo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task<bool> EnsureStockViewPermissionAsync()
+    {
+        if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "Stock"))
+        {
+            CallSnackBar(Localizer["You have not access to view"], MudBlazor.Severity.Warning);
+            return false;
+        }
+
+        return true;
+    }
+
+    private StockListFilter BuildFilter() => new(
+        Location: string.IsNullOrWhiteSpace(_filterLocation) ? null : _filterLocation.Trim(),
+        ContainerNo: string.IsNullOrWhiteSpace(_filterContainer) ? null : _filterContainer.Trim(),
+        Consignee: string.IsNullOrWhiteSpace(_filterConsignee) ? null : _filterConsignee.Trim(),
+        Yom: string.IsNullOrWhiteSpace(_filterYom) ? null : _filterYom.Trim(),
+        DateInFrom: _filterDateInFrom,
+        DateInTo: _filterDateInTo);
+
+    private async Task SearchAsync()
+    {
+        _loading = true;
+        try
+        {
+            if (!await EnsureStockViewPermissionAsync())
+            {
+                _items.Clear();
+                _locations.Clear();
+                _selected = null;
+                return;
+            }
+
+            _items = await StockSvc.GetFilteredAsync(BuildFilter());
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Lỗi tìm kiếm: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        _loading = true;
+        try
+        {
+            if (!await EnsureStockViewPermissionAsync())
+            {
+                _items.Clear();
+                _locations.Clear();
+                _selected = null;
+                return;
+            }
+
+            _locations = await StockSvc.GetDistinctLocationsAsync();
+            _items = await StockSvc.GetFilteredAsync(BuildFilter());
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Lỗi tải dữ liệu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_Stock> args)
+    {
+        _selected = args.Item;
+    }
+
+    private string StockRowClassFunc(M_Stock row, int _)
+    {
+        return _selected != null && _selected.StockID == row.StockID ? "selected" : string.Empty;
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "Delete", "Stock"))
+        {
+            CallSnackBar(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_selected is null)
+        {
+            Snackbar.Add("Chọn một dòng để xóa.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var label = string.IsNullOrWhiteSpace(_selected.Container) ? _selected.StockID.ToString() : _selected.Container;
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa",
+            $"Xóa bản ghi container \"{label}\"? Thao tác không hoàn tác.",
+            yesText: "Xóa",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        _loading = true;
+        try
+        {
+            var (ok, err) = await StockSvc.DeleteAsync(_selected.StockID);
+            if (!ok)
+            {
+                Snackbar.Add(string.IsNullOrWhiteSpace(err) ? "Xóa thất bại" : err, MudBlazor.Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Đã xóa.", MudBlazor.Severity.Success);
+            _selected = null;
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Xóa lỗi: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnImportExcel(InputFileChangeEventArgs e)
+    {
+        if (e.FileCount == 0)
+            return;
+
+        var authState = await asv.GetAuth();
+        var importUser = authState.User?.Identity?.Name;
+        if (string.IsNullOrEmpty(importUser) || !await ssv.CheckPermission(importUser, "Add", "Stock"))
+        {
+            CallSnackBar(Localizer["You have not access to Add"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            await using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            var userLogin = importUser;
+
+            var result = await StockSvc.ImportFromExcelAsync(ms, userLogin);
+            if (result.ErrorMessage != null)
+            {
+                Snackbar.Add("Import lỗi: " + result.ErrorMessage, MudBlazor.Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(
+                $"Import xong: thêm {result.Inserted} dòng; bỏ qua trùng {result.SkippedDuplicate}; dòng trống (không số container) {result.SkippedEmpty}.",
+                result.Inserted > 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Info);
+
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Import lỗi: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string FormatTime(TimeSpan? t) =>
+        t.HasValue ? string.Format("{0:hh\\:mm}", t.Value) : string.Empty;
+}

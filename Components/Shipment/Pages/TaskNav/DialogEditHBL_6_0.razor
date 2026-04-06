@@ -1,0 +1,664 @@
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@inject IStringLocalizer<SharedResource> Localizer
+@inject BookingService bksv
+@inject ISnackbar Snackbar
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<MudDialog>
+    <DialogContent>
+        <MudContainer Class="pa-2">
+            <MudGrid>
+                <MudItem xs="12">
+                    <MudText Typo="Typo.h6">@("Edit HBL")</MudText>
+                </MudItem>
+
+                <!-- Row 1 -->
+                <MudItem xs="2">
+                    <MudTextField @bind-Value="Item.hbl" Immediate Label="@Localizer["HBL"]" Required />
+                </MudItem>
+                <MudItem xs="2">
+                    <MudDatePicker Label="@Localizer["Selected Date Get HBL"]"
+                                   DateChanged="OnHblRefDateChanged"
+                                   ImmediateText
+                                   DateFormat="dd/MM/yyyy" />
+                </MudItem>
+                <MudItem xs="2">
+                    <MudAutocomplete Class="pl-0"
+                                     T="string"
+                                     @bind-Value="Item.bkno"
+                                     @bind-Value:after="OnBknoChangedAsync"
+                                     For="@(() => Item.bkno)"
+                                     Label="@Localizer["Bkno"]"
+                                     SearchFunc="SearchBookingNo"
+                                     Immediate="true"
+                                     CoerceText="true"
+                                     Clearable="true"
+                                     MaxItems="200" />
+                </MudItem>
+                <MudItem xs="2">
+                    <MudCheckBox @bind-Checked="Item.release"
+                                  Label="@Localizer["Release"]"
+                                  Disabled="@(CurrentUserRole != AccountRole)"
+                                  Size="Size.Small"
+                                  Style="margin:0;" />
+                </MudItem>
+
+                <!-- Row 2 -->
+                <MudItem xs="4">
+                    <MudTextField @bind-Value="Item.releaseNote"
+                                  Label="@Localizer["Release Note"]"
+                                  Disabled="@(CurrentUserRole != AccountRole)" />
+                </MudItem>
+                <MudItem xs="3">
+                    <MudTextField Value="@FormatNumber(TDebit_(Item.hblID))"
+                                  Label="@Localizer["Debit"]"
+                                  Class="text-right"
+                                  Disabled />
+                </MudItem>
+                <MudItem xs="3">
+                    <MudTextField Value="@FormatNumber(TCredit_(Item.hblID))"
+                                  Label="@Localizer["Credit"]"
+                                  Class="text-right"
+                                  Disabled />
+                </MudItem>
+
+                <!-- Row 3 (Profit + currency toggles) -->
+                <MudItem xs="6">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="hbl-profit-row">
+                        <MudText Typo="Typo.subtitle2" Class="pr-2">@Localizer["Profit"]</MudText>
+                        <MudRadioGroup @bind-Value="chkUSD" Style="margin-left:10px;" Dense="true">
+                            <MudRadio Value="true" Size="Size.Small" Color="Color.Inherit">USD</MudRadio>
+                            <MudRadio Value="false" Size="Size.Small" Color="Color.Inherit">VND</MudRadio>
+                        </MudRadioGroup>
+                        <MudCheckBox @bind-Checked="chkVAT"
+                                      Label="VAT"
+                                      Color="Color.Inherit"
+                                      Size="Size.Small"
+                                      Style="margin:0;" />
+                        <MudTextField Value="@FormatNumber(TProfit_(Item.hblID))"
+                                      Label=""
+                                      Disabled
+                                      Class="hbl-profit-value"
+                                      Style="max-width:150px;" />
+                    </MudStack>
+                </MudItem>
+
+                <!-- Compact flags 5 items: Approve/Invoice/Debit/SPC/Agent -->
+                <MudItem xs="12">
+                    <div class="hbl-flags-group">
+                        <div class="hbl-flags-5cols">
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.approve"
+                                              Label="@Localizer["Approve"]"
+                                              Disabled="@(Item.approve.HasValue && Item.approve.Value)"
+                                              Size="Size.Small"
+                                              Style="margin:0;"
+                                              @bind-Checked:after="()=>UpdatebyCheckboxClickAsync(Item)" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.issueinvoice"
+                                              Label="@Localizer["Invoice Issued"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.dathudebit"
+                                              Label="@Localizer["Debit Received"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.dachicredit"
+                                              Label="@Localizer["Spent Credit"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.dathuchidaily"
+                                              Label="@Localizer["Received & Spent Agent"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                        </div>
+                    </div>
+                </MudItem>
+
+                <!-- Compact 6 flags một hàng: Required / Surrendered / TelexRelease / Prepaid / Collect / Freight -->
+                <MudItem xs="12">
+                    <div class="hbl-flags-group">
+                        <div class="hbl-flags-6cols">
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.Required"
+                                             Label="@Localizer["ORIGINAL"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.Surrendered"
+                                              Label="@Localizer["Surrendered"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.TelexRelease"
+                                              Label="@Localizer["Seaway B/L"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.Prepaid"
+                                              Label="@Localizer["Prepaid"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.Collect"
+                                              Label="@Localizer["Collect"]"
+                                              Size="Size.Small"
+                                              Style="margin:0;" />
+                            </div>
+                            <div>
+                                <MudCheckBox @bind-Checked="Item.freight"
+                                             Label="@Localizer["Freight"]"
+                                             Size="Size.Small"
+                                             Style="margin:0;" />
+                            </div>
+                        </div>
+                    </div>
+                </MudItem>
+
+                <!-- Row 5 -->
+                <MudItem xs="3">
+                    <MudDatePicker @bind-Date="Item.ETA"
+                                   Label="@Localizer["ETA"]"
+                                   DateFormat="dd/MM/yyyy"
+                                   @bind-Date:after="() => SetActualdeldateAsync(Item)" />
+                </MudItem>
+
+                <!-- Row 6 -->
+                <MudItem xs="3">
+                    <MudDatePicker @bind-Date="Item.ETD"
+                                   Label="@Localizer["ETD"]"
+                                   DateFormat="dd/MM/yyyy"
+                                   @bind-Date:after="() => SetActualdeldateAsync(Item)" />
+                </MudItem>
+                <MudItem xs="3">
+                    <MudDatePicker @bind-Date="Item.ActualDelDate"
+                                   Label="@Localizer["ActualDel Date"]"
+                                   DateFormat="dd/MM/yyyy" />
+                </MudItem>
+                <MudItem xs="3">
+                    <MudDatePicker @bind-Date="Item.datereport"
+                                   Label="@Localizer["Date Report"]"
+                                   DateFormat="dd/MM/yyyy" />
+                </MudItem>
+
+                <!-- Row 7 -->
+                <MudItem xs="3">
+                    <MudAutocomplete @bind-Value="Item.CustomerID"
+                                       Label="@Localizer["Main Customer"]"
+                                       Required
+                                       SearchFunc="SearchCustomer"
+                                       ToStringFunc="CusidtoCusCode" />
+                </MudItem>
+                <MudItem xs="3">
+                    <MudAutocomplete @bind-Value="Item.AgentID"
+                                       Label="@Localizer["Agent"]"
+                                       Required
+                                       SearchFunc="SearchAgent"
+                                       ToStringFunc="AgentidtoName" />
+                </MudItem>
+
+                <!-- Row 8 -->
+                <MudItem xs="3">
+                    <MudAutocomplete @bind-Value="Item.Air_wareHouse"
+                                       Label="@Localizer["Warehouse"]"
+                                       Required
+                                       SearchFunc="SearchWHouse"
+                                       CoerceValue />
+                </MudItem>
+                <MudItem xs="3">
+                    <MudAutocomplete @bind-Value="Item.Air_type"
+                                       Label="@Localizer["LoaiHang"]"
+                                       Required
+                                       SearchFunc="SearchCFS"
+                                       CoerceValue />
+                </MudItem>
+                <MudItem xs="3">
+                    <MudSelect @bind-Value="Item.statusHBL" Label="@Localizer["Status"]">
+                        @foreach (var item in TrangThai)
+                        {
+                            <MudSelectItem Value="item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                <!-- Row 9 -->
+                <MudItem xs="3">
+                    <MudSelect @bind-Value="Item.SaleName" Label="@Localizer["Sale Name"]" Required>
+                        @foreach (var item in SaleNames)
+                        {
+                            <MudSelectItem Value="item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="3">
+                    <MudSelect @bind-Value="Item.OPS" Label="@Localizer["OPS"]" Required>
+                        @foreach (var item in ListUsers)
+                        {
+                            <MudSelectItem Value="item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="3">
+                    <MudSelect @bind-Value="Item.DOC" Label="@Localizer["DOC"]" Required>
+                        @foreach (var item in ListUsers)
+                        {
+                            <MudSelectItem Value="item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+
+            <MudGrid Class="mt-2">
+                <MudItem xs="4">
+                    <MudAutocomplete T="string" @bind-Value="search_shipper"
+                                       Label="@Localizer["Shipper"]"
+                                       SearchFunc="SearchShipper"
+                                       MaxItems="50"
+                                       Clearable="true"
+                                       AutoFocus="false" />
+                    <MudStack Row="true" Style="gap:8px; align-items:center;">
+                        <MudItem>
+                            <MudButton Style="background-color: #007BFF; color: white; padding:4px 10px; min-width:44px;"
+                                       Size="Size.Small"
+                                       Color="Color.Primary"
+                                       OnClick="() => Get_linkshipper()">
+                                >>>
+                            </MudButton>
+                        </MudItem>
+                        <MudTextField @bind-Value="Item.shipper"
+                                      Label="@Localizer["Shipper"]"
+                                      Lines="5"
+                                      Required />
+                    </MudStack>
+                </MudItem>
+
+                <MudItem xs="4">
+                    <MudAutocomplete T="string" @bind-Value="search_Consignee"
+                                       Label="@Localizer["Consignee"]"
+                                       SearchFunc="SearchConsignee"
+                                       MaxItems="50"
+                                       Clearable="true"
+                                       AutoFocus="false" />
+                    <MudStack Row="true" Style="gap:8px; align-items:center;">
+                        <MudItem>
+                            <MudButton Style="background-color: #007BFF; color: white; padding:4px 10px; min-width:44px;"
+                                       Size="Size.Small"
+                                       Color="Color.Primary"
+                                       OnClick="() => Get_linkConsignee()">
+                                >>>
+                            </MudButton>
+                        </MudItem>
+                        <MudTextField @bind-Value="Item.consignee"
+                                      Label="@Localizer["Consignee"]"
+                                      Lines="5"
+                                      Required />
+                    </MudStack>
+                </MudItem>
+
+                <MudItem xs="4">
+                    <MudAutocomplete T="string" @bind-Value="search_Notify"
+                                       Label="@Localizer["Notify"]"
+                                       SearchFunc="SearchNotify"
+                                       Clearable="true"
+                                       AutoFocus="false" />
+                    <MudStack Row="true" Style="gap:8px; align-items:center;">
+                        <MudItem>
+                            <MudButton Style="background-color: #007BFF; color: white; padding:4px 10px; min-width:44px;"
+                                       Size="Size.Small"
+                                       Color="Color.Primary"
+                                       OnClick="() => Get_linkNotify()">
+                                >>>
+                            </MudButton>
+                        </MudItem>
+                        <MudTextField @bind-Value="Item.notify1"
+                                      Label="@Localizer["Notify"]"
+                                      Lines="5"
+                                      Required />
+                    </MudStack>
+                </MudItem>
+
+                <MudItem xs="12">
+
+                    <MudStack Row="true" Style="gap:8px; align-items:center;">
+                       
+                        <MudTextField @bind-Value="Item.remarks"
+                                      Label="@Localizer["Remarks"]"
+                                      Lines="3"
+                                       />
+                    </MudStack>
+                </MudItem>
+                <!-- Fourth column (pack 4-per-row) -->
+           
+            </MudGrid>
+        </MudContainer>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Secondary" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public MudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public M_HBL Item { get; set; } = default!;
+
+    [Parameter] public List<M_Customer> Customers { get; set; } = new();
+    [Parameter] public List<string?> CFS { get; set; } = new();
+    [Parameter] public List<string> Warehouse { get; set; } = new();
+    [Parameter] public List<string> SaleNames { get; set; } = new();
+    [Parameter] public List<string> ListUsers { get; set; } = new();
+    [Parameter] public List<string> TrangThai { get; set; } = new();
+
+    [Parameter] public List<M_Debit> ListDebit { get; set; } = new();
+    [Parameter] public List<M_Credit> ListCredit { get; set; } = new();
+
+    [Parameter] public string CurrentUserRole { get; set; } = "";
+
+    [Parameter] public Func<M_HBL, Task> SetActualdeldateAsync { get; set; } = default!;
+    [Parameter] public Func<M_HBL, DateTime, Task> UpdateHBLNoAsync { get; set; } = default!;
+    [Parameter] public Func<M_HBL, Task> UpdatebyCheckboxClickAsync { get; set; } = default!;
+
+    const string AccountRole = "ACCOUNT";
+
+    string ShipperLabel => Localizer["Shipper"];
+    string ConsigneeLabel => Localizer["Consignee"];
+    string NotifyLabel => Localizer["Notify"];
+
+    bool chkUSD = false;
+    bool chkVAT = false;
+
+    private List<string> BookingNoList { get; set; } = new();
+    private string _lastBknoValidated = string.Empty;
+    private string _lastBknoWarned = string.Empty;
+
+    List<string> Shippers = new();
+    List<string> Consignees = new();
+    List<string> Notify = new();
+
+    string search_shipper = "";
+    string search_Consignee = "";
+    string search_Notify = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        BookingNoList = (await bksv.GetListSBooking() ?? new List<Models.Booking>())
+            .Select(x => x.BookingNo)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct()
+            .OrderByDescending(x => x)
+            .ToList();
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (Customers == null || Customers.Count == 0) return;
+
+        // Same format as the page: EnglishName + address in VND + phone + fax.
+        Shippers = Customers
+            .Select(x => x.EnglishName + "\n" + x.addresstiengviet + "\n" + x.Tel + "\n" + x.Fax)
+            .Distinct()
+            .ToList();
+
+        Consignees = Customers
+            .Select(x => x.EnglishName + "\n" + x.addresstiengviet + "\n" + x.Tel + "\n" + x.Fax)
+            .Distinct()
+            .ToList();
+
+        Notify = Customers
+            .Select(x => x.EnglishName + "\n" + x.addresstiengviet + "\n" + x.Tel + "\n" + x.Fax)
+            .Distinct()
+            .ToList();
+    }
+
+    private async Task<IEnumerable<string>> SearchBookingNo(string value)
+    {
+        await Task.Delay(1);
+
+        if (BookingNoList == null || BookingNoList.Count == 0)
+            return Array.Empty<string>();
+
+        if (string.IsNullOrWhiteSpace(value))
+            return BookingNoList;
+
+        return BookingNoList.Where(x => x.Contains(value, StringComparison.InvariantCultureIgnoreCase));
+    }
+
+    private async Task OnBknoChangedAsync()
+    {
+        var bkno = Item?.bkno?.Trim();
+        if (string.IsNullOrWhiteSpace(bkno))
+            return;
+
+        // Prevent repeated queries/warnings when value doesn't change.
+        if (string.Equals(_lastBknoValidated, bkno, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        _lastBknoValidated = bkno;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            // Check duplicate BKNO on other HBLs (exclude current HBL row).
+            var matches = await db.HBL
+                .AsNoTracking()
+                .Where(x => x.bkno != null
+                            && x.bkno.Trim() == bkno
+                            && x.hblID != Item.hblID)
+                .OrderByDescending(x => x.datereport)
+                .Select(x => x.hbl)
+                .Take(10)
+                .ToListAsync();
+
+            if (matches.Count == 0)
+                return;
+
+            // Don't spam same warning repeatedly.
+            if (string.Equals(_lastBknoWarned, bkno, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _lastBknoWarned = bkno;
+
+            var hblList = matches
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!.Trim())
+                .Distinct()
+                .ToList();
+
+            var hblDisplay = hblList.Count == 0 ? "(không có HBL No.)" : string.Join(", ", hblList);
+
+            Snackbar.Add($"BookingNo '{bkno}' đã tồn tại ở HBL: {hblDisplay}", MudBlazor.Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            // Non-blocking: still allow user to proceed.
+            Snackbar.Add($"Không kiểm tra được BKNO trùng: {ex.Message}", MudBlazor.Severity.Warning);
+        }
+    }
+
+    void Cancel() => MudDialog.Cancel();
+
+    void Submit() => MudDialog.Close(Item);
+
+    string FormatNumber(double? value)
+    {
+        if (value == null) return string.Empty;
+        // Nhóm hàng nghìn bằng dấu phẩy (vd: 1,000,000); phần thập phân chỉ hiện khi có
+        return value.Value.ToString("#,##0.##", CultureInfo.GetCultureInfo("en-US"));
+    }
+
+    async Task OnHblRefDateChanged(DateTime? date)
+    {
+        if (!date.HasValue)
+            return;
+        await UpdateHBLNoAsync(Item, date.Value);
+    }
+
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == Guid.Empty) return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.COMPANY ?? string.Empty;
+    }
+
+    string AgentidtoName(Guid id)
+    {
+        if (id == Guid.Empty) return string.Empty;
+        // In the current page, Agent name is read from Customers table.
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == id);
+        return rs == null ? string.Empty : rs.COMPANY ?? string.Empty;
+    }
+
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        await Task.Delay(1);
+        if (string.IsNullOrWhiteSpace(text))
+            return Customers.Select(x => x.Customer_ID);
+
+        return Customers
+            .Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Customer_ID);
+    }
+
+    private async Task<IEnumerable<Guid>> SearchAgent(string text)
+    {
+        await Task.Delay(1);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Customers
+                .Where(x => !string.IsNullOrWhiteSpace(x.MainCode) && x.MainCode.Contains("Agent"))
+                .Select(x => x.Customer_ID);
+        }
+
+        return Customers
+            .Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Customer_ID);
+    }
+
+    private async Task<IEnumerable<string?>> SearchCFS(string text)
+    {
+        await Task.Delay(1);
+        if (string.IsNullOrWhiteSpace(text)) return CFS;
+        return CFS.Where(x => x != null && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<IEnumerable<string>> SearchWHouse(string text)
+    {
+        await Task.Delay(1);
+        if (string.IsNullOrWhiteSpace(text)) return Warehouse;
+        return Warehouse.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<IEnumerable<string>> SearchShipper(string text)
+    {
+        await Task.Delay(10);
+        if (string.IsNullOrWhiteSpace(text)) return Shippers;
+        return Shippers.Where(x => !string.IsNullOrWhiteSpace(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<IEnumerable<string>> SearchConsignee(string text)
+    {
+        await Task.Delay(10);
+        if (string.IsNullOrWhiteSpace(text)) return Consignees;
+        return Consignees.Where(x => !string.IsNullOrWhiteSpace(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<IEnumerable<string>> SearchNotify(string text)
+    {
+        await Task.Delay(10);
+        if (string.IsNullOrWhiteSpace(text)) return Notify;
+        return Notify.Where(x => !string.IsNullOrWhiteSpace(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private Task Get_linkshipper()
+    {
+        Item.shipper = search_shipper;
+        return Task.CompletedTask;
+    }
+
+    private Task Get_linkConsignee()
+    {
+        Item.consignee = search_Consignee;
+        return Task.CompletedTask;
+    }
+
+    private Task Get_linkNotify()
+    {
+        Item.notify1 = search_Notify;
+        return Task.CompletedTask;
+    }
+
+    double? TProfit_(Guid id)
+    {
+        var debit = ListDebit.Where(x => x.hblid == id).ToList();
+        var credit = ListCredit.Where(x => x.hblid == id).ToList();
+
+        var totaldebit = debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD" ? tien : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit);
+            }
+            return x.tiente == "VND" ? tien : tien * x.tigiadebit;
+        });
+
+        var totalcredit = credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD" ? tien : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit);
+            }
+            return x.tiente == "VND" ? tien : tien * x.tigiacredit;
+        });
+
+        return totaldebit - totalcredit;
+    }
+
+    double? TDebit_(Guid id)
+    {
+        var debit = ListDebit.Where(x => x.hblid == id).ToList();
+        return debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD" ? tien : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit);
+            }
+            return x.tiente == "VND" ? tien : tien * x.tigiadebit;
+        });
+    }
+
+    double? TCredit_(Guid id)
+    {
+        var credit = ListCredit.Where(x => x.hblid == id).ToList();
+        return credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD" ? tien : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit);
+            }
+            return x.tiente == "VND" ? tien : tien * x.tigiacredit;
+        });
+    }
+}
+

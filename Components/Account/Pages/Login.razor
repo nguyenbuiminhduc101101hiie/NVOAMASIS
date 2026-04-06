@@ -1,0 +1,154 @@
+﻿@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Authentication.Cookies
+@using Microsoft.AspNetCore.Authentication
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Mvc
+@using NVOAMASIS.Services
+
+@page "/Account/Login"
+@inject NavigationManager navSvc
+@inject ILogger<Login> Logger
+@inject AccountService accSvc
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>Log in</PageTitle>
+
+<HeadContent>
+  <link rel="stylesheet" href="bootstrap/bootstrap.min.css" />
+</HeadContent>
+
+<div class="d-flex flex-column justify-content-center align-items-center" style="height:100vh;">
+  <h1>Log in</h1>
+
+  @if (errorMessage != null)
+  {
+    <div class="alert alert-danger" role="alert">
+      @errorMessage
+    </div>
+  }
+
+  <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" FormName="login">
+    <DataAnnotationsValidator />
+    <AntiForgeryToken />
+    <div class="card" style="width:400px;">
+      <div class="card-body">
+
+        <h3>Use a local account to log in.</h3>
+        <hr />
+        <ValidationSummary class="text-danger" role="alert" />
+        <div class="form-floating mb-3">
+          <InputText @bind-Value="Input.UserName" class="form-control" autocomplete="username" aria-required="true"
+            placeholder="sgn-fc-employee" />
+          <label for="text" class="form-label">User Name</label>
+          <ValidationMessage For="() => Input.UserName" class="text-danger" />
+        </div>
+        <div class="form-floating mb-3">
+          <InputText type="password" @bind-Value="Input.Password" class="form-control" autocomplete="current-password"
+            aria-required="true" placeholder="password" />
+          <label for="password" class="form-label">Password</label>
+          <ValidationMessage For="() => Input.Password" class="text-danger" />
+        </div>
+        <div class="checkbox mb-3">
+          <label class="form-label">
+            <InputCheckbox @bind-Value="Input.RememberMe" class="darker-border-checkbox form-check-input" />
+            Remember me
+          </label>
+        </div>
+        <div>
+          <button type="submit" class="w-100 btn btn-lg btn-primary">Log in</button>
+        </div>
+        <div class="mt-2 text-center">
+          <NavLink class="btn btn-link" href="/AccountPass">Quên mật khẩu?</NavLink>
+
+        </div>
+      </div>
+    </div>
+  </EditForm>
+</div>
+
+@code {
+  [CascadingParameter]
+  private HttpContext HttpContext { get; set; } = default!;
+
+  [SupplyParameterFromForm]
+  private InputModel Input { get; set; } = new();
+
+  [SupplyParameterFromQuery]
+  private string? ReturnUrl { get; set; }
+
+  string? errorMessage;
+
+
+
+  protected override async Task OnInitializedAsync()
+  {
+    if (HttpMethods.IsGet(HttpContext.Request.Method))
+    {
+      // Clear the existing external cookie to ensure a clean login process
+      await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    }
+  }
+  // public async Task LoginUser()
+  // {
+  // var result = await accSvc.Authenticate($"{Input.Email}:{Input.Password}:{Input.RememberMe}");
+  // if (result.Flag)
+  // {
+  // navSvc.NavigateTo("/", forceLoad: true);
+  // }
+  // }
+  [ValidateAntiForgeryToken]
+  public async Task LoginUser()
+  {
+    var authUser = await accSvc.Authenticate($"{Input.UserName}:{Input.Password}:{Input.RememberMe}");
+    errorMessage = authUser.Message;
+    if (authUser.Flag)
+    {
+
+      var userClaims = new List<Claim>
+{
+new Claim(ClaimTypes.Name, authUser.AuthUser.Usr),
+new Claim(ClaimTypes.Sid, authUser.AuthUser.UsrId.ToString()),
+new Claim(ClaimTypes.GivenName, authUser.AuthUser.Name),
+new Claim(ClaimTypes.Email, authUser.AuthUser.Email),
+new Claim(ClaimTypes.Role, authUser.AuthUser.Department),
+new Claim(ClaimTypes.NameIdentifier, authUser.AuthUser.UsrId.ToString())
+};
+
+
+      // foreach (var role in authUser.Roles)
+      // userClaims.Add(new Claim(ClaimTypes.Role, role));
+
+      var userIdentity = new ClaimsIdentity(userClaims, CookieAuthenticationDefaults.AuthenticationScheme);
+      var authProperties = new AuthenticationProperties
+      {
+        //IsPersistent = authUser.RememberMe,
+        IssuedUtc = DateTimeOffset.UtcNow.AddDays(-1),
+        ExpiresUtc = DateTimeOffset.UtcNow.AddMonths(1),
+        RedirectUri = ReturnUrl, // this.Request.Host.Value
+                                 //AllowRefresh = <bool>,
+                                 // Refreshing the authentication session should be allowed.
+      };
+
+      //Cookie-Base Auth
+      await HttpContext.SignInAsync(
+      CookieAuthenticationDefaults.AuthenticationScheme,
+      new ClaimsPrincipal(userIdentity),
+      authProperties);
+      Logger.LogInformation("User logged in.");
+      navSvc.NavigateTo(ReturnUrl ?? "/", true);
+    }
+  }
+  private sealed class InputModel
+  {
+    [Required]
+    [DataType(DataType.Text)]
+    public string UserName { get; set; } = "";
+
+    [Required]
+    [DataType(DataType.Password)]
+    public string Password { get; set; } = "";
+
+    [Display(Name = "Remember me?")]
+    public bool RememberMe { get; set; }
+  }
+}

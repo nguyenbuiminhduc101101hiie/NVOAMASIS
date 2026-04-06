@@ -1,0 +1,185 @@
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <MudGrid Spacing="2">
+                <MudItem xs="12">
+                    <MudAutocomplete T="HeaderLookupItem"
+                                     @bind-Value="_headerItem"
+                                     Label="@Localizer["TariffTier_Lbl_TariffHeader"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Required="true"
+                                     ToStringFunc="@(x => x?.Display ?? string.Empty)"
+                                     SearchFunc="SearchTariffHeadersAsync"
+                                     MinCharacters="0"
+                                     MaxItems="50"
+                                     ShowProgressIndicator="true"
+                                     Clearable="true"
+                                     Dense="true"
+                                     CoerceText="false"
+                                     ResetValueOnEmptyText="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudNumericField T="int" @bind-Value="_fromDay" Label="@Localizer["TariffTier_Lbl_FromDay"]" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudNumericField T="int?" @bind-Value="_toDay" Label="@Localizer["TariffTier_Lbl_ToDay"]" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Clearable="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudNumericField T="int" @bind-Value="_sequenceNo" Label="@Localizer["TariffTier_Lbl_SequenceNo"]" Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="6">
+                    <MudNumericField T="decimal" @bind-Value="_rate" Label="@Localizer["TariffTier_Lbl_Rate"]" Variant="Variant.Outlined" Margin="Margin.Dense" Format="N4" HideSpinButtons="true" Required="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="6">
+                    <MudNumericField T="decimal?" @bind-Value="_minCharge" Label="@Localizer["TariffTier_Lbl_MinCharge"]" Variant="Variant.Outlined" Margin="Margin.Dense" Format="N2" HideSpinButtons="true" Clearable="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_rateBasis" Label="@Localizer["TariffTier_Lbl_RateBasis"]" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" MaxLength="64" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_unit" Label="@Localizer["TariffTier_Lbl_Unit"]" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="32" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_notes" Label="@Localizer["TariffTier_Lbl_Notes"]" Variant="Variant.Outlined" Margin="Margin.Dense" Lines="2" MaxLength="2000" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">@Localizer["cancel"]</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync">@Localizer["save"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const int ComboResultLimit = 50;
+
+    private sealed class HeaderLookupItem
+    {
+        public Guid Id { get; init; }
+        public string Display { get; init; } = string.Empty;
+    }
+
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public M_TariffTier? Model { get; set; }
+    [Parameter] public bool IsEdit { get; set; }
+    [Parameter] public int DialogKey { get; set; }
+
+    public sealed class TariffTierDialogResult
+    {
+        public bool IsEdit { get; init; }
+        public M_TariffTier Entity { get; init; } = new();
+    }
+
+    private MudForm? _form;
+    private int _lastDialogKey = int.MinValue;
+
+    private HeaderLookupItem? _headerItem;
+    private int _fromDay = 1;
+    private int? _toDay;
+    private int _sequenceNo = 1;
+    private decimal _rate;
+    private decimal? _minCharge;
+    private string _rateBasis = "DAY";
+    private string? _unit;
+    private string? _notes;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await base.OnParametersSetAsync();
+        if (DialogKey == _lastDialogKey)
+            return;
+        _lastDialogKey = DialogKey;
+        await LoadFromModelAsync();
+    }
+
+    private async Task LoadFromModelAsync()
+    {
+        if (Model is null)
+            return;
+
+        _fromDay = Model.FromDay;
+        _toDay = Model.ToDay;
+        _sequenceNo = Model.SequenceNo;
+        _rate = Model.Rate;
+        _minCharge = Model.MinCharge;
+        _rateBasis = string.IsNullOrWhiteSpace(Model.RateBasis) ? "DAY" : Model.RateBasis;
+        _unit = Model.Unit;
+        _notes = Model.Notes;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (Model.TariffHeaderId != Guid.Empty)
+        {
+            var h = await db.TariffHeader.AsNoTracking().FirstOrDefaultAsync(x => x.Id == Model.TariffHeaderId);
+            _headerItem = h is null ? null : new HeaderLookupItem { Id = h.Id, Display = HeaderDisplay(h) };
+        }
+        else
+            _headerItem = null;
+    }
+
+    private static string HeaderDisplay(M_TariffHeader h)
+    {
+        if (!string.IsNullOrWhiteSpace(h.TariffName))
+            return h.TariffName.Trim();
+        if (!string.IsNullOrWhiteSpace(h.TariffCode))
+            return h.TariffCode.Trim();
+        return h.Id.ToString();
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task SaveAsync()
+    {
+        if (_form is null)
+            return;
+        await _form.Validate();
+        if (!_form.IsValid)
+            return;
+
+        if (_headerItem is null || _headerItem.Id == Guid.Empty)
+        {
+            Snackbar.Add(Localizer["TariffTier_Msg_SelectHeader"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var entity = Model ?? new M_TariffTier { Id = Guid.Empty };
+        entity.TariffHeaderId = _headerItem.Id;
+        entity.FromDay = _fromDay;
+        entity.ToDay = _toDay;
+        entity.SequenceNo = _sequenceNo;
+        entity.Rate = _rate;
+        entity.MinCharge = _minCharge;
+        entity.RateBasis = _rateBasis.Trim();
+        entity.Unit = string.IsNullOrWhiteSpace(_unit) ? null : _unit.Trim();
+        entity.Notes = string.IsNullOrWhiteSpace(_notes) ? null : _notes.Trim();
+
+        MudDialog.Close(DialogResult.Ok(new TariffTierDialogResult { IsEdit = IsEdit, Entity = entity }));
+    }
+
+    private async Task<IEnumerable<HeaderLookupItem>> SearchTariffHeadersAsync(string value)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var q = db.TariffHeader.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var v = value.Trim();
+            q = q.Where(x =>
+                (x.TariffName != null && x.TariffName.Contains(v)) ||
+                (x.TariffCode != null && x.TariffCode.Contains(v)));
+        }
+
+        var list = await q.OrderBy(x => x.TariffName).ThenBy(x => x.TariffCode).Take(ComboResultLimit).ToListAsync();
+        return list.Select(x => new HeaderLookupItem { Id = x.Id, Display = HeaderDisplay(x) });
+    }
+}

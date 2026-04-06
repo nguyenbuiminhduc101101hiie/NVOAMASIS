@@ -1,0 +1,268 @@
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.JSInterop;
+using Stimulsoft.Report;
+using Stimulsoft.Report.Blazor;
+using NVOAMASIS.Components.CUSTOMER.Pages;
+using NVOAMASIS.Data;
+using NVOAMASIS.Models;
+using NVOAMASIS.Response;
+
+namespace NVOAMASIS.Services
+{
+    public class LenhDieuXeServices(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv)
+    {
+
+        public async Task<List<M_LenhDieuXe>> GetListLenhDieuXe()
+        {
+            try
+            {
+
+
+                _context.ChangeTracker.Clear();
+                List<M_LenhDieuXe> rs = new();
+
+                rs = _context.LenhDieuXe.OrderByDescending(x => x.Lenhdieuxeno).ToList();
+
+                return rs;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return new List<M_LenhDieuXe>();
+            }
+        }
+        public async Task<List<M_LenhDieuXe>> GetListLDX_create(Guid? id)
+        {
+            _context.ChangeTracker.Clear();
+            var Invoices = await _context.LenhDieuXe.Where(_ => _.Id == id).ToListAsync();
+            return Invoices;
+        }
+
+        public async Task<BoolandMessReponse> CreateLenhDieuXe_Detail(M_LenhDieuXe c)
+        {
+            try
+            {
+
+                _context.ChangeTracker.Clear();
+                c.Id = Guid.NewGuid();
+                _context.LenhDieuXe.Add(c!);
+                await _context.SaveChangesAsync();
+                return new BoolandMessReponse(true, "Create Lệnh Điều Xe Success");
+
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Cannot Add Lệnh Điều Xe with error code: " + ex.Message);
+            }
+        }
+
+        public async Task<List<string>> UpdateCreateLenhDieuXe(M_LenhDieuXe IV)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                if (IV.Id == null || IV.Id == Guid.Empty)
+                {
+                    _context.ChangeTracker.Clear();
+                    _context.Add(IV);
+                    await _context.SaveChangesAsync();
+                    return ["Create new Lệnh Điều Xe Successfully", "1"];
+                }
+                else
+                {
+                    _context.ChangeTracker.Clear();
+
+                    _context.Update(IV);
+                    await _context.SaveChangesAsync();
+                    return ["Update Lệnh Điều Xe Successfully", "1"];
+                }
+            }
+            catch
+            {
+                return ["Save Lệnh Điều Xe Fail", "0"];
+            }
+        }
+
+
+        public async Task<BoolandMessReponse> DeleteLenhDieuXe_Detail(M_LenhDieuXe c)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                if (c?.Id == null || c?.Id == Guid.Empty)
+                    return new BoolandMessReponse(false, "Nothing to Delete");
+
+                _context?.LenhDieuXe.Remove(c!);
+                await _context?.SaveChangesAsync()!;
+                return new BoolandMessReponse(true, "Delete successful");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Cannot Delete Project with error code: " + ex.Message);
+            }
+        }
+        public async Task<BoolandMessReponse> UpdateLenhDieuXe_Detail(M_LenhDieuXe c)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                _context.LenhDieuXe.Update(c);
+                await _context.SaveChangesAsync();
+                return new BoolandMessReponse(true, "Update Lệnh Điều Xe Success");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Cannot Update Lệnh Điều Xe with error code: " + ex.Message);
+            }
+        }
+        public async Task<List<M_Customer>> GetList_Cus_Driver()
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var rs = await _context.Customer.OrderBy(x => x.Customer_Code)
+                    .Where(x => x.MainCode.Contains("Driver"))
+                    .ToListAsync();
+        
+                return rs;
+            }
+            catch (Exception ex)
+            {
+                return new List<M_Customer>();
+            }
+
+        }
+
+        public async Task<List<M_Customer>> GetList_Cus_Personal()
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var rs = await _context.Customer.OrderBy(x => x.Customer_Code)
+                    .Where(x => x.MainCode.Contains("Personal"))
+                    .ToListAsync();
+            
+                return rs;
+            }
+            catch (Exception ex)
+            {
+                return new List<M_Customer>();
+            }
+
+        }
+        public async Task<List<M_Customer>> GetList_Cus_Trucking()
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var rs = await _context.Customer.OrderBy(x => x.Customer_Code)
+                    .Where(x => x.MainCode.Contains("Trucking"))
+                    .ToListAsync();
+        
+                return rs;
+            }
+            catch (Exception ex)
+            {
+                return new List<M_Customer>();
+            }
+
+        }
+        public async Task<List<PortModel>> GetList_port()
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var rs = await _context.Port.OrderBy(x => x.PORT)
+                
+                    .ToListAsync();
+     
+                return rs;
+            }
+            catch (Exception ex)
+            {
+                return new List<PortModel>();
+            }
+
+        }
+
+        public async Task<BoolandMessReponse> ExportLenhDieuXe(Guid? id)
+        {
+            try
+            {
+                //Create empty report object
+                var report = new StiReport();
+                //Load report template
+                var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillLenhDieuXe.mrt");
+                StiBlazorHelper.Initialize(JSRuntime);
+                report = StiReport.CreateNewReport();
+                report.Load(rpt);
+                var lenhdieuxeinfo = await Get_LDXinfo(id);
+       
+
+                report.Dictionary.Variables["ID"].Value = id.ToString();
+                report.Dictionary.Variables["tongkm"].Value = (lenhdieuxeinfo.Tongkm ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["dinhmuc"].Value = (lenhdieuxeinfo.Dinhmucdau ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["tamung"].Value = (lenhdieuxeinfo.Tamung ?? 0).ToString("#,##0.##");
+                try
+                {
+                    report.Render();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                    return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
+                }
+
+
+                using (var ms = new MemoryStream())
+                {
+                    report.ExportDocument(StiExportFormat.Pdf, ms);
+                    var pdfData = ms.ToArray();
+                    await JSRuntime.InvokeVoidAsync("openReportInNewTab", pdfData);
+                }
+
+
+                return new BoolandMessReponse(true, "Export successfully!");
+
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
+            }
+        }
+        public async Task<M_LenhDieuXe?> GetLenhDieuXeByTruckNo(string? Lenhdieuxeno)
+        {
+            _context.ChangeTracker.Clear();
+            var rs = await _context.LenhDieuXe.FirstOrDefaultAsync(x => x.Lenhdieuxeno == Lenhdieuxeno);
+            return rs;
+        }
+        public async Task<List<string>> GetListTruckNo()
+        {
+            _context.ChangeTracker.Clear();
+            var rs = await _context.LenhDieuXe.Select(x => x.Lenhdieuxeno).ToListAsync();
+            return rs;
+        }
+
+        public async Task<M_LenhDieuXe> Get_LDXinfo(Guid? id)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var rs = await _context.LenhDieuXe.Where(x => x.Id == id).FirstOrDefaultAsync();
+                return rs;
+            }
+            catch (Exception ex)
+            {
+                return new M_LenhDieuXe();
+            }
+        }
+        public M_LenhDieuXe? GetDetailByNo(string? no)
+        {
+            _context.ChangeTracker.Clear();
+            var rs = _context.LenhDieuXe.FirstOrDefault(_ => _.Lenhdieuxeno == no);
+            return rs;
+        }
+    }
+}

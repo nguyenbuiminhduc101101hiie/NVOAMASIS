@@ -1,0 +1,761 @@
+﻿@using System.Globalization
+@using System.Net.Http
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.IO
+@using System.Text
+@using Microsoft.AspNetCore.Hosting
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject HttpClient HttpClient
+@inject IWebHostEnvironment WebHostEnvironment
+@attribute [Authorize]
+@inject ShipmentService shipsv
+
+<PageTitle>Invoice Viettel</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="pa-4">
+    <MudCard Elevation="2">
+        <MudCardContent Class="pa-4">
+            <!-- Header Section -->
+            <MudText Typo="Typo.h5" Class="mb-4" GutterBottom="true">
+                <MudIcon Icon="@Icons.Material.Filled.Receipt" Class="mr-2" />
+                Quản Lý Hóa Đơn Viettel
+            </MudText>
+            
+            <MudDivider Class="my-4" />
+
+            <!-- Top Section: Configuration and Date Range -->
+            <MudGrid Spacing="3">
+                <MudItem xs="12" md="6">
+                    <MudPaper Elevation="1" Class="pa-3">
+                        <MudText Typo="Typo.subtitle1" Class="mb-3" GutterBottom="true">
+                            <MudIcon Icon="@Icons.Material.Filled.Settings" Size="Size.Small" Class="mr-2" />
+                            Cấu Hình
+                        </MudText>
+                        <MudCheckBox @bind-Checked="GetDefaultJson" 
+                                    Label="Lấy giá trị Json mặc định" 
+                                    Size="Size.Small" 
+                                    Color="Color.Primary" />
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudPaper Elevation="1" Class="pa-3">
+                        <MudText Typo="Typo.subtitle1" Class="mb-3" GutterBottom="true">
+                            <MudIcon Icon="@Icons.Material.Filled.DateRange" Size="Size.Small" Class="mr-2" />
+                            Khoảng Thời Gian
+                        </MudText>
+                        <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                            <MudDatePicker @bind-Date="FromDate" 
+                                          Label="Từ ngày" 
+                                          DateFormat="dd/MM/yyyy"
+                                          Variant="Variant.Outlined"
+                                          Dense="true"
+                                          Margin="Margin.Dense"
+                                          Adornment="Adornment.Start"
+                                          AdornmentIcon="@Icons.Material.Filled.CalendarToday" />
+                            <MudDatePicker @bind-Date="ToDate" 
+                                          Label="Đến ngày" 
+                                          DateFormat="dd/MM/yyyy"
+                                          Variant="Variant.Outlined"
+                                          Dense="true"
+                                          Margin="Margin.Dense"
+                                          Adornment="Adornment.Start"
+                                          AdornmentIcon="@Icons.Material.Filled.CalendarToday" />
+                            <MudButton Variant="Variant.Filled" 
+                                      Color="Color.Primary" 
+                                      OnClick="Search"
+                                      StartIcon="@Icons.Material.Filled.Search"
+                                      Size="Size.Small"
+                                      Class="mt-6">
+                                Tìm Kiếm
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined" 
+                                      Color="Color.Default" 
+                                      OnClick="Exit"
+                                      StartIcon="@Icons.Material.Filled.ExitToApp"
+                                      Size="Size.Small"
+                                      Class="mt-6">
+                                Thoát
+                            </MudButton>
+                        </MudStack>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudDivider Class="my-4" />
+
+            <!-- Middle Section: Invoice Actions and Details -->
+            <MudGrid Spacing="3" Class="mt-3">
+                <MudItem xs="12" md="4">
+                    <MudPaper Elevation="1" Class="pa-3">
+                        <MudText Typo="Typo.subtitle1" Class="mb-3" GutterBottom="true">
+                            <MudIcon Icon="@Icons.Material.Filled.Build" Size="Size.Small" Class="mr-2" />
+                            Thao Tác Hóa Đơn
+                        </MudText>
+                        <MudStack Spacing="2">
+                            <MudButton Variant="Variant.Filled" 
+                                      Color="Color.Warning"
+                                      OnClick="CreateDraftInvoice"
+                                      StartIcon="@Icons.Material.Filled.Description"
+                                      Size="Size.Medium"
+                                      FullWidth="true">
+                                Lập Hóa Đơn Nháp
+                            </MudButton>
+                            <MudButton Variant="Variant.Filled" 
+                                      Color="Color.Error"
+                                      OnClick="CreateInvoice"
+                                      StartIcon="@Icons.Material.Filled.ReceiptLong"
+                                      Size="Size.Medium"
+                                      FullWidth="true">
+                                Lập Hóa Đơn
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined" 
+                                      Color="Color.Primary"
+                                      OnClick="DownloadInvoicePdf"
+                                      StartIcon="@Icons.Material.Filled.PictureAsPdf"
+                                      Size="Size.Medium"
+                                      FullWidth="true">
+                                Tải File PDF Hóa Đơn
+                            </MudButton>
+                        </MudStack>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" md="8">
+                    <MudPaper Elevation="1" Class="pa-3">
+                        <MudText Typo="Typo.subtitle1" Class="mb-3" GutterBottom="true">
+                            <MudIcon Icon="@Icons.Material.Filled.FilterList" Size="Size.Small" Class="mr-2" />
+                            Điều Kiện Tìm Kiếm
+                        </MudText>
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="6">
+                                <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                                    <MudItem xs="9">
+                                        <MudAutocomplete T="Guid?" @bind-Value="HBL"
+                                                        Label="Mã HBL" 
+                                                        Variant="Variant.Outlined"
+                                                        Dense="true"
+                                                        Margin="Margin.Dense"
+                                                        SearchFunc="SearchHBL"
+                                                        ToStringFunc="CusidtoCusCode"
+                                                        ResetValueOnEmptyText
+                                                        Clearable
+                                                        Adornment="Adornment.Start"
+                                                        AdornmentIcon="@Icons.Material.Filled.LocalShipping"
+                                                        FullWidth="true" />
+                                    </MudItem>
+                                    <MudItem xs="3">
+                                        <MudCheckBox @bind-Checked="HBLChecked" 
+                                                    Label="Áp dụng" 
+                                                    Size="Size.Small"
+                                                    Color="Color.Primary" />
+                                    </MudItem>
+                                </MudStack>
+                            </MudItem>
+
+                            <MudItem xs="12" md="6">
+                                <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                                    <MudItem xs="9">
+                                        <MudAutocomplete @bind-Value="HDNoiBo"
+                                                        Label="Số Hóa Đơn Nội Bộ" 
+                                                        Variant="Variant.Outlined"
+                                                        Dense="true"
+                                                        Margin="Margin.Dense"
+                                                        SearchFunc="SearchHDNoiBo"
+                                                        ResetValueOnEmptyText
+                                                        Clearable
+                                                        Adornment="Adornment.Start"
+                                                        AdornmentIcon="@Icons.Material.Filled.Receipt"
+                                                        FullWidth="true" />
+                                    </MudItem>
+                                    <MudItem xs="3">
+                                        <MudCheckBox @bind-Checked="HDNoiBoChecked" 
+                                                    Label="Áp dụng" 
+                                                    Size="Size.Small"
+                                                    Color="Color.Primary" />
+                                    </MudItem>
+                                </MudStack>
+                            </MudItem>
+
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="TaxCode" 
+                                            Label="Mã Số Thuế" 
+                                            Variant="Variant.Outlined" 
+                                            Dense="true"
+                                            Margin="Margin.Dense"
+                                            Adornment="Adornment.Start"
+                                            AdornmentIcon="@Icons.Material.Filled.Business"
+                                            FullWidth="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="MauSo" 
+                                            Label="Mẫu Số" 
+                                            Variant="Variant.Outlined" 
+                                            Dense="true"
+                                            Margin="Margin.Dense"
+                                            Adornment="Adornment.Start"
+                                            AdornmentIcon="@Icons.Material.Filled.FormatListNumbered"
+                                            FullWidth="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="VatPercent" 
+                                            Label="VAT (%)" 
+                                            Variant="Variant.Outlined" 
+                                            Dense="true"
+                                            Margin="Margin.Dense"
+                                            Adornment="Adornment.Start"
+                                            AdornmentIcon="@Icons.Material.Filled.Percent"
+                                            FullWidth="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="6">
+                                <MudTextField @bind-Value="InvoiceSeries" 
+                                            Label="Ký Hiệu Hóa Đơn" 
+                                            Variant="Variant.Outlined" 
+                                            Dense="true"
+                                            Margin="Margin.Dense"
+                                            Adornment="Adornment.Start"
+                                            AdornmentIcon="@Icons.Material.Filled.Tag"
+                                            FullWidth="true" />
+                            </MudItem>
+                        </MudGrid>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudDivider Class="my-4" />
+
+            <!-- Bottom Section: Tabs -->
+            <MudTabs SliderColor="Color.Primary" Class="mt-3" Variant="Variant.FullWidth">
+                <MudTabPanel Text="Danh Sách Hóa Đơn" Icon="@Icons.Material.Filled.List">
+                    <MudCardContent Class="pa-4">
+                        @if (_isSearching)
+                        {
+                            <MudStack AlignItems="AlignItems.Center" Spacing="2" Class="py-4">
+                                <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
+                                <MudText Typo="Typo.body1" Color="Color.Primary">Đang tìm kiếm...</MudText>
+                            </MudStack>
+                        }
+                        else if (SearchResults.Any())
+                        {
+                            <MudPaper Elevation="1" Class="pa-2">
+                                <MudText Typo="Typo.subtitle2" Class="mb-2" Color="Color.Success">
+                                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small" Class="mr-1" />
+                                    Tìm thấy @SearchResults.Count kết quả
+                                </MudText>
+                                <MudDataGrid T="M_HoaDonDauRa" 
+                                            Items="@SearchResults" 
+                                            Dense="true" 
+                                            Hover="true"
+                                            Striped="true"
+                                            Filterable="true"
+                                            Sortable="true"
+                                            Loading="_isSearching"
+                                            FixedHeader="true"
+                                            Height="500px"
+                                            MultiSelection="true"
+                                            @bind-SelectedItems="SelectedInvoices">
+                                    <Columns>
+                                        <TemplateColumn Sortable="false" Filterable="false" Width="60px">
+                                            <HeaderTemplate>
+                                                <MudCheckBox @bind-Checked="SelectAll" 
+                                                            Indeterminate="@(SelectedInvoices.Count > 0 && SelectedInvoices.Count < SearchResults.Count)"
+                                                            Changed="@((bool? value) => OnSelectAllChanged(value))" />
+                                            </HeaderTemplate>
+                                            <CellTemplate>
+                                                <MudCheckBox Checked="@SelectedInvoices.Contains(context.Item)" 
+                                                            Changed="@((bool? value) => OnItemSelectionChanged(context.Item, value))" />
+                                            </CellTemplate>
+                                        </TemplateColumn>
+                                        <PropertyColumn Property="x => x.sohoadonNoibo" Title="Số HĐ Nội Bộ" Sortable="true" />
+                                        <PropertyColumn Property="x => x.sohoadonDientu" Title="Số HĐ Điện Tử" Sortable="true" />
+                                        <PropertyColumn Property="x => x.ngayphathanhhoadonDientu" Title="Ngày Phát Hành" Format="dd/MM/yyyy" Sortable="true" />
+                                        <PropertyColumn Property="x => x.thanhtiensauthue" Title="Thành Tiền Sau Thuế" Format="#,##0.##" Sortable="true" />
+                                        <PropertyColumn Property="x => x.tiente" Title="Tiền Tệ" Sortable="true" />
+                                        <PropertyColumn Property="x => x.approve" Title="Đã Duyệt" Sortable="true">
+                                            <CellTemplate>
+                                                @if (context.Item.approve == true)
+                                                {
+                                                    <MudChip Color="Color.Success" Size="Size.Small" Icon="@Icons.Material.Filled.Check">Đã duyệt</MudChip>
+                                                }
+                                                else
+                                                {
+                                                    <MudChip Color="Color.Default" Size="Size.Small" Icon="@Icons.Material.Filled.Close">Chưa duyệt</MudChip>
+                                                }
+                                            </CellTemplate>
+                                        </PropertyColumn>
+                                    </Columns>
+                                </MudDataGrid>
+                            </MudPaper>
+                        }
+                        else
+                        {
+                            <MudStack AlignItems="AlignItems.Center" Spacing="3" Class="py-8">
+                                <MudIcon Icon="@Icons.Material.Filled.SearchOff" Size="Size.Large" Color="Color.Default" />
+                                <MudText Typo="Typo.h6" Color="Color.Default">Chưa có dữ liệu</MudText>
+                                <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">
+                                    Vui lòng nhấn nút <strong>"Tìm Kiếm"</strong> để bắt đầu tìm kiếm hóa đơn
+                                </MudText>
+                            </MudStack>
+                        }
+                    </MudCardContent>
+                </MudTabPanel>
+                <MudTabPanel Text="Dữ Liệu Json" Icon="@Icons.Material.Filled.Code">
+                    <MudCardContent Class="pa-4">
+                        <MudStack AlignItems="AlignItems.Center" Spacing="3" Class="py-8">
+                            <MudIcon Icon="@Icons.Material.Filled.DataObject" Size="Size.Large" Color="Color.Default" />
+                            <MudText Typo="Typo.h6" Color="Color.Default">Dữ liệu Json</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">
+                                Nội dung Json sẽ được hiển thị tại đây
+                            </MudText>
+                        </MudStack>
+                    </MudCardContent>
+                </MudTabPanel>
+                <MudTabPanel Text="Thông Báo Lỗi" Icon="@Icons.Material.Filled.Error">
+                    <MudCardContent Class="pa-4">
+                        <MudStack AlignItems="AlignItems.Center" Spacing="3" Class="py-8">
+                            <MudIcon Icon="@Icons.Material.Filled.Warning" Size="Size.Large" Color="Color.Error" />
+                            <MudText Typo="Typo.h6" Color="Color.Default">Thông Báo Lỗi</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">
+                                Các thông báo lỗi sẽ được hiển thị tại đây
+                            </MudText>
+                        </MudStack>
+                    </MudCardContent>
+                </MudTabPanel>
+            </MudTabs>
+        </MudCardContent>
+    </MudCard>
+</MudContainer>
+
+@code {
+    // Configuration fields
+    private string ConfigField1 { get; set; } = string.Empty;
+    private string ConfigField2 { get; set; } = string.Empty;
+    private bool UseProxy { get; set; } = false;
+    private bool GetDefaultJson { get; set; } = true;
+    private bool SSLConfig { get; set; } = true;
+
+    // Date range
+    private DateTime? FromDate { get; set; } = DateTime.Now;
+    private DateTime? ToDate { get; set; } = DateTime.Now;
+
+    // Customer and Employee fields
+
+    private Guid? HBL { get; set; }
+    private bool HBLChecked { get; set; } = false;
+    private string? HDNoiBo { get; set; }
+    private bool HDNoiBoChecked { get; set; } = false;
+    private string TaxCode { get; set; } = string.Empty;
+    private string MauSo { get; set; } = string.Empty;
+    private string VatPercent { get; set; } = string.Empty;
+    private string InvoiceSeries { get; set; } = string.Empty;
+
+    public List<M_HBL> HBLs { get; set; } = default!;
+    public List<M_HoaDonDauRa> HDDauRas { get; set; } = default!;
+    public List<M_HoaDonDauRa> SearchResults { get; set; } = new List<M_HoaDonDauRa>();
+    public HashSet<M_HoaDonDauRa> SelectedInvoices { get; set; } = new HashSet<M_HoaDonDauRa>();
+    private bool _isSearching = false;
+    private bool SelectAll { get; set; } = false;
+
+    // API Configuration
+    private string strAccessToken { get; set; } = string.Empty;
+    private string urlAPI { get; set; } = "https://api-vinvoice.viettel.vn";
+    private string username_vtel { get; set; } = string.Empty;
+    private string pass_vtel { get; set; } = string.Empty;
+    private string proxy { get; set; } = string.Empty;
+    private int port { get; set; } = 0;
+    private int ssl { get; set; } = 0;
+
+    protected async override Task OnInitializedAsync()
+    {
+        HBLs = await shipsv.GetListHBLALL();
+        HDDauRas = await shipsv.GetListHoaDonDauRa_HDnoibo();
+    }
+
+
+    string CusidtoCusCode(Guid? hblid)
+    {
+        if (!hblid.HasValue || hblid.Value == Guid.Empty)
+            return string.Empty;
+        var rs = HBLs.FirstOrDefault(x => x.hblID == hblid.Value);
+        return rs == null ? string.Empty : rs.hbl!;
+    }
+
+    private async Task<IEnumerable<Guid?>> SearchHBL(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return HBLs.Select(x => (Guid?)x.hblID);
+            }
+            return HBLs.Where(x => !string.IsNullOrEmpty(x.hbl) && x.hbl.Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => (Guid?)x.hblID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string?>> SearchHDNoiBo(string text)
+    {
+        try
+        {
+            if (HDDauRas == null || !HDDauRas.Any())
+            {
+                return Enumerable.Empty<string?>();
+            }
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return HDDauRas
+                    .Where(x => !string.IsNullOrEmpty(x.sohoadonNoibo))
+                    .Select(x => x.sohoadonNoibo)
+                    .Distinct();
+            }
+
+            return HDDauRas
+                .Where(x => !string.IsNullOrEmpty(x.sohoadonNoibo) && x.sohoadonNoibo.Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.sohoadonNoibo)
+                .Distinct();
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string?>> SearchEmployee(string value)
+    {
+        await Task.Delay(100);
+        return new List<string?> { "Employee 1", "Employee 2", "Employee 3" }
+            .Where(x => string.IsNullOrEmpty(value) || x?.Contains(value, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    private async Task Search()
+    {
+        try
+        {
+            _isSearching = true;
+            StateHasChanged();
+
+            // Validate date range
+            if (!FromDate.HasValue || !ToDate.HasValue)
+            {
+                Snackbar.Add("Vui lòng chọn khoảng thời gian tìm kiếm", MudBlazor.Severity.Warning);
+                _isSearching = false;
+                return;
+            }
+
+            // Build query
+            var query = await shipsv.GetListHoaDonDauRaALL();
+            
+            // Filter by date range (using ngayphathanhhoadonDientu)
+            query = query.Where(x => 
+                x.ngayphathanhhoadonDientu.HasValue &&
+                x.ngayphathanhhoadonDientu.Value.Date >= FromDate.Value.Date &&
+                x.ngayphathanhhoadonDientu.Value.Date <= ToDate.Value.Date
+            ).ToList();
+
+            // Filter by HBL if checked
+            if (HBLChecked && HBL.HasValue)
+            {
+                query = query.Where(x => x.hblid == HBL.Value).ToList();
+            }
+
+            // Filter by HDNoiBo if checked
+            if (HDNoiBoChecked && !string.IsNullOrEmpty(HDNoiBo))
+            {
+                query = query.Where(x => 
+                    !string.IsNullOrEmpty(x.sohoadonNoibo) && 
+                    x.sohoadonNoibo.Contains(HDNoiBo, StringComparison.OrdinalIgnoreCase)
+                ).ToList();
+            }
+
+            SearchResults = query;
+            
+            Snackbar.Add($"Tìm thấy {SearchResults.Count} kết quả", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Lỗi khi tìm kiếm: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _isSearching = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Exit()
+    {
+        Snackbar.Add("Exit clicked", MudBlazor.Severity.Info);
+    }
+
+    private async Task OnSelectAllChanged(bool? value)
+    {
+        if (value == true)
+        {
+            SelectedInvoices = SearchResults.ToHashSet();
+        }
+        else
+        {
+            SelectedInvoices.Clear();
+        }
+        StateHasChanged();
+    }
+
+    private void OnItemSelectionChanged(M_HoaDonDauRa item, bool? value)
+    {
+        if (value == true)
+        {
+            SelectedInvoices.Add(item);
+        }
+        else
+        {
+            SelectedInvoices.Remove(item);
+        }
+        SelectAll = SelectedInvoices.Count == SearchResults.Count;
+        StateHasChanged();
+    }
+
+    private async Task CreateDraftInvoice()
+    {
+        try
+        {
+            // Validate Tax Code
+            if (string.IsNullOrEmpty(TaxCode))
+            {
+                Snackbar.Add("Vui lòng nhập Mã Số Thuế!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Validate selected items
+            if (SearchResults.Count <= 0)
+            {
+                Snackbar.Add("Không có dữ liệu!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (SelectedInvoices.Count <= 0)
+            {
+                Snackbar.Add("Vui lòng chọn ít nhất một dòng dữ liệu!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Validate all selected invoices have same customer (if needed)
+            // This would require joining with customer table - simplified for now
+
+            // Check if any invoice already has sohoadonDientu
+            var hasExistingInvoice = SelectedInvoices.Any(x => !string.IsNullOrEmpty(x.sohoadonDientu));
+            if (hasExistingInvoice)
+            {
+                Snackbar.Add("Xuất hiện dữ liệu đã có Số Hóa Đơn Viettel!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Get invoice number from selected invoices
+            var firstInvoice = SelectedInvoices.First();
+            string invoiceNo = firstInvoice.sohoadonNoibo ?? string.Empty;
+            
+            if (string.IsNullOrEmpty(invoiceNo))
+            {
+                Snackbar.Add("Các hóa đơn đã chọn phải có số hóa đơn nội bộ!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Validate all selected invoices have the same invoice number
+            var hasDifferentInvoiceNo = SelectedInvoices.Any(x => x.sohoadonNoibo != invoiceNo);
+            if (hasDifferentInvoiceNo)
+            {
+                Snackbar.Add("Các dòng đã chọn phải có chung một số hóa đơn nội bộ!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Get Access Token
+            await GetAccessToken();
+            if (string.IsNullOrEmpty(strAccessToken))
+            {
+                Snackbar.Add("Không thể lấy Access Token. Vui lòng kiểm tra lại thông tin đăng nhập!", MudBlazor.Severity.Error);
+                return;
+            }
+
+            // Get list of IDs
+            var listIds = SelectedInvoices.Select(x => x.hoadondauraid.ToString()).ToList();
+            string ids = string.Join(",", listIds);
+
+            // Call API to create draft invoice
+            string apiLink = urlAPI + $"/services/einvoiceapplication/api/InvoiceAPI/InvoiceUtilsWS/createInvoiceDraftPreview/{TaxCode}";
+            string contentType = "application/json";
+
+            // Create request body (simplified - you may need to adjust based on actual API requirements)
+            string requestBody = GetDefaultJson ? CreateInvoiceExample(listIds) : "{}"; // You'll need to implement CreateInvoiceExample
+
+            // Make API call
+            var response = await CallViettelAPI(apiLink, requestBody, "POST", contentType);
+            
+            if (string.IsNullOrEmpty(response))
+            {
+                Snackbar.Add("Lỗi khi gọi API Viettel!", MudBlazor.Severity.Error);
+                return;
+            }
+
+            // Parse response and save PDF
+            await ProcessInvoiceResponse(response, invoiceNo, listIds);
+
+            Snackbar.Add("Tạo hóa đơn nháp thành công!", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Lỗi: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task GetAccessToken()
+    {
+        try
+        {
+            strAccessToken = string.Empty;
+
+            // You should load these from configuration or user settings
+            if (string.IsNullOrEmpty(username_vtel) || string.IsNullOrEmpty(pass_vtel))
+            {
+                Snackbar.Add("Vui lòng cấu hình thông tin đăng nhập Viettel!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            string apiLink = urlAPI + "/auth/login";
+            string contentType = "application/json";
+            string method = "POST";
+
+            var loginRequest = new
+            {
+                username = username_vtel,
+                password = pass_vtel
+            };
+
+            var jsonContent = JsonSerializer.Serialize(loginRequest);
+            var content = new StringContent(jsonContent, System.Text.Encoding.UTF8, contentType);
+
+            var response = await HttpClient.PostAsync(apiLink, content);
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadAsStringAsync();
+            var authResponse = JsonSerializer.Deserialize<JsonElement>(result);
+
+            if (authResponse.TryGetProperty("access_token", out var tokenElement))
+            {
+                strAccessToken = $"access_token={tokenElement.GetString()}";
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Lỗi khi lấy Access Token: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task<string> CallViettelAPI(string apiLink, string requestBody, string method, string contentType)
+    {
+        try
+        {
+            var content = new StringContent(requestBody, System.Text.Encoding.UTF8, contentType);
+            var request = new HttpRequestMessage(new HttpMethod(method), apiLink)
+            {
+                Content = content
+            };
+
+            if (!string.IsNullOrEmpty(strAccessToken))
+            {
+                request.Headers.Add("Cookie", strAccessToken);
+            }
+
+            var response = await HttpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Lỗi khi gọi API: {ex.Message}", MudBlazor.Severity.Error);
+            return string.Empty;
+        }
+    }
+
+    private async Task ProcessInvoiceResponse(string response, string invoiceNo, List<string> listIds)
+    {
+        try
+        {
+            // Parse response to extract file data
+            var jsonDoc = JsonDocument.Parse(response);
+            if (jsonDoc.RootElement.TryGetProperty("fileToBytes", out var fileBytesElement))
+            {
+                string base64Data = fileBytesElement.GetString() ?? string.Empty;
+                
+                // Generate file name
+                string fileName = $"{invoiceNo}_{DateTime.Now:MMddyyyyHHmmss}";
+                string exportsDir = Path.Combine(WebHostEnvironment.WebRootPath, "exports");
+                
+                // Ensure directory exists
+                Directory.CreateDirectory(exportsDir);
+
+                // Save PDF file
+                string filePath = Path.Combine(exportsDir, $"{fileName}.pdf");
+                byte[] pdfBytes = Convert.FromBase64String(base64Data);
+                await System.IO.File.WriteAllBytesAsync(filePath, pdfBytes);
+
+                // Update database
+                await UpdateInvoicesAsDraft(listIds, invoiceNo);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Lỗi khi xử lý response: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task UpdateInvoicesAsDraft(List<string> listIds, string invoiceNo)
+    {
+        try
+        {
+            // Update all selected invoices - mark as draft
+            // Note: M_HoaDonDauRa doesn't have IsDraft field, so we just ensure sohoadonNoibo is set
+            foreach (var invoice in SelectedInvoices)
+            {
+                var originalInvoice = JsonSerializer.Deserialize<M_HoaDonDauRa>(JsonSerializer.Serialize(invoice));
+                // Ensure invoice number is set (should already be set, but just in case)
+                if (string.IsNullOrEmpty(invoice.sohoadonNoibo))
+                {
+                    invoice.sohoadonNoibo = invoiceNo;
+                }
+                await shipsv.UpdateHoaDonDauRaMBL(invoice, originalInvoice!);
+            }
+            
+            // Refresh search results
+            await Search();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Lỗi khi cập nhật database: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private string CreateInvoiceExample(List<string> listIds)
+    {
+        // This should create the JSON request body based on selected invoices
+        // Simplified version - you'll need to implement based on actual API requirements
+        return "{}";
+    }
+
+    private void CreateInvoice()
+    {
+        Snackbar.Add("Create invoice clicked", MudBlazor.Severity.Info);
+    }
+
+    private void DownloadInvoicePdf()
+    {
+        Snackbar.Add("Download invoice PDF clicked", MudBlazor.Severity.Info);
+    }
+}

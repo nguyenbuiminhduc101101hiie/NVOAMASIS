@@ -1,0 +1,244 @@
+@using MudBlazor
+@inject HttpClient Http
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+@inject NavigationManager Navigation
+@inject IHttpContextAccessor HttpContextAccessor
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudText Typo="Typo.subtitle1" Class="mb-2 mt-4">@Localizer["HeaderColor"]</MudText>
+            <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                <input type="color" value="@mainLayoutColor" @onchange="@((ChangeEventArgs e) => mainLayoutColor = e.Value?.ToString() ?? mainLayoutColor)" 
+                       style="width: 80px; height: 40px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;" />
+                <MudTextField @bind-Value="mainLayoutColor" @bind-Value:after="OnMainLayoutColorChanged" 
+                              Label="@Localizer["Color"]" 
+                              Variant="Variant.Outlined" Style="flex: 1;" />
+            </MudStack>
+
+            <MudText Typo="Typo.subtitle1" Class="mb-2">@Localizer["MenuColor"]</MudText>
+            <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                <input type="color" value="@navMenuColor" @onchange="@((ChangeEventArgs e) => navMenuColor = e.Value?.ToString() ?? navMenuColor)" 
+                       style="width: 80px; height: 40px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;" />
+                <MudTextField @bind-Value="navMenuColor" @bind-Value:after="OnNavMenuColorChanged" 
+                              Label="@Localizer["Color"]" 
+                              Variant="Variant.Outlined" Style="flex: 1;" />
+            </MudStack>
+
+            <MudText Typo="Typo.subtitle1" Class="mb-2">@Localizer["MenuTextColor"]</MudText>
+            <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                <input type="color" value="@navMenuTextColor" @onchange="@((ChangeEventArgs e) => navMenuTextColor = e.Value?.ToString() ?? navMenuTextColor)" 
+                       style="width: 80px; height: 40px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;" />
+                <MudTextField @bind-Value="navMenuTextColor" @bind-Value:after="OnNavMenuTextColorChanged" 
+                              Label="@Localizer["Color"]" 
+                              Variant="Variant.Outlined" Style="flex: 1;" />
+            </MudStack>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="ResetToDefault" Color="Color.Secondary" Variant="Variant.Text">
+            @Localizer["ResetToDefault"]
+        </MudButton>
+        <MudSpacer />
+        <MudButton OnClick="Cancel" Color="Color.Secondary">@Localizer["Cancel"]</MudButton>
+        <MudButton OnClick="ApplyChanges" Color="Color.Primary" Variant="Variant.Filled" Disabled="saving">
+            @(saving ? Localizer["Saving..."] : Localizer["Apply"])
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public MudDialogInstance? MudDialog { get; set; }
+    
+    private string navMenuColor = ThemeDefaults.NavMenuBackgroundColor;
+    private string navMenuTextColor = ThemeDefaults.NavMenuTextColor;
+    private string mainLayoutColor = ThemeDefaults.MainLayoutBackgroundColor;
+    private bool saving = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCurrentTheme();
+    }
+
+    private async Task LoadCurrentTheme()
+    {
+        try
+        {
+            var url = Navigation.ToAbsoluteUri("api/theme/get");
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            
+            // Add cookies from HttpContext to request
+            if (HttpContextAccessor.HttpContext != null)
+            {
+                var cookies = HttpContextAccessor.HttpContext.Request.Cookies;
+                var cookieHeader = string.Join("; ", cookies.Select(c => $"{c.Key}={c.Value}"));
+                if (!string.IsNullOrEmpty(cookieHeader))
+                {
+                    request.Headers.Add("Cookie", cookieHeader);
+                }
+            }
+            
+            var httpResponse = await Http.SendAsync(request);
+            
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                var errorContent = await httpResponse.Content.ReadAsStringAsync();
+                Console.WriteLine($"ThemeSelector API Error: {httpResponse.StatusCode} - {errorContent.Substring(0, Math.Min(200, errorContent.Length))}");
+                return;
+            }
+
+            var response = await httpResponse.Content.ReadFromJsonAsync<ThemeResponse>();
+            if (response != null)
+            {
+                navMenuColor = response.NavMenuBackgroundColor ?? ThemeDefaults.NavMenuBackgroundColor;
+                navMenuTextColor = response.NavMenuTextColor ?? ThemeDefaults.NavMenuTextColor;
+                mainLayoutColor = response.MainLayoutBackgroundColor ?? ThemeDefaults.MainLayoutBackgroundColor;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading theme: {ex.Message}");
+            Console.WriteLine($"StackTrace: {ex.StackTrace}");
+        }
+    }
+
+    private async Task ApplyChanges()
+    {
+        saving = true;
+        try
+        {
+            var updateRequest = new UpdateThemeRequest
+            {
+                NavMenuBackgroundColor = navMenuColor,
+                NavMenuTextColor = navMenuTextColor,
+                MainLayoutBackgroundColor = mainLayoutColor
+            };
+
+            var url = Navigation.ToAbsoluteUri("api/theme/update");
+            var httpRequest = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = System.Net.Http.Json.JsonContent.Create(updateRequest)
+            };
+            
+            // Add cookies from HttpContext to request
+            if (HttpContextAccessor.HttpContext != null)
+            {
+                var cookies = HttpContextAccessor.HttpContext.Request.Cookies;
+                var cookieHeader = string.Join("; ", cookies.Select(c => $"{c.Key}={c.Value}"));
+                if (!string.IsNullOrEmpty(cookieHeader))
+                {
+                    httpRequest.Headers.Add("Cookie", cookieHeader);
+                }
+            }
+            
+            var response = await Http.SendAsync(httpRequest);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var responseContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Theme update response: {responseContent}");
+                Snackbar.Add(Localizer["ThemeUpdatedSuccessfully"], MudBlazor.Severity.Success);
+                MudDialog?.Close(DialogResult.Ok(true));
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Theme update failed: {response.StatusCode} - {errorContent}");
+                Snackbar.Add($"{Localizer["FailedToUpdateTheme"]}: {response.StatusCode}", MudBlazor.Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception in ApplyChanges: {ex.Message}");
+            Console.WriteLine($"StackTrace: {ex.StackTrace}");
+            Snackbar.Add($"{Localizer["Error"]}: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task ResetToDefault()
+    {
+        saving = true;
+        try
+        {
+            var url = Navigation.ToAbsoluteUri("api/theme/reset");
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            
+            // Add cookies from HttpContext to request
+            if (HttpContextAccessor.HttpContext != null)
+            {
+                var cookies = HttpContextAccessor.HttpContext.Request.Cookies;
+                var cookieHeader = string.Join("; ", cookies.Select(c => $"{c.Key}={c.Value}"));
+                if (!string.IsNullOrEmpty(cookieHeader))
+                {
+                    request.Headers.Add("Cookie", cookieHeader);
+                }
+            }
+            
+            var response = await Http.SendAsync(request);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                navMenuColor = ThemeDefaults.NavMenuBackgroundColor;
+                navMenuTextColor = ThemeDefaults.NavMenuTextColor;
+                mainLayoutColor = ThemeDefaults.MainLayoutBackgroundColor;
+                Snackbar.Add(Localizer["ThemeResetToDefault"], MudBlazor.Severity.Success);
+                MudDialog?.Close(DialogResult.Ok(true));
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Theme reset failed: {response.StatusCode} - {errorContent}");
+                Snackbar.Add(Localizer["FailedToResetTheme"], MudBlazor.Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Exception in ResetToDefault: {ex.Message}");
+            Console.WriteLine($"StackTrace: {ex.StackTrace}");
+            Snackbar.Add($"{Localizer["Error"]}: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private void Cancel()
+    {
+        MudDialog?.Cancel();
+    }
+
+    private void OnMainLayoutColorChanged()
+    {
+        StateHasChanged();
+    }
+
+    private void OnNavMenuColorChanged()
+    {
+        StateHasChanged();
+    }
+
+    private void OnNavMenuTextColorChanged()
+    {
+        StateHasChanged();
+    }
+
+    private class ThemeResponse
+    {
+        public string? NavMenuBackgroundColor { get; set; }
+        public string? NavMenuTextColor { get; set; }
+        public string? MainLayoutBackgroundColor { get; set; }
+    }
+
+    private class UpdateThemeRequest
+    {
+        public string NavMenuBackgroundColor { get; set; } = string.Empty;
+        public string NavMenuTextColor { get; set; } = string.Empty;
+        public string MainLayoutBackgroundColor { get; set; } = string.Empty;
+    }
+}

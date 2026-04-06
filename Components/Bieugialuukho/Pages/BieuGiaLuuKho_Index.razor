@@ -1,0 +1,564 @@
+﻿@page "/Bieugialuukho"
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject Bieugianangha_Services Bgnhsv
+@inject CustomerService Cussv
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+
+<PageTitle>@Localizer["Bieugialuukho"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["Bieugialuukho"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenCreateDialog(new Models.M_BieuGiaLuuKho()))"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["new"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenEditDialog(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Edit">
+        @Localizer["edit"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenEditDialog_adddetail(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Edit">
+        @Localizer["ADD_Detail"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenDuplicateDialog(detail))"
+               Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.CopyAll">
+        @Localizer["duplicate"]
+    </MudButton>
+
+</MudStack>
+
+<MudDataGrid T="M_BieuGiaLuuKho" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4" Bordered="true"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+             RowClick="@RowClicked" EditDialogOptions="@options"
+             ColumnResizeMode="@(ResizeMode.Column)" Loading="_loading">
+    <Columns>
+        <HierarchyColumn T="M_BieuGiaLuuKho" />
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x=>x.Bieugialuukhono" Title="@Localizer["BieuGiaKTCLNo"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.NgayHieuLuc" Title="@Localizer["NgayHieuLuc"]" Required="false" CellStyleFunc="_cellStyleFunc" Format="dd/MM/yyyy">
+        </PropertyColumn>
+        <PropertyColumn Property="x=>x.GhiChu" Title="@Localizer["DichVuKiemTra"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+        <PropertyColumn Property="x => CustomerName(x.VenderID)" Title="@Localizer["Vender"]" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.VenderID" Label="@Localizer["Vender"]">
+                    @foreach (var item in CustomerList)
+                    {
+                        <MudSelectItem Value="@item.Customer_ID">@item.COMPANY</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <TemplateColumn Title="@Localizer["Approve"]">
+            <CellTemplate>
+                <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                </MudCheckBox>
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x=>x.Continued" Title="@Localizer["Continued"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+  
+    </Columns>
+
+    <ChildRowContent>
+        <MudTabs>
+            <MudTabPanel Text="@Localizer["ChiTietBieuGiaLuuKho"]">
+                <Index_Detail _BGLK_details="context.Item" />
+            </MudTabPanel>
+        </MudTabs>
+    </ChildRowContent>
+
+    <PagerContent>
+        <MudDataGridPager T="Models.M_BieuGiaLuuKho" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    List<M_BieuGiaLuuKho> Listdata = new List<M_BieuGiaLuuKho>();
+    MudDataGrid<M_BieuGiaLuuKho> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    M_BieuGiaLuuKho detail;
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<M_Customer> filteredCarr = new List<M_Customer>();
+    private List<M_Customer> Cuss_Carr = new List<M_Customer>();
+    private List<Terminal_> Terminals = new List<Terminal_>();
+
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    protected async override Task OnInitializedAsync()
+    {
+        CustomerList = await Cussv.GetList();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "Bieugialuukho").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+
+        Terminals = await gsv.GetList_Terminal();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Cuss_Carr = await lcsv.GetList_Customer_line();
+        // await Refresh();
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = CustomerList.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.COMPANY! : "";
+    }
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+            await Bgnhsv.UpdateTrangThai_HetHieuLuc_BGLK();
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "Bieugialuukho"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                _loading = false;
+                return;
+            }
+            Listdata = await Bgnhsv.GetList_BieuGiaLuuKho();
+            StateHasChanged();
+            if (Listdata.Count == 0)
+            {
+                CallSnackBar("No Data", MudBlazor.Severity.Warning);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_BieuGiaLuuKho> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_BieuGiaLuuKho m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(M_BieuGiaLuuKho item)
+    {
+        item.UserUpdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.DateUpdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.BieuGiaLuuKhoID != Guid.Empty ? await Bgnhsv.UpdateBieugiaLuukho_Detail(item) : await Bgnhsv.CreateBieugiaLuukho_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    int? index_no;
+
+    async Task DeleteItem(M_BieuGiaLuuKho item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "Bieugialuukho"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await Bgnhsv.DeleteBieugiaLuukhoL_Detail(item);
+
+            await HistoryLogService.LogAsync(usr, "Delete Bieu Gia Luu Kho", "Bieugialuukho", item.BieuGiaLuuKhoID, item.Bieugialuukhono, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(M_BieuGiaLuuKho sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_BieuGiaLuuKho sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.Bieugialuukhono))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.Bieugialuukhono!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.Bieugialuukhono} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    private Func<M_BieuGiaLuuKho, string> _cellStyleFunc => x =>
+       {
+           string style = "";
+
+           if (string.IsNullOrEmpty(x.Trangthai))
+               return "color: #000000";
+
+           var rs = M_Trangthais
+           .Where(t => (t.Noidung).Contains(x.Trangthai, StringComparison.InvariantCultureIgnoreCase)
+               && t.Tieude.Equals("Bieugialuukho", StringComparison.InvariantCultureIgnoreCase))
+           .Select(t => t.Mamau)
+           .FirstOrDefault();
+           return "color: " + rs;
+
+
+       };
+
+    private async Task OpenCreateDialog(Models.M_BieuGiaLuuKho tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Bieugialuukho"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._BieuGiaLuuKho_Detail, tr }, { x => x.Status, "add" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.BieuGiaLuuKhoID == Guid.Empty ? "Warehouse price list Create" : "Warehouse price list Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                var data = (M_BieuGiaLuuKho)result.Data;
+                var rs = await Bgnhsv.UpdateCreateBieugiaLuukho(data);
+                await HistoryLogService.LogAsync(usr, "ADD Bieu Gia Luu Kho", "Bieugialuukho", data.BieuGiaLuuKhoID, data.Bieugialuukhono, data);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                await HandleRefresh_create(data.BieuGiaLuuKhoID);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+            Listdata.Clear();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "Bieugialuukho"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await Bgnhsv.GetListBieugiaLuukho_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+    
+    private async Task OpenEditDialog_adddetail(Models.M_BieuGiaLuuKho tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Biểu giá đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Bieugialuukho"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD_Details> { { x => x._BGLK_details, tr } };
+
+            var dialog = await DialogService.ShowAsync<ADD_Details>(tr.BieuGiaLuuKhoID == Guid.Empty ? "Warehouse price list Details Edit" : "Warehouse price list Details Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_ChiTietBieuGiaLuuKho)result.Data;
+                var rs = await Bgnhsv.UpdateCreateChitietBGLuuKho(data);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OpenEditDialog(Models.M_BieuGiaLuuKho tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Biểu giá đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "Bieugialuukho"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_BieuGiaLuuKho>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._BieuGiaLuuKho_Detail, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.BieuGiaLuuKhoID == Guid.Empty ? "Warehouse price list Edit" : "Warehouse price list Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_BieuGiaLuuKho)result.Data;
+                var rs = await Bgnhsv.UpdateCreateBieugiaLuukho(data);
+
+                await HistoryLogService.LogAsync(usr, "Update Bieu Gia Luu Kho", "Bieugialuukho", data.BieuGiaLuuKhoID, data.Bieugialuukhono, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task<IEnumerable<string>> searchTerminal(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName))
+               .Select(x => x.TermiNalName);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName) &&
+                            x.TermiNalName.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.TermiNalName);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task GetT_BieugiananghaNo(M_BieuGiaLuuKho item)
+    {
+
+        int formattedYear = DateTime.Now.Year;
+        int formattedMonth = DateTime.Now.Month;
+
+        string usr = asv.GetAuth().Result.User.Identity!.Name!;
+        var refno = await supsv.GetRefNoByFunc("BGLK", formattedMonth, formattedYear, usr);
+
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        item.Bieugialuukhono = cn + "BGLK_" + formattedYear.ToString() + formattedMonth.ToString() + refno.Value.ToString("D4");
+
+    }
+    private async Task OnApproveCheckboxWrapper(M_BieuGiaLuuKho item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "Bieugialuukho"))
+        {
+            var rs = await Bgnhsv.UpdateCreateBieugiaLuukho(item);
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+    }
+
+    private async Task OpenDuplicateDialog(Models.M_BieuGiaLuuKho tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Bieugialuukho"))
+        {
+
+            var OldData = JsonSerializer.Deserialize<M_BieuGiaLuuKho>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._BieuGiaLuuKho_Detail, tr }, { x => x.Status, "Duplicate" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.BieuGiaLuuKhoID == Guid.Empty ? "Warehouse Price List Create" : "Warehouse Price List Create", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_BieuGiaLuuKho)result.Data;
+                var rs = await Bgnhsv.UpdateCreateBieugiaLuukho(data);
+
+                await HistoryLogService.LogAsync(usr, "Duplicate Bieu Gia Luu Kho", "Bieugialuukho", data.BieuGiaLuuKhoID, data.Bieugialuukhono, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+}

@@ -1,0 +1,117 @@
+@using MudBlazor
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@inject AppDbContext Db
+@inject NotificationService NotificationService
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h5">Duyệt yêu cầu ra ngoài</MudText>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh" OnClick="Refresh">Tải lại</MudButton>
+    </MudStack>
+    <MudTable Items="_pending" Dense="true" Hover="true" Bordered="true">
+        <HeaderContent>
+            <MudTh>Nhân viên</MudTh>
+            <MudTh>Từ</MudTh>
+            <MudTh>Đến</MudTh>
+            <MudTh>Lý do</MudTh>
+            <MudTh>Trạng thái</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@GetUserName(context.UserId)</MudTd>
+            <MudTd>@context.FromTime.ToString("dd/MM HH:mm")</MudTd>
+            <MudTd>@context.ToTime.ToString("dd/MM HH:mm")</MudTd>
+            <MudTd>@context.Reason</MudTd>
+            <MudTd>@context.Status</MudTd>
+            <MudTd>
+                @if (context.Status == "Pending")
+                {
+                    <MudButton Size="Size.Small" Color="Color.Success" OnClick="() => Review(context.Id, true)">Duyệt</MudButton>
+                    <MudButton Size="Size.Small" Color="Color.Error" OnClick="() => Review(context.Id, false)" Class="ml-2">Từ chối</MudButton>
+                }
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+<MudDialog @bind-IsVisible="_showRejectDialog" MaxWidth="MaxWidth.Small">
+    <DialogContent>
+        <MudTextField @bind-Value="_rejectNote" Label="Ghi chú từ chối" Lines="3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="ConfirmReject" Color="Color.Error">Xác nhận</MudButton>
+        <MudButton OnClick="() => _showRejectDialog = false">Hủy</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<OutRequest> _pending = new();
+    private Dictionary<Guid,string> _userNames = new();
+    private bool _showRejectDialog = false;
+    private Guid _rejectId;
+    private string _rejectNote = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+    await Task.Yield();
+        // Load pending requests (top 100 by CreatedAt)
+        _pending = Db.OutRequests
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(100)
+            .ToList();
+
+        var userIds = _pending.Select(p => p.UserId).Distinct().ToList();
+        _userNames = new Dictionary<Guid, string>();
+        if (userIds.Count > 0)
+        {
+            // Build parameterized IN clause instead of using Contains in LINQ (project rule)
+            var parameters = new List<object>();
+            var parts = new List<string>();
+            for (int i = 0; i < userIds.Count; i++)
+            {
+                var pn = $"@p{i}";
+                parts.Add(pn);
+                parameters.Add(new Microsoft.Data.SqlClient.SqlParameter(pn, userIds[i]));
+            }
+            var inClause = string.Join(",", parts);
+            var sql = $"SELECT * FROM UserList WHERE UsrId IN ({inClause})";
+            var raw = Db.UserList.FromSqlRaw(sql, parameters.ToArray()).AsNoTracking().ToList();
+            foreach (var u in raw)
+            {
+                var name = u.Name ?? u.Usr ?? u.NickName ?? string.Empty;
+                if (!_userNames.ContainsKey(u.UsrId))
+                    _userNames.Add(u.UsrId, name);
+            }
+        }
+    }
+
+    string GetUserName(Guid id) => _userNames.TryGetValue(id, out string? n) ? n : id.ToString();
+
+    private async Task Review(Guid id, bool approve)
+    {
+        if (!approve)
+        {
+            _rejectId = id; _showRejectDialog = true; return;
+        }
+        var rs = await NotificationService.ReviewOutRequestAsync(id, true, null);
+        Snackbar.Add(rs.Message, rs.Flag? MudBlazor.Severity.Success: MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    private async Task ConfirmReject()
+    {
+        var rs = await NotificationService.ReviewOutRequestAsync(_rejectId, false, _rejectNote);
+        Snackbar.Add(rs.Message, rs.Flag? MudBlazor.Severity.Success: MudBlazor.Severity.Error);
+        _showRejectDialog = false; _rejectNote = string.Empty;
+        await Refresh();
+    }
+
+    private Task Refresh()
+    {
+        _pending = Db.OutRequests.OrderByDescending(x=>x.CreatedAt).Take(100).ToList();
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+}

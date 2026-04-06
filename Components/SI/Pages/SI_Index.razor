@@ -1,0 +1,819 @@
+@page "/SI"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Forms
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using System.Globalization
+@using System.IO
+@using System.Linq
+@using System.Text.Json
+@using Microsoft.Data.SqlClient
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+@inject EmailService EmailService
+@inject HistoryLogService HistoryLogService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>@Localizer["SI"]</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.h6" Class="fw-700">10. @Localizer["SI"]</MudText>
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Secondary"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenNewDialogAsync"
+                       Disabled="_busy">
+                @Localizer["new"]
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Info"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Edit"
+                       OnClick="OpenEditDialogAsync"
+                       Disabled="_selected is null || _busy">
+                @Localizer["edit"]
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Error"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Delete"
+                       OnClick="DeleteSelectedAsync"
+                       Disabled="_selected is null || _busy">
+                @Localizer["delete"]
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       OnClick="LoadListAsync"
+                       Disabled="_busy">
+                @Localizer["reload"]
+            </MudButton>
+            <MudTooltip Text="Chọn một hoặc nhiều file (Ctrl/Cmd + click trong hộp thoại chọn file). Tối đa 50 file mỗi lần.">
+                <MudButton HtmlTag="label"
+                           Variant="Variant.Filled"
+                           Color="Color.Tertiary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.AttachFile"
+                           Disabled="_selected is null || _busy">
+                    Attach file(s)
+                    <InputFile OnChange="OnAttachFileAsync" style="display:none" accept="*/*" multiple />
+                </MudButton>
+            </MudTooltip>
+            <MudMenu AnchorOrigin="Origin.BottomCenter"
+                     TransformOrigin="Origin.TopCenter"
+                     Disabled="_selected is null || !HasAttachments(_selected) || _busy">
+                <ActivatorContent>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.OpenInNew">
+                        Open file
+                    </MudButton>
+                </ActivatorContent>
+                <ChildContent>
+                    @foreach (var ar in _selected?.AttachmentRefs ?? Enumerable.Empty<M_SI_AttachmentRef>())
+                    {
+                        var idCopy = ar.AttachmentId;
+                        <MudMenuItem OnClick="@(() => OpenAttachmentAsync(idCopy))">@ar.FileName</MudMenuItem>
+                    }
+                </ChildContent>
+            </MudMenu>
+            <MudMenu AnchorOrigin="Origin.BottomCenter"
+                     TransformOrigin="Origin.TopCenter"
+                     Disabled="_selected is null || !HasAttachments(_selected) || _busy">
+                <ActivatorContent>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Warning"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.DeleteOutline">
+                        Remove file
+                    </MudButton>
+                </ActivatorContent>
+                <ChildContent>
+                    @foreach (var ar in _selected?.AttachmentRefs ?? Enumerable.Empty<M_SI_AttachmentRef>())
+                    {
+                        var idCopy = ar.AttachmentId;
+                        <MudMenuItem OnClick="@(() => RemoveOneAttachmentAsync(idCopy))">
+                            @ar.FileName
+                        </MudMenuItem>
+                    }
+                    <MudDivider />
+                    <MudMenuItem OnClick="RemoveAllAttachmentsAsync">
+                        Remove all files…
+                    </MudMenuItem>
+                </ChildContent>
+            </MudMenu>
+        </MudStack>
+    </MudStack>
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2">
+            <MudTextField @bind-Value="_searchText"
+                          Label="@Localizer["ChargeType_SearchHint"]"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true"
+                          Immediate="true"
+                          Style="max-width: 420px;" />
+        </MudStack>
+        <MudDataGrid T="M_SI"
+                     Items="VisibleRows"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClassFunc"
+                     Height="calc(100vh - 220px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <TemplateColumn Title="File" Filterable="false" Sortable="false">
+                    <CellTemplate>
+                        @{
+                            var n = context.Item.AttachmentRefs.Count;
+                        }
+                        @if (n > 0)
+                        {
+                            <MudTooltip Text="@($"{n} file(s)")">
+                                <MudStack Row="true" Spacing="0" AlignItems="AlignItems.Center">
+                                    <MudIcon Icon="@Icons.Material.Filled.AttachFile" Color="Color.Success" />
+                                    <MudText Typo="Typo.caption">@n</MudText>
+                                </MudStack>
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.hbl" Title="HBL" />
+                <PropertyColumn Property="x => x.bkno" Title="B/L No." />
+                <PropertyColumn Property="x => x.mbl" Title="MBL" />
+                <PropertyColumn Property="x => x.shipper" Title="Shipper" />
+                <PropertyColumn Property="x => x.consignee" Title="Consignee" />
+                <PropertyColumn Property="x => x.vessel" Title="Vessel" />
+                <PropertyColumn Property="x => x.polname" Title="POL" />
+                <PropertyColumn Property="x => x.podname" Title="POD" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_SI" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "SI";
+
+    /// <summary>Hàng truy vấn metadata đính kèm (không đọc cột Content).</summary>
+    private sealed class SiAttachmentListRow
+    {
+        public Guid AttachmentId { get; set; }
+        public Guid SIID { get; set; }
+        public string FileName { get; set; } = "";
+        public DateTime UploadedUtc { get; set; }
+    }
+
+    private bool _busy;
+    private List<M_SI> _items = new();
+    private M_SI? _selected;
+    private string usr = string.Empty;
+    private string _searchText = string.Empty;
+
+    private IEnumerable<M_SI> VisibleRows
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+                return _items;
+            var t = _searchText.Trim();
+            return _items.Where(x =>
+                ContainsIc(x.hbl, t) ||
+                ContainsIc(x.bkno, t) ||
+                ContainsIc(x.mbl, t) ||
+                ContainsIc(x.shipper, t) ||
+                ContainsIc(x.consignee, t) ||
+                ContainsIc(x.vessel, t) ||
+                ContainsIc(x.polname, t) ||
+                ContainsIc(x.podname, t));
+        }
+    }
+
+    private static bool ContainsIc(string? s, string needle) =>
+        !string.IsNullOrEmpty(s) && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadListAsync();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "View", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+            _items = new List<M_SI>();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.SI
+                .AsNoTracking()
+                .OrderByDescending(x => x.SIID)
+                .ToListAsync();
+
+            var siIds = _items.Select(x => x.SIID).ToList();
+            if (siIds.Count > 0)
+            {
+                // Không dùng LINQ Contains → EF có thể sinh OPENJSON(...) WITH (...), gây lỗi WITH trên một số SQL Server.
+                const int siIdChunkSize = 1000;
+                var flat = new List<SiAttachmentListRow>();
+                for (var i = 0; i < siIds.Count; i += siIdChunkSize)
+                {
+                    var chunk = siIds.Skip(i).Take(siIdChunkSize).ToList();
+                    var names = new List<string>(chunk.Count);
+                    var prm = new List<SqlParameter>(chunk.Count);
+                    for (var j = 0; j < chunk.Count; j++)
+                    {
+                        var pname = "@s" + j;
+                        names.Add(pname);
+                        prm.Add(new SqlParameter(pname, chunk[j]));
+                    }
+
+                    var sql = "SELECT [AttachmentId], [SIID], [FileName], [UploadedUtc] FROM [SI_Attachment] WHERE [SIID] IN (" + string.Join(",", names) + ")";
+                    var part = await db.Database.SqlQueryRaw<SiAttachmentListRow>(sql, prm.Cast<object>().ToArray()).ToListAsync();
+                    flat.AddRange(part);
+                }
+
+                flat.Sort((a, b) => a.UploadedUtc.CompareTo(b.UploadedUtc));
+                var lookup = flat
+                    .GroupBy(x => x.SIID)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Select(x => new M_SI_AttachmentRef { AttachmentId = x.AttachmentId, FileName = x.FileName ?? "" }).ToList());
+                foreach (var row in _items)
+                    row.AttachmentRefs = lookup.GetValueOrDefault(row.SIID) ?? new List<M_SI_AttachmentRef>();
+            }
+            else
+            {
+                foreach (var row in _items)
+                    row.AttachmentRefs = new List<M_SI_AttachmentRef>();
+            }
+
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Cannot load SI: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_SI> args)
+    {
+        _selected = CloneRow(args.Item);
+    }
+
+    private static M_SI CloneRow(M_SI row) => new()
+    {
+        SIID = row.SIID,
+        mbl = row.mbl,
+        shipper = row.shipper,
+        consignee = row.consignee,
+        notify1 = row.notify1,
+        vessel = row.vessel,
+        voy = row.voy,
+        porname = row.porname,
+        porcode = row.porcode,
+        polname = row.polname,
+        polcode = row.polcode,
+        podname = row.podname,
+        podcode = row.podcode,
+        delName = row.delName,
+        delcode = row.delcode,
+        bkno = row.bkno,
+        hbl = row.hbl,
+        markAndNumbers = row.markAndNumbers,
+        NoOfPackages = row.NoOfPackages,
+        description = row.description,
+        gross = row.gross,
+        cbm = row.cbm,
+        shipOnboard = row.shipOnboard,
+        say = row.say,
+        freightPayableAt = row.freightPayableAt,
+        numberOfOriginal = row.numberOfOriginal,
+        placeAndDate = row.placeAndDate,
+        collectat = row.collectat,
+        dateLaden = row.dateLaden,
+        freightAmount = row.freightAmount,
+        forDelivery = row.forDelivery,
+        Air_type = row.Air_type,
+        AttachmentHistoryJson = row.AttachmentHistoryJson,
+        AttachmentRefs = row.AttachmentRefs?.Select(r => new M_SI_AttachmentRef { AttachmentId = r.AttachmentId, FileName = r.FileName }).ToList() ?? new List<M_SI_AttachmentRef>()
+    };
+
+    private const int MaxAttachmentHistoryEntries = 400;
+
+    private static void AppendSiAttachmentHistory(M_SI entity, string user, string action, IReadOnlyList<string> fileNames)
+    {
+        List<SiAttachmentHistoryEntry> list;
+        try
+        {
+            list = string.IsNullOrWhiteSpace(entity.AttachmentHistoryJson)
+                ? new List<SiAttachmentHistoryEntry>()
+                : JsonSerializer.Deserialize<List<SiAttachmentHistoryEntry>>(entity.AttachmentHistoryJson) ?? new();
+        }
+        catch
+        {
+            list = new List<SiAttachmentHistoryEntry>();
+        }
+
+        list.Add(new SiAttachmentHistoryEntry
+        {
+            At = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+            User = string.IsNullOrEmpty(user) ? null : user,
+            Action = action,
+            FileNames = fileNames.Count > 0 ? fileNames.ToList() : null
+        });
+
+        while (list.Count > MaxAttachmentHistoryEntries)
+            list.RemoveAt(0);
+
+        entity.AttachmentHistoryJson = JsonSerializer.Serialize(list);
+    }
+
+    private static bool HasAttachments(M_SI? x) => x?.AttachmentRefs is { Count: > 0 };
+
+    /// <summary>Tên file duy nhất trong tập đã có + các tên vừa thêm vào <paramref name="usedNames"/>.</summary>
+    private static string NextUniqueFileName(List<string> usedNames, string fileName)
+    {
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var ext = Path.GetExtension(fileName);
+        var candidate = Path.GetFileName(fileName);
+        var n = 0;
+        while (usedNames.Exists(x => string.Equals(x, candidate, StringComparison.OrdinalIgnoreCase)))
+        {
+            n++;
+            candidate = $"{name}_{n}{ext}";
+        }
+        usedNames.Add(candidate);
+        return candidate;
+    }
+
+    private static string SiNo(M_SI x) =>
+        !string.IsNullOrWhiteSpace(x.bkno) ? x.bkno! :
+        !string.IsNullOrWhiteSpace(x.hbl) ? x.hbl! :
+        x.SIID.ToString();
+
+    private string RowClassFunc(M_SI row, int _)
+    {
+        if (_selected != null && _selected.SIID == row.SIID)
+            return "si-selected-row";
+        return string.Empty;
+    }
+
+    private async Task OpenNewDialogAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to ADD", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<EditSI_Dialog>(
+            $"{Localizer["new"]} — {Localizer["SI"]}",
+            new DialogParameters
+            {
+                ["Model"] = new M_SI { SIID = Guid.Empty },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not EditSI_Dialog.SiDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task OpenEditDialogAsync()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to EDIT", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<EditSI_Dialog>(
+            $"{Localizer["edit"]} — {Localizer["SI"]}",
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not EditSI_Dialog.SiDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(EditSI_Dialog.SiDialogResult data)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var m = data.Model;
+            M_SI? oldSnapshot = null;
+
+            if (!data.IsEdit)
+            {
+                m.SIID = Guid.NewGuid();
+                db.SI.Add(m);
+            }
+            else
+            {
+                var entity = await db.SI.FirstOrDefaultAsync(x => x.SIID == m.SIID);
+                if (entity is null)
+                {
+                    CallSnackBar("Record not found.", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                oldSnapshot = JsonSerializer.Deserialize<M_SI>(JsonSerializer.Serialize(entity))!;
+
+                entity.mbl = m.mbl;
+                entity.shipper = m.shipper;
+                entity.consignee = m.consignee;
+                entity.notify1 = m.notify1;
+                entity.vessel = m.vessel;
+                entity.voy = m.voy;
+                entity.porname = m.porname;
+                entity.porcode = m.porcode;
+                entity.polname = m.polname;
+                entity.polcode = m.polcode;
+                entity.podname = m.podname;
+                entity.podcode = m.podcode;
+                entity.delName = m.delName;
+                entity.delcode = m.delcode;
+                entity.bkno = m.bkno;
+                entity.hbl = m.hbl;
+                entity.markAndNumbers = m.markAndNumbers;
+                entity.NoOfPackages = m.NoOfPackages;
+                entity.description = m.description;
+                entity.gross = m.gross;
+                entity.cbm = m.cbm;
+                entity.shipOnboard = m.shipOnboard;
+                entity.say = m.say;
+                entity.freightPayableAt = m.freightPayableAt;
+                entity.numberOfOriginal = m.numberOfOriginal;
+                entity.placeAndDate = m.placeAndDate;
+                entity.collectat = m.collectat;
+                entity.dateLaden = m.dateLaden;
+                entity.freightAmount = m.freightAmount;
+                entity.forDelivery = m.forDelivery;
+                entity.Air_type = m.Air_type;
+            }
+
+            await db.SaveChangesAsync();
+
+            if (!data.IsEdit)
+                await HistoryLogService.LogAsync(usr, "ADD Shipment Instruction SI", "SI", m.SIID, SiNo(m), m);
+            else if (oldSnapshot != null)
+                await HistoryLogService.LogAsync(usr, "Update Shipment Instruction SI", "SI", m.SIID, SiNo(m),
+                    new { OldData = oldSnapshot, NewData = m });
+
+            _selected = null;
+            await LoadListAsync();
+            CallSnackBar(Localizer["ChargeType_Saved"], MudBlazor.Severity.Success);
+
+            var emailOk = await EmailService.NotifyCompanyShipmentInstructionSavedAsync(m, !data.IsEdit, usr);
+            if (!emailOk)
+                CallSnackBar("Saved. Email notification could not be sent.", MudBlazor.Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Cannot save: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnAttachFileAsync(InputFileChangeEventArgs e)
+    {
+        if (_selected is null || e.FileCount == 0)
+            return;
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to attach file", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        // Đọc hết stream trước khi _busy — tránh lỗi InputFile khi attach nhiều file.
+        var buffers = new List<(string SafeName, string ContentType, byte[] Bytes)>();
+        try
+        {
+            var files = e.GetMultipleFiles(50).ToList();
+            foreach (var file in files)
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                var safeName = SanitizeFileName(file.Name);
+                var ct = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+                buffers.Add((safeName, ct!, ms.ToArray()));
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Attach failed: {ex.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        if (buffers.Count == 0)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.SI.FirstOrDefaultAsync(x => x.SIID == _selected.SIID);
+            if (entity is null)
+            {
+                CallSnackBar("Record not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var usedNames = await db.SI_Attachment
+                .Where(a => a.SIID == entity.SIID)
+                .Select(a => a.FileName)
+                .ToListAsync();
+
+            var displayNames = new List<string>();
+            var addedIds = new List<Guid>();
+            foreach (var (safeName, contentType, bytes) in buffers)
+            {
+                var uniqueName = NextUniqueFileName(usedNames, safeName);
+                var id = Guid.NewGuid();
+                addedIds.Add(id);
+                displayNames.Add(uniqueName);
+                db.SI_Attachment.Add(new M_SI_Attachment
+                {
+                    AttachmentId = id,
+                    SIID = entity.SIID,
+                    FileName = uniqueName,
+                    Content = bytes,
+                    ContentType = contentType,
+                    UploadedUtc = DateTime.UtcNow
+                });
+            }
+
+            AppendSiAttachmentHistory(entity, usr, "attach", displayNames);
+            await db.SaveChangesAsync();
+            await HistoryLogService.LogAsync(usr, "Attach file SI", "SI", entity.SIID, SiNo(entity),
+                new
+                {
+                    Kind = "attach",
+                    FileNames = displayNames,
+                    AddedAttachmentIds = addedIds,
+                    TotalFilesAfter = usedNames.Count
+                });
+            CallSnackBar(buffers.Count == 1 ? "File attached." : $"{buffers.Count} files attached.", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Attach failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OpenAttachmentAsync(Guid attachmentId)
+    {
+        if (attachmentId == Guid.Empty)
+            return;
+        var url = Navigation.ToAbsoluteUri($"api/si-attachment/{attachmentId}").ToString();
+        await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+
+    private async Task RemoveOneAttachmentAsync(Guid attachmentId)
+    {
+        if (_selected is null || attachmentId == Guid.Empty)
+            return;
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to remove file", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var name = _selected.AttachmentRefs.FirstOrDefault(r => r.AttachmentId == attachmentId)?.FileName ?? attachmentId.ToString();
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["ChargeType_Warning"],
+            $"Remove file \"{name}\" from this SI?",
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.SI.FirstOrDefaultAsync(x => x.SIID == _selected.SIID);
+            if (entity is null)
+            {
+                CallSnackBar("Record not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var row = await db.SI_Attachment.FirstOrDefaultAsync(x => x.AttachmentId == attachmentId && x.SIID == entity.SIID);
+            if (row is null)
+            {
+                CallSnackBar("File not found in list.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var removedDisplayName = row.FileName;
+            db.SI_Attachment.Remove(row);
+            AppendSiAttachmentHistory(entity, usr, "remove_one", new List<string> { removedDisplayName });
+            await db.SaveChangesAsync();
+            var remaining = await db.SI_Attachment.CountAsync(x => x.SIID == entity.SIID);
+            await HistoryLogService.LogAsync(usr, "Remove attachment SI", "SI", entity.SIID, SiNo(entity),
+                new
+                {
+                    Kind = "remove_one",
+                    FileNames = new List<string> { removedDisplayName },
+                    RemovedAttachmentId = attachmentId,
+                    RemainingCount = remaining
+                });
+            CallSnackBar("File removed.", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Cannot remove: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RemoveAllAttachmentsAsync()
+    {
+        if (_selected is null || !HasAttachments(_selected))
+            return;
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to remove file", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["ChargeType_Warning"],
+            "Remove all attached files from this SI?",
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.SI.FirstOrDefaultAsync(x => x.SIID == _selected.SIID);
+            if (entity is null)
+            {
+                CallSnackBar("Record not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var rows = await db.SI_Attachment.Where(x => x.SIID == entity.SIID).ToListAsync();
+            var removedDisplayNames = rows.Select(x => x.FileName).ToList();
+            var removedIds = rows.Select(x => x.AttachmentId).ToList();
+            AppendSiAttachmentHistory(entity, usr, "remove_all", removedDisplayNames);
+            db.SI_Attachment.RemoveRange(rows);
+            await db.SaveChangesAsync();
+            await HistoryLogService.LogAsync(usr, "Remove attachment SI", "SI", entity.SIID, SiNo(entity),
+                new
+                {
+                    Kind = "remove_all",
+                    FileNames = removedDisplayNames,
+                    RemovedAttachmentIds = removedIds,
+                    All = true
+                });
+            CallSnackBar("Attachments removed.", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Cannot remove: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var f = Path.GetFileName(name);
+        foreach (var c in Path.GetInvalidFileNameChars())
+            f = f.Replace(c, '_');
+        return string.IsNullOrWhiteSpace(f) ? "file.dat" : f;
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Delete", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["ChargeType_Warning"],
+            "Delete this SI record?",
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.SI.FirstOrDefaultAsync(x => x.SIID == _selected.SIID);
+            if (entity is null)
+            {
+                CallSnackBar("Record not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var deletedSnapshot = JsonSerializer.Deserialize<M_SI>(JsonSerializer.Serialize(entity))!;
+            await HistoryLogService.LogAsync(usr, "Delete Shipment Instruction SI", "SI", entity.SIID, SiNo(entity), deletedSnapshot);
+
+            db.SI.Remove(entity);
+            await db.SaveChangesAsync();
+            _selected = null;
+            CallSnackBar(Localizer["ChargeType_Deleted"], MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Cannot delete: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
+
+<style>
+    .si-selected-row {
+        background-color: #2196f3 !important;
+    }
+</style>

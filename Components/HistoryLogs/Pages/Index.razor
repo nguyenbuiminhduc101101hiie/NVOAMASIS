@@ -1,0 +1,423 @@
+
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject Bieugianangha_Services Bgnhsv
+@inject CustomerService Cussv
+@inject DNTUServices DNTUSV
+@inject ProductPriceServices prsv;
+@inject HistoryLogService HistoryLogService
+@using System.Linq
+@using System.Net                                                                                                   
+@using System.Text.Json;
+@using System.Text
+
+
+<PageTitle>@Localizer["History"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["History"]</MudText>
+<MudStack Spacing="3" Class="pa-4">
+    <a href="HDSDhtml/Huong_dan_History_LMS_2025.html" target="_blank">
+        <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">@Localizer["Help"]</MudButton>
+    </a>
+    <MudGrid GutterSize="2">
+
+        <!-- User -->
+        <MudItem xs="12" sm="6" md="2">
+            <MudStack Row AlignItems="AlignItems.Center" Spacing="1">
+                <MudAutocomplete T="string"
+                                 @bind-Value="UserHanding"
+                                 Label="@Localizer["User"]"
+                                 SearchFunc="Search_User"
+                                 Immediate="true"
+                                 CoerceText="true"
+                                 Clearable="true"
+                                 MaxItems="100"
+                                 Class="flex-grow-1" />
+                <MudCheckBox @bind-Value="chk_User" Color="Color.Primary" />
+            </MudStack>
+        </MudItem>
+
+        <!-- Form -->
+        <MudItem xs="12" sm="6" md="2">
+            <MudStack Row AlignItems="AlignItems.Center" Spacing="1">
+                <MudSelect T="string" @bind-Value="Form_text" Label="@Localizer["Form"]" Class="flex-grow-1">
+                    @foreach (var item in Menus)
+                    {
+                        <MudSelectItem Value="item.MenuName">@item.Title</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudCheckBox @bind-Value="chk_Form" Color="Color.Primary" />
+            </MudStack>
+        </MudItem>
+
+        <!-- Changes -->
+        <MudItem xs="12" sm="12" md="4">
+            <MudStack Row AlignItems="AlignItems.Center" Spacing="1">
+                <MudTextField T="string"
+                @bind-Value="Changes_text"
+                Label="@Localizer["search_changes"]"
+                Class="flex-grow-1" />
+                <MudCheckBox @bind-Value="chk_Changes" Color="Color.Primary" />
+            </MudStack>
+        </MudItem>
+
+        <!-- ALL checkbox -->
+        <MudItem xs="6" sm="3" md="1">
+            <MudCheckBox @bind-Value="chk_All" Label="@Localizer["ALL"]" Color="Color.Primary" />
+        </MudItem>
+
+        <!-- Search Button -->
+        <MudItem xs="6" sm="3" md="1">
+            <MudButton OnClick="Refresh"
+            StartIcon="@Icons.Material.Filled.Search"
+            Variant="Variant.Filled"
+            Color="Color.Primary"
+            Class="w-100">
+                @Localizer["Search"]
+            </MudButton>
+        </MudItem>
+
+        <MudItem xs="6">
+            <MudDateRangePicker DateRange="frmtoDate"
+                                DateRangeChanged="OnDateRangeChanged"
+                                Label="From - To Date"
+                                Color="Color.Primary" />
+        </MudItem>
+
+    </MudGrid>
+
+
+</MudStack>
+
+
+<MudDataGrid T="HistoryLog" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4" Bordered="true"
+FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+ReadOnly="false" RowClassFunc="@SelectedRowClassFunc"
+RowClick="@RowClicked" EditDialogOptions="@options"
+ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" Loading="_loading">
+    <Columns>
+
+        <PropertyColumn Property="x=>x.UserName" Title="@Localizer["User"]"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Action" Title="@Localizer["Action"]"></PropertyColumn>
+        <PropertyColumn Property="x=>x.EntityName" Title="@Localizer["EntityName"]"></PropertyColumn>
+        <PropertyColumn Property="x=>x.No" Title="@Localizer["No."]"></PropertyColumn>
+
+
+        <TemplateColumn Title="@Localizer["Changes"]">
+            <CellTemplate Context="context">
+                @((MarkupString)GetChangeSummary(context.Item.Changes))
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x=>x.Timestamp" Title="@Localizer["Dateupdate"]"></PropertyColumn>
+
+    </Columns>
+
+    <ChildRowContent>
+
+        <Add_Detail_Import__Index _ProductPrice_Import_Details="context.Item" />
+
+    </ChildRowContent>
+
+
+    <PagerContent>
+        <MudDataGridPager T="HistoryLog" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    List<HistoryLog> Listdata = new List<HistoryLog>();
+    MudDataGrid<HistoryLog> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding,Form_text,Changes_text;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    HistoryLog detail;
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<M_DNTT_Logistics> DNTTs = new List<M_DNTT_Logistics>();
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    List<FormMenu> Menus = new List<FormMenu>();
+    public bool chk_User { get; set; } = false;
+    public bool chk_Form { get; set; } = false;
+    public bool chk_Changes { get; set; } = false;
+    public bool chk_All { get; set; } = true;
+    private DateRange frmtoDate = new DateRange(
+    new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-1).Date,
+    new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1).Date.AddDays(1).AddSeconds(-1)
+    );
+
+    private void OnDateRangeChanged(DateRange range)
+    {
+        if (range?.Start != null && range?.End != null)
+        {
+            frmtoDate = new DateRange(
+                range.Start.Value.Date,
+                range.End.Value.Date.AddDays(1).AddSeconds(-1)
+            );
+        }
+    }
+
+
+    public class ChangeWrapper
+    {
+        public Dictionary<string, object>? OldData { get; set; }
+        public Dictionary<string, object>? NewData { get; set; }
+    }
+
+    protected async override Task OnInitializedAsync()
+    {
+        CustomerList = await Cussv.GetList();
+        Menus = await ssv.GetListFormMenu();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+
+        // await Refresh();
+    }
+
+    string CustomerName(Guid? iddntt)
+    {
+        var rs = DNTTs.FirstOrDefault(x => x.Id == iddntt);
+        return rs != null ? rs.So! : "";
+    }
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "HistoryLog"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (chk_All == true)
+            {
+                Listdata = await supsv.Get_HistoryLog(frmtoDate);
+            }
+            else
+            {
+                if (chk_User == false)
+                {
+                    UserHanding = "";
+                }
+                if (chk_Form == false)
+                {
+                    Form_text = "";
+                }
+                if (chk_Changes == false)
+                {
+                    Changes_text = "";
+                }
+                Listdata = await supsv.Get_HistoryLog_search(UserHanding, Form_text, Changes_text, frmtoDate);
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<HistoryLog> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(HistoryLog m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    int? index_no;
+
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(HistoryLog sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(HistoryLog sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.UserName))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.UserName!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.UserName} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    public string GetChangeSummary(string changesJson)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(changesJson))
+                return string.Empty;
+
+            Dictionary<string, JsonElement>? root;
+            try
+            {
+                root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(changesJson);
+            }
+            catch (JsonException)
+            {
+                return WebUtility.HtmlEncode("Invalid JSON format.");
+            }
+
+            if (root == null || root.Count == 0)
+                return string.Empty;
+
+            // SI attach/remove: { Kind, FileNames, ... } — không có OldData/NewData
+            if (root.ContainsKey("Kind") || root.ContainsKey("FileNames"))
+            {
+                var si = TryFormatSiFileChangeSummary(root);
+                if (!string.IsNullOrEmpty(si))
+                    return si;
+            }
+
+            if (!root.ContainsKey("OldData") || !root.ContainsKey("NewData"))
+                return string.Empty;
+
+            var oldData = JsonSerializer.Deserialize<Dictionary<string, object>>(root["OldData"].GetRawText());
+            var newData = JsonSerializer.Deserialize<Dictionary<string, object>>(root["NewData"].GetRawText());
+            if (oldData == null || newData == null)
+                return string.Empty;
+
+            var differences = new StringBuilder();
+
+            foreach (var key in oldData.Keys)
+            {
+                oldData.TryGetValue(key, out var oldValue);
+                newData.TryGetValue(key, out var newValue);
+
+                if (!object.Equals(oldValue?.ToString(), newValue?.ToString()))
+                {
+                    var k = WebUtility.HtmlEncode(key);
+                    var ov = WebUtility.HtmlEncode(oldValue?.ToString() ?? "");
+                    var nv = WebUtility.HtmlEncode(newValue?.ToString() ?? "");
+                    differences.AppendLine($"<b>{k}</b>: <span style='color:red'>{ov}</span> → <span style='color:green'>{nv}</span><br>");
+                }
+            }
+
+            return differences.ToString();
+        }
+        catch (Exception ex)
+        {
+            return WebUtility.HtmlEncode(ex.Message);
+        }
+    }
+
+    private static string TryFormatSiFileChangeSummary(Dictionary<string, JsonElement> root)
+    {
+        var kind = root.TryGetValue("Kind", out var kindEl) && kindEl.ValueKind == JsonValueKind.String
+            ? kindEl.GetString()
+            : null;
+
+        if (kind == null && !root.ContainsKey("FileNames"))
+            return string.Empty;
+
+        var actionLabel = kind switch
+        {
+            "attach" => "Attached",
+            "remove_one" => "Removed",
+            "remove_all" => "Removed all",
+            _ => kind != null ? WebUtility.HtmlEncode(kind) : "Files"
+        };
+
+        var sb = new StringBuilder();
+        sb.Append($"<b>{actionLabel}</b><br>");
+
+        if (root.TryGetValue("FileNames", out var namesEl) && namesEl.ValueKind == JsonValueKind.Array)
+        {
+            var names = namesEl.EnumerateArray()
+                .Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() : x.GetRawText())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => WebUtility.HtmlEncode(s!))
+                .ToList();
+            if (names.Count > 0)
+                sb.Append($"<b>File name(s)</b>: {string.Join(", ", names)}<br>");
+        }
+
+        if (root.TryGetValue("TotalFilesAfter", out var tot) && tot.ValueKind == JsonValueKind.Number)
+            sb.Append($"<b>Total files after</b>: {tot}<br>");
+
+        if (root.TryGetValue("RemainingCount", out var rem) && rem.ValueKind == JsonValueKind.Number)
+            sb.Append($"<b>Remaining</b>: {rem}<br>");
+
+        if (root.TryGetValue("All", out var all) && all.ValueKind == JsonValueKind.True)
+            sb.Append("<i>All attachments cleared</i><br>");
+
+        return sb.ToString();
+    }
+
+    private async Task<IEnumerable<string>> Search_User(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return ListUser;
+
+        return ListUser.Where(x => x.Contains(value, StringComparison.InvariantCultureIgnoreCase));
+    }
+  
+}

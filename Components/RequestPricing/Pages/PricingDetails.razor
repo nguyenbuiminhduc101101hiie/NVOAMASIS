@@ -1,0 +1,229 @@
+﻿@using System.Globalization
+@inject ProductPriceServices prsv;
+@inject GlobalServices gsv;
+@inject EmailService emsv
+@inject QuotationService QuoSv
+@inject SharedServices ssv
+@inject TrainScheduleServices trainsv
+@inject BookingService bksv
+@inject AccountService asv
+@inject CustomerService Cussv
+
+@inject SupportServices supsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject FontService FontSizeService
+@inject IStringLocalizer<SharedResource> Localizer
+
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="RefreshInfo"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+ @*    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItemMarketInfo())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton> *@
+</MudStack>
+
+<MudDataGrid T="M_Product_Price_Details" Items="@listImport.ToList()" Filterable="true" @ref="muddetails" Style="background-color: lightblue;"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItemDebitInfo"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@context.Actions.StartEditingItemAsync" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItemDebitInfo(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x => ItemidtoChargeName(x.itemid)" Title="Item" Required="false">
+            <EditTemplate>
+                <MudAutocomplete T="Guid?" Label="*Item:"
+                                 @bind-Value="context.Item.itemid"
+                                 Required="true"
+                                 SearchFunc="Search_Charge"
+                                 ToStringFunc="GetChargeLabel" />
+
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.price" Title="Price" Format="#,##0" Required="false" CellClass="custom-right-align">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.price"
+                                 Label="Price" Format="#,##0.##" Culture="@_en"  T="double?"
+                                 Class="text-right-input" />
+
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.cur" Title="Cur" Required="false">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.cur" Label="Cur">
+                    <MudSelectItem Value="@("VND")">VND</MudSelectItem>
+                    <MudSelectItem Value="@("USD")">USD</MudSelectItem>
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.note" Title="Ghi Chú" Required="false">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.note" Label="Ghi Chú" Placeholder="Nhập ghi chú..."
+                              Adornment="Adornment.Start" AdornmentIcon="Icons.Material.Filled.Notes"
+                              InputType="InputType.Text" Lines="3" />
+            </EditTemplate>
+        </PropertyColumn>
+
+    </Columns>
+</MudDataGrid>
+
+@code {
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    [Parameter] public Models.M_Duan _Product_price_details { get; set; }
+    private List<Models.ChargeModel> charges = new List<Models.ChargeModel>();
+    private List<Models.M_Product_Price_Details> listImport = new List<Models.M_Product_Price_Details>();
+    bool cusmarket_loading = false;
+    private MudDataGrid<Models.M_Product_Price_Details> muddetails;
+    private string searchText_item = "";
+    private List<ChargeModel> filteredCharges = new List<ChargeModel>();
+    [Parameter] public string Status { get; set; }
+    public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    private bool _resizeColumn;
+    protected async override Task OnInitializedAsync()
+    {
+        charges = await QuoSv.Getcharge();
+
+        await RefreshInfo();
+    }
+
+    async Task RefreshInfo()
+    {
+        try
+        {
+            cusmarket_loading = true;
+            listImport.Clear();
+            StateHasChanged();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "Product_Price"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            listImport = await prsv.GetListProductPriceDetails_pricingrequest(_Product_price_details.Id);
+        }
+        finally
+        {
+            cusmarket_loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    async Task AddItemMarketInfo()
+    {
+        if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "Product_Price"))
+        {
+            CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_Product_Price_Details();
+
+        listImport.Add(item);
+
+        await muddetails.SetEditingItemAsync(listImport.LastOrDefault()!);
+    }
+
+    async Task CommittedItemDebitInfo(M_Product_Price_Details item)
+    {
+
+        // item.date = DateTime.Now.ToString();
+
+        // item.userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.UserUPdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.DateUpdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.id != Guid.Empty ? await prsv.UpdateProductPrice_details(item) : await prsv.CreateProductPrice_details(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await RefreshInfo();
+    }
+
+    async Task DeleteItemDebitInfo(M_Product_Price_Details item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await prsv.DeletepRODUCTdETAILS(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await RefreshInfo();
+        }
+
+    }
+
+    string ItemidtoChargeName(Guid? itemid)
+    {
+        if (itemid == null || itemid == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == itemid);
+        return rs == null ? string.Empty : rs.CHARGE!;
+    }
+
+    private async Task FilterCharge()
+    {
+
+        if (string.IsNullOrWhiteSpace(searchText_item))
+        {
+            filteredCharges = charges;
+        }
+        else
+        {
+            filteredCharges = charges.Where(x => x.CHARGE != null)
+                .Where(c => c.CHARGE_CODE.Contains(searchText_item, StringComparison.OrdinalIgnoreCase) ||
+                            c.CHARGE.Contains(searchText_item, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        await InvokeAsync(StateHasChanged); // Cập nhật giao diện
+    }
+
+    private string GetChargeLabel(Guid? id)
+    {
+        var customer = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return customer != null ? customer.CHARGE : string.Empty;
+    }
+
+    private async Task<IEnumerable<Guid?>> Search_Charge(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return charges.Select(x => (Guid?)x.CHARGE_ID);
+
+        return charges
+            .Where(x => (x.CHARGE).Contains(value, StringComparison.InvariantCultureIgnoreCase))
+            .Select(x => (Guid?)x.CHARGE_ID);
+    }
+
+}

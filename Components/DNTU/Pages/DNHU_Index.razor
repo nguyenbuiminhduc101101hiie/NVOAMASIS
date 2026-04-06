@@ -1,0 +1,337 @@
+﻿
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject Bieugianangha_Services Bgnhsv
+@inject CustomerService Cussv
+@inject DNTUServices DNTUSV
+
+
+
+
+<MudDataGrid T="M_DNHU" Items="@Listdata.ToList()" Filterable="true" @ref="mudTable" Style="background-color: lightblue;"
+             Dense="true" Virtualize="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)">
+    <Columns>
+
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+              <PropertyColumn Property="x=>x.So" Title="@Localizer["So"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => CustomerName(x.DeNghiTamUngID)" Title="@Localizer["DNTUNo"]" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.DeNghiTamUngID" Label="@Localizer["DNTUNo"]">
+                    @foreach (var item in M_DNTUs)
+                    {
+                        <MudSelectItem Value="@item.Id">@item.So</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x=>x.Ngay" Title="@Localizer["NGAY"]" Required="false" CellStyleFunc="_cellStyleFunc" Format="dd/MM/yyyy">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Kinhgui" Title="@Localizer["Kinhgui"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Tennguoidenghi" Title="@Localizer["Tennguoidenghi"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Bophan" Title="@Localizer["bophan"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Noidung" Title="@Localizer["noidung"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Sotien" Title="@Localizer["sotien"]" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Loaitiente" Title="@Localizer["Loaitiente"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.tigia" Title="@Localizer["tigia"]" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Chungtukemtheo" Title="@Localizer["Chungtukemtheo"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Bkno" Title="@Localizer["BookingNo"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Hbl" Title="@Localizer["HBL"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Files" Title="@Localizer["Files"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+            <TemplateColumn Title="@Localizer["Approve"]">
+            <CellTemplate>
+                <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                </MudCheckBox>
+            </CellTemplate>
+        </TemplateColumn>
+
+
+        <PropertyColumn Property="x=>x.Continued" Title="@Localizer["Continued"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+    </Columns>
+
+</MudDataGrid>
+
+@code {
+    List<M_DNHU> Listdata = new List<M_DNHU>();
+    MudDataGrid<M_DNHU> mudTable;
+        [Parameter] public Models.M_DNTU _DNTU_details { get; set; }
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    M_DNHU detail;
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<M_Customer> filteredCarr = new List<M_Customer>();
+    private List<M_Customer> Cuss_Carr = new List<M_Customer>();
+    private List<Terminal_> Terminals = new List<Terminal_>();
+    private List<M_DNTU> M_DNTUs = new List<M_DNTU>();
+    List<string> DNTUs = new List<string>();
+
+
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    protected async override Task OnInitializedAsync()
+    {
+        CustomerList = await Cussv.GetList();
+        M_DNTUs = DNTUSV.GetListDNTU();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "DNHU").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+      
+        DNTUs = M_DNTUs.Select(x => x.So).ToList();
+
+        Terminals = await gsv.GetList_Terminal();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Cuss_Carr = await lcsv.GetList_Customer_line();
+        await Refresh();
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = M_DNTUs.FirstOrDefault(x => x.Id == customerID);
+        return rs != null ? rs.So! : "";
+    }
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "DNHU"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = DNTUSV.GetListDNHU_by_idTU(_DNTU_details.Id);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_DNHU> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_DNHU m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(M_DNHU item)
+    {
+        item.UserUpdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.DeNghiHoanUngID != Guid.Empty ? await DNTUSV.UpdatedeNghiHoanUng_Detail(item) : await DNTUSV.CreateDeNghiHoanUng_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    int? index_no;
+
+    async Task DeleteItem(M_DNHU item)
+    {
+        if (item.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Delete", "DNHU"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await DNTUSV.DeletedeNghiHoanUng_Detail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(M_DNHU sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_DNHU sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.So))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.So!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.So} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    private Func<M_DNHU, string> _cellStyleFunc => x =>
+       {
+           string style = "";
+
+           if (string.IsNullOrEmpty(x.Trangthai))
+               return "color: #000000";
+
+           var rs = M_Trangthais
+           .Where(t => (t.Noidung).Contains(x.Trangthai, StringComparison.InvariantCultureIgnoreCase)
+               && t.Tieude.Equals("DNHU", StringComparison.InvariantCultureIgnoreCase))
+           .Select(t => t.Mamau)
+           .FirstOrDefault();
+           return "color: " + rs;
+
+
+       };
+
+    
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+
+            if (Listdata != null)
+            {
+                Listdata.Clear();
+            }
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "DNHU"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await DNTUSV.GetListdeNghiHoanUng_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    private async Task OnApproveCheckboxWrapper(M_DNHU item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "DNHU"))
+        {
+            var rs = await DNTUSV.UpdateCreatedeNghiHoanUng(item);
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+}

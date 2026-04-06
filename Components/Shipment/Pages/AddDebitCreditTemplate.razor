@@ -1,0 +1,340 @@
+@using MudBlazor
+@inject ISnackbar Snackbar
+@inject SupportServices supsv
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+  <DialogContent>
+    <MudGrid Class="mb-2">
+      <MudItem xs="12" sm="6">
+        <MudTextField T="string"
+                      Label="Search Item"
+                      @bind-Value="_itemSearchText"
+                      Immediate="true"
+                      Placeholder="Nhập mã/tên item..." />
+      </MudItem>
+      <MudItem xs="12" sm="6">
+        <MudTextField T="string"
+                      Label="Search Customer/Vendor"
+                      @bind-Value="_customerSearchText"
+                      Immediate="true"
+                      Placeholder="Nhập mã/tên customer..." />
+      </MudItem>
+    </MudGrid>
+
+    <MudTable Items="FilteredTemplates" Hover="true" Dense="true">
+      <HeaderContent>
+        <MudTh>Item</MudTh>
+        <MudTh>Customer/Vendor</MudTh>
+        <MudTh>Amount</MudTh>
+        <MudTh>Curency</MudTh>
+        <MudTh>Debit/Credit</MudTh>
+        <MudTh>Continued</MudTh>
+        <MudTh>User</MudTh>
+        <MudTh>Shipment Type</MudTh>
+        <MudTh>@Localizer["Type"]</MudTh>
+        <MudTh style="width:120px">Actions</MudTh>
+      </HeaderContent>
+
+      <RowTemplate Context="row">
+        @if (editId == row.Id)
+        {
+          <!-- 🔧 Edit Mode -->
+          <MudTd>
+            <MudAutocomplete T="Guid"
+                             @bind-Value="editModel.ItemId"
+                             SearchFunc="SearchCharge"
+                             ToStringFunc="CharIdToCharge"
+                             Dense="true" Immediate MaxItems="50"
+                             Required="true" />
+          </MudTd>
+          <MudTd>
+            <MudAutocomplete T="Guid"
+                             @bind-Value="editModel.CustomerId"
+                             SearchFunc="SearchCustomer"
+                             ToStringFunc="CusidtoCusCode"
+                             Dense="true" Immediate MaxItems="50"
+                             Required="true"/>
+          </MudTd>
+          <MudTd>
+                <MudNumericField T="double" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Money"
+                            Min="0" @bind-Value="editModel.Amount" Format="##,##0" Immediate/>
+          </MudTd>
+          <MudTd>
+              <MudSelect T="string"
+                            @bind-Value="editModel.Cur"
+                            Required="true" Immediate>
+                    @foreach(var cur in Curs)
+                    {
+                        <MudSelectItem Value="@cur">@cur</MudSelectItem>
+                    }
+                </MudSelect>
+          </MudTd>
+          <MudTd>
+            <MudSelect T="string"
+                          @bind-Value="editModel.DebitCredit"
+                                      Required="true" Immediate >
+                <MudSelectItem Value="@("Debit")">Debit</MudSelectItem>
+                <MudSelectItem Value="@("Credit")">Credit</MudSelectItem>
+            </MudSelect>
+          </MudTd>
+          <MudTd>
+            <MudCheckBox @bind-Checked="editModel.Continued" />
+          </MudTd>
+          <MudTd>
+            <MudTextField Value="editModel.UserCreate" Immediate Readonly Required />
+          </MudTd>
+          <MudTd>
+            <MudSelect T="string"
+                          @bind-Value="editModel.ShipmentType"
+                                      Required="true" Immediate >
+                <MudSelectItem Value="@("AI")">AI</MudSelectItem>
+                <MudSelectItem Value="@("AE")">AE</MudSelectItem>
+                <MudSelectItem Value="@("SI")">SI</MudSelectItem>
+                <MudSelectItem Value="@("SE")">SE</MudSelectItem>
+                <MudSelectItem Value="@("Truck")">Truck</MudSelectItem>
+                <MudSelectItem Value="@("Customs")">Customs</MudSelectItem>
+            </MudSelect>
+          </MudTd>
+          <MudTd>
+            <MudAutocomplete T="string"
+                             @bind-Value="editModel.type"
+                             Label="@Localizer["Type"]"
+                             Required="true"
+                             CoerceValue
+                             Dense="true"
+                             Immediate="true"
+                             MaxItems="50"
+                             SearchFunc="SearchType" />
+          </MudTd>
+          <MudTd>
+            <MudIconButton Icon="@Icons.Material.Filled.Check"
+                           Color="Color.Primary"
+                           OnClick="@(() => SaveRow(row))" />
+            <MudIconButton Icon="@Icons.Material.Filled.Close"
+                           Color="Color.Secondary"
+                           OnClick="CancelEdit" />
+          </MudTd>
+        }
+        else
+        {
+          <!-- 📄 Display Mode -->
+          <MudTd>@CharIdToCharge(row.ItemId)</MudTd>
+          <MudTd>@CusidtoCusCode(row.CustomerId)</MudTd>
+          <MudTd>@row.Amount.ToString("##,##0")</MudTd>
+          <MudTd>@row.Cur</MudTd>
+          <MudTd>@row.DebitCredit</MudTd>
+          <MudTd>
+            <MudCheckBox Checked="@row.Continued" Disabled="true" />
+          </MudTd>
+          <MudTd>@row.UserCreate</MudTd>
+            <MudTd>@row.ShipmentType</MudTd>
+          <MudTd>@(row.type ?? "")</MudTd>
+          <MudTd>
+            <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                           OnClick="@(() => StartEdit(row))" />
+            <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                           Color="Color.Error"
+                           OnClick="@(() => DeleteRow(row))" />
+          </MudTd>
+        }
+      </RowTemplate>
+
+      <FooterContent>
+        <MudTr>
+          <MudTd >
+            <MudButton Variant="Variant.Outlined"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="AddNew">
+              Thêm mới
+            </MudButton>
+          </MudTd>
+        </MudTr>
+      </FooterContent>
+    </MudTable>
+  </DialogContent>
+
+  <DialogActions>
+    <MudButton Color="Color.Primary"
+               Variant="Variant.Filled"
+               Disabled="@_isSubmitting"
+               OnClick="Submit">
+      Lưu
+    </MudButton>
+    <MudButton OnClick="Cancel">
+      Hủy
+    </MudButton>
+  </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<DebitCreditTemplate> Templates { get; set; } = new();
+    [Parameter] public List<ChargeModel> Charges { get; set; } = new();
+    [Parameter] public List<M_Customer> Customers { get; set; } = new();
+    [Parameter] public string usr { get; set; } = "N/A";
+
+    private List<DebitCreditTemplate> _templates = new();
+    private Guid? editId;
+    private DebitCreditTemplate editModel = new();
+    private bool _isSubmitting;
+    private List<string?> Curs = new();
+    private List<string> Types = new();
+    private string _itemSearchText = string.Empty;
+    private string _customerSearchText = string.Empty;
+
+    private IEnumerable<DebitCreditTemplate> FilteredTemplates =>
+        _templates.Where(row =>
+            (string.IsNullOrWhiteSpace(_itemSearchText) ||
+             CharIdToCharge(row.ItemId).Contains(_itemSearchText, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(_customerSearchText) ||
+             CusidtoCusCode(row.CustomerId).Contains(_customerSearchText, StringComparison.OrdinalIgnoreCase)));
+    protected override void OnInitialized()
+    {
+        // Clone list để chỉnh sửa riêng, không làm thay đổi list gốc cho đến khi Submit
+        _templates = Templates
+            .Select(t => new DebitCreditTemplate {
+            Id = t.Id,
+            ItemId = t.ItemId,
+            CustomerId = t.CustomerId,
+            DebitCredit = t.DebitCredit,
+            UserCreate = t.UserCreate,
+            ShipmentType = t.ShipmentType,
+            type = t.type,
+            Continued = t.Continued,
+            Amount = t.Amount,
+            Cur = t.Cur
+            })
+            .ToList();
+    }
+    protected async override Task OnParametersSetAsync()
+    {
+        Curs = await Vcbsv.GetCur();
+        Types = await shipsv.GetListTypeInDebitCredit();
+    }
+    void StartEdit(DebitCreditTemplate row)
+    {
+    editId = row.Id;
+    editModel = new DebitCreditTemplate {
+      Id = row.Id,
+      ItemId = row.ItemId,
+      CustomerId = row.CustomerId,
+      DebitCredit = row.DebitCredit,
+      UserCreate = row.UserCreate,
+      ShipmentType = row.ShipmentType,
+      type = row.type,
+      Continued = row.Continued,
+      Cur = row.Cur,
+      Amount = row.Amount
+    };
+  }
+
+  void AddNew()
+  {
+    var newRow = new DebitCreditTemplate {
+      Id = Guid.NewGuid(),
+      ItemId = Guid.Empty,
+      CustomerId = Guid.Empty,
+      DebitCredit = "Debit",
+      UserCreate = usr,
+      ShipmentType = "SI",
+      Continued = true
+    };
+    _templates.Add(newRow);
+    StartEdit(newRow);
+  }
+
+  void SaveRow(DebitCreditTemplate original)
+  {
+    // Validate đơn giản
+    if (editModel.ItemId == Guid.Empty || string.IsNullOrWhiteSpace(editModel.DebitCredit)
+        || string.IsNullOrWhiteSpace(editModel.type))
+    {
+      Snackbar.Add("Vui lòng chọn Item, Type và Debit/Credit", MudBlazor.Severity.Error);
+      return;
+    }
+
+    var idx = _templates.FindIndex(t => t.Id == original.Id);
+    if (idx >= 0)
+      _templates[idx] = new DebitCreditTemplate {
+        Id = original.Id,
+        ItemId = editModel.ItemId,
+        CustomerId = editModel.CustomerId,
+        DebitCredit = editModel.DebitCredit,
+        UserCreate = editModel.UserCreate,
+        ShipmentType = editModel.ShipmentType,
+        type = editModel.type,
+        Continued = editModel.Continued,
+        Cur = editModel.Cur,
+        Amount = editModel.Amount
+      };
+
+    editId = null;
+  }
+
+  void CancelEdit()
+  {
+    // Nếu đang edit row mới (chưa có trong Templates gốc) thì xóa luôn
+    if (!Templates.Any(t => t.Id == editModel.Id))
+      _templates.RemoveAll(t => t.Id == editModel.Id);
+
+    editId = null;
+  }
+
+  void DeleteRow(DebitCreditTemplate row)
+  {
+    _templates.Remove(row);
+  }
+
+  private Task<IEnumerable<string>> SearchType(string? text)
+  {
+      var items = Types.Where(x => !string.IsNullOrEmpty(x)).Distinct();
+      if (string.IsNullOrWhiteSpace(text))
+          return Task.FromResult(items.AsEnumerable());
+      return Task.FromResult(items.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase)));
+  }
+
+  Task<IEnumerable<Guid>> SearchCharge(string text)
+  {
+    var q = Charges.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(text))
+      q = q.Where(c => (c.CHARGE_CODE + "_" + c.CHARGE)
+           .Contains(text, StringComparison.OrdinalIgnoreCase));
+    return Task.FromResult(q.Select(c => c.CHARGE_ID));
+  }
+
+  string CharIdToCharge(Guid id)
+  {
+    var c = Charges.FirstOrDefault(x => x.CHARGE_ID == id);
+    return c == null ? "" : $"{c.CHARGE_CODE} - {c.CHARGE}";
+  }
+
+  void Submit()
+  {
+    _isSubmitting = true;
+    // Trả về list đã chỉnh sửa
+    MudDialog.Close(DialogResult.Ok(_templates));
+  }
+
+  void Cancel() => MudDialog.Cancel();
+  private Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        var customers = Customers.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            customers = customers.Where(c =>
+                (!string.IsNullOrWhiteSpace(c.Customer_Code) &&
+                 c.Customer_Code.Contains(text, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(c.COMPANY) &&
+                 c.COMPANY.Contains(text, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return Task.FromResult(customers.Select(c => c.Customer_ID).Distinct());
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : $"{rs.Customer_Code} - {rs.COMPANY!}";
+    }
+}

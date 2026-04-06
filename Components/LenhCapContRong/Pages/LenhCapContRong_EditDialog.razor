@@ -1,0 +1,613 @@
+@using MudBlazor
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AccountService asv
+@inject SupportServices supsv
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <MudGrid>
+                <MudItem xs="12" sm="6">
+                    <MudAutocomplete T="Booking"
+                                     Value="_selectedBooking"
+                                     ValueChanged="OnBookingChanged"
+                                     Label="Booking No"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     SearchFunc="SearchBooking"
+                                     ToStringFunc="BookingToString"
+                                     Clearable="true"
+                                     CoerceText="true"
+                                     Required="true"
+                                     RequiredError="Booking No is required" />
+                </MudItem>
+                <MudItem xs="1" sm="1">
+                    <MudButton Style="background-color: #007BFF; color: white;"
+                               Size="Size.Small"
+                               Color="Color.Primary"
+                               Disabled="@(_model.id != Guid.Empty)"
+                               OnClick="GetOrderNo">
+                        >>>>
+                    </MudButton>
+                </MudItem>
+                <MudItem xs="11" sm="11">
+                    <MudTextField @bind-Value="_model.OrderNo"
+                                  Label="OrderNo"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Required="true"
+                                  RequiredError="OrderNo is required" />
+                </MudItem>
+               
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker @bind-Date="_model.HieuLucLenh"
+                                   Label="Hiệu lực lệnh"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   DateFormat="dd/MM/yyyy"
+                                   Clearable="true" />
+                </MudItem>
+
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="string"
+                               Value="_model.ContType"
+                               ValueChanged="@((string? val) => OnContTypeChanged(val))"
+                               Label="Cont Type"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Required="true"
+                               RequiredError="Vui lòng chọn Cont Type"
+                               Disabled="@(_remainingByType.Count == 0)">
+                        @foreach (var t in _availableContTypes)
+                        {
+                            <MudSelectItem T="string" Value="@t">
+                                @{
+                                    var remaining = _remainingByType.TryGetValue(t, out var v) ? v : 0;
+                                }
+                                @($"{t} (Còn: {remaining})")
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                <MudItem xs="12" sm="6">
+                    <MudNumericField T="int"
+                                     @bind-Value="QuantityValue"
+                                     Label="Quantity"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Min="1"
+                                     Disabled="@(_remainingByType.Count == 0 || string.IsNullOrWhiteSpace(_model.ContType))" />
+                    @if (_remainingByType.Count != 0 && !string.IsNullOrWhiteSpace(_model.ContType))
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-1">
+                            Max: @_maxQuantity
+                        </MudText>
+                    }
+                </MudItem>
+
+                <MudItem xs="12" sm="6">
+                    <div @key="_model.Saycont">
+                        <MudTextField @bind-Value="_model.Saycont"
+                                      Label="Saycont"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      ReadOnly="true" />
+                    </div>
+                </MudItem>
+
+                <MudItem xs="12" sm="6">
+                    <MudAutocomplete T="string"
+                                     Value="@_model.HaContTai"
+                                     ValueChanged="OnHaContTaiValueChanged"
+                                     Text="@_haContTaiInput"
+                                     TextChanged="OnHaContTaiTextChanged"
+                                     Label="HaContTai"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     SearchFunc="SearchHaContTai"
+                                     Clearable="true"
+                                     CoerceText="true"
+                                     CoerceValue="true"
+                                     Immediate="true"
+                                     ResetValueOnEmptyText="false"
+                                     OnBlur="OnHaContTaiBlur" />
+                </MudItem>
+
+                <MudItem xs="12" sm="6">
+                    <MudTextField Value="@_trongLuongInput"
+                                  ValueChanged="@((string v) => OnTrongLuongValueChanged(v))"
+                                  Label="TrongLuongCont"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  OnBlur="OnTrongLuongBlur" />
+                    @if (!_trongLuongManuallyEdited && !string.IsNullOrWhiteSpace(_trongLuongInput))
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-1">
+                            Auto by Cont Type
+                        </MudText>
+                    }
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public M_LenhCapContRong? Model { get; set; }
+    [Parameter] public string Title { get; set; } = "Lenh Cấp Cont Rỗng";
+
+    private MudForm? _form;
+    private M_LenhCapContRong _model = new();
+    private Booking? _selectedBooking;
+    private string _haContTaiInput = string.Empty;
+    private string _trongLuongInput = string.Empty;
+    private bool _trongLuongManuallyEdited;
+
+    private readonly List<string> _contTypeCodes = new()
+    {
+        "DC20",
+        "HC40",
+        "RF20",
+        "RF40",
+        "DC40",
+        "RH40",
+        "HC45",
+        "OT20",
+        "OT40",
+        "FR20",
+        "FR40"
+    };
+
+    private readonly Dictionary<string, int> _remainingByType = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _availableContTypes = new();
+    private int _maxQuantity;
+
+    private List<ParamTrongLuongCont> _paramTrongLuong = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _model = Model != null
+            ? new M_LenhCapContRong
+            {
+                id = Model.id,
+                bookingid = Model.bookingid,
+                OrderNo = Model.OrderNo,
+                HieuLucLenh = Model.HieuLucLenh,
+                ContType = Model.ContType,
+                Quantity = Model.Quantity,
+                Saycont = Model.Saycont,
+                HaContTai = Model.HaContTai,
+                TrongLuongCont = Model.TrongLuongCont
+            }
+            : new M_LenhCapContRong { id = Guid.Empty, bookingid = Guid.Empty };
+
+        _haContTaiInput = _model.HaContTai ?? string.Empty;
+        _trongLuongInput = _model.TrongLuongCont ?? string.Empty;
+        _trongLuongManuallyEdited = !string.IsNullOrWhiteSpace(_trongLuongInput);
+
+        await LoadParamTrongLuongAsync();
+
+        if (_model.bookingid != Guid.Empty)
+        {
+            // Load full booking quantities for the selected booking id
+            try
+            {
+                await using var db = await DbFactory.CreateDbContextAsync();
+                _selectedBooking = await db.CONTAINEROUTBOUNDNOTIFY_sale
+                    .AsNoTracking()
+                    .Where(x => x.ContainerOutBoundNotifyId == _model.bookingid)
+                    .Select(x => new Booking
+                    {
+                        ContainerOutBoundNotifyId = x.ContainerOutBoundNotifyId,
+                        BookingNo = x.BookingNo,
+                        DC20 = x.DC20,
+                        HC40 = x.HC40,
+                        RF20 = x.RF20,
+                        RF40 = x.RF40,
+                        DC40 = x.DC40,
+                        RH40 = x.RH40,
+                        HC45 = x.HC45,
+                        OT20 = x.OT20,
+                        OT40 = x.OT40,
+                        FR20 = x.FR20,
+                        FR40 = x.FR40
+                    })
+                    .FirstOrDefaultAsync();
+            }
+            catch
+            {
+                // Leave _selectedBooking null; user can re-select booking.
+            }
+        }
+
+        await RecomputeRemainingAsync();
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task OnContTypeChanged(string? value)
+    {
+        _model.ContType = value;
+        UpdateSaycont();
+        UpdateTrongLuongAuto();
+        await RecomputeRemainingAsync();
+    }
+
+    private async Task Save()
+    {
+        if (_form == null)
+            return;
+
+        await _form.Validate();
+        if (!_form.IsValid)
+            return;
+
+        if (_selectedBooking == null || _selectedBooking.ContainerOutBoundNotifyId == Guid.Empty)
+            return;
+
+        if (string.IsNullOrWhiteSpace(_model.ContType))
+            return;
+
+        // Ensure max is computed based on latest state
+        await RecomputeRemainingAsync();
+
+        if (_model.Quantity < 1 || _model.Quantity > _maxQuantity)
+            return;
+
+        _model.bookingid = _selectedBooking.ContainerOutBoundNotifyId;
+        UpdateSaycont();
+        MudDialog.Close(DialogResult.Ok(_model));
+    }
+
+    private async Task GetOrderNo()
+    {
+        try
+        {
+            int formattedYear = DateTime.Now.Year;
+            int formattedMonth = DateTime.Now.Month;
+
+            string usr = asv.GetAuth().Result.User.Identity!.Name!;
+            var refno = await supsv.GetRefNoByFunc("OrderNo", formattedMonth, formattedYear, usr);
+
+            var rs = asv.GetUserDetail();
+            var cn = rs.Branch;
+
+            _model.OrderNo = cn + "LS" + formattedYear + formattedMonth + refno.Value.ToString("D4");
+            StateHasChanged();
+        }
+        catch
+        {
+            // keep silent; snackbar handled by parent page
+        }
+    }
+
+    private async Task OnBookingChanged(Booking? booking)
+    {
+        _selectedBooking = booking;
+        _model.bookingid = booking?.ContainerOutBoundNotifyId ?? Guid.Empty;
+        await RecomputeRemainingAsync();
+    }
+
+    private int QuantityValue
+    {
+        get => _model.Quantity;
+        set
+        {
+            if (value < 0)
+                value = 0;
+
+            if (_maxQuantity > 0 && value > _maxQuantity)
+                value = _maxQuantity;
+
+            _model.Quantity = value;
+            UpdateSaycont();
+            UpdateTrongLuongAuto();
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task<IEnumerable<Booking>> SearchBooking(string? value)
+    {
+        var s = value?.Trim() ?? string.Empty;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var query = db.CONTAINEROUTBOUNDNOTIFY_sale.AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(s))
+            query = query.Where(x => x.BookingNo != null && x.BookingNo.Contains(s));
+
+        return await query
+            .OrderByDescending(x => x.UpdateTime)
+            .Select(x => new Booking
+            {
+                ContainerOutBoundNotifyId = x.ContainerOutBoundNotifyId,
+                BookingNo = x.BookingNo,
+                DC20 = x.DC20,
+                HC40 = x.HC40,
+                RF20 = x.RF20,
+                RF40 = x.RF40,
+                DC40 = x.DC40,
+                RH40 = x.RH40,
+                HC45 = x.HC45,
+                OT20 = x.OT20,
+                OT40 = x.OT40,
+                FR20 = x.FR20,
+                FR40 = x.FR40
+            })
+            .Take(30)
+            .ToListAsync();
+    }
+
+    private static string BookingToString(Booking? b)
+        => b?.BookingNo ?? string.Empty;
+
+    private async Task RecomputeRemainingAsync()
+    {
+        _remainingByType.Clear();
+        _availableContTypes = new List<string>();
+        _maxQuantity = 0;
+
+        if (_selectedBooking == null || _selectedBooking.ContainerOutBoundNotifyId == Guid.Empty)
+            return;
+
+        var bookingId = _selectedBooking.ContainerOutBoundNotifyId;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        foreach (var t in _contTypeCodes)
+        {
+            var bookingTotal = GetBookingTotalByContType(_selectedBooking, t);
+
+            // allocated(T) = sum of Quantity for same booking & same cont type, excluding current record id when editing.
+            var allocated = await db.LenhCapContRong
+                .AsNoTracking()
+                .Where(x => x.bookingid == bookingId
+                            && x.ContType == t
+                            && x.id != _model.id)
+                .Select(x => (int?)x.Quantity)
+                .SumAsync();
+
+            var allocatedValue = allocated ?? 0;
+            var remaining = bookingTotal - allocatedValue;
+            if (remaining < 0) remaining = 0;
+
+            _remainingByType[t] = remaining;
+        }
+
+        // New flow: show only types còn lại > 0.
+        // Edit flow: also keep current ContType even if remaining == 0 (so user can keep it).
+        var currentType = _model.ContType;
+        _availableContTypes = _contTypeCodes
+            .Where(t => (_remainingByType.TryGetValue(t, out var r) ? r : 0) > 0
+                        || (!string.IsNullOrWhiteSpace(currentType) && string.Equals(currentType, t, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        if (string.IsNullOrWhiteSpace(_model.ContType) ||
+            !_availableContTypes.Contains(_model.ContType, StringComparer.OrdinalIgnoreCase))
+        {
+            _model.ContType = _availableContTypes.FirstOrDefault();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_model.ContType) &&
+            _remainingByType.TryGetValue(_model.ContType!, out var rem))
+        {
+            _maxQuantity = rem;
+            if (_model.Quantity < 1 && _maxQuantity > 0)
+                _model.Quantity = Math.Min(1, _maxQuantity);
+            if (_model.Quantity > _maxQuantity)
+                _model.Quantity = _maxQuantity;
+        }
+
+        UpdateSaycont();
+        UpdateTrongLuongAuto();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static int GetBookingTotalByContType(Booking b, string contType)
+    {
+        return contType switch
+        {
+            "DC20" => b.DC20 ?? 0,
+            "HC40" => b.HC40 ?? 0,
+            "RF20" => b.RF20 ?? 0,
+            "RF40" => b.RF40 ?? 0,
+            "DC40" => b.DC40 ?? 0,
+            "RH40" => b.RH40 ?? 0,
+            "HC45" => b.HC45 ?? 0,
+            "OT20" => b.OT20 ?? 0,
+            "OT40" => b.OT40 ?? 0,
+            "FR20" => b.FR20 ?? 0,
+            "FR40" => b.FR40 ?? 0,
+            _ => 0
+        };
+    }
+
+    private void UpdateSaycont()
+    {
+        var newValue = FormatSaycont(_model.ContType, _model.Quantity);
+        if (!string.Equals(_model.Saycont, newValue, StringComparison.Ordinal))
+        {
+            _model.Saycont = newValue;
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void UpdateTrongLuongAuto()
+    {
+        if (_trongLuongManuallyEdited)
+            return;
+
+        var weight = FormatTrongLuongByContTypeFromParam(_model.ContType);
+        var auto = FormatTrongLuongDisplay(_model.ContType, weight);
+        if (!string.Equals(_trongLuongInput, auto, StringComparison.Ordinal))
+        {
+            _trongLuongInput = auto;
+            _model.TrongLuongCont = string.IsNullOrWhiteSpace(auto) ? null : auto;
+        }
+    }
+
+    private static string FormatTrongLuongDisplay(string? contType, string? trongLuong)
+    {
+        if (string.IsNullOrWhiteSpace(trongLuong))
+            return string.Empty;
+
+        var size = TryGetFeetSize(contType);
+        var loai = size?.ToString() ?? (contType?.Trim().ToUpperInvariant() ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(loai))
+            return trongLuong.Trim();
+
+        return $"Cont {loai}': {trongLuong.Trim()}";
+    }
+
+    private string FormatTrongLuongByContTypeFromParam(string? contType)
+    {
+        if (string.IsNullOrWhiteSpace(contType))
+            return string.Empty;
+
+        contType = contType.Trim().ToUpperInvariant();
+
+        // 1) Match trực tiếp theo mã cont (DC20/HC40/...)
+        var direct = _paramTrongLuong.FirstOrDefault(x =>
+            !string.IsNullOrWhiteSpace(x.LoaiCont) &&
+            string.Equals(x.LoaiCont!.Trim().ToUpperInvariant(), contType, StringComparison.Ordinal));
+        if (!string.IsNullOrWhiteSpace(direct?.TrongLuongToiDa))
+            return direct!.TrongLuongToiDa!.Trim();
+
+        // 2) Fallback nếu user nhập ngược cột (LoaiCont=28MT, TrongLuongToiDa=DC20)
+        var swapped = _paramTrongLuong.FirstOrDefault(x =>
+            !string.IsNullOrWhiteSpace(x.TrongLuongToiDa) &&
+            string.Equals(x.TrongLuongToiDa!.Trim().ToUpperInvariant(), contType, StringComparison.Ordinal));
+        if (!string.IsNullOrWhiteSpace(swapped?.LoaiCont))
+            return swapped!.LoaiCont!.Trim();
+
+        // 3) Fallback theo size feet (20/40/45...)
+        var size = TryGetFeetSize(contType);
+        if (size == null)
+            return string.Empty;
+
+        var bySize = _paramTrongLuong.FirstOrDefault(x =>
+            !string.IsNullOrWhiteSpace(x.LoaiCont) &&
+            string.Equals(x.LoaiCont!.Trim(), size.Value.ToString(), StringComparison.OrdinalIgnoreCase));
+        return bySize?.TrongLuongToiDa?.Trim() ?? string.Empty;
+    }
+
+    private static int? TryGetFeetSize(string? contType)
+    {
+        if (string.IsNullOrWhiteSpace(contType))
+            return null;
+
+        contType = contType.Trim().ToUpperInvariant();
+
+        var i = contType.Length - 1;
+        while (i >= 0 && char.IsDigit(contType[i]))
+            i--;
+
+        var sizePart = contType.Substring(i + 1);
+        return int.TryParse(sizePart, out var size) ? size : null;
+    }
+
+    private async Task LoadParamTrongLuongAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _paramTrongLuong = await db.ParamTrongLuongCont
+                .AsNoTracking()
+                .Where(x => x.LoaiCont != null && x.TrongLuongToiDa != null)
+                .OrderBy(x => x.LoaiCont)
+                .ToListAsync();
+        }
+        catch
+        {
+            _paramTrongLuong = new List<ParamTrongLuongCont>();
+        }
+    }
+
+    private static string FormatSaycont(string? contType, int quantity)
+    {
+        if (string.IsNullOrWhiteSpace(contType) || quantity < 1)
+            return string.Empty;
+
+        contType = contType.Trim().ToUpperInvariant();
+
+        var i = contType.Length - 1;
+        while (i >= 0 && char.IsDigit(contType[i]))
+            i--;
+
+        var sizePart = contType.Substring(i + 1);
+        if (!int.TryParse(sizePart, out var size))
+            return $"{quantity}x{contType}";
+
+        var kindPart = contType.Substring(0, i + 1);
+        if (string.IsNullOrWhiteSpace(kindPart))
+            kindPart = contType;
+
+        return $"{quantity}x{size}'{kindPart}";
+    }
+
+    private async Task<IEnumerable<string>> SearchHaContTai(string? value)
+    {
+        var s = value?.Trim() ?? string.Empty;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var query = db.LenhCapContRong
+            .AsNoTracking()
+            .Where(x => x.HaContTai != null && x.HaContTai != "");
+
+        if (!string.IsNullOrWhiteSpace(s))
+            query = query.Where(x => x.HaContTai!.Contains(s));
+
+        var list = await query
+            .Select(x => x.HaContTai!)
+            .Distinct()
+            .OrderBy(x => x)
+            .Take(50)
+            .ToListAsync();
+
+        return list;
+    }
+
+    private void OnHaContTaiValueChanged(string? value)
+    {
+        _model.HaContTai = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        _haContTaiInput = _model.HaContTai ?? string.Empty;
+    }
+
+    private void OnHaContTaiTextChanged(string text)
+    {
+        _haContTaiInput = text;
+    }
+
+    private void OnHaContTaiBlur(FocusEventArgs _)
+    {
+        _model.HaContTai = string.IsNullOrWhiteSpace(_haContTaiInput) ? null : _haContTaiInput.Trim();
+        _haContTaiInput = _model.HaContTai ?? string.Empty;
+    }
+
+    private void OnTrongLuongValueChanged(string value)
+    {
+        _trongLuongInput = value ?? string.Empty;
+    }
+
+    private void OnTrongLuongBlur(FocusEventArgs _)
+    {
+        _trongLuongInput = _trongLuongInput ?? string.Empty;
+        var v = _trongLuongInput.Trim();
+
+        _model.TrongLuongCont = string.IsNullOrWhiteSpace(v) ? null : v;
+        _trongLuongInput = _model.TrongLuongCont ?? string.Empty;
+        _trongLuongManuallyEdited = !string.IsNullOrWhiteSpace(_model.TrongLuongCont);
+    }
+}
+

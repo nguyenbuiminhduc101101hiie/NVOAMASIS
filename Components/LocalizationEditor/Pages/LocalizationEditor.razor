@@ -1,0 +1,225 @@
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services.Localization
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <!-- Culture Selection -->
+            <MudSelect T="string" @bind-Value="SelectedCulture" @bind-Value:after="OnCultureChanged"
+                Label="@Localizer["Language"]" Variant="Variant.Outlined">
+                @foreach (var culture in AvailableCultures)
+                {
+                    <MudSelectItem Value="@culture">@culture</MudSelectItem>
+                }
+            </MudSelect>
+
+            <!-- ResourceKey Search/Autocomplete -->
+            @if (!string.IsNullOrEmpty(SelectedCulture))
+            {
+                <MudAutocomplete T="string" @bind-Value="SelectedResourceKey" @bind-Value:after="OnResourceKeyChanged"
+                    Label="@Localizer["Key"]" Variant="Variant.Outlined" SearchFunc="SearchResourceKeys" Immediate="true"
+                    CoerceText="true" Clearable="true" MaxItems="50" />
+            }
+
+            <!-- Value Input -->
+            @if (!string.IsNullOrEmpty(SelectedCulture) && !string.IsNullOrEmpty(SelectedResourceKey))
+            {
+                <MudTextField @bind-Value="ResourceValue" Label="@Localizer["Value"]" Variant="Variant.Outlined" Lines="3"
+                    AutoGrow="true" />
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudSpacer />
+        <MudButton OnClick="Cancel" Color="Color.Secondary">@Localizer["Cancel"]</MudButton>
+        <MudButton OnClick="Save" Color="Color.Primary" Variant="Variant.Filled"
+            Disabled="saving || string.IsNullOrEmpty(SelectedCulture) || string.IsNullOrEmpty(SelectedResourceKey)">
+            @(saving? Localizer["Saving..."] : Localizer["Save"])</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public MudDialogInstance? MudDialog { get; set; }
+
+    private string? SelectedCulture { get; set; }
+    private string? SelectedResourceKey { get; set; }
+
+    private string ResourceValue { get; set; } = string.Empty;
+    private List<string> AvailableCultures { get; set; } = new();
+    private List<string> ResourceKeysForCulture { get; set; } = new();
+    private bool saving = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCultures();
+    }
+
+    private async Task LoadCultures()
+    {
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+            AvailableCultures = await context.LocalizationResources
+            .Select(r => r.Culture)
+            .Distinct()
+            .OrderBy(c => c)
+            .ToListAsync();
+
+            // If no cultures in DB, use default list from CultureSelector
+            if (!AvailableCultures.Any())
+            {
+                AvailableCultures = new List<string> { "en-US", "vi-VN", "zh-CN" };
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading cultures: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task OnCultureChanged()
+    {
+        SelectedResourceKey = null;
+        ResourceValue = string.Empty;
+        ResourceKeysForCulture.Clear();
+
+        if (!string.IsNullOrEmpty(SelectedCulture))
+        {
+            await LoadResourceKeysForCulture();
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task LoadResourceKeysForCulture()
+    {
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+            ResourceKeysForCulture = await context.LocalizationResources
+            .Where(r => r.Culture == SelectedCulture)
+            .Select(r => r.ResourceKey)
+            .Distinct()
+            .OrderBy(k => k)
+            .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading resource keys: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task<IEnumerable<string>> SearchResourceKeys(string value)
+    {
+        if (string.IsNullOrEmpty(SelectedCulture))
+        {
+            return Enumerable.Empty<string>();
+        }
+
+        if (ResourceKeysForCulture.Count == 0)
+        {
+            await LoadResourceKeysForCulture();
+        }
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return ResourceKeysForCulture.Take(50);
+        }
+
+        return ResourceKeysForCulture
+        .Where(k => k.Contains(value, StringComparison.OrdinalIgnoreCase))
+        .Take(50);
+    }
+
+    private async Task OnResourceKeyChanged()
+    {
+        if (!string.IsNullOrEmpty(SelectedCulture) && !string.IsNullOrEmpty(SelectedResourceKey))
+        {
+            await LoadResourceValue();
+        }
+        else
+        {
+            ResourceValue = string.Empty;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task LoadResourceValue()
+    {
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+            var resource = await context.LocalizationResources
+            .FirstOrDefaultAsync(r => r.Culture == SelectedCulture && r.ResourceKey == SelectedResourceKey);
+
+            ResourceValue = resource?.Value ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading resource value: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrEmpty(SelectedCulture) || string.IsNullOrEmpty(SelectedResourceKey))
+        {
+            Snackbar.Add(Localizer["PleaseSelectLanguageAndKey"],
+            MudBlazor.Severity.Warning);
+            return;
+        }
+
+        saving = true;
+        try
+        {
+            using var context = await DbFactory.CreateDbContextAsync();
+            var resource = await context.LocalizationResources
+            .FirstOrDefaultAsync(r => r.Culture == SelectedCulture && r.ResourceKey == SelectedResourceKey);
+
+            if (resource == null)
+            {
+                // Create new resource
+                resource = new LocalizationResource
+                {
+                    ResourceKey = SelectedResourceKey,
+                    Culture = SelectedCulture,
+                    Value = ResourceValue
+                };
+                context.LocalizationResources.Add(resource);
+            }
+            else
+            {
+                // Update existing resource
+                resource.Value = ResourceValue;
+            }
+
+            await context.SaveChangesAsync();
+
+            // Clear cache for the updated culture
+            DbStringLocalizerFactory.ClearCache(SelectedCulture);
+
+            Snackbar.Add(Localizer["SaveLanguageValueSuccessfully"], MudBlazor.Severity.Success);
+            MudDialog?.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error saving resource: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private void Cancel()
+    {
+        MudDialog?.Cancel();
+    }
+}

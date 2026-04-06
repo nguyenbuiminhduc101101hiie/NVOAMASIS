@@ -1,0 +1,510 @@
+﻿
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject Bieugianangha_Services Bgnhsv
+@inject CustomerService Cussv
+@inject DNTUServices DNTUSV
+@inject ProductPriceServices prsv;
+@inject IssueReportServices IRSv;
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<PageTitle>@Localizer["IssueReports"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["IssueReports"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenCreateDialog(new Models.M_IssueReports()))"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["new"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenEditDialog(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Edit">
+        @Localizer["edit"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenDuplicateDialog(detail))"
+               Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.CopyAll">
+        @Localizer["duplicate"]
+    </MudButton>
+
+
+</MudStack>
+
+<MudDataGrid T="M_IssueReports" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4" Bordered="true"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" RowClassFunc="@SelectedRowClassFunc"
+             RowClick="@RowClicked" EditDialogOptions="@options"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" Loading="_loading">
+    <Columns>
+
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x => x.No" Title="@Localizer["No"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Title" Title="@Localizer["Title"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Description" Title="@Localizer["Description"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.StepsToReproduce" Title="@Localizer["StepsToReproduce"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.ExpectedResult" Title="@Localizer["ExpectedResult"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.ActualResult" Title="@Localizer["ActualResult"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Severity" Title="@Localizer["Severity"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Status" Title="@Localizer["status"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Reporter" Title="@Localizer["Reporter"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.AssignedTo" Title="@Localizer["AssignedTo"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.ReportDate" Title="@Localizer["CreatedAt"]"  CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.ResolveDate" Title="@Localizer["ResolveDate"]" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+      
+        <PropertyColumn Property="x=>x.UserHandle" Title="@Localizer["Userhandle"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+
+        <TemplateColumn Title="@Localizer["Approve"]">
+            <CellTemplate>
+                <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                </MudCheckBox>
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x=>x.Continued" Title="@Localizer["Continued"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Editable" Title="@Localizer["Editable"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Userupdate" Title="@Localizer["Userupdate"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Dateupdate" Title="@Localizer["Dateupdate"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.ScreenshotUrl" Title="@Localizer["ScreenshotUrl"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+
+    </Columns>
+
+   
+
+
+    <PagerContent>
+        <MudDataGridPager T="M_IssueReports" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+<MudItem xs="12">
+
+    <MudChart ChartType="ChartType.Bar"
+              ChartSeries="@Series"
+              XAxisLabels="@XAxisLabels"
+              Height="350px" Width="100%"
+              ChartOptions="options_chart" />
+
+</MudItem>
+
+@code {
+    List<M_IssueReports> Listdata = new List<M_IssueReports>();
+    MudDataGrid<M_IssueReports> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    M_IssueReports detail;
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<M_DNTT_Logistics> DNTTs = new List<M_DNTT_Logistics>();
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    private List<M_Product_Price_detail_ALL> M_details_Alls = new List<M_Product_Price_detail_ALL>();
+    private List<M_Product_Price_detail_ALL> List_detail = new List<M_Product_Price_detail_ALL>();
+    private List<ChargeModel> List_Charge = new List<ChargeModel>();
+
+    public List<ChartSeries> Series = new List<ChartSeries>
+    {
+        new ChartSeries() { Name = "Fee", Data = new double[] { } }
+    };
+    public string[] XAxisLabels = {  };
+
+
+    protected async override Task OnInitializedAsync()
+    {
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "IssueReports").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        DNTTs = DNTUSV.GetListDNTT_all();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+
+    }
+
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "IssueReports"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await IRSv.Get_IssueReport();
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_IssueReports> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_IssueReports m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+
+    int? index_no;
+
+    async Task DeleteItem(M_IssueReports item)
+    {
+        if (item.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Delete", "IssueReports"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await IRSv.Delete_IssueReport(item);
+               string usr = asv.GetAuth().Result.User.Identity!.Name!;
+            await HistoryLogService.LogAsync(usr, "Delete Issue Reports", "IssueReports", item.IssueId, "", new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(M_IssueReports sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_IssueReports sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.Title))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.Title!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.Title} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    private Func<M_IssueReports, string> _cellStyleFunc => x =>
+       {
+
+           string style = "";
+
+           if (string.IsNullOrEmpty(x.Status))
+               return "color: #000000";
+
+           var rs = M_Trangthais
+           .Where(t => (t.Noidung).Contains(x.Status, StringComparison.InvariantCultureIgnoreCase)
+               && t.Tieude.Equals("IssueReports", StringComparison.InvariantCultureIgnoreCase))
+           .Select(t => t.Mamau)
+           .FirstOrDefault();
+           return "color: " + rs;
+
+
+       };
+
+    private async Task OpenCreateDialog(Models.M_IssueReports tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "IssueReports"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<Add> { { x => x._IssueReport_Details, tr }, { x => x.Status, "add" } };
+
+            var dialog = await DialogService.ShowAsync<Add>(tr.IssueId == Guid.Empty ? "Issue Report Create" : "Issue Report Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                var data = (M_IssueReports)result.Data;
+                var rs = await IRSv.UpdateCreate_IssueReport(data);
+
+                await HistoryLogService.LogAsync(usr, "ADD", "IssueReports", data.IssueId, data.Title, data);
+
+
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                await HandleRefresh_create(data.IssueId);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+
+            if (Listdata != null)
+            {
+                Listdata.Clear();
+            }
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "IssueReports"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await IRSv.Get_IssueReport_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    private async Task OpenEditDialog(Models.M_IssueReports tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "IssueReports"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_IssueReports>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<Add> { { x => x._IssueReport_Details, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<Add>(tr.IssueId == Guid.Empty ? "Issue Report Edit" : "Issue Report Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_IssueReports)result.Data;
+                var rs = await IRSv.UpdateCreate_IssueReport(data);
+
+                await HistoryLogService.LogAsync(usr, "Update", "IssueReports", data.IssueId, data.Title, new { OldData = OldData, NewData = data });
+
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OpenDuplicateDialog(Models.M_IssueReports tr)
+    {
+        Guid id_temp = tr.IssueId;
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "IssueReports"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_IssueReports>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<Add> { { x => x._IssueReport_Details, tr }, { x => x.Status, "Duplicate" } };
+
+            var dialog = await DialogService.ShowAsync<Add>(tr.IssueId == Guid.Empty ? "Issue Report Create" : "Issue Report Create", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_IssueReports)result.Data;
+                var rs = await IRSv.UpdateCreate_IssueReport(data);
+                await HistoryLogService.LogAsync(usr, "Duplicate", "IssueReports", data.IssueId, data.Title, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+
+                await HandleRefresh_create(data.IssueId);
+
+
+
+
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OnApproveCheckboxWrapper(M_IssueReports item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "IssueReports"))
+        {
+            var rs =await IRSv.UpdateCreate_IssueReport(item);
+            MudBlazor.Severity severity;
+            if (rs[1] == "1")
+                severity = MudBlazor.Severity.Success;
+            else
+                severity = MudBlazor.Severity.Error;
+
+            CallSnackBar(rs[0], severity);
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private ChartOptions options_chart = new ChartOptions
+    {
+        YAxisFormat = "#,##0"
+    };
+
+
+   
+
+}

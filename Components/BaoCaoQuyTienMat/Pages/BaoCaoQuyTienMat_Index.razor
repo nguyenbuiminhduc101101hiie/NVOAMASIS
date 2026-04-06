@@ -1,0 +1,333 @@
+﻿@page "/BaoCaoQuyTienMat"
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv 
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject CustomerService Cussv
+@inject PhieuThu_Chi_Services thuchisv
+@inject ReportServices rpsv
+
+@* <style>
+    .class-dialog-custom {
+        backdrop-filter: blur(10px);
+        transition: none !important;
+        animation: none !important;
+    }
+
+    .selected {
+        background: #855ff3 !important;
+    }
+
+    .selected > td {
+        color: white !important;
+    }
+
+    .selected > td .mud-input {
+        color: white !important;
+    }
+
+    .labelCustomColor label {
+        font-weight: bold;
+        color: #118AB2 !important;
+    }
+
+    .mud-table thead {
+        background-color: #118AB2;
+    }
+
+    .mud-table th {
+        background-color: #118AB2 !important;
+        color: white !important;
+    }
+    .mud-table-foot tr{
+        background-color: #118AB2 !important;
+    }
+    .footer-cell{
+        background-color: #118AB2 !important;
+        color: white !important;
+    }
+    .filter-header-cell {
+        background-color: white !important;
+        color: black !important;
+    }
+
+    .mud-menu{
+        display:none;
+    }
+    .no-wrap{
+        white-space:nowrap;
+    }
+
+    .text-right input {
+        text-align: right !important;
+    }
+    .custom-right-align{
+        text-align: right !important; 
+    }
+
+    .custom-label .mud-input-label {
+        color: blue !important;
+    }
+
+    .label-right label {
+        text-align: right;
+        color: blue !important;
+    }
+</style> *@
+
+<PageTitle>@Localizer["BaoCaoQuyTienMat"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["BaoCaoQuyTienMat"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+
+            <MudDateRangePicker Label="@Localizer["searchdatefromto"]" @bind-DateRange="_dateRange" />
+
+
+            <MudSelect @bind-Value="_Cur" Label="@Localizer["Loaitiente"]" Class="label-right">
+                <MudSelectItem Value="@("VND")">VND</MudSelectItem>
+                <MudSelectItem Value="@("USD")">USD</MudSelectItem>
+            </MudSelect>
+
+
+            <MudButton HtmlTag="label"
+                       OnClick="Search"
+                       Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.Refresh">
+                @Localizer["Search"]
+            </MudButton>
+
+
+
+
+            <MudButton Disabled="_processingUpload"
+                       OnClick="@(() => ExportToExcel(sodudauky, soducuoiky, tongsotien, _dateRange?.Start, _dateRange?.End))"
+                       Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.Download">
+                @if (_processingUpload)
+        {
+            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+            <MudText Class="ms-2">Processing</MudText>
+        }
+        else
+        {
+            <MudText>@Localizer["ExportExcel"]</MudText>
+        }
+    </MudButton>
+
+</MudStack>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+
+    <MudTextField T="double?" @bind-Value="sodudauky" Label="@Localizer["Sodudauky"]" Format="#,##0.##" Culture="_en" Class="text-right label-right"></MudTextField>
+
+    <MudTextField T="double?" @bind-Value="tongsotienthu" Label="@Localizer["ThanhTienThu"]" Format="#,##0.##" Culture="_en" Class="text-right label-right"></MudTextField>
+
+    <MudTextField T="double?" @bind-Value="tongsotienchi" Label="@Localizer["ThanhTienChi"]" Format="#,##0.##" Culture="_en" Class="text-right label-right"></MudTextField>
+
+    <MudTextField T="double?" @bind-Value="tongsotien" Label="@Localizer["ThanhTien"]" Format="#,##0.##" Culture="_en" Class="text-right label-right"></MudTextField>
+
+    <MudTextField T="double?" @bind-Value="soducuoiky" Label="@Localizer["Soducuoiky"]" Format="#,##0.##" Culture="_en" Class="text-right label-right"></MudTextField>
+</MudStack>
+
+<MudDataGrid T="M_BaocaoQuyTienMat" Items="@Listdata" Bordered="true" Striped="true" Hover="true">
+    <Columns>
+        <PropertyColumn Property="x => x.Ngay" Title="@Localizer["NGAY"]" Format="dd/MMM/yyyy" />
+        <PropertyColumn Property="x => CustomerName(x.Customer_id)" Title="@Localizer["Customer"]" />
+        <PropertyColumn Property="x => x.Loaigiaodich" Title="@Localizer["Loaigiaodich"]" />
+        <PropertyColumn Property="x => x.Sotienthu" Format="#,##0.##" Title="@Localizer["ThanhTienThu"]" Culture="_en" CellClass=" custom-right-align" />
+        <PropertyColumn Property="x => x.Sotienchi" Format="#,##0.##" Title="@Localizer["ThanhTienChi"]" Culture="_en" CellClass=" custom-right-align" />
+        <PropertyColumn Property="x => x.GhiChu" Title="@Localizer["ghichu"]" />
+        <PropertyColumn Property="x => x.Currency" Title="@Localizer["Loaitiente"]" />
+    </Columns>
+
+    <PagerContent>
+        <MudDataGridPager T="M_BaocaoQuyTienMat" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    private DateRange _dateRange = new DateRange(DateTime.Now.Date, DateTime.Now.AddDays(5).Date);
+    private List<M_BaocaoQuyTienMat> Listdata = new();
+    private List<M_Customer> List_Cus = new List<M_Customer>();
+    private double? soducuoiky;
+    private double? sodudauky;
+    private double? tongsotien;
+    private double? tongsotienthu;
+    private double? tongsotienchi;
+    private string _Cur = "VND";// Giá trị mặc định
+    private bool _processingUpload = false;
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    protected async override Task OnInitializedAsync(){
+        List_Cus = await Cussv.GetList();
+    }
+
+    public class M_BaocaoQuyTienMat
+    {
+        public DateTime? Ngay { get; set; }
+        public Guid? Customer_id { get; set; }
+        public string? Loaigiaodich { get; set; }
+        public double? Sotien { get; set; }
+        public double? Sotienthu { get; set; }
+        public double? Sotienchi { get; set; }
+        public double? Tigia { get; set; }
+        public string? GhiChu { get; set; }
+        public string? Currency { get; set; }
+    }
+
+    async Task Search(){
+        var startDate = _dateRange.Start.Value;
+        var endDate = _dateRange.End.Value;
+
+        if (startDate != null && endDate != null)
+        {
+
+            Listdata = await thuchisv.GetBaoCaoQuyTienMat(startDate, endDate );
+
+            double? tongPT;
+            double? tongPC;
+
+            if (_Cur == "VND")
+            {
+                tongPT = Listdata
+                    .Where(x => x.Loaigiaodich == "PT")
+
+                    .Sum(x =>
+                    x.Currency == "USD"
+                        ? (x.Sotien ?? 0) * (x.Tigia ?? 1)  // nếu là USD thì nhân với tỷ giá
+                        : (x.Sotien ?? 0)                  // nếu không thì lấy nguyên sotien
+                    );
+
+                tongPC = Listdata
+                    .Where(x => x.Loaigiaodich == "PC")
+
+                    .Sum(x =>
+                    x.Currency == "USD"
+                        ? (x.Sotien ?? 0) * (x.Tigia ?? 1)  // nếu là USD thì nhân với tỷ giá
+                        : (x.Sotien ?? 0)                  // nếu không thì lấy nguyên sotien
+                    );
+
+                tongsotien = tongPT - tongPC;
+                tongsotienthu = tongPT;
+                tongsotienchi = tongPC;
+
+            }else{
+                tongPT = Listdata
+                    .Where(x => x.Loaigiaodich == "PT")
+
+                    .Sum(x =>
+                    x.Currency == "VND"
+                       ? Math.Round((x.Sotien ?? 0) / (x.Tigia ?? 1), 3)  // nếu là USD thì nhân với tỷ giá
+                        : (x.Sotien ?? 0)                  // nếu không thì lấy nguyên sotien
+                    );
+
+                tongPC = Listdata
+                    .Where(x => x.Loaigiaodich == "PC")
+
+                    .Sum(x =>
+                    x.Currency == "VND"
+                        ? Math.Round((x.Sotien ?? 0) / (x.Tigia ?? 1), 3)  // nếu là USD thì nhân với tỷ giá
+                        : (x.Sotien ?? 0)                  // nếu không thì lấy nguyên sotien
+                    );
+
+                tongsotien = tongPT - tongPC;
+                tongsotienthu = tongPT;
+                tongsotienchi = tongPC;
+            }
+
+            //------update convert Cur listdata
+            foreach (var item in Listdata)
+            {
+                if (_Cur == "VND" && item.Currency == "USD")
+                {
+                    if (item.Loaigiaodich == "PC")
+                    {
+                        item.Sotienchi = (item.Sotien ?? 0) * (item.Tigia ?? 1);
+                    }
+                    else
+                    {
+                        item.Sotienthu = (item.Sotien ?? 0) * (item.Tigia ?? 1);
+                    }
+                    item.Sotien = (item.Sotien ?? 0) * (item.Tigia ?? 1);
+            
+                    item.Currency = "VND";
+                }else if(_Cur =="USD" && item.Currency=="VND"){
+                    if (item.Loaigiaodich == "PC")
+                    {
+                        item.Sotienchi = Math.Round((item.Sotien ?? 0) / (item.Tigia ?? 1), 3);
+                    }
+                    else
+                    {
+                        item.Sotienthu = Math.Round((item.Sotien ?? 0) / (item.Tigia ?? 1), 3);
+                    }
+                    item.Sotien = Math.Round((item.Sotien ?? 0) / (item.Tigia ?? 1), 3);
+                 
+                    item.Currency = "USD";
+                }
+            }
+              
+ 
+        }
+        sodudauky = await thuchisv.getsodudauky_bydate(startDate,_Cur);
+        // if (sodudauky<0){
+        //     if(tongsotien<0){
+        //         soducuoiky = sodudauky - Math.Abs((double)tongsotien);
+        //     }else{
+        //         soducuoiky = sodudauky + tongsotien;
+        //     }
+        // }else{
+        //     if (tongsotien < 0)
+        //     {
+        //         soducuoiky = sodudauky - Math.Abs((double)tongsotien);
+        //     }
+        //     else
+        //     {
+        //         soducuoiky = sodudauky + tongsotien;
+        //     }
+        // }
+        
+        soducuoiky = sodudauky + tongsotien;
+
+     }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = List_Cus.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.COMPANY! : "";
+    }
+
+    //--------Export Excel
+    private async Task ExportToExcel(double? sodudauky , double? soducuoiky ,double? tongsotien,DateTime? startdate ,DateTime? Enddate)
+    {
+        try{
+
+            _processingUpload = true;
+            var result = await rpsv.PrintExportReport_BaoCaoQuyTienMat(sodudauky, soducuoiky, tongsotien, startdate, Enddate, Listdata);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+
+     void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
+
+

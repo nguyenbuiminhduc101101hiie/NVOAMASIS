@@ -1,0 +1,173 @@
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject SupportServices supsv
+<MudDialog>
+    <DialogContent>
+
+        <MudGrid>
+            <MudItem xs="12" sm="7">
+                <MudPaper Class="pa-4">
+                    <MudForm @ref="form" @bind-IsValid="@success" @bind-Errors="@errors">
+                        <MudTextField T="string" @bind-Value="user.Name" Label="@Localizer["name"]" Required="true" Disabled="edit" RequiredError="@Localizer["User_name_is_required"]" />
+                        <MudTextField T="string" @bind-Value="user.Email" Label="@Localizer["email"]"  />
+                        <MudSelect @bind-Value="user.Branch" Label="@Localizer["Branch"]" Required="true">
+                            <MudSelectItem Value=@("SGN")>SGN</MudSelectItem>
+                            <MudSelectItem Value=@("HAN")>HAN</MudSelectItem>
+                            <MudSelectItem Value=@("HPH")>HPH</MudSelectItem>
+                            <MudSelectItem Value=@("DAD")>DAD</MudSelectItem>
+                        </MudSelect>
+                        <MudSelect @bind-Value="user.Department" Label="@Localizer["Department"]" Required="true">
+                            @foreach (var item in Depts)
+                            {
+                                <MudSelectItem Value="item">@item</MudSelectItem>
+                            }
+                        </MudSelect>
+
+                        <MudText Typo="Typo.subtitle2" Class="mb-2">@Localizer["Roles Dept"]</MudText>
+                        <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                            @foreach (var role in RolesDeptOptions)
+                            {
+                                <MudCheckBox T="bool" Label="@role" Checked="@RolesDeptSelected.Contains(role)"
+                                             CheckedChanged="@(isChecked => ToggleRolesDept(role, isChecked))" />
+                            }
+                        </MudStack>
+
+                        <MudTextField T="string" @bind-Value="user.Pass_viettel" Label="@Localizer["password"]" HelperText="@Localizer["choose_a_strong_password"]" @ref="pwField1"
+                                      InputType="InputType.Password"
+                                      Validation="@(new Func<string, IEnumerable<string>>(PasswordStrength))" Required="@(!edit)"
+                                      RequiredError="Password is required!" />
+                        <MudTextField T="string"
+                                      Label="@Localizer["password"]" HelperText="@Localizer["repeat_the_password"]" InputType="InputType.Password"
+                                      Validation="@(new Func<string, string>(PasswordMatch))" Required="@(!edit)" />
+
+                        <MudTextField T="string" @bind-Value="user.Zaloid" Label="@Localizer["ZaloId"]"  />
+                    </MudForm>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <div class="d-flex align-center justify-space-between">
+            <MudButton OnClick="Cancel">@Localizer["Cancel"] </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" DropShadow="false" OnClick="@(()=>form.ResetAsync())" Class="mx-2">@Localizer["Reset"]</MudButton>
+
+            @if (success)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           OnClick="Register" Class="ml-auto">@(!edit ? @Localizer["register"] : @Localizer["update"])</MudButton>
+            }
+            else
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled Class="ml-auto">@Localizer["submit"]</MudButton>
+            }
+        </div>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    [Parameter] public AuthUser user { get; set; }
+    bool edit;
+    List<string> Depts = new List<string>();
+    static readonly string[] RolesDeptOptions = { "AI", "AE", "SI", "SE", "Truck", "Customs","Get" };
+    List<string> RolesDeptSelected { get; set; } = new();
+
+    protected override void OnParametersSet()
+    {
+        RolesDeptSelected = string.IsNullOrWhiteSpace(user?.Roles_Dept)
+            ? new List<string>()
+            : user.Roles_Dept.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).ToList();
+    }
+
+    void ToggleRolesDept(string role, bool? selected)
+    {
+        if (selected == true && !RolesDeptSelected.Contains(role))
+            RolesDeptSelected.Add(role);
+        else if (selected != true && RolesDeptSelected.Contains(role))
+            RolesDeptSelected.Remove(role);
+        if (user != null)
+            user.Roles_Dept = RolesDeptSelected.Count == 0 ? string.Empty : string.Join(",", RolesDeptSelected);
+    }
+
+    void Cancel() => MudDialog.Cancel();
+
+    protected override async Task OnInitializedAsync()
+    {
+        edit = user.UsrId! == Guid.Empty ? false : true;
+        var departments = await supsv.GetListDepartments();
+        Depts = departments.Select(x => x.Code).ToList();
+    }
+
+    void CallSnackBar(string message, string type)
+    {
+        MudBlazor.Severity severity = MudBlazor.Severity.Normal;
+        if (type == "E")
+            severity = MudBlazor.Severity.Error;
+        else if (type == "S")
+            severity = MudBlazor.Severity.Success;
+        else if (type == "W")
+            severity = MudBlazor.Severity.Warning;
+        else if (type == "I")
+            severity = MudBlazor.Severity.Info;
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task Register()
+    {
+        await form.Validate();
+        if (form.IsValid)
+        {
+            user.Email = user.Email == null ? string.Empty : user.Email;
+            var result = edit ? await asv.UpdateUser(user) : await asv.RegisterUser(user);
+            if (result.Flag)
+            {
+                CallSnackBar(result.Message, "S");
+                await form.ResetAsync();
+                Cancel();
+            }
+            else
+                CallSnackBar(result.Message, "E");
+            
+        }
+    }
+
+    bool success;
+    string[] errors = { };
+    MudTextField<string> pwField1;
+    MudForm form;
+
+    private IEnumerable<string> PasswordStrength(string pw)
+    {   
+        if (string.IsNullOrWhiteSpace(pw))
+        {
+            if (edit) yield break;
+            yield return "Password is required!";
+            yield break;
+        }
+        if (pw.Length < 8)
+            yield return "Password must be at least of length 8";
+        if (!Regex.IsMatch(pw, @"[A-Z]"))
+            yield return "Password must contain at least one capital letter";
+        if (!Regex.IsMatch(pw, @"[a-z]"))
+            yield return "Password must contain at least one lowercase letter";
+        if (!Regex.IsMatch(pw, @"[0-9]"))
+            yield return "Password must contain at least one digit";
+    }
+
+    private string PasswordMatch(string arg)
+    {
+        if (string.IsNullOrWhiteSpace(pwField1.Value) && edit) return null;
+        if (pwField1.Value != arg)
+            return "Passwords don't match";
+        return null;
+    }
+    
+}
+
+

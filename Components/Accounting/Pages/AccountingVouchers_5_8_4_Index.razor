@@ -1,0 +1,335 @@
+@page "/AccountingVouchers584"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>5.8.4 Chứng Từ Kế Toán</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudText Typo="Typo.h6" Class="fw-700">5.8.4 Chứng Từ Kế Toán</MudText>
+
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddAsync" Disabled="_busy">@Localizer["new"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditAsync" Disabled="_busy || _selected is null">@Localizer["edit"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.CheckCircleOutline" OnClick="UnapproveAsync" Disabled="_busy || _selected is null || _selected.Approve != true">Hủy Approve</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">@Localizer["delete"]</MudButton>
+         @*    <MudButton Variant="Variant.Filled" Color="Color.Tertiary" Size="Size.Small" StartIcon="@Icons.Material.Filled.PostAdd" OnClick="OpenLinesDialogAsync" Disabled="_busy || _selected is null">ADD Details</MudButton> *@
+            <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-3">
+        <MudDataGrid T="M_AccountingVouchers"
+                     Items="_items"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClass"
+                     Height="calc(100vh - 280px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.VoucherNo" Title="@Localizer["Sophieuketoan"]" />
+                <TemplateColumn Title="@Localizer["AccountingVoucherLine.Customer"]">
+                    <CellTemplate>@CustomerLabel(context.Item.CompanyId)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.VoucherDate" Title="@Localizer["Ngay"]" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.PostingDate" Title="@Localizer["AccountingVoucher.PostingDate"]" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.FiscalYear" Title="@Localizer["AccountingVoucher.FiscalYear"]" />
+                <PropertyColumn Property="x => x.FiscalPeriod" Title="@Localizer["AccountingVoucher.FiscalPeriod"]" />
+                <TemplateColumn Title="@Localizer["AccountingVoucher.TransactionType"]">
+                    <CellTemplate>@GetTransactionTypeName(context.Item.TransactionTypeCode)</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="@Localizer["status"]">
+                    <CellTemplate>@StatusLabel(context.Item.Status)</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="@Localizer["AccountingVoucher.Approve"]">
+                    <CellTemplate>@ApproveLabel(context.Item.Approve)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.CurrencyCode" Title="@Localizer["Loaitiente"]" />
+                <PropertyColumn Property="x => x.ExchangeRate" Title="@Localizer["AccountingVoucher.ExchangeRate"]" />
+                <PropertyColumn Property="x => x.Description" Title="@Localizer["noidung"]" />
+                <PropertyColumn Property="x => x.ReferenceNo" Title="@Localizer["AccountingVoucher.ReferenceNo"]" />
+                <PropertyColumn Property="x => x.ReferenceDate" Title="@Localizer["AccountingVoucher.ReferenceDate"]" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.BookScope" Title="@Localizer["AccountingVoucher.BookScope"]" />
+                <PropertyColumn Property="x => x.SourceModule" Title="@Localizer["AccountingVoucher.SourceModule"]" />
+                <PropertyColumn Property="x => x.SourceId" Title="@Localizer["AccountingVoucher.SourceId"]" />
+                <PropertyColumn Property="x => x.CreatedBy" Title="@Localizer["AccountingVoucher.CreatedBy"]" />
+                <PropertyColumn Property="x => x.CreatedDate" Title="@Localizer["AccountingVoucher.CreatedDate"]" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.ModifiedBy" Title="@Localizer["AccountingVoucher.ModifiedBy"]" />
+                <PropertyColumn Property="x => x.ModifiedDate" Title="@Localizer["AccountingVoucher.ModifiedDate"]" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.PostedBy" Title="@Localizer["AccountingVoucher.PostedBy"]" />
+                <PropertyColumn Property="x => x.PostedDate" Title="@Localizer["AccountingVoucher.PostedDate"]" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.CancelledBy" Title="@Localizer["AccountingVoucher.CancelledBy"]" />
+                <PropertyColumn Property="x => x.CancelledDate" Title="@Localizer["AccountingVoucher.CancelledDate"]" Format="dd/MM/yyyy HH:mm" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_AccountingVouchers" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "PhieuKeToan";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private List<M_AccountingVouchers> _items = new();
+    private M_AccountingVouchers? _selected;
+    private Dictionary<string, string> _transactionTypeNames = new();
+    private Dictionary<Guid, M_Customer> _customerById = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+            _items.Clear();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.AccountingVouchers.AsNoTracking()
+                .OrderByDescending(x => x.VoucherDate)
+                .ThenByDescending(x => x.VoucherNo)
+                .ToListAsync();
+
+            // Avoid list.Contains translation for older SQL compatibility levels.
+            // Load a lightweight lookup then map in memory.
+            var types = await db.TransactionTypes.AsNoTracking()
+                .Select(x => new { x.Code, x.Name })
+                .ToListAsync();
+            _transactionTypeNames = types
+                .Where(x => !string.IsNullOrWhiteSpace(x.Code))
+                .GroupBy(x => x.Code)
+                .ToDictionary(g => g.Key, g => g.First().Name ?? string.Empty);
+            var customers = await db.Customer.AsNoTracking()
+                .Where(x => x.Customer_ID != Guid.Empty)
+                .ToListAsync();
+            _customerById = customers.ToDictionary(x => x.Customer_ID, x => x);
+
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private string GetTransactionTypeName(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+            return string.Empty;
+        return _transactionTypeNames.TryGetValue(code, out var n) ? n : code;
+    }
+
+    private static string StatusLabel(int status) => status switch
+    {
+        1 => "0-Draft",
+        2 => "1-Posted",
+        3 => "2-Cancelled",
+        _ => status.ToString()
+    };
+    private static string ApproveLabel(bool? approve) => approve == true ? "Yes" : "No";
+    private string CustomerLabel(Guid companyId)
+    {
+        if (!_customerById.TryGetValue(companyId, out var c))
+            return companyId.ToString();
+        var code = c.Customer_Code?.Trim() ?? string.Empty;
+        var company = !string.IsNullOrWhiteSpace(c.COMPANY) ? c.COMPANY!.Trim() : (c.BIZName?.Trim() ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(company))
+            return $"{code} - {company}";
+        return !string.IsNullOrWhiteSpace(company) ? company : code;
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_AccountingVouchers> args) => _selected = args.Item;
+
+    private string RowClass(M_AccountingVouchers row, int _) => _selected?.Id == row.Id ? "selected-row-blue" : string.Empty;
+
+    private async Task OpenAddAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<AccountingVoucher_AddEditDialog>(
+            "Chứng từ kế toán — Thêm",
+            new DialogParameters { ["VoucherId"] = (Guid?)null },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dialog.Result;
+        if (!rs.Canceled)
+            await LoadAsync();
+    }
+
+    private async Task OpenEditAsync()
+    {
+        if (_selected is null)
+            return;
+        if (_selected.Approve == true)
+        {
+            CallSnack("Chứng từ đã Approve, không được chỉnh sửa.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<AccountingVoucher_AddEditDialog>(
+            "Chứng từ kế toán — Sửa",
+            new DialogParameters { ["VoucherId"] = _selected.Id },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dialog.Result;
+        if (!rs.Canceled)
+            await LoadAsync();
+    }
+
+    private async Task OpenLinesDialogAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<AccountingVoucherLines_ManagerDialog>(
+            "Thông Tin Bút Toán",
+            new DialogParameters
+            {
+                ["VoucherId"] = _selected.Id,
+                ["VoucherNo"] = _selected.VoucherNo,
+                ["PermissionCode"] = PermissionMenuName
+            },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+
+        await dialog.Result;
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(Localizer["Warning"], Localizer["Delete_Confirm"], yesText: Localizer["delete"], cancelText: Localizer["cancel"]);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.AccountingVouchers.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnack(Localizer["RecordNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var lines = await db.AccountingVoucherLines.Where(x => x.VoucherId == entity.Id).ToListAsync();
+            if (lines.Count > 0)
+                db.AccountingVoucherLines.RemoveRange(lines);
+
+            db.AccountingVouchers.Remove(entity);
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["DeletedSuccess"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task UnapproveAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Approve", PermissionMenuName))
+        {
+            CallSnack("Không có quyền Approve.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.AccountingVouchers.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnack(Localizer["RecordNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            entity.Approve = false;
+            await db.SaveChangesAsync();
+            CallSnack("Đã hủy Approve.", MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
+
+<style>
+    .selected-row-blue { background-color: #2196f3 !important; }
+</style>

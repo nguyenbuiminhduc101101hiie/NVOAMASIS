@@ -1,0 +1,533 @@
+@page "/ShipmentChargeContext"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["Scc_Title"]</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.h6" Class="fw-700">8.7 @Localizer["Scc_Title"]</MudText>
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenNewDialog" Disabled="_busy">@Localizer["new"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialog" Disabled="_selected is null || _busy">@Localizer["edit"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteSelectedAsync" Disabled="_selected is null || _busy">@Localizer["delete"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadListAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
+        </MudStack>
+    </MudStack>
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2">
+            <MudTextField @bind-Value="_searchText"
+                          Label="@Localizer["Scc_SearchHint"]"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true"
+                          Immediate="true"
+                          Style="max-width: 420px;" />
+        </MudStack>
+        <div style="overflow-x: auto;">
+            <MudDataGrid T="M_ShipmentChargeContext"
+                         Items="VisibleRows"
+                         Dense="true"
+                         Striped="true"
+                         Bordered="true"
+                         Hover="true"
+                         RowClick="OnRowClick"
+                         RowClassFunc="RowClassFunc"
+                         Height="calc(100vh - 220px)"
+                         FixedHeader="true"
+                         Loading="_busy">
+                <Columns>
+                    <TemplateColumn Title="@Localizer["Scc_Col_HBL"]">
+                        <CellTemplate>@LabelHbl(context.Item.ShipmentId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["Scc_Col_Container"]">
+                        <CellTemplate>@LabelContainer(context.Item.ContainerId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["Scc_Col_ChargeType"]">
+                        <CellTemplate>@LabelChargeType(context.Item.ChargeTypeId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["Scc_Col_Customer"]">
+                        <CellTemplate>@LabelCustomer(context.Item.CustomerId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["Scc_Col_ShippingLine"]">
+                        <CellTemplate>@LabelCustomer(context.Item.ShippingLineId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["Scc_Col_Depot"]">
+                        <CellTemplate>@LabelDepot(context.Item.DepotId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["Scc_Col_Terminal"]">
+                        <CellTemplate>@LabelTerminal(context.Item.PortId)</CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.ContainerTypeId" Title="@Localizer["Scc_Col_ContType"]" />
+                    <PropertyColumn Property="x => x.Direction" Title="@Localizer["Scc_Col_Direction"]" />
+                    <PropertyColumn Property="x => x.FreeDays" Title="@Localizer["Scc_Col_FreeDays"]" />
+                    <PropertyColumn Property="x => x.BillableDays" Title="@Localizer["Scc_Col_BillableDays"]" />
+                    <PropertyColumn Property="x => x.CurrencyCode" Title="@Localizer["Scc_Col_Currency"]" />
+                    <TemplateColumn Title="@Localizer["Scc_Col_EmptyPickup"]">
+                        <CellTemplate>@(context.Item.EmptyPickupDate?.ToString("dd/MM/yyyy") ?? "")</CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.Remarks" Title="@Localizer["Scc_Col_Remarks"]" />
+                </Columns>
+                <PagerContent>
+                    <MudDataGridPager T="M_ShipmentChargeContext" PageSizeOptions="new int[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudDataGrid>
+        </div>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "ShipmentChargeContext";
+
+    private bool _busy;
+    private List<M_ShipmentChargeContext> _items = new();
+    private M_ShipmentChargeContext? _selected;
+    private string usr = string.Empty;
+    private int _dialogKey;
+    private string _searchText = string.Empty;
+
+    private Dictionary<Guid, string> _hblById = new();
+    private Dictionary<Guid, string> _containerById = new();
+    private Dictionary<Guid, string> _chargeTypeById = new();
+    private Dictionary<Guid, string> _customerById = new();
+    private Dictionary<string, string> _depotLabelByKey = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _terminalLabelByKey = new(StringComparer.OrdinalIgnoreCase);
+
+    private IEnumerable<M_ShipmentChargeContext> VisibleRows
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+                return _items;
+            var t = _searchText.Trim();
+            return _items.Where(x =>
+                ContainsIc(LabelHbl(x.ShipmentId), t) ||
+                ContainsIc(LabelContainer(x.ContainerId), t) ||
+                ContainsIc(LabelChargeType(x.ChargeTypeId), t) ||
+                ContainsIc(LabelCustomer(x.CustomerId), t) ||
+                ContainsIc(LabelCustomer(x.ShippingLineId), t) ||
+                ContainsIc(LabelDepot(x.DepotId), t) ||
+                ContainsIc(LabelTerminal(x.PortId), t) ||
+                ContainsIc(x.ContainerTypeId, t) ||
+                ContainsIc(x.Direction, t) ||
+                ContainsIc(x.CurrencyCode, t) ||
+                ContainsIc(x.Remarks, t) ||
+                x.FreeDays.ToString().Contains(t, StringComparison.OrdinalIgnoreCase) ||
+                (x.BillableDays?.ToString().Contains(t, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.EmptyPickupDate?.ToString("dd/MM/yyyy").Contains(t, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+    }
+
+    private static bool ContainsIc(string? s, string needle) =>
+        !string.IsNullOrEmpty(s) && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadListAsync();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "View", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["Scc_NoAccessView"], MudBlazor.Severity.Warning);
+            _items = new List<M_ShipmentChargeContext>();
+            _selected = null;
+            ClearLookups();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.ShipmentChargeContext
+                .AsNoTracking()
+                .OrderByDescending(x => x.CreatedAt)
+                .ToListAsync();
+            _selected = null;
+            await BuildLookupsAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["Scc_CannotLoad", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ClearLookups()
+    {
+        _hblById.Clear();
+        _containerById.Clear();
+        _chargeTypeById.Clear();
+        _customerById.Clear();
+        _depotLabelByKey.Clear();
+        _terminalLabelByKey.Clear();
+    }
+
+    private async Task BuildLookupsAsync()
+    {
+        ClearLookups();
+        if (_items.Count == 0)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        foreach (var id in _items.Select(x => x.ShipmentId).Where(x => x != Guid.Empty).Distinct())
+        {
+            var h = await db.HBL.AsNoTracking().FirstOrDefaultAsync(x => x.hblID == id);
+            if (h != null)
+                _hblById[id] = HblLabel(h);
+        }
+
+        foreach (var id in _items.Select(x => x.ContainerId).Where(x => x != Guid.Empty).Distinct())
+        {
+            var c = await db.Container.AsNoTracking().FirstOrDefaultAsync(x => x.CTN_ID == id);
+            if (c != null)
+                _containerById[id] = ContainerLabel(c);
+        }
+
+        foreach (var id in _items.Select(x => x.ChargeTypeId).Where(x => x != Guid.Empty).Distinct())
+        {
+            var ct = await db.ChargeType.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+            if (ct != null)
+                _chargeTypeById[id] = ChargeTypeLabel(ct);
+        }
+
+        foreach (var id in _items.SelectMany(x => new[] { x.CustomerId, x.ShippingLineId }).Where(x => x != Guid.Empty).Distinct())
+        {
+            var c = await db.Customer.AsNoTracking().FirstOrDefaultAsync(x => x.Customer_ID == id);
+            if (c != null)
+                _customerById[c.Customer_ID] = CustomerLabel(c);
+        }
+
+        foreach (var key in _items.Select(x => x.DepotId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct())
+        {
+            if (!Guid.TryParse(key, out var g))
+                continue;
+            var p = await db.Port.AsNoTracking().FirstOrDefaultAsync(x => x.PORT_ID == g);
+            if (p != null)
+                _depotLabelByKey[key!] = PortLabel(p);
+        }
+
+        foreach (var key in _items.Select(x => x.PortId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct())
+        {
+            if (!Guid.TryParse(key, out var g))
+                continue;
+            var t = await db.Terminal.AsNoTracking().FirstOrDefaultAsync(x => x.TerminalID == g);
+            if (t != null)
+                _terminalLabelByKey[key!] = TerminalLabel(t);
+        }
+    }
+
+    private static string HblLabel(M_HBL h)
+    {
+        if (!string.IsNullOrWhiteSpace(h.hbl))
+            return h.hbl.Trim();
+        if (!string.IsNullOrWhiteSpace(h.bkno))
+            return h.bkno.Trim();
+        return h.hblID.ToString();
+    }
+
+    private static string ContainerLabel(M_Container c)
+    {
+        if (!string.IsNullOrWhiteSpace(c.CONTAINER_NO))
+            return c.CONTAINER_NO.Trim();
+        return c.CTN_ID.ToString();
+    }
+
+    private static string ChargeTypeLabel(M_ChargeType x)
+    {
+        var name = x.Name?.Trim() ?? "";
+        var code = x.Code?.Trim() ?? "";
+        if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(code))
+            return $"{name} ({code})";
+        return !string.IsNullOrEmpty(name) ? name : (!string.IsNullOrEmpty(code) ? code : x.Id.ToString());
+    }
+
+    private static string CustomerLabel(M_Customer c)
+    {
+        var code = !string.IsNullOrWhiteSpace(c.Customer_Code)
+            ? c.Customer_Code!.Trim()
+            : (!string.IsNullOrWhiteSpace(c.MainCode) ? c.MainCode!.Trim() : "");
+        var en = !string.IsNullOrWhiteSpace(c.EnglishName) ? c.EnglishName!.Trim() : "";
+        if (!string.IsNullOrEmpty(code) && !string.IsNullOrEmpty(en))
+            return $"{code}_{en}";
+        if (!string.IsNullOrEmpty(en))
+            return en;
+        if (!string.IsNullOrEmpty(code))
+            return code;
+        if (!string.IsNullOrWhiteSpace(c.COMPANY))
+            return c.COMPANY!.Trim();
+        return c.Customer_ID.ToString();
+    }
+
+    private static string PortLabel(PortModel p)
+    {
+        if (!string.IsNullOrWhiteSpace(p.PORT) && !string.IsNullOrWhiteSpace(p.PORT_CODE))
+            return $"{p.PORT} ({p.PORT_CODE})";
+        return p.PORT ?? p.PORT_CODE ?? p.PORT_ID.ToString();
+    }
+
+    private static string TerminalLabel(Terminal_ t)
+    {
+        if (!string.IsNullOrWhiteSpace(t.TermiNalName))
+            return t.TermiNalName!;
+        if (!string.IsNullOrWhiteSpace(t.Code))
+            return t.Code!;
+        return t.TerminalID.ToString();
+    }
+
+    private string LabelHbl(Guid id) => _hblById.GetValueOrDefault(id, id.ToString());
+    private string LabelContainer(Guid id) => _containerById.GetValueOrDefault(id, id.ToString());
+    private string LabelChargeType(Guid id) => _chargeTypeById.GetValueOrDefault(id, id.ToString());
+    private string LabelCustomer(Guid id) => _customerById.GetValueOrDefault(id, id.ToString());
+    private string LabelDepot(string? key) => string.IsNullOrWhiteSpace(key) ? "" : _depotLabelByKey.GetValueOrDefault(key, key);
+    private string LabelTerminal(string? key) => string.IsNullOrWhiteSpace(key) ? "" : _terminalLabelByKey.GetValueOrDefault(key, key);
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_ShipmentChargeContext> args)
+    {
+        _selected = CloneRow(args.Item);
+    }
+
+    private static M_ShipmentChargeContext CloneRow(M_ShipmentChargeContext row) => new()
+    {
+        Id = row.Id,
+        ShipmentId = row.ShipmentId,
+        ContainerId = row.ContainerId,
+        ChargeTypeId = row.ChargeTypeId,
+        CustomerId = row.CustomerId,
+        ShippingLineId = row.ShippingLineId,
+        DepotId = row.DepotId,
+        PortId = row.PortId,
+        ContainerTypeId = row.ContainerTypeId,
+        Direction = row.Direction,
+        EmptyPickupDate = row.EmptyPickupDate,
+        FullDischargeDate = row.FullDischargeDate,
+        FullDeliveryDate = row.FullDeliveryDate,
+        EmptyReturnDate = row.EmptyReturnDate,
+        StorageInDate = row.StorageInDate,
+        StorageOutDate = row.StorageOutDate,
+        FreeDays = row.FreeDays,
+        BillableDays = row.BillableDays,
+        CurrencyCode = row.CurrencyCode,
+        Remarks = row.Remarks,
+        CreatedAt = row.CreatedAt,
+        UpdatedAt = row.UpdatedAt
+    };
+
+    private string RowClassFunc(M_ShipmentChargeContext row, int _)
+    {
+        if (_selected != null && _selected.Id == row.Id)
+            return "scc-selected-row";
+        return string.Empty;
+    }
+
+    private async Task OpenNewDialog()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["Scc_NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _dialogKey++;
+        var model = new M_ShipmentChargeContext
+        {
+            Id = Guid.Empty,
+            ShipmentId = Guid.Empty,
+            ContainerId = Guid.Empty,
+            ChargeTypeId = Guid.Empty,
+            CustomerId = Guid.Empty,
+            ShippingLineId = Guid.Empty,
+            FreeDays = 0,
+            ContainerTypeId = "20DC"
+        };
+
+        var dlg = DialogService.Show<ShipmentChargeContext_EditDialog>(
+            Localizer["Scc_NewDialogTitle"],
+            new DialogParameters
+            {
+                ["Model"] = model,
+                ["IsEdit"] = false,
+                ["DialogKey"] = _dialogKey
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not ShipmentChargeContext_EditDialog.ShipmentChargeContextDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task OpenEditDialog()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["Scc_NoAccessEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _dialogKey++;
+        var dlg = DialogService.Show<ShipmentChargeContext_EditDialog>(
+            Localizer["Scc_EditDialogTitle"],
+            new DialogParameters
+            {
+                ["Model"] = CloneRow(_selected),
+                ["IsEdit"] = true,
+                ["DialogKey"] = _dialogKey
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not ShipmentChargeContext_EditDialog.ShipmentChargeContextDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(ShipmentChargeContext_EditDialog.ShipmentChargeContextDialogResult data)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var e = data.Entity;
+
+            if (!data.IsEdit)
+            {
+                e.Id = Guid.NewGuid();
+                e.CreatedAt = DateTime.UtcNow;
+                e.UpdatedAt = null;
+                db.ShipmentChargeContext.Add(e);
+            }
+            else
+            {
+                var entity = await db.ShipmentChargeContext.FirstOrDefaultAsync(x => x.Id == e.Id);
+                if (entity is null)
+                {
+                    CallSnackBar(Localizer["Scc_RecordNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.ShipmentId = e.ShipmentId;
+                entity.ContainerId = e.ContainerId;
+                entity.ChargeTypeId = e.ChargeTypeId;
+                entity.CustomerId = e.CustomerId;
+                entity.ShippingLineId = e.ShippingLineId;
+                entity.DepotId = e.DepotId;
+                entity.PortId = e.PortId;
+                entity.ContainerTypeId = e.ContainerTypeId;
+                entity.Direction = e.Direction;
+                entity.EmptyPickupDate = e.EmptyPickupDate;
+                entity.FullDischargeDate = e.FullDischargeDate;
+                entity.FullDeliveryDate = e.FullDeliveryDate;
+                entity.EmptyReturnDate = e.EmptyReturnDate;
+                entity.StorageInDate = e.StorageInDate;
+                entity.StorageOutDate = e.StorageOutDate;
+                entity.FreeDays = e.FreeDays;
+                entity.BillableDays = e.BillableDays;
+                entity.CurrencyCode = e.CurrencyCode;
+                entity.Remarks = e.Remarks;
+                entity.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync();
+            _selected = null;
+            await LoadListAsync();
+            CallSnackBar(Localizer["Scc_Saved"], MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["Scc_CannotSave", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["Scc_NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_selected is null)
+            return;
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["Scc_Warning"],
+            Localizer["Scc_DeleteConfirmBody"],
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.ShipmentChargeContext.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnackBar(Localizer["Scc_RecordNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.ShipmentChargeContext.Remove(entity);
+            await db.SaveChangesAsync();
+
+            _selected = null;
+            CallSnackBar(Localizer["Scc_Deleted"], MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["Scc_CannotDelete", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
+
+<style>
+    .scc-selected-row {
+        background-color: #2196f3 !important;
+    }
+</style>

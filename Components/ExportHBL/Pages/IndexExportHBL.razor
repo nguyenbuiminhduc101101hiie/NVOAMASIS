@@ -1,0 +1,232 @@
+
+@page "/exportHBL"
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["Export HBL"]</PageTitle>
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton OnClick="Refresh"
+                Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["Reload"]
+    </MudButton>
+    <MudButton Disabled="_processingUpload"
+                OnClick="ExportBill" 
+                Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                StartIcon="@Icons.Material.Filled.Download">
+        @if (_processingUpload)
+        {
+            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+            <MudText Class="ms-2">Processing</MudText>
+        }
+        else
+        {
+            <MudText>@Localizer["Export_Bill"]</MudText>
+        }
+    </MudButton>
+</MudStack>
+<MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable"
+                FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+                FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+                ReadOnly="false" RowClassFunc="@SelectedRowClassFunc"
+                RowClick="@RowClicked" RowContextMenuClick="RowRightClicked"
+                ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+    <Columns>
+        <PropertyColumn Property="x => Listdata.IndexOf(x)+1" Title="@Localizer["No."]" Required="false" />
+        <PropertyColumn Property="x => x.hbl" Title="@Localizer["HBL"]" Required="false" />
+        <PropertyColumn Property="x => Getjobno(x.mblid)" Title="@Localizer["Job No."]" Required="false" />
+        <PropertyColumn Property="x => GetFLC(x.mblid)" Title="@Localizer["FLC"]" Required="false" />
+        <PropertyColumn Property="x => GetType(x.mblid)" Title="@Localizer["Type"]" Required="false" />
+        <PropertyColumn Property="x => GetStatus(x.mblid)" Title="@Localizer["Status"]" Required="false" />
+        <PropertyColumn Property="x => CusidtoCusCode(x.CustomerID)" Title="@Localizer["Main Customer"]" Required="false" />
+        <PropertyColumn Property="x => x.statusHBL" Title="@Localizer["Status"]" Required="false" />
+        <PropertyColumn Property="x => x.polname" Title="@Localizer["Port of Loading"]" Required="false"/>
+        <PropertyColumn Property="x => x.delName" Title="@Localizer["Place of Delivery"]" Required="false" />
+        <PropertyColumn Property="x => x.podname" Title="@Localizer["Port of Discharge"]" Required="false" />
+        <PropertyColumn Property="x => x.porname" Title="@Localizer["Place Of Receipt"]" Required="false" />
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="M_HBL" PageSizeOptions="[5,10,15,25]" />
+    </PagerContent>
+</MudDataGrid>
+@code {
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    string usr;
+    List<string> trangthais = new List<string>();
+    List<M_Customer> Customers = new List<M_Customer>();
+    List<(M_Job job, Guid mblid)> Jobs = new List<(M_Job job, Guid mblid)>();
+    protected async override Task OnInitializedAsync()
+    {
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "HBL").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        var userdetail = asv.GetUserDetail();
+        Customers = await csv.GetList(userdetail);
+        Jobs = await shipsv.GetListJobNoAndMBLID();
+        //await Refresh();
+    }
+
+    bool _loading = false;
+    List<M_HBL> Listdata = new List<M_HBL>();
+    M_HBL hbldetail = new M_HBL();
+    async Task Refresh()
+    {
+        try
+        {
+            hbldetail = null!;
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "HBL"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            Listdata = await shipsv.GetListHBLALLBY_Dept_Export();
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_HBL> mudTable;
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_HBL Sis, int rowNumber)
+    {
+        if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            return "selected"; // Giữ lớp "selected" cho dòng đã chọn
+        }
+        else
+        {
+            return string.Empty;
+        }
+        // if (selectedRowNumber == rowNumber)
+        // {
+        //     selectedRowNumber = -1;
+        //     return string.Empty;
+        // }
+        // else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        // {
+        //     selectedRowNumber = rowNumber;
+        //     return "selected";
+        // }
+        // else
+        // {
+        //     return string.Empty;
+        // }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_HBL> args)
+    {
+        hbldetail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_HBL> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+    private bool _processingUpload = false;
+    private async Task ExportBill()
+    {
+        try
+        {
+            _processingUpload = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if (hbldetail == null)
+            {
+                CallSnackBar("you must select 1 HBL.", MudBlazor.Severity.Warning);
+                return;
+            }
+            var type = await shipsv.GetTypeByMBLID(hbldetail.mblid); // Air Sea Truck HQ
+            if (type.Contains("S")) // sea
+            {
+                var dialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogBillSeaVesselOption>("Bill Sea - Vessel display", new DialogOptions { MaxWidth = MaxWidth.Small });
+                var result = await dialogRef.Result;
+                if (result.Canceled) return;
+                var (showPreCarriage, attach) = ((bool showPreCarriage, bool attach))result.Data!;
+                var rs = await shipsv.ExportBillSea(hbldetail.hblID!, showPreCarriage, attach);
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            }
+            else if (type.Contains("A")) // air
+            {
+                var rs = await shipsv.ExportBilAir(hbldetail.hblID!);
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            }
+            else
+                CallSnackBar($"Chưa có mẫu bill cho loại '{type}' ", MudBlazor.Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.shortname + "_" + rs.COMPANY!;
+    }
+
+    string Getjobno(Guid? mblid)
+    {
+        if (mblid == Guid.Empty) return string.Empty;
+        var rs = Jobs.FirstOrDefault(x=> x.mblid != Guid.Empty && x.mblid == mblid);
+        return string.IsNullOrEmpty(rs.job.JobNo) ? string.Empty : rs.job.JobNo;
+    }
+
+    string GetFLC(Guid? mblid)
+    {
+        if (mblid == Guid.Empty) return string.Empty;
+        var rs = Jobs.FirstOrDefault(x => x.mblid != Guid.Empty && x.mblid == mblid);
+        return string.IsNullOrEmpty(rs.job.FLC) ? string.Empty : rs.job.FLC;
+    }
+    string GetType(Guid? mblid)
+    {
+        if (mblid == Guid.Empty) return string.Empty;
+        var rs = Jobs.FirstOrDefault(x => x.mblid != Guid.Empty && x.mblid == mblid);
+        return string.IsNullOrEmpty(rs.job.Loai) ? string.Empty : rs.job.Loai;
+    }
+    string GetStatus(Guid? mblid)
+    {
+        if (mblid == Guid.Empty) return string.Empty;
+        var rs = Jobs.FirstOrDefault(x => x.mblid != Guid.Empty && x.mblid == mblid);
+        return string.IsNullOrEmpty(rs.job.statusJob) ? string.Empty : rs.job.statusJob;
+    }
+    async Task TestThongBao()
+    {
+        // await _notificationService.SendNotificationAsync(
+        // senderId: Guid.Parse("868B0DBB-A14B-46FE-A091-3D73BA70BB3D"), // ngoc
+        // receiverId: Guid.Parse("EC947117-9F77-43E6-9CEE-E05A73DFED85"), // admin
+        // message: "Bạn có yêu cầu mới cần xử lý"
+        // );
+
+    }
+}
+@inject NotificationService _notificationService

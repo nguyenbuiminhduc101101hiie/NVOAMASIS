@@ -1,0 +1,355 @@
+﻿
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv 
+@inject LenhDieuXeServices ldxsv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject TKHQ_Services tkhqsv
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["More_details_for_customs_clearance"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton  HtmlTag="label"
+                OnClick="Refresh"
+                Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItem())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+
+
+
+</MudStack>
+
+
+
+<MudDataGrid T="M_TKHQ_Thongtinchitiet" Items="@Listdata.ToList()" Filterable="true" @ref="mudTable" Style="background-color: lightblue;"
+            FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+            FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+            ReadOnly="false" CommittedItemChanges="@CommittedItem"
+            ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)">
+
+    <Columns>
+        <HierarchyColumn T="M_TKHQ_Thongtinchitiet" />
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => {
+
+                                 detail_TKHQ = JsonSerializer.Deserialize<M_TKHQ_Thongtinchitiet>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+
+                       })" />
+
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x=>x.Tenhanghoa" Title="@Localizer["Product_Name"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Tenhanghoa" Label="@Localizer["Product_Name"]" Class="custom-label"
+                              InputType="InputType.Text" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Mahs" Title="@Localizer["Ma_HS"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Mahs" Label="@Localizer["Ma_HS"]" Class="custom-label"
+                              InputType="InputType.Text" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Soluong" Title="@Localizer["Quantity"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.Soluong"
+                                 Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" T="double?" HideSpinButtons="true"
+                                 Class="text-right-input custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Dontvitinh" Title="@Localizer["Unit"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Dontvitinh" Label="@Localizer["Unit"]" Class="custom-label"
+                              InputType="InputType.Text" />
+            </EditTemplate>
+        </PropertyColumn>
+
+         <PropertyColumn Property="x=>x.Giatrihanghoa" Title="@Localizer["Giatrihanghoa"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.Giatrihanghoa"
+                                 Label="@Localizer["Giatrihanghoa"]" Format="#,##0.##" Culture="@_en" T="double?" HideSpinButtons="true"
+                                 Class="text-right-input custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Xuatxuhanghoa" Title="@Localizer["Xuatxuhanghoa"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Xuatxuhanghoa" Label="@Localizer["Xuatxuhanghoa"]" Class="custom-label"
+                              InputType="InputType.Text" />
+            </EditTemplate>
+        </PropertyColumn>
+
+    </Columns>
+
+</MudDataGrid>
+
+@code {
+    List<M_TKHQ_Thongtinchitiet> Listdata = new List<M_TKHQ_Thongtinchitiet>();
+    [Parameter] public Models.M_TKHQ_Thongtinchunglohang _TKHQ_ThongTinChung_details { get; set; }
+    MudDataGrid<M_TKHQ_Thongtinchitiet> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    M_TKHQ_Thongtinchitiet detail;
+    private List<PortModel> List_pod = new List<PortModel>();
+    private List<PortModel> List_pol = new List<PortModel>();
+    private List<M_Customer> filteredCarr = new List<M_Customer>();
+
+    private List<M_Customer> Cuss_Carr = new List<M_Customer>();
+    public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    M_TKHQ_Thongtinchitiet detail_TKHQ;
+    protected async override Task OnInitializedAsync()
+    {
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        await Refresh();
+    }
+
+
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "Add", "TKHQ"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await tkhqsv.GetListTKHQ_Detail_BYID_TKHQ(_TKHQ_ThongTinChung_details.Id);
+            StateHasChanged();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_TKHQ_Thongtinchitiet> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_TKHQ_Thongtinchitiet m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(M_TKHQ_Thongtinchitiet item)
+    {
+        item.Id_Tkhq = _TKHQ_ThongTinChung_details.Id;
+        item.userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.dateupdate = DateTime.Now;
+        var rs = item.Id != Guid.Empty ? await tkhqsv.UpdateTKHQChitiet_Detail(item,detail_TKHQ) : await tkhqsv.CreateTKHQChitiet_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    int? index_no;
+    async Task AddItem()
+    {
+
+        if (!await ssv.CheckPermission(usr, "Add", "TKHQ"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_TKHQ_Thongtinchitiet
+        {
+
+        };
+
+        item.userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.dateupdate = DateTime.Now;
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+    private async Task<IEnumerable<string>> Searchpol(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_pol.Where(x => !string.IsNullOrEmpty(x.PORT))
+               .Select(x => x.PORT);
+            }
+            // MBL.Porname = mst_Consignee;
+            return List_pol.Where(x => !string.IsNullOrEmpty(x.PORT) &&
+                            x.PORT.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.PORT);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> Searchpod(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_pod.Where(x => !string.IsNullOrEmpty(x.PORT))
+               .Select(x => x.PORT);
+            }
+
+            return List_pod.Where(x => !string.IsNullOrEmpty(x.PORT) &&
+                            x.PORT.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.PORT);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    async Task DeleteItem(M_TKHQ_Thongtinchitiet item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "TKHQ"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await tkhqsv.DeleteTKHQChiTiet_Detail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions 
+    {
+        ClassBackground = "class-dialog-custom",
+        FullWidth = true,
+        MaxWidth = MaxWidth.Medium,
+        CloseOnEscapeKey = false,
+        DisableBackdropClick = true
+    };
+    string search;
+
+    // private bool FilterFunc1(M_TKHQ_Thongtinchitiet sbd) => FilterFunc(sbd, search);
+
+    // private bool FilterFunc(M_TKHQ_Thongtinchitiet sbd, string searchString)
+    // {
+    //     if (string.IsNullOrWhiteSpace(sbd.Sotokhai))
+    //         return true;
+    //     if (string.IsNullOrWhiteSpace(searchString))
+    //         return true;
+    //     if (sbd.Sotokhai!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+    //         return true;
+    //     if ($"{sbd.Sotokhai} ".Contains(searchString))
+    //         return true;
+    //     return false;
+    // }
+
+    private Func<M_TKHQ_Thongtinchitiet, string> _cellStyleFunc => x =>
+      {
+
+
+          return "color: #000000";
+      };
+
+
+    // async Task HandleRefresh_create(Guid? id)
+    // {
+    //     try
+    //     {
+
+    //         detail = null;
+
+    //         Listdata.Clear();
+    
+    //         await Task.Delay(500);
+
+    //         if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "TKHQ"))
+    //         {
+    //             CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+    //             return;
+    //         }
+    //         Listdata = await tkhqsv.GetListTKHQ_create(id);
+    //         StateHasChanged();
+    //     }
+    //     finally
+    //     {
+
+
+    //     }
+    // }
+
+  
+}

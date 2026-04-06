@@ -1,0 +1,240 @@
+@page "/param-trongluongcont"
+@using MudBlazor
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Param TrongLuong Cont</PageTitle>
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4" Spacing="2">
+    <MudButton OnClick="Refresh" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Refresh">
+        Refresh
+    </MudButton>
+    <MudButton OnClick="AddItem" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+</MudStack>
+
+<MudContainer Class="px-4" MaxWidth="MaxWidth.False">
+    <MudDataGrid T="ParamTrongLuongCont"
+                 Items="@_items"
+                 Dense="true"
+                 Bordered="true"
+                 Hover="true"
+                 Striped="true"
+                 Filterable="true"
+                 FixedHeader="true"
+                 Height="calc(100vh - 240px)"
+                 Loading="_loading"
+                 ReadOnly="false"
+                 CommittedItemChanges="CommittedItem"
+                 @ref="_grid">
+        <Columns>
+            <TemplateColumn CellClass="d-flex justify-end" Filterable="false" Sortable="false" ShowColumnOptions="false">
+                <CellTemplate>
+                    <MudIconButton Size="Size.Small"
+                                   Icon="@Icons.Material.Outlined.Edit"
+                                   OnClick="@(async () => await StartEditWithPermissionAsync(context.Actions))" />
+                    <MudIconButton Size="Size.Small"
+                                   Icon="@Icons.Material.Outlined.Delete"
+                                   OnClick="@(() => DeleteItem(context.Item))" />
+                </CellTemplate>
+            </TemplateColumn>
+
+            <PropertyColumn Property="x => x.Id" Title="Id" Hidden="true" Editable="false" />
+
+            <PropertyColumn Property="x => x.LoaiCont" Title="LoaiCont" Required="false" />
+
+            <PropertyColumn Property="x => x.TrongLuongToiDa" Title="TrongLuongToiDa" Required="false" />
+        </Columns>
+
+        <PagerContent>
+            <MudDataGridPager T="ParamTrongLuongCont" PageSizeOptions="@(new int[] { 10, 20, 50 })" />
+        </PagerContent>
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+    private bool _loading;
+    private List<ParamTrongLuongCont> _items = new();
+    private MudDataGrid<ParamTrongLuongCont>? _grid;
+    string usr;
+
+    protected override async Task OnInitializedAsync()
+    {
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+
+        await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+        try
+        {
+            if (!await ssv.CheckPermission(usr, "View", "BaremTrongLuongCont"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            _loading = true;
+            StateHasChanged();
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.ParamTrongLuongCont
+                .AsNoTracking()
+                .OrderBy(x => x.LoaiCont)
+                .ThenBy(x => x.TrongLuongToiDa)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Cannot load ParamTrongLuongCont: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task AddItem()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "BaremTrongLuongCont"))
+        {
+            CallSnackBar("You have not access to ADD", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new ParamTrongLuongCont { Id = Guid.Empty };
+        _items.Add(item);
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(50);
+        if (_grid != null)
+            await _grid.SetEditingItemAsync(item);
+    }
+
+    private async Task CommittedItem(ParamTrongLuongCont item)
+    {
+        try
+        {
+            if (item.Id == Guid.Empty && string.IsNullOrWhiteSpace(item.LoaiCont) && string.IsNullOrWhiteSpace(item.TrongLuongToiDa))
+            {
+                _items.Remove(item);
+                StateHasChanged();
+                return;
+            }
+
+            if (item.Id == Guid.Empty)
+            {
+                if (!await ssv.CheckPermission(usr, "Add", "BaremTrongLuongCont"))
+                {
+                    CallSnackBar("You have not access to ADD", MudBlazor.Severity.Warning);
+                    return;
+                }
+            }
+            else
+            {
+                if (!await ssv.CheckPermission(usr, "Edit", "BaremTrongLuongCont"))
+                {
+                    CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+                    return;
+                }
+            }
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            if (item.Id == Guid.Empty)
+            {
+                item.Id = Guid.NewGuid();
+                db.ParamTrongLuongCont.Add(item);
+            }
+            else
+            {
+                db.ParamTrongLuongCont.Update(item);
+            }
+
+            await db.SaveChangesAsync();
+            CallSnackBar("Saved.", MudBlazor.Severity.Success);
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Save failed: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task StartEditWithPermissionAsync(MudBlazor.CellContext<ParamTrongLuongCont>.CellActions actions)
+    {
+        if (!await ssv.CheckPermission(usr, "Edit", "BaremTrongLuongCont"))
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await actions.StartEditingItemAsync();
+    }
+
+    private async Task DeleteItem(ParamTrongLuongCont item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "BaremTrongLuongCont"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item == null)
+        {
+            CallSnackBar("Please select a row.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (item.Id == Guid.Empty)
+        {
+            _items.Remove(item);
+            StateHasChanged();
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Warning",
+            "Deleting can not be undone!",
+            yesText: "Delete!",
+            cancelText: "Cancel");
+
+        if (!confirm.HasValue)
+            return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.ParamTrongLuongCont.FirstOrDefaultAsync(x => x.Id == item.Id);
+            if (entity == null)
+            {
+                CallSnackBar("Not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.ParamTrongLuongCont.Remove(entity);
+            await db.SaveChangesAsync();
+            CallSnackBar("Deleted.", MudBlazor.Severity.Success);
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Delete failed: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
+

@@ -1,0 +1,270 @@
+﻿@attribute [Authorize]
+@using MudBlazor
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
+
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject ShipmentService shipsv
+@inject ReportServices rsv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>7.3 Trucking Report</PageTitle>
+
+<MudContainer MaxWidth=MaxWidth.False>
+
+    <MudDataGrid T="HBLTruckGridItem" Items="@ListdataGrid" Dense="true" Bordered="true" Hover="true"
+                 FilterMode="DataGridFilterMode.Simple" FixedHeader="true" Height="calc(100vh - 42vh)" Loading="_loading">
+
+        <ToolBarContent>
+            <MudStack Row Spacing="3" AlignItems="AlignItems.Center">
+                <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+                <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Primary" OnClick="() => Refresh(frmtoDate)" />
+                <MudButton Disabled="_processingExport" OnClick="@ExportTrucking" StartIcon="@Icons.Material.Filled.Download" Color="Color.Tertiary" Variant="Variant.Filled" Size="Size.Small">
+                    @if (_processingExport)
+                    {
+                        <MudProgressCircular Indeterminate Size="Size.Small" Class="ms-n1" />
+                        <MudText Class="ms-2">Processing</MudText>
+                    }
+                    else
+                    {
+                        <MudText>Export 7.3</MudText>
+                    }
+                </MudButton>
+            </MudStack>
+            <MudSpacer />
+        </ToolBarContent>
+
+        <Columns>
+            <PropertyColumn Property="x => x.STT" Title="No." />
+            <PropertyColumn Property="x => x.DateReport" Title="Date" />
+            <PropertyColumn Property="x => x.HBL" Title="HBL" />
+            <PropertyColumn Property="x => x.TruckReqNo" Title="Truck Req No" />
+            <PropertyColumn Property="x => x.LenhNo" Title="Lenh No" />
+            <PropertyColumn Property="x => x.Pickup" Title="Pickup" />
+            <PropertyColumn Property="x => x.Dropoff" Title="Dropoff" />
+            <PropertyColumn Property="x => x.NoOfPackages" Title="Qty (Pkgs/Cont)" />
+            <PropertyColumn Property="x => x.TruckNo" Title="Truck No" />
+            <TemplateColumn Title="Cuoc VC Noi Dia">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.CuocVCNoiDia.HasValue
+                                        ? ctx.Item.CuocVCNoiDia.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Phi Nang">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.PhiNang.HasValue
+                                        ? ctx.Item.PhiNang.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Phi Ha">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.PhiHa.HasValue
+                                        ? ctx.Item.PhiHa.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Local Charge">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.LocalCharge.HasValue
+                                        ? ctx.Item.LocalCharge.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Cuoc VC Quoc Te">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.CuocVCQuocTe.HasValue
+                                        ? ctx.Item.CuocVCQuocTe.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Chi Phi Khac">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.PhiKhac.HasValue
+                                        ? ctx.Item.PhiKhac.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="VAT 8%">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.VAT8.HasValue
+                                        ? ctx.Item.VAT8.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Thanh Tien">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.ThanhTienTruocThue.HasValue
+                                        ? ctx.Item.ThanhTienTruocThue.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+
+            <PropertyColumn Property="x => x.InvoiceNos" Title="Invoice Nos" />
+            <PropertyColumn Property="x => x.Remarks" Title="Remarks" />
+        </Columns>
+    </MudDataGrid>
+
+</MudContainer>
+
+@code {
+    bool _loading = false;
+    bool _processingExport = false;
+    List<M_HBL> Listdata = new();
+    MudDataGrid<M_HBL>? grid;
+    string? usr;
+    AuthUser? userdetail;
+
+    DateRange frmtoDate = new(
+        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1),
+        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
+
+    protected override async Task OnInitializedAsync()
+    {
+        userdetail = asv.GetUserDetail();
+        usr = (await asv.GetAuth()).User.Identity!.Name!;
+        await Refresh(frmtoDate);
+    }
+
+    void Snack(string msg, MudBlazor.Severity sev)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(msg, sev);
+    }
+
+
+    List<HBLTruckGridItem> ListdataGrid = new();
+
+    async Task Refresh(DateRange range)
+    {
+        try
+        {
+            if (_loading) return;
+            _loading = true;
+            Listdata.Clear();
+            ListdataGrid.Clear();
+
+            if (!await ssv.CheckPermission(usr!, "View", "Trucking_Reports"))
+            {
+                Snack("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Lấy dữ liệu HBL từ service
+            Listdata = await shipsv.GetListHBLTruckDateRange(range);
+            if (Listdata.Count == 0)
+            {
+                Snack("No Data", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            int stt = 1;
+            foreach (var h in Listdata.Where(x => !string.IsNullOrEmpty(x.Truck_YeucauTruckingNo)))
+            {
+                // gọi service tính toán giống Excel
+                var row = await rsv.GetHBLTruckGridItem(h);
+
+                row.STT = stt++;
+                ListdataGrid.Add(row);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    // async Task Refresh(DateRange range)
+    // {
+    //     // try
+    //     // {
+    //     //     if (_loading) return;
+    //     //     _loading = true;
+    //     //     Listdata.Clear();
+    //     //     if (!await ssv.CheckPermission(usr!, "View", "Shipment"))
+    //     //     {
+    //     //         Snack("You have not access to view", MudBlazor.Severity.Warning);
+    //     //         return;
+    //     //     }
+    //     //     Listdata = await shipsv.GetListHBLTruckDateRange(range);
+    //     // }
+    //     // catch (Exception ex)
+    //     // {
+    //     //     Snack(ex.Message, MudBlazor.Severity.Error);
+    //     // }
+    //     // finally
+    //     // {
+    //     //     _loading = false;
+    //     //     StateHasChanged();
+    //     // }
+    // }
+
+    async Task ExportTrucking()
+    {
+        try
+        {
+            _processingExport = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if (Listdata.Count == 0)
+            {
+                Snack("No Data", MudBlazor.Severity.Warning);
+                return;
+            }
+            var rs = await rsv.BangKeTruckingReportExcel(Listdata, frmtoDate);
+            Snack(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snack("Export error: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingExport = false;
+        }
+    }
+
+    public class HBLTruckGridItem
+    {
+        public int STT { get; set; }
+        public DateTime? DateReport { get; set; }
+        public string HBL { get; set; } = "";
+        public string TruckReqNo { get; set; } = "";
+        public string LenhNo { get; set; } = "";
+        public string Pickup { get; set; } = "";
+        public string Dropoff { get; set; } = "";
+        public string NoOfPackages { get; set; }
+        public string TruckNo { get; set; } = "";
+
+        public double? CuocVCNoiDia { get; set; }
+        public double? PhiNang { get; set; }
+        public double? PhiHa { get; set; }
+        public double? LocalCharge { get; set; }
+        public double? CuocVCQuocTe { get; set; }
+        public double? PhiKhac { get; set; }
+        public double? VAT8 { get; set; }
+        public double? ThanhTienTruocThue { get; set; }
+        public string InvoiceNos { get; set; } = "";
+        public string Remarks { get; set; } = "";
+    }
+
+
+}

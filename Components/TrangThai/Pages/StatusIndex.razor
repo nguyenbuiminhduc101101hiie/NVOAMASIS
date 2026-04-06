@@ -1,0 +1,248 @@
+﻿@page "/Status"
+@inject NavigationManager navSvc
+@inject ILogger<Index> Logger
+@inject IJSRuntime js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<PageTitle>@Localizer["Status"]</PageTitle>
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItem())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+    <a href="HDSDhtml/HDSD_Status_Module_LMS.html" target="_blank">
+        <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">Trợ giúp</MudButton>
+    </a>
+</MudStack>
+<MudDataGrid T="TrangThai" Items="@Listdata" Filterable="true" @ref="mudTable" QuickFilter="@FilterFunc1"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" Bordered="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap" EditDialogOptions="optionsdialog"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="SelectedRowClassFunc"
+             ColumnResizeMode="ResizeMode.Column" Loading="_loading" RowContextMenuClick="RowRightClicked">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => {
+
+                                 detail = JsonSerializer.Deserialize<TrangThai>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+
+                       })" />
+
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.Tieude" Title="Title" Required="true" >
+            <FilterTemplate >
+                <MudTextField @bind-Value="searchString1"/>
+            </FilterTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Noidung" Title="Content" Required="true" />
+
+        <PropertyColumn Property="x => x.Mamau" Title="Color">
+
+            <CellTemplate>
+                <MudChip Style="@GetColorStyle(context.Item.Mamau)">
+                    @context.Item.Mamau
+                </MudChip>
+            </CellTemplate>
+             <EditTemplate>
+                <MudColorPicker Value="ConvertToMudColor(context.Item.Mamau)" ValueChanged="@((t) => OnColorChanged(t, context.Item))" Label="Color" ColorPickerView="ColorPickerView.Spectrum" />
+             </EditTemplate>
+        </PropertyColumn>
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="TrangThai" PageSizeOptions=@(new int[] {10, 15, 25}) />
+    </PagerContent>
+</MudDataGrid>
+<script>
+    window.triggerGridClick = () => {
+        const gridElement = document.querySelector(".mudTable");
+        if (gridElement) {
+            gridElement.click();
+        }
+    }
+</script>
+@code {
+    @using MudBlazor.Utilities
+    [Parameter] public M_Customer customer { get; set; } = default!;
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    protected async override Task OnInitializedAsync()
+    {
+        // await Refresh();
+    }
+    bool _loading = false;
+    List<TrangThai> Listdata = new List<TrangThai>();
+    TrangThai detail;
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "Status"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await supsv.GetListTrangThai();
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    MudDataGrid<TrangThai> mudTable;
+    async Task AddItem()
+    {
+        var item = new TrangThai
+        {
+            Tieude = "",
+            Noidung = ""
+        };
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task DeleteItem(TrangThai item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await supsv.DeleteTrangThai(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    private string searchString1 = "";
+    private bool FilterFunc1(TrangThai sbd) => FilterFunc(sbd, searchString1);
+
+    private bool FilterFunc(TrangThai sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.Tieude!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.Tieude} ".Contains(searchString))
+            return true;
+        return false;
+    }
+    async Task CommittedItem(TrangThai item)
+    {
+        var rs = item.Id != Guid.Empty ? await supsv.UpdateTrangThai(item,detail) : await supsv.CreateTrangThai(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+        await TriggerGridClick();
+        searchString1 = item.Tieude;
+
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(TrangThai Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    private async Task TriggerGridClick()
+    {
+        await js.InvokeVoidAsync("triggerGridClick");
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<TrangThai> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private List<string> predefinedColors = new List<string>
+    {
+        "#FF5733", "#33FF57", "#3357FF", "#FFFF33", "#FF33FF", "#33FFFF"
+    };
+
+    private string GetColorStyle(string color)
+    {
+        return $"background-color: {color}; color: white;";
+    }
+
+    private void OnColorChanged(MudColor color, TrangThai tt)
+    {
+        tt.Mamau = color.ToString(MudColorOutputFormats.Hex);
+    }
+
+    public MudColor ConvertToMudColor(string? colorString)
+    {
+        MudColor defaultColor = new MudColor("#3498db");
+        if (string.IsNullOrWhiteSpace(colorString))
+            return defaultColor;
+        try
+        {
+            return new MudColor(colorString);
+        }
+        catch
+        {
+            return defaultColor;
+        }
+    }
+    DialogOptions optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+}

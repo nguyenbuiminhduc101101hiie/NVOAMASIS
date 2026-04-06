@@ -1,0 +1,311 @@
+@page "/TransactionTypes"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["TransactionTypes_Title"]</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudText Typo="Typo.h6" Class="fw-700">5.8.5 @Localizer["TransactionTypes_Title"]</MudText>
+
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddTransactionTypeDialogAsync" Disabled="_busy">@Localizer["new"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditTransactionTypeDialogAsync" Disabled="_busy || _selected is null">@Localizer["edit"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">@Localizer["delete"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Tertiary" Size="Size.Small" StartIcon="@Icons.Material.Filled.PostAdd" OnClick="OpenDetailsDialogAsync" Disabled="_busy || _selected is null">ADD Details</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-3">
+        <MudTextField @bind-Value="_search" Label="@Localizer["search"]" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" />
+        <MudDataGrid T="M_TransactionTypes"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClass"
+                     Height="calc(100vh - 300px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.Code" Title="@Localizer["TransactionTypes_Code"]" />
+                <PropertyColumn Property="x => x.Name" Title="@Localizer["TransactionTypes_Name"]" />
+                <PropertyColumn Property="x => x.Description" Title="@Localizer["TransactionTypes_Description"]" />
+                <PropertyColumn Property="x => x.IsActive" Title="@Localizer["TransactionTypes_IsActive"]" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_TransactionTypes" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "TransactionTypes";
+    private bool _busy;
+    private string _usr = string.Empty;
+    private string _search = string.Empty;
+    private List<M_TransactionTypes> _items = new();
+    private M_TransactionTypes? _selected;
+    private M_TransactionTypes _edit = new() { IsActive = true };
+
+    private IEnumerable<M_TransactionTypes> VisibleItems =>
+        string.IsNullOrWhiteSpace(_search)
+            ? _items
+            : _items.Where(x =>
+                (x.Code?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.Name?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.Description?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+            _items.Clear();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.TransactionTypes.AsNoTracking().OrderBy(x => x.Code).ToListAsync();
+            _selected = null;
+            _edit = new M_TransactionTypes { IsActive = true };
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_TransactionTypes> args)
+    {
+        _selected = args.Item;
+        _edit = new M_TransactionTypes
+        {
+            Id = args.Item.Id,
+            Code = args.Item.Code,
+            Name = args.Item.Name,
+            Description = args.Item.Description,
+            IsActive = args.Item.IsActive
+        };
+    }
+
+    private string RowClass(M_TransactionTypes row, int _) => _selected?.Id == row.Id ? "selected-row-blue" : string.Empty;
+
+    private async Task SaveAsync()
+    {
+        var isNew = _edit.Id == Guid.Empty;
+        if (isNew && !await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!isNew && !await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_edit.Code) || string.IsNullOrWhiteSpace(_edit.Name))
+        {
+            CallSnack(Localizer["TransactionTypes_Validate_CodeName"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var normalizedCode = _edit.Code.Trim();
+            var normalizedName = _edit.Name.Trim();
+            var duplicatedName = await db.TransactionTypes.AsNoTracking()
+                .AnyAsync(x => x.Name == normalizedName && x.Id != _edit.Id);
+            if (duplicatedName)
+            {
+                CallSnack("Name already exists.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (isNew)
+            {
+                _edit.Id = Guid.NewGuid();
+                _edit.Code = normalizedCode;
+                _edit.Name = normalizedName;
+                _edit.Description = string.IsNullOrWhiteSpace(_edit.Description) ? null : _edit.Description.Trim();
+                db.TransactionTypes.Add(_edit);
+            }
+            else
+            {
+                var entity = await db.TransactionTypes.FirstOrDefaultAsync(x => x.Id == _edit.Id);
+                if (entity is null)
+                {
+                    CallSnack(Localizer["RecordNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+                entity.Code = normalizedCode;
+                entity.Name = normalizedName;
+                entity.Description = string.IsNullOrWhiteSpace(_edit.Description) ? null : _edit.Description.Trim();
+                entity.IsActive = _edit.IsActive;
+            }
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["SavedSuccess"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (DbUpdateException ex)
+        {
+            CallSnack(ex.InnerException?.Message ?? ex.Message, MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OpenAddTransactionTypeDialogAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<TransactionType_AddEditDialog>(
+            "Add TransactionType",
+            new DialogParameters { ["Model"] = new M_TransactionTypes { IsActive = true } },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_TransactionTypes data)
+            return;
+
+        _edit = data;
+        await SaveAsync();
+    }
+
+    private async Task OpenEditTransactionTypeDialogAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<TransactionType_AddEditDialog>(
+            "Edit TransactionType",
+            new DialogParameters { ["Model"] = _selected },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_TransactionTypes data)
+            return;
+
+        _edit = data;
+        await SaveAsync();
+    }
+
+    private async Task OpenDetailsDialogAsync()
+    {
+        if (_selected is null)
+            return;
+
+        var dialog = DialogService.Show<TransactionTypeMappings_ManagerDialog>(
+            "ADD Details",
+            new DialogParameters
+            {
+                ["TransactionId"] = _selected.Id,
+                ["TransactionName"] = _selected.Name ?? _selected.Code,
+                ["PermissionCode"] = PermissionMenuName
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        await dialog.Result;
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(Localizer["Warning"], Localizer["Delete_Confirm"], yesText: Localizer["delete"], cancelText: Localizer["cancel"]);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TransactionTypes.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnack(Localizer["RecordNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+            var mappings = await db.TransactionTypeMappings.Where(x => x.TransactionID == entity.Id).ToListAsync();
+            if (mappings.Count > 0)
+                db.TransactionTypeMappings.RemoveRange(mappings);
+            db.TransactionTypes.Remove(entity);
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["DeletedSuccess"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
+
+<style>
+    .selected-row-blue { background-color: #2196f3 !important; }
+</style>
+

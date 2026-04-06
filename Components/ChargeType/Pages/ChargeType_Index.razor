@@ -1,0 +1,358 @@
+@page "/ChargeType"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["ChargeType"]</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.h6" Class="fw-700">8.4 @Localizer["ChargeType"]</MudText>
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Secondary"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenNewDialog"
+                       Disabled="_busy">
+                @Localizer["new"]
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Info"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Edit"
+                       OnClick="OpenEditDialog"
+                       Disabled="_selected is null || _busy">
+                @Localizer["edit"]
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Error"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Delete"
+                       OnClick="DeleteSelectedAsync"
+                       Disabled="_selected is null || _busy">
+                @Localizer["delete"]
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       OnClick="LoadListAsync"
+                       Disabled="_busy">
+                @Localizer["reload"]
+            </MudButton>
+        </MudStack>
+    </MudStack>
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2">
+            <MudTextField @bind-Value="_searchText"
+                          Label="@Localizer["ChargeType_SearchHint"]"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true"
+                          Immediate="true"
+                          Style="max-width: 420px;" />
+        </MudStack>
+        <MudDataGrid T="M_ChargeType"
+                     Items="VisibleChargeTypes"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClassFunc"
+                     Height="calc(100vh - 220px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.Code" Title="@Localizer["ChargeType_Code"]" />
+                <PropertyColumn Property="x => x.Name" Title="@Localizer["name"]" />
+                <PropertyColumn Property="x => x.Description" Title="@Localizer["ChargeType_Description"]" />
+                <TemplateColumn Title="@Localizer["ChargeType_Active"]">
+                    <CellTemplate>
+                        <MudChip T="string" Size="Size.Small" Color="@(context.Item.IsActive ? Color.Success : Color.Default)">
+                            @(context.Item.IsActive ? Localizer["ChargeType_Yes"] : Localizer["ChargeType_No"])
+                        </MudChip>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_ChargeType" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "ChargeType";
+
+    private bool _busy;
+    private List<M_ChargeType> _items = new();
+    private M_ChargeType? _selected;
+    private string usr = string.Empty;
+    private string _searchText = string.Empty;
+
+    private IEnumerable<M_ChargeType> VisibleChargeTypes
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+                return _items;
+            var t = _searchText.Trim();
+            return _items.Where(x =>
+                ContainsIc(x.Code, t) ||
+                ContainsIc(x.Name, t) ||
+                ContainsIc(x.Description, t));
+        }
+    }
+
+    private static bool ContainsIc(string? s, string needle) =>
+        !string.IsNullOrEmpty(s) && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadListAsync();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "View", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+            _items = new List<M_ChargeType>();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.ChargeType
+                .AsNoTracking()
+                .OrderBy(x => x.Code)
+                .ToListAsync();
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["ChargeType_CannotLoad", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_ChargeType> args)
+    {
+        _selected = CloneRow(args.Item);
+    }
+
+    private static M_ChargeType CloneRow(M_ChargeType row) => new()
+    {
+        Id = row.Id,
+        Code = row.Code ?? string.Empty,
+        Name = row.Name ?? string.Empty,
+        Description = row.Description,
+        IsActive = row.IsActive
+    };
+
+    private string RowClassFunc(M_ChargeType row, int _)
+    {
+        if (_selected != null && _selected.Id == row.Id)
+            return "chargetype-selected-row";
+        return string.Empty;
+    }
+
+    private async Task OpenNewDialog()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to ADD", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<ChargeType_EditDialog>(
+            Localizer["ChargeType_NewDialogTitle"],
+            new DialogParameters
+            {
+                ["Model"] = new M_ChargeType { Id = Guid.Empty, Code = string.Empty, Name = string.Empty, IsActive = true },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not ChargeType_EditDialog.ChargeTypeDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task OpenEditDialog()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to EDIT", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<ChargeType_EditDialog>(
+            Localizer["ChargeType_EditDialogTitle"],
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not ChargeType_EditDialog.ChargeTypeDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(ChargeType_EditDialog.ChargeTypeDialogResult data)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var codeNorm = data.Code.Trim();
+            var dup = await db.ChargeType.AnyAsync(x => x.Code == codeNorm && x.Id != data.Id);
+            if (dup)
+            {
+                CallSnackBar(Localizer["ChargeType_CodeAlreadyExists"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (!data.IsEdit)
+            {
+                var entity = new M_ChargeType
+                {
+                    Id = Guid.NewGuid(),
+                    Code = codeNorm,
+                    Name = data.Name.Trim(),
+                    Description = data.Description,
+                    IsActive = data.IsActive
+                };
+                db.ChargeType.Add(entity);
+            }
+            else
+            {
+                var entity = await db.ChargeType.FirstOrDefaultAsync(x => x.Id == data.Id);
+                if (entity is null)
+                {
+                    CallSnackBar(Localizer["ChargeType_RecordNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.Code = codeNorm;
+                entity.Name = data.Name.Trim();
+                entity.Description = data.Description;
+                entity.IsActive = data.IsActive;
+            }
+
+            await db.SaveChangesAsync();
+            _selected = null;
+            await LoadListAsync();
+            CallSnackBar(Localizer["ChargeType_Saved"], MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["ChargeType_CannotSave", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", PermissionMenuName))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_selected is null)
+            return;
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["ChargeType_Warning"],
+            Localizer["ChargeType_DeleteConfirmBody"],
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.ChargeType.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnackBar(Localizer["ChargeType_RecordNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var usedTariff = await db.TariffHeader.AnyAsync(x => x.ChargeTypeId == entity.Id);
+            var usedCtx = await db.ShipmentChargeContext.AnyAsync(x => x.ChargeTypeId == entity.Id);
+            if (usedTariff || usedCtx)
+            {
+                CallSnackBar(Localizer["ChargeType_CannotDeleteReferenced"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.ChargeType.Remove(entity);
+            await db.SaveChangesAsync();
+            _selected = null;
+            CallSnackBar(Localizer["ChargeType_Deleted"], MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["ChargeType_CannotDelete", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
+
+<style>
+    .chargetype-selected-row {
+        background-color: #2196f3 !important;
+    }
+</style>

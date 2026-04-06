@@ -1,0 +1,279 @@
+﻿@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@using System.Globalization﻿
+
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="M_MBL" Items="@Listdata_mbl" @ref="mudTable" Class="table-shipment-bg" Dense="true"
+                 FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+                 ReadOnly="false" RowClassFunc="@SelectedRowClassFunc"
+                 RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true" RowClass="no-wrap-cell"
+                 ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+        <Columns>
+            <HierarchyColumn T="M_MBL" />
+            <PropertyColumn Property="x => x.Mbl" Title="@Localizer["MBL"]" Required />
+            <PropertyColumn Property="x => TDebit_(x.MblID)" Title="@Localizer["Debit"]" Required Format="#,##0.##" Culture="@_en" Filterable="false" />
+            <PropertyColumn Property="x => TCredit_(x.MblID)" Title="@Localizer["Credit"]" Required Format="#,##0.##" Culture="@_en" Filterable="false" />
+            <PropertyColumn Property="x => TCMS_(x.MblID)" Title="@Localizer["Commission"]" Required Format="#,##0.##" Culture="@_en" Filterable="false" />
+            <PropertyColumn Property="@(x => TProfit_(x.MblID, ""))" Title="@Localizer["Profit (All)"]" Required Format="#,##0.##" Culture="@_en" Filterable="false" />
+            <PropertyColumn Property="x => TDuty_(x.MblID)" Title="@Localizer["Refund Duty (COM.)"]" Required Format="#,##0.##" Culture="@_en" Filterable="false" />
+    @*         <PropertyColumn Property="@(x => TProfit_(x.MblID, "FREIGHT"))" Title="@Localizer["Profit (Freight)"]" Required Format="#,##0.##" Culture="@_en" Filterable="false" />
+            <PropertyColumn Property="@(x => TProfit_(x.MblID, "LOCAL"))" Title="@Localizer["Profit (Local)"]" Required Format="#,##0.##" Culture="@_en" Filterable="false" /> *@
+     
+       @*      <PropertyColumn Property="@(x => TProfit_(x.MblID, "notCOM"))" Title="@Localizer["Profit (not COM.)"]" Required Format="#,##0.##" Culture="@_en" Filterable="false" /> *@
+        </Columns>
+        <ChildRowContent>
+            <Profit_HBL Listdata="ListHBLs" MBLDetail=context.Item ListCredit="ListCredit" ListDebit="ListDebit"
+                        chkVAT="chkVAT" chkUSD="chkUSD" chkVND="chkVND" />
+        </ChildRowContent>
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    List<ChargeModel> charges = new List<ChargeModel>();
+    CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    protected async override Task OnInitializedAsync()
+    {
+        _loading = true;
+        charges = await supsv.GetListCharge();
+        //Listdata = await shipsv.GetListMBL(JobDetail.JobID);
+        Listdata_mbl = Listdata.Where(x => x.Jobid == JobDetail.JobID).ToList();
+        _loading = false;
+    }
+
+    bool _loading = false;
+    public List<M_MBL> Listdata_mbl = new List<M_MBL>();
+    [Parameter] public List<M_MBL> Listdata { get; set; } = new List<M_MBL>();
+    [Parameter] public M_Job JobDetail { get; set; }
+    [Parameter] public List<M_HBL> ListHBLs { get; set; }
+    [Parameter] public List<M_Debit> ListDebit { get; set; }
+    [Parameter] public List<M_Credit> ListCredit { get; set; }
+    M_MBL detail;
+    [Parameter] public bool chkVAT { get; set; }
+    [Parameter] public bool chkUSD { get; set; }
+    [Parameter] public bool chkVND { get; set; }
+    MudDataGrid<M_MBL> mudTable;
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_MBL Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_MBL> args)
+    {
+        detail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_MBL> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    string formatDate(DateTime? date)
+    {
+        if (date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MMM/yyyy");
+    }
+
+
+
+
+    DateRange frmtoDate = new DateRange(DateTime.Now.AddMonths(-1), DateTime.Now);
+
+    string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    string CharidtoLoaidv(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.loaidichvu_charge}"!;
+    }
+    double? TDebit_(Guid id)
+    {
+        var debit = ListDebit.Where(x => x.mblid == id &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION") &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("DUTY"))
+                        .ToList();
+        return debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien;
+        });
+    }
+
+    double? TCredit_(Guid id)
+    {
+        var credit = ListCredit.Where(x => x.mblid == id &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION") &&
+                        !Charidtocharge(x.itemid).ToUpper().Contains("DUTY"))
+                        .ToList();
+        return credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiacredit;
+            }
+            return tien;
+        });
+    }
+    double? TCMS_(Guid id)
+    {
+        var credit = ListCredit.Where(x => x.mblid == id &&
+                        Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION"))
+                        .ToList();
+        return credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiacredit;
+            }
+            return tien;
+        });
+    }
+    double? TDuty_(Guid id)
+    {
+        var debit = ListDebit.Where(x => x.mblid == id &&
+                        Charidtocharge(x.itemid).ToUpper().Contains("DUTY"))
+                        .ToList();
+        return debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien;
+        });
+    }
+
+    double? TProfit_(Guid id, string type)
+    {
+        var debit = ListDebit;
+        var credit = ListCredit;
+        if (type == "FREIGHT" || type == "LOCAL")
+        {
+            debit = ListDebit.Where(x => x.mblid == id && CharidtoLoaidv(x.itemid).ToUpper().Contains(type)).ToList();
+            credit = ListCredit.Where(x => x.mblid == id && CharidtoLoaidv(x.itemid).ToUpper().Contains(type)).ToList();
+        }
+        else if (type == "notCOM")
+        {
+            debit = ListDebit.Where(x => x.mblid == id && !Charidtocharge(x.itemid).ToUpper().Contains("DUTY")).ToList();
+            credit = ListCredit.Where(x => x.mblid == id && !Charidtocharge(x.itemid).ToUpper().Contains("COMMISSION")).ToList();
+        }
+        else
+        {
+            debit = ListDebit.Where(x => x.mblid == id).ToList();
+            credit = ListCredit.Where(x => x.mblid == id).ToList();
+        }
+        var totaldebit = debit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiadebit;
+            }
+            return tien;
+        });
+        var totalcredit = credit.Sum(x =>
+        {
+            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
+            if (chkUSD)
+            {
+                return x.tiente == "USD"
+                    ? tien * 1
+                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
+            }
+            else if (!chkUSD)
+            {
+                return x.tiente == "VND"
+                    ? tien * 1
+                    : tien * x.tigiacredit;
+            }
+            return tien;
+        });
+        return totaldebit - totalcredit;
+    }
+}

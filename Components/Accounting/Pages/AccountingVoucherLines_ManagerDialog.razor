@@ -1,0 +1,448 @@
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.subtitle1" Class="fw-700 mb-2">@($"Thông tin bút toán — {VoucherNo}")</MudText>
+
+        <MudStack Row="true" Spacing="1" Class="mb-2">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddAsync" Disabled="_busy">Thêm dòng</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditAsync" Disabled="_busy || _selected is null">Sửa</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">Xóa</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Warning" StartIcon="@Icons.Material.Filled.AutoFixHigh" OnClick="RegenerateFromTransactionTypeAsync" Disabled="_busy">Tạo dòng từ loại dịch vụ</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">Reload</MudButton>
+        </MudStack>
+
+        <MudDataGrid T="M_AccountingVoucherLines"
+                     Items="_items"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClass"
+                     Height="380px"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.LineNo_" Title="STT" />
+                <TemplateColumn Title="TK">
+                    <CellTemplate>@GetTaiKhoan(context.Item.DanhMucTaiKhoanID)</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Tên TK">
+                    <CellTemplate>@GetTenTaiKhoan(context.Item.DanhMucTaiKhoanID)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.LineDescription" Title="Diễn giải" />
+                <TemplateColumn Title="Customer">
+                    <CellTemplate>@GetCustomerLabel(context.Item.CustomerId)</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Shipment (HBL)">
+                    <CellTemplate>@GetHblLabel(context.Item.ShipmentId)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.ContractId" Title="Contract" />
+                <PropertyColumn Property="x => x.InvoiceDate" Title="Invoice Date" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.DebitAmount" Title="Nợ" Format="N2" />
+                <PropertyColumn Property="x => x.CreditAmount" Title="Có" Format="N2" />
+            </Columns>
+        </MudDataGrid>
+
+        <MudPaper Class="pa-2 mt-2" Elevation="0">
+            <MudStack Row="true" Spacing="2" Justify="Justify.FlexEnd" AlignItems="AlignItems.Center">
+                <MudText Typo="Typo.body2">Tổng dòng: @_items.Count</MudText>
+                <MudText Typo="Typo.body2">Tổng Nợ: @_totalDebit.ToString("N2")</MudText>
+                <MudText Typo="Typo.body2">Tổng Có: @_totalCredit.ToString("N2")</MudText>
+                <MudText Typo="Typo.body2" Color="@(_diff == 0 ? MudBlazor.Color.Success : MudBlazor.Color.Error)">Chênh lệch: @_diff.ToString("N2")</MudText>
+                <MudText Typo="Typo.body2" Color="MudBlazor.Color.Success">@BalanceLabel</MudText>
+            </MudStack>
+        </MudPaper>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Close">Đóng</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Guid VoucherId { get; set; }
+    [Parameter] public string VoucherNo { get; set; } = string.Empty;
+    [Parameter] public string PermissionCode { get; set; } = "AccountingVouchers";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private List<M_AccountingVoucherLines> _items = new();
+    private M_AccountingVoucherLines? _selected;
+    private Dictionary<Guid, DanhMucTaiKhoan> _danhMucById = new();
+    private Dictionary<Guid, M_Customer> _customerById = new();
+    private Dictionary<Guid, M_HBL> _hblById = new();
+
+    private decimal _totalDebit;
+    private decimal _totalCredit;
+    private decimal _diff;
+
+    private string BalanceLabel => _diff == 0 && _items.Count > 0 ? "Cân bút toán" : (_items.Count == 0 ? "" : "Chưa cân");
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadLookupsAsync();
+        await LoadAsync();
+        if (await ssv.CheckPermission(_usr, "Edit", PermissionCode))
+            await TryAutoGenerateLinesAsync();
+    }
+
+    private async Task LoadLookupsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var list = await db.DanhMucTaiKhoan.AsNoTracking()
+            .Where(x => x.Taikhoan != null)
+            .ToListAsync();
+        _danhMucById = list.ToDictionary(x => x.Id, x => x);
+        var customers = await db.Customer.AsNoTracking()
+            .Where(x => x.Customer_ID != Guid.Empty)
+            .ToListAsync();
+        _customerById = customers.ToDictionary(x => x.Customer_ID, x => x);
+        var hbls = await db.HBL.AsNoTracking()
+            .Where(x => x.hblID != Guid.Empty)
+            .ToListAsync();
+        _hblById = hbls.ToDictionary(x => x.hblID, x => x);
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.AccountingVoucherLines.AsNoTracking()
+                .Where(x => x.VoucherId == VoucherId)
+                .OrderBy(x => x.SortKey ?? int.MaxValue)
+                .ThenBy(x => x.LineNo_)
+                .ToListAsync();
+            _selected = null;
+            RecalcTotals();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void RecalcTotals()
+    {
+        _totalDebit = _items.Sum(x => x.DebitAmount);
+        _totalCredit = _items.Sum(x => x.CreditAmount);
+        _diff = _totalDebit - _totalCredit;
+    }
+
+    private string GetTenTaiKhoan(Guid id)
+    {
+        if (_danhMucById.TryGetValue(id, out var dmById))
+            return dmById.Tentaikhoan ?? string.Empty;
+        return string.Empty;
+    }
+
+    private string GetTaiKhoan(Guid id)
+    {
+        if (_danhMucById.TryGetValue(id, out var dmById))
+            return dmById.Taikhoan ?? string.Empty;
+        return string.Empty;
+    }
+
+    private string GetCustomerLabel(Guid? id)
+    {
+        if (id is null || id == Guid.Empty)
+            return string.Empty;
+        if (!_customerById.TryGetValue(id.Value, out var c))
+            return string.Empty;
+        var code = c.Customer_Code?.Trim() ?? string.Empty;
+        var company = !string.IsNullOrWhiteSpace(c.COMPANY) ? c.COMPANY!.Trim() : (c.BIZName?.Trim() ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(company))
+            return $"{code} - {company}";
+        return !string.IsNullOrWhiteSpace(code) ? code : company;
+    }
+
+    private string GetHblLabel(Guid? id)
+    {
+        if (id is null || id == Guid.Empty)
+            return string.Empty;
+        return _hblById.TryGetValue(id.Value, out var h) ? (h.hbl ?? string.Empty) : string.Empty;
+    }
+
+    private async Task TryAutoGenerateLinesAsync()
+    {
+        if (_items.Count > 0)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var voucher = await db.AccountingVouchers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == VoucherId);
+        if (voucher is null || string.IsNullOrWhiteSpace(voucher.TransactionTypeCode))
+            return;
+
+        var tt = await db.TransactionTypes.AsNoTracking().FirstOrDefaultAsync(x => x.Code == voucher.TransactionTypeCode);
+        if (tt is null)
+            return;
+
+        var mappings = await db.TransactionTypeMappings.AsNoTracking()
+            .Where(x => x.TransactionID == tt.Id && x.IsActive)
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync();
+        if (mappings.Count == 0)
+            return;
+
+        await GenerateLinesCoreAsync(mappings, silent: true);
+    }
+
+    private async Task RegenerateFromTransactionTypeAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionCode))
+        {
+            Snackbar.Add("Không có quyền sửa.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox("Xác nhận", "Xóa các dòng hiện tại và tạo lại theo cấu hình loại dịch vụ?", yesText: "Đồng ý", cancelText: "Hủy");
+        if (confirm != true)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var voucher = await db.AccountingVouchers.AsNoTracking().FirstOrDefaultAsync(x => x.Id == VoucherId);
+        if (voucher is null || string.IsNullOrWhiteSpace(voucher.TransactionTypeCode))
+        {
+            Snackbar.Add("Chưa có loại dịch vụ trên chứng từ.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var tt = await db.TransactionTypes.AsNoTracking().FirstOrDefaultAsync(x => x.Code == voucher.TransactionTypeCode);
+        if (tt is null)
+        {
+            Snackbar.Add("Không tìm thấy loại nghiệp vụ.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var mappings = await db.TransactionTypeMappings.AsNoTracking()
+            .Where(x => x.TransactionID == tt.Id && x.IsActive)
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync();
+        if (mappings.Count == 0)
+        {
+            Snackbar.Add("Chưa cấu hình chi tiết (TransactionTypeMappings) cho loại này.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await GenerateLinesCoreAsync(mappings, silent: false);
+    }
+
+    private async Task GenerateLinesCoreAsync(List<M_TransactionTypeMappings> mappings, bool silent)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var existing = await db.AccountingVoucherLines.Where(x => x.VoucherId == VoucherId).ToListAsync();
+            if (existing.Count > 0)
+            {
+                db.AccountingVoucherLines.RemoveRange(existing);
+                await db.SaveChangesAsync();
+            }
+
+            var dmIds = mappings.Select(m => m.DanhMucTaiKhoanID).Distinct().ToHashSet();
+            // Avoid SQL translation that may emit OPENJSON ... WITH on older SQL compatibility levels.
+            var dms = (await db.DanhMucTaiKhoan.AsNoTracking().ToListAsync())
+                .Where(x => dmIds.Contains(x.Id))
+                .ToDictionary(x => x.Id);
+            var n = 1;
+            foreach (var m in mappings)
+            {
+                if (!dms.TryGetValue(m.DanhMucTaiKhoanID, out var dm))
+                    continue;
+
+                var line = new M_AccountingVoucherLines
+                {
+                    Id = Guid.NewGuid(),
+                    VoucherId = VoucherId,
+                    LineNo_ = n.ToString(),
+                    DanhMucTaiKhoanID = dm.Id,
+                    AccountCode = (dm.Taikhoan ?? string.Empty).Trim(),
+                    LineDescription = string.IsNullOrWhiteSpace(dm.Diengiai) ? (dm.Tentaikhoan ?? string.Empty) : dm.Diengiai!,
+                    DebitAmount = 0,
+                    CreditAmount = 0,
+                    DebitAmountFC = 0,
+                    CreditAmountFC = 0,
+                    IsTaxBook = false,
+                    IsManagementBook = false,
+                    SortKey = m.SortOrder
+                };
+
+                db.AccountingVoucherLines.Add(line);
+                n++;
+            }
+
+            if (n > 1)
+                await db.SaveChangesAsync();
+            if (!silent)
+                Snackbar.Add("Đã tạo dòng theo loại dịch vụ.", MudBlazor.Severity.Success);
+            await LoadLookupsAsync();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_AccountingVoucherLines> args) => _selected = args.Item;
+
+    private string RowClass(M_AccountingVoucherLines row, int _) => _selected?.Id == row.Id ? "selected-row-blue" : string.Empty;
+
+    private async Task OpenAddAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionCode))
+        {
+            Snackbar.Add("Không có quyền thêm.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<AccountingVoucherLine_AddEditDialog>(
+            "Thêm dòng",
+            new DialogParameters { ["VoucherId"] = VoucherId, ["Line"] = (M_AccountingVoucherLines?)null },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dialog.Result;
+        if (rs.Canceled || rs.Data is not M_AccountingVoucherLines line)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.AccountingVoucherLines.Add(line);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Đã lưu dòng.", MudBlazor.Severity.Success);
+            await LoadLookupsAsync();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OpenEditAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionCode))
+        {
+            Snackbar.Add("Không có quyền sửa.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<AccountingVoucherLine_AddEditDialog>(
+            "Sửa dòng",
+            new DialogParameters { ["VoucherId"] = VoucherId, ["Line"] = _selected },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dialog.Result;
+        if (rs.Canceled || rs.Data is not M_AccountingVoucherLines line)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.AccountingVoucherLines.FirstOrDefaultAsync(x => x.Id == line.Id);
+            if (entity is null)
+                return;
+
+            entity.LineNo_ = line.LineNo_;
+            entity.DanhMucTaiKhoanID = line.DanhMucTaiKhoanID;
+            if (_danhMucById.TryGetValue(line.DanhMucTaiKhoanID, out var dm))
+                entity.AccountCode = (dm.Taikhoan ?? string.Empty).Trim();
+            entity.LineDescription = line.LineDescription;
+            entity.CustomerId = line.CustomerId;
+            entity.ShipmentId = line.ShipmentId;
+            entity.ContractId = line.ContractId;
+            entity.InvoiceDate = line.InvoiceDate;
+            entity.DebitAmount = line.DebitAmount;
+            entity.CreditAmount = line.CreditAmount;
+            entity.DebitAmountFC = line.DebitAmountFC;
+            entity.CreditAmountFC = line.CreditAmountFC;
+
+            await db.SaveChangesAsync();
+            Snackbar.Add("Đã cập nhật dòng.", MudBlazor.Severity.Success);
+            await LoadLookupsAsync();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionCode))
+        {
+            Snackbar.Add("Không có quyền xóa.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.AccountingVoucherLines.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+                return;
+            db.AccountingVoucherLines.Remove(entity);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Đã xóa.", MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Close() => MudDialog.Close();
+}
+
+<style>
+    .selected-row-blue { background-color: #2196f3 !important; }
+</style>

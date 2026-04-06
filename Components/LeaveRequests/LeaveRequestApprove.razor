@@ -1,0 +1,258 @@
+@using MudBlazor
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
+@using NVOAMASIS.Data
+@inject AppDbContext Db
+@inject LeaveRequestService LeaveService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices SharedService
+@inject AccountService AccountService
+
+<MudPaper Class="pa-4">
+    @if (!_canSee)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning">Bạn không có quyền xem danh sách nghỉ phép</MudAlert>
+    }
+    else
+    {
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-4">
+            <MudText Typo="Typo.h5">Duyệt yêu cầu nghỉ phép</MudText>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh" OnClick="RefreshList">Tải lại</MudButton>
+        </MudStack>
+
+        <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true">
+            <MudTabPanel Text="Chờ duyệt" BadgeData="@_pendingCount.ToString()" BadgeColor="Color.Warning">
+                <MudTable Items="_pending" Dense="true" Hover="true" Bordered="true" Loading="_loading">
+                    <HeaderContent>
+                        <MudTh>Nhân viên</MudTh>
+                        <MudTh>Loại nghỉ</MudTh>
+                        <MudTh>Thời gian</MudTh>
+                        <MudTh>Lý do</MudTh>
+                        <MudTh>Ngày tạo</MudTh>
+                        @if (_canApprove)
+                        {
+                            <MudTh></MudTh>
+                        }
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@GetUserName(context.EmployeeId)</MudTd>
+                        <MudTd>@LeaveService.GetDurationTypeName(context.DurationType) - @GetLeaveTypeName(context.LeaveType)</MudTd>
+                        <MudTd>
+                            @if (context.DurationType == 1)
+                            {
+                                <span>@context.StartDate.ToString("dd/MM/yyyy") - @context.EndDate.ToString("dd/MM/yyyy") (@context.TotalDays ngày)</span>
+                            }
+                            else if (context.DurationType == 2)
+                            {
+                                <span>@context.StartDate.ToString("dd/MM/yyyy") (0.5 ngày)</span>
+                            }
+                            else
+                            {
+                                <span>@context.StartDate.ToString("dd/MM/yyyy") @context.StartTime?.ToString(@"hh\:mm") - @context.EndTime?.ToString(@"hh\:mm") (@context.TotalHours h)</span>
+                            }
+                        </MudTd>
+                        <MudTd>@context.Reason</MudTd>
+                        <MudTd>@context.CreatedDate.ToString("dd/MM/yyyy HH:mm")</MudTd>
+                        @if (_canApprove)
+                        {
+                            <MudTd>
+                                <MudButton Size="Size.Small" Color="Color.Success" OnClick="() => Review(context.Id, true)">Duyệt</MudButton>
+                                <MudButton Size="Size.Small" Color="Color.Error" OnClick="() => Review(context.Id, false)" Class="ml-2">Từ chối</MudButton>
+                            </MudTd>
+                        }
+                    </RowTemplate>
+                </MudTable>
+            </MudTabPanel>
+
+            <MudTabPanel Text="Tất cả">
+                <MudTable Items="_all" Dense="true" Hover="true" Bordered="true" Loading="_loading">
+                    <HeaderContent>
+                        <MudTh>Nhân viên</MudTh>
+                        <MudTh>Loại nghỉ</MudTh>
+                        <MudTh>Thời gian</MudTh>
+                        <MudTh>Lý do</MudTh>
+                        <MudTh>Trạng thái</MudTh>
+                        <MudTh>Ghi chú</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@GetUserName(context.EmployeeId)</MudTd>
+                        <MudTd>@LeaveService.GetDurationTypeName(context.DurationType) - @GetLeaveTypeName(context.LeaveType)</MudTd>
+                        <MudTd>
+                            @if (context.DurationType == 1)
+                            {
+                                <span>@context.StartDate.ToString("dd/MM/yyyy") - @context.EndDate.ToString("dd/MM/yyyy") (@context.TotalDays ngày)</span>
+                            }
+                            else if (context.DurationType == 2)
+                            {
+                                <span>@context.StartDate.ToString("dd/MM/yyyy") (0.5 ngày)</span>
+                            }
+                            else
+                            {
+                                <span>@context.StartDate.ToString("dd/MM/yyyy") @context.StartTime?.ToString(@"hh\:mm") - @context.EndTime?.ToString(@"hh\:mm") (@context.TotalHours h)</span>
+                            }
+                        </MudTd>
+                        <MudTd>@context.Reason</MudTd>
+                        <MudTd>
+                            <MudChip Size="Size.Small" Color="@GetStatusColor(context.Status)">
+                                @LeaveService.GetStatusName(context.Status)
+                            </MudChip>
+                        </MudTd>
+                        <MudTd>@context.ApproverComment</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudTabPanel>
+        </MudTabs>
+    }
+</MudPaper>
+
+<MudDialog @bind-IsVisible="_showRejectDialog" Options="@_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Từ chối yêu cầu nghỉ phép</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_rejectComment" Label="Ghi chú (tùy chọn)" Lines="3" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _showRejectDialog = false">Hủy</MudButton>
+        <MudButton OnClick="ConfirmReject" Color="Color.Error">Xác nhận từ chối</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private List<LeaveRequest> _pending = new();
+    private List<LeaveRequest> _all = new();
+    private Dictionary<Guid, string> _userNames = new();
+    private bool _loading = false;
+    private bool _showRejectDialog = false;
+    private Guid _rejectId;
+    private string _rejectComment = string.Empty;
+    private int _pendingCount = 0;
+    private string _currentUser = string.Empty;
+    
+    // Permissions
+    private bool _canSee = false;
+    private bool _canApprove = false;
+
+    private DialogOptions _dialogOptions = new DialogOptions
+    {
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Get current user
+        var auth = AccountService.GetAuth().Result;
+        _currentUser = auth.User.Identity?.Name ?? string.Empty;
+        
+        // Check permissions
+        _canSee = await SharedService.CheckPermission(_currentUser, "view", "LeaveRequests");
+        _canApprove = await SharedService.CheckPermission(_currentUser, "approve", "LeaveRequests");
+        
+        if (_canSee)
+        {
+            await RefreshList();
+        }
+    }
+
+    private async Task RefreshList()
+    {
+        try
+        {
+            _loading = true;
+            _pending = await LeaveService.GetPendingRequestsAsync();
+            _all = await LeaveService.GetAllRequestsAsync();
+            _pendingCount = _pending.Count;
+
+            // Load user names - get all unique employee IDs
+            var allRequests = _pending.Concat(_all).ToList();
+            var userIds = allRequests.Select(p => p.EmployeeId).Distinct().ToList();
+            _userNames = new Dictionary<Guid, string>();
+            
+            // Load users one by one to avoid OPENJSON issues
+            foreach (var userId in userIds)
+            {
+                var user = await Db.UserList.Where(u => u.UsrId == userId).AsNoTracking().FirstOrDefaultAsync();
+                if (user != null)
+                {
+                    var name = user.Name ?? user.Usr ?? user.NickName ?? string.Empty;
+                    if (!_userNames.ContainsKey(user.UsrId))
+                        _userNames.Add(user.UsrId, name);
+                }
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Lỗi: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private string GetUserName(Guid id) => _userNames.TryGetValue(id, out string? n) ? n : id.ToString();
+
+    private async Task Review(Guid id, bool approve)
+    {
+        if (!_canApprove)
+        {
+            Snackbar.Add("Bạn không có quyền duyệt nghỉ phép", MudBlazor.Severity.Error);
+            return;
+        }
+
+        if (!approve)
+        {
+            _rejectId = id;
+            _showRejectDialog = true;
+            return;
+        }
+
+        var rs = await LeaveService.ReviewLeaveRequestAsync(id, true, null);
+        Snackbar.Add(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await RefreshList();
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (!_canApprove)
+        {
+            Snackbar.Add("Bạn không có quyền duyệt nghỉ phép", MudBlazor.Severity.Error);
+            return;
+        }
+
+        var rs = await LeaveService.ReviewLeaveRequestAsync(_rejectId, false, _rejectComment);
+        Snackbar.Add(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        _showRejectDialog = false;
+        _rejectComment = string.Empty;
+        await RefreshList();
+    }
+
+    private string GetLeaveTypeName(int type)
+    {
+        return type switch
+        {
+            1 => "Nghỉ phép năm",
+            2 => "Nghỉ ốm",
+            3 => "Nghỉ việc riêng",
+            4 => "Nghỉ không lương",
+            5 => "Xin ra ngoài",
+            _ => "Khác"
+        };
+    }
+
+    private Color GetStatusColor(int status)
+    {
+        return status switch
+        {
+            1 => Color.Warning,
+            2 => Color.Success,
+            3 => Color.Error,
+            _ => Color.Default
+        };
+    }
+}

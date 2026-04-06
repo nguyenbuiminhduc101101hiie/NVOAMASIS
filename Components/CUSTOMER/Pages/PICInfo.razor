@@ -1,0 +1,149 @@
+<MudStack Row="true" Justify="Justify.FlexStart" Class="py-2" Spacing="2">
+    <MudButton HtmlTag="label"
+               OnClick="RefreshPIC"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItemPIC())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+    <a href="HDSDhtml/Huong_dan_Customer_PIC_Info.html" target="_blank">
+        <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">Trợ giúp</MudButton>
+    </a>
+</MudStack>
+<MudDataGrid T="M_PIC" Items="@PICs" Filterable="true" @ref="PICinfomudTable"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+             EditTrigger="@(DataGridEditTrigger.Manual)" CommittedItemChanges="@CommittedItemPIC"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" Loading="PIC_loading"
+             ColumnResizeMode="ResizeMode.Column">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@context.Actions.StartEditingItemAsync" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItemPIC(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.PIC" Title="PIC">
+            <EditTemplate>
+                <MudTextField Immediate="true" @bind-Value="context.Item.PIC" Label="PIC" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Pos" Title="PIC Position">
+            <EditTemplate>
+                <MudTextField Immediate="true" @bind-Value="context.Item.Pos" Label="PIC Position" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.DirectLine" Title="PIC Direct Line">
+            <EditTemplate>
+                <MudTextField Immediate="true" @bind-Value="context.Item.DirectLine" Label="PIC Direct Line" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Fax" Title="Fax">
+            <EditTemplate>
+                <MudTextField Immediate="true" @bind-Value="context.Item.Fax" Label="Fax" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.hp" Title="HP">
+            <EditTemplate>
+                <MudTextField Immediate="true" @bind-Value="context.Item.hp" Label="HP" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.EMail" Title="Email">
+            <EditTemplate>
+                <MudTextField Immediate="true" @bind-Value="context.Item.EMail" Label="Email" />
+            </EditTemplate>
+        </PropertyColumn>
+    </Columns>
+</MudDataGrid>
+
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@code {
+
+    [Parameter] public M_Customer customer { get; set; } = default!;
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    protected async override Task OnInitializedAsync()
+    {
+        PICs = await csv.GetListPIC(customer.Customer_ID);
+    }
+
+    bool PIC_loading = false;
+    List<M_PIC> PICs = new List<M_PIC>();
+    async Task RefreshPIC()
+    {
+        try
+        {
+            PIC_loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            PICs.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "System-Customer"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            PICs = await csv.GetListPIC(customer.Customer_ID);
+        }
+        finally
+        {
+            PIC_loading = false;
+        }
+
+    }
+
+    MudDataGrid<M_PIC> PICinfomudTable;
+    async Task AddItemPIC()
+    {
+        var item = new M_PIC();
+        PICs.Add(item);
+        await PICinfomudTable.SetEditingItemAsync(PICs.LastOrDefault()!);
+    }
+
+    async Task DeleteItemPIC(M_PIC item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await csv.DeletePIC(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await RefreshPIC();
+        }
+
+    }
+    async Task CommittedItemPIC(M_PIC item)
+    {
+        item.Customer_ID = customer.Customer_ID;
+        item.UserId = asv.GetAuth().Result.User.Identity!.Name!;
+        item.UpdateTime = DateTime.Now;
+        item.Continued = item.Editable = true;
+        var rs = item.PIC_ID != Guid.Empty ? await csv.UpdatePIC(item) : await csv.CreatePIC(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await RefreshPIC();
+    }
+
+}

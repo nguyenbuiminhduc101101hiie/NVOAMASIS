@@ -1,0 +1,783 @@
+﻿
+@page "/QuotationIndex"
+@using System.Net
+@using System.Diagnostics
+@inject EmailService emsv
+@inject QuotationService QuoSv
+@inject SharedServices ssv
+@inject TrainScheduleServices trainsv
+@inject BookingService bksv
+@inject AccountService asv
+@inject CustomerService Cussv
+@inject SupportServices supsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject FontService FontSizeService
+@inject IStringLocalizer<SharedResource> Localizer
+@inject HistoryLogService HistoryLogService
+@inject NavigationManager Nav
+@inject IJSRuntime JSRuntime
+
+@using System.Text.Json;
+@attribute [Authorize]
+
+<MudContainer MaxWidth=MaxWidth.False>
+    <CascadingValue Value="FontSizeService">
+  
+
+            <MudText Class="pa-2" Typo="Typo.h6">@Localizer["Quotation"]</MudText>
+            <MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+
+                <MudButton HtmlTag="label"
+                           OnClick="HandleRefresh"
+                           Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Refresh">
+
+                    @Localizer["reload"]
+                </MudButton>
+                <MudButton HtmlTag="label"
+                           @onclick="@((e) => OpenCreateDialog(new Models.M_Quotation()))"
+                           Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Add">
+                    @Localizer["new"]
+                </MudButton>
+                <MudButton HtmlTag="label"
+                           @onclick="@((e) => OpenEditDialog(Quotation_detail))"
+                           Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Edit">
+                    @Localizer["edit"]
+                </MudButton>
+
+                <MudButton HtmlTag="label"
+                           OnClick="Delete"
+                           Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Delete">
+                    @Localizer["delete"]
+                </MudButton>
+            <MudButton HtmlTag="label"
+                       @onclick="@((e) => OpenDuplicateDialog(Quotation_detail))"
+                       Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.CopyAll">
+                @Localizer["duplicate"]
+            </MudButton>
+             @*    <MudButton HtmlTag="label"
+                           @onclick="@(() => ExportBill())"
+                           Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Download">
+                    @Localizer["Export_Bill"]
+                </MudButton> *@
+
+            <MudButton Disabled="_processingUpload"
+                       OnClick="ExportBill"
+                       Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.Download">
+                @if (_processingUpload)
+                {
+                    <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                    <MudText Class="ms-2">Processing</MudText>
+                }
+                else
+                {
+                    <MudText>@Localizer["Export_Bill"]</MudText>
+                }
+            </MudButton>
+            <MudButton HtmlTag="label"
+            @onclick="@(() => SendEmail())"
+            Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+            StartIcon="@Icons.Material.Filled.Email">
+                @Localizer["Send Email"]
+            </MudButton>
+            <MudButton Disabed="_processingExportFormQou"
+                       OnClick="ExportFormExcelQuo"
+                       Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.Download">
+                @if (_processingExportFormQou)
+                {
+                    <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                    <MudText Class="ms-2">Processing</MudText>
+                }
+                else
+                {
+                    <MudText>@Localizer["Export Form Quotation"]</MudText>
+                }
+            </MudButton>
+        </MudStack>
+
+    </CascadingValue>
+</MudContainer>
+
+<MudSpacer></MudSpacer>
+<MudSpacer></MudSpacer>
+
+
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="Models.M_Quotation" Items="@listImport.ToList()" 
+    Filterable="true" QuickFilter="@FilterFunc1"
+    FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+    RowClick="@RowClicked" Bordered="true"
+    FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+    EditTrigger="DataGridEditTrigger.Manual" ReadOnly="false" CommittedItemChanges="@((t)=>CommittedItemChanges(t))"
+    RowClassFunc="@SelectedRowClassFunc"
+    ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" @ref="mudTable"
+    Hideable="true">
+
+        <Columns>
+            <HierarchyColumn T="M_Quotation" />
+
+            <FilterHeaderCell Class="custom-colorfillter" />
+
+            <PropertyColumn Property="x => x.quotationID" Title="@(Localizer["ID"])" Hidden="true">
+                <FooterTemplate>
+                    ID
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Required="false" Property="x => listImport.IndexOf(x) + 1" Title="@Localizer["no"]" Filterable="false" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["no"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => CustomerName(x.customer_id)" Title="Customer" CellStyleFunc="_cellStyleFunc">
+                <EditTemplate>
+                    <MudSelect @bind-Value="context.Item.customer_id" Label="Customer">
+                        @foreach (var item in CustomerList)
+                        {
+                            <MudSelectItem Value="@item.Customer_ID">@item.COMPANY</MudSelectItem>
+                        }
+                    </MudSelect>
+                </EditTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.status" Title="@(Localizer["status"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Group1"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.RFQ_No" Title="@(Localizer["RFQ_No"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["RFQ_No"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.quotationNo" Title="@(Localizer["QuotationNo"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["QuotationNo"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.BookingNo" Title="@(Localizer["BookingNo"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["BookingNo"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Subject" Title="@(Localizer["Subject"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Subject"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.o1" Title="@(Localizer["Group1"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Group1"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.o2" Title="@(Localizer["Group2"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Group2"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.o3" Title="@(Localizer["Group3"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Group3"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.o4" Title="@(Localizer["Group4"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Group4"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.terms" Title="@(Localizer["Terms"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Terms"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.type" Title="@(Localizer["Type"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Type"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.pol" Title="@(Localizer["POL"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["POL"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.pod" Title="@(Localizer["POD"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["POD"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.TransitTime" Title="@(Localizer["TransitTime"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["TransitTime"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Transitport" Title="@(Localizer["Transitport"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Transitport"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.shippingline" Title="@(Localizer["Shippingline"])" CellStyleFunc="_cellStyleFunc"> 
+                <FooterTemplate>
+                    @Localizer["Shippingline"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.frequency" Title="@(Localizer["Frequency"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Frequency"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.Routing" Title="@(Localizer["Routing"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Routing"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.SaleName" Title="@(Localizer["SaleName"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["SaleName"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.remarks" Title="@(Localizer["Remarks"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Remarks"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.validDate" Title="@(Localizer["ValidDate"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["ValidDate"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+
+            <PropertyColumn Property="x => x.userupdate" Title="@(Localizer["Userupdate"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Userupdate"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+
+            <PropertyColumn Property="x => x.dateupdate" Title="@(Localizer["Dateupdate"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Dateupdate"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+
+            <PropertyColumn Property="x => x.MasterColoader" Title="@(Localizer["MasterColoader"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["MasterColoader"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.ETD" Title="@(Localizer["ETD"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["ETD"]
+                </FooterTemplate>
+            </PropertyColumn>
+
+            <PropertyColumn Property="x => x.ETA" Title="@(Localizer["ETA"])" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["ETA"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <TemplateColumn Title="@Localizer["Approve"]">
+                <CellTemplate>
+                    <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                    </MudCheckBox>
+                </CellTemplate>
+            </TemplateColumn>
+
+
+        </Columns>
+
+        <ChildRowContent>
+            <MudTabs>
+                <MudTabPanel Text="Debit">
+                    <Debit_Index _QuotationDetail="context.Item" />
+                </MudTabPanel>
+
+                <MudTabPanel Text="Credit">
+                    <Credit_index _QuotationDetail="context.Item" />
+                </MudTabPanel>
+            </MudTabs>
+
+        </ChildRowContent>
+
+
+        <PagerContent>
+            <MudDataGridPager T="Models.M_Quotation" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+        </PagerContent>
+
+    </MudDataGrid>
+
+</MudContainer>
+
+
+        
+@code {
+    Models.M_Quotation Quotation_detail;
+    Guid? QuotationId;
+    private List<Models.M_Quotation> listImport = new List<Models.M_Quotation>();
+    private int selectedRowNumber = -1;
+    private MudDataGrid<Models.M_Quotation> mudTable;
+    private string Search_QuoNo;
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<Models.TrangThai> Trangthais = new List<Models.TrangThai>();
+    private string FontSizeStyle = "";
+    private bool _processingUpload = false;
+    private bool _processingExportFormQou = false;
+    private bool _resizeColumn;
+    string usr;
+    protected override async Task OnInitializedAsync()
+    {
+
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Trangthais = await supsv.GetListTrangThai();
+        // await HandleRefresh();
+        CustomerList = await Cussv.GetList();
+
+    }
+
+    async Task CommittedItemChanges(Models.M_Quotation item)
+    {
+        var rs = await QuoSv.UpdateQuotationRequest(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+    }
+    async Task RowClicked(DataGridRowClickEventArgs<Models.M_Quotation> args)
+    {
+        Quotation_detail = args.Item;
+        QuotationId = args.Item.quotationID;
+
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = CustomerList.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.COMPANY! : "";
+    }
+
+    private string SelectedRowClassFunc(Models.M_Quotation Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    async Task HandleRefresh(){
+
+        try
+        {
+            Quotation_detail = null;
+            QuotationId = null;
+
+            listImport.Clear();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "Booking-Request"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            listImport = await QuoSv.GetListQuotation();
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            Quotation_detail = null;
+            QuotationId = null;
+
+            listImport.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "Quotation"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            listImport = await QuoSv.GetListQuotation_create(id);
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    async Task OpenCreateDialog(Models.M_Quotation tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Quotation"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<AddQuotation> { { x => x._QuotationDetail, tr }, { x => x.Status, "add" } };
+
+            var dialog = await DialogService.ShowAsync<AddQuotation>(tr.quotationID == Guid.Empty ? "Quotation Create" : "Quotation Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                var data = (M_Quotation)result.Data;
+                var rs = await QuoSv.UpdateOrCreateQuotation(data);
+                await HistoryLogService.LogAsync(usr, "ADD", "Quotation", data.quotationID, data.quotationNo, data);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+
+                await HandleRefresh_create(data.quotationID);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OpenEditDialog(Models.M_Quotation tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "Quotation"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_Quotation>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<AddQuotation> { { x => x._QuotationDetail, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<AddQuotation>(tr.quotationID == Guid.Empty ? "Quotation Edit" : "Quotation Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_Quotation)result.Data;
+                var rs = await QuoSv.UpdateOrCreateQuotation(data);
+                await HistoryLogService.LogAsync(usr, "Update", "Quotation", data.quotationID, data.quotationNo, new { OldData = OldData, NewData = data });
+
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OpenDuplicateDialog(Models.M_Quotation tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Quotation"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_Quotation>(JsonSerializer.Serialize(tr));
+            tr.quotationID = Guid.Empty;
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<AddQuotation> { { x => x._QuotationDetail, tr }, { x => x.Status, "Duplicate" } };
+
+            var dialog = await DialogService.ShowAsync<AddQuotation>(tr.quotationID == Guid.Empty ? "Quotation Add" : "Quotation Add", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_Quotation)result.Data;
+                var rs = await QuoSv.UpdateOrCreateQuotation(data);
+                await HistoryLogService.LogAsync(usr, "Duplicate", "Quotation", data.quotationID, data.quotationNo, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+
+                 
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+                await HandleRefresh_create(data.quotationID);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task Delete()
+    {
+        try
+        {
+            if (Quotation_detail.Approve == true)
+            {
+                CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+                return;
+            }
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Delete", "Quotation"))
+            {
+                CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+                return;
+            }
+            if (QuotationId== null)
+            {
+                CallSnackBar("Please select Data!", MudBlazor.Severity.Warning);
+                return;
+            }
+            var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+            if (resultMess.HasValue)
+            {
+
+                var bkdetail = await QuoSv.GetDetailQuotationFromID(QuotationId);
+                var result = await QuoSv.DeleteQuotation(Quotation_detail);
+                var result_Debit = await QuoSv.DeleteQuotation_Debit(Quotation_detail);
+                var result_Credit = await QuoSv.DeleteQuotation_CreDit(Quotation_detail);
+                await HistoryLogService.LogAsync(usr, "Delete", "Quotation", Quotation_detail.quotationID, Quotation_detail.quotationNo, new { OldData = Quotation_detail });
+
+                if (result.Flag)
+                    CallSnackBar(result.Message, MudBlazor.Severity.Success);
+                else
+                {
+                    CallSnackBar(result.Message, MudBlazor.Severity.Error);
+                    return;
+                }
+
+                await HandleRefresh();
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Cannot delete with eror code: " + ex.Message, MudBlazor.Severity.Error);
+
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    async Task ExportBill()
+    {
+        if (Quotation_detail == null)
+        {
+            CallSnackBar("you must select 1 Quotation.", MudBlazor.Severity.Warning);
+            return;
+        }
+        string cur_type;
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Small,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true,
+        };
+        var parameters = new DialogParameters<Export_bill> { { x => x.quotation_details, Quotation_detail } };
+        var dialog = await DialogService.ShowAsync<Export_bill>("Selected Debit No.", parameters, optionsdialog);
+        var result = await dialog.Result;
+        if (result.Canceled) return;
+        cur_type = (string)result.Data;
+
+        _processingUpload = true;
+        StateHasChanged();
+        await Task.Delay(1);
+        var rs = await QuoSv.ExportQuotation(Quotation_detail.quotationID!,cur_type);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        _processingUpload = false;
+    }
+ 
+
+    private async Task ExportFormExcelQuo()
+    {
+        _processingExportFormQou = true;
+
+        try
+        {
+            var fileUrl = $"{Nav.BaseUri}Reports/FormExportQuo.xlsx";
+            await JSRuntime.InvokeVoidAsync("downloadFileFromUrl", fileUrl);
+        }
+        finally
+        {
+            _processingExportFormQou = false;
+        }
+    }
+
+
+    async Task SendEmail()
+    {
+
+        // if (Quotation_detail.customer_id)
+        string email_Cus = Cussv.GetIdcusfromID(Quotation_detail.customer_id);
+
+        if (!string.IsNullOrEmpty(email_Cus))
+        {
+            var (success, message, pdfFile) = await QuoSv.ExportQuotation_file(QuotationId);
+            bool result = await emsv.SendEmailAttachment_Quotation(email_Cus, "Your Quotation", "Please find attached your bill.", pdfFile, "Quotation.pdf");
+            if (result = true)
+            {
+                await HistoryLogService.LogAsync(usr, "SendEmail", "Quotation", Quotation_detail.quotationID, Quotation_detail.quotationNo, new { DataSend = Quotation_detail });
+
+                CallSnackBar("Email đã gửi thành công!", MudBlazor.Severity.Success);
+            }
+            else
+            {
+                CallSnackBar("Email đã gửi thất bại!", MudBlazor.Severity.Error);
+            }
+        }
+        else
+        {
+            CallSnackBar("Email Cus trống!!!", MudBlazor.Severity.Error);
+        }
+
+    }
+
+    private bool FilterFunc1(Models.M_Quotation bt) => FilterFunc(bt, Search_QuoNo);
+
+    private bool FilterFunc(Models.M_Quotation bt, string search_InvNo)
+    {
+        if (string.IsNullOrWhiteSpace(search_InvNo))
+            return true;
+        if (bt.quotationNo!.Contains(search_InvNo, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if ($"{bt.quotationNo} ".Contains(search_InvNo))
+            return true;
+        return false;
+    }
+
+    private Func<M_Quotation, string> _cellStyleFunc => x =>
+      {
+      string style = "";
+
+      if (string.IsNullOrEmpty(x.status))
+          return "color: #000000";
+
+      var rs = Trangthais
+          .Where(t => (t.Noidung).Contains(x.status, StringComparison.InvariantCultureIgnoreCase)
+              && t.Tieude.Equals("QUOTATION", StringComparison.InvariantCultureIgnoreCase))
+          .Select(t => t.Mamau)
+          .FirstOrDefault();
+      return "color: " + rs;
+
+
+      };
+    private async Task OnApproveCheckboxWrapper(M_Quotation item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "Quotation"))
+        {
+            var rs = await QuoSv.UpdateOrCreateQuotation(item);
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+}

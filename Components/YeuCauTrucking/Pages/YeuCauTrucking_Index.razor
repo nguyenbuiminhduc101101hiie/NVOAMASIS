@@ -1,0 +1,959 @@
+﻿@page "/YeuCauTrucking"
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv 
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject YeuCauTruckingServices yctsv
+@inject LenhDieuXeServices ldxsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject HistoryLogService HistoryLogService
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@using System.Text.Json;
+
+<PageTitle>Project</PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["Trucking Requirements"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton  HtmlTag="label"
+                OnClick="Refresh"
+                Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+
+          <MudButton  HtmlTag="label"
+                 @onclick="@((e) => OpenCreateDialog(new M_YeuCauTrucking()))"
+                Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["new"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenEditDialog(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Edit">
+        @Localizer["edit"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenDuplicateDialog(detail))"
+               Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.CopyAll">
+        @Localizer["duplicate"]
+    </MudButton>
+
+</MudStack>
+
+<MudPaper Class="pa-4 ma-4" Elevation="1">
+    <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.subtitle2">Tính km theo đường trucking</MudText>
+        <MudTextField @bind-Value="_addressFrom" Label="Địa chỉ đi" Class="ma-2" Style="min-width:320px" />
+        <MudTextField @bind-Value="_addressTo" Label="Địa chỉ đến" Class="ma-2" Style="min-width:320px" />
+        <MudButton Disabled="_distanceLoading" OnClick="CalculateDistanceAsync" Color="Color.Primary" Variant="Variant.Filled">
+            @if (_distanceLoading)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <MudText Class="ms-2">Đang tính...</MudText>
+            }
+            else
+            {
+                <MudText>Tính km</MudText>
+            }
+        </MudButton>
+        <MudTextField @bind-Value="_distanceKmDisplay" ReadOnly="true" Label="Khoảng cách (km)" Class="ma-2" Style="width:200px" />
+    </MudStack>
+
+    @if (!string.IsNullOrEmpty(_distanceError))
+    {
+        <MudText Color="Color.Error">@_distanceError</MudText>
+    }
+</MudPaper>
+
+<MudDataGrid    T="M_YeuCauTrucking" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4" 
+                FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap" Bordered="true"
+                ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+                RowClick="@RowClicked" EditDialogOptions="@options"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" Loading="_loading">
+    <Columns>
+        <HierarchyColumn T="M_YeuCauTrucking" />
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+       
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+
+
+      @*   <PropertyColumn Property="x=> Listdata.IndexOf(x)+1" Title="No." IsEditable="false" Required="false" Filterable="false" CellStyleFunc="_cellStyleFunc" /> *@
+        <PropertyColumn Property="x=>x.YeuCauTruckingNo" Title="@Localizer["yeucautruckingno"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudStack Row>
+                    <MudItem>
+                        <MudButton Class="pl-4 pa-10" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary" OnClick="() => GetT_YCTruckingNo(context.Item)">>>></MudButton>
+                    </MudItem>
+
+                    <MudTextField @bind-Value="context.Item.YeuCauTruckingNo" Label="Yêu Cầu Trucking No." class="custom-label" Required="true" />
+
+                </MudStack>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Nguoiyeucau" Title="@Localizer["nguoiyeucau"]" Required="false" IsEditable="false" CellStyleFunc="_cellStyleFunc" />
+
+        <PropertyColumn Property="x=>x.TieuDeEmail" Title="@Localizer["tieudeemail"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.TieuDeEmail" Lines="3" AutoGrow Label="@Localizer["tieudeemail"]" class="custom-label" Required="false" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x=>x.NoidungEmail" Title="@Localizer["noidung"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.NoidungEmail" Lines="3" AutoGrow Label="@Localizer["noidung"]" class="custom-label" Required="false" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.NoidungChitietEmail" Title="@Localizer["chitietnoidung"]" Required="false" CellClass="no-wrap-cell" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.NoidungChitietEmail" Lines="3" AutoGrow Label="@Localizer["chitietnoidung"]" class="custom-label" Required="false" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Nguoitraloi" Title="@Localizer["emailnguoiphutrach"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudStack Row>
+                    <MudItem>
+                        <MudAutocomplete Class="pl-4 labelCustomColor custom-label" T="string"
+                        @bind-Value="UserHanding"
+                                         Label="@Localizer["emailnguoiphutrach"]"
+                        SearchFunc="Search_User"
+                        Immediate="true"
+                        CoerceText="true"
+                        Clearable="true"
+                        MaxItems="100">
+                        </MudAutocomplete>
+                    </MudItem>
+
+                    <MudItem>
+                        <MudButton Class="pl-4 labelCustomColor" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary" OnClick="() => Getuser(context.Item)">>>></MudButton>
+                    </MudItem>
+
+                    <MudTextField @bind-Value="context.Item.Nguoitraloi" class="custom-label" HelperTextOnFocus HelperText="từ 2 mail trở lên vui lòng ngăn cách bằng dấu ','"
+                                  Lines="3" AutoGrow Label="@Localizer["emailnguoiphutrach"]" Required="false" />
+
+                    <MudButton HtmlTag="label" Disabled="_processingUpload"
+                    @onclick="@(() => SendMailnotify(context.Item))" 
+                    Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+                    StartIcon="@Icons.Material.Filled.Email">
+                        @if (_processingUpload)
+                        {
+                            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                            <MudText Class="ms-2">Processing</MudText>
+                        }
+                        else
+                        {
+                            <MudText>@Localizer["sendemail"]</MudText>
+                        }
+                    </MudButton>
+
+                   <MudButton HtmlTag="label" Disabled="_processingUploadzalo"
+                                   @onclick="@(() => SendZalonotify(context.Item))"
+                                   Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+                                    StartIcon="@Icons.Material.Filled.Send">
+                            @if (_processingUploadzalo)
+                            {
+                                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                                <MudText Class="ms-2">Processing</MudText>
+                            }
+                            else
+                            {
+                            <MudText>@Localizer["sendzalo"]</MudText>
+                            }
+                        </MudButton>
+                </MudStack>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.DiaDiemTraHang" Title="@Localizer["diadiemgiaohang"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.DiaDiemTraHang" Label="@Localizer["diadiemgiaohang"]" class="custom-label" Required
+                                 SearchFunc="Searchpol" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.DiaDiemNhanHang" Title="@Localizer["diadiemnhanhang"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.DiaDiemNhanHang" Label="@Localizer["diadiemnhanhang"]" class="custom-label" Required
+                                 SearchFunc="Searchpol" />
+            </EditTemplate>
+        </PropertyColumn>
+
+
+
+        <PropertyColumn Property="x=>x.LoaiCont" Title="@Localizer["loaicont"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.LoaiCont" Label="@Localizer["loaicont"]" class="custom-label" Required="false" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.NgayDukienLayHang" Title="@Localizer["Ngaylayhang"]" Required="false" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudDatePicker @bind-Date="context.Item.NgayDukienLayHang" class="custom-label"
+                               Label="@Localizer["Ngaylayhang"]"
+                               Required="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.NgayDuKienTraHang" Title="@Localizer["Ngaytrahang"]" Required="false" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudDatePicker @bind-Date="context.Item.NgayDuKienTraHang" class="custom-label"
+                               Label="@Localizer["Ngaytrahang"]"
+                                Required="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.GhiChu" Title="@Localizer["ghichu"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.GhiChu" Label="@Localizer["ghichu"]" InputType="InputType.Text" Lines="3" class="custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Trangthai" Title="@Localizer["status"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.Trangthai" Label="@Localizer["status"]" class="custom-label">
+                    @foreach (var item in trangthais)
+                    {
+                        <MudSelectItem Value="item">@item</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <TemplateColumn Title="@Localizer["Approve"]">
+            <CellTemplate>
+                <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                </MudCheckBox>
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x=>x.Userupdate" Title="@Localizer["UserUpdate"]" Required="false" IsEditable="false" CellStyleFunc="_cellStyleFunc" />
+        <PropertyColumn Property="x=>x.Dateupdate" Title="@Localizer["Dateupdate"]" Required="false" IsEditable="false" CellStyleFunc="_cellStyleFunc" />
+
+
+        <PropertyColumn Property="x=>x.Links" Title="@Localizer["Linkhinhanh"]" Required="false" CellStyleFunc="_cellStyleFunc" CellClass="no-wrap-cell">
+            <EditTemplate>
+                <MudStack Row>
+                    <MudContainer Class="pa-4; max-height:200px; overflow-y: auto; custom-label;">
+                        <MudText class="custom-label" Typo="Typo.h6">@Localizer["Linkhinhanh"]</MudText>
+                        @foreach (var item in Linksplit(context.Item.Links!))
+                        {
+                            <MudPaper Elevation="3" Style="position: relative; display: inline-block;">
+                                <MudImage Src="@item.Replace("ftp","http")" Alt="@item.Replace("ftp","http")"
+                                          Height="150" Elevation="25" Class="rounded-lg ma-4" />
+
+                                <MudIconButton Icon="@Icons.Material.Filled.Visibility" OnClick="@(() => SeeDetail(item))"
+                                               Style="position: absolute; top: 5px; left: 5px; padding: 0; min-width: 0;" />
+
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                               OnClick="@(() => Deleteimg(context.Item,item))"
+                                               Style="position: absolute; top: 5px; right: 5px; padding: 0; min-width: 0;" />
+                            </MudPaper>
+                        }
+                    </MudContainer>
+
+                    <MudFileUpload T="IBrowserFile" Accept=".png,.jpg,.jpeg" FilesChanged="@((t) => AttachFileToFTP(t,context.Item))">
+                        <ButtonTemplate Context="context1">
+                            <MudIconButton HtmlTag="label" for="@context1" Size="Size.Small" Color="Color.Secondary"
+                                           Icon="@Icons.Material.Filled.AttachFile" />
+                        </ButtonTemplate>
+                    </MudFileUpload>
+
+                </MudStack>
+            </EditTemplate>
+        </PropertyColumn>
+        
+    </Columns>
+
+   <PagerContent>
+        <MudDataGridPager T="Models.M_YeuCauTrucking" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    List<M_YeuCauTrucking> Listdata = new List<M_YeuCauTrucking>();
+    MudDataGrid<M_YeuCauTrucking> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+
+    string _addressFrom = string.Empty;
+    string _addressTo = string.Empty;
+    string _distanceKmDisplay = string.Empty;
+    bool _distanceLoading = false;
+    string _distanceError = string.Empty;
+
+    private bool _resizeColumn;
+    private List<PortModel> List_pod = new List<PortModel>();
+    private List<PortModel> List_pol = new List<PortModel>();
+    protected async override Task OnInitializedAsync()
+    {
+        List_pol = await ldxsv.GetList_port();
+        List_pod = await ldxsv.GetList_port();
+
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "YeuCauTrucking").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        // await Refresh();
+    }
+    M_YeuCauTrucking detail;
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "YeuCauTrucking"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await yctsv.GetListYCTrucking();
+            StateHasChanged();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    async Task CalculateDistanceAsync()
+    {
+        _distanceError = string.Empty;
+        _distanceKmDisplay = string.Empty;
+        if (string.IsNullOrWhiteSpace(_addressFrom) || string.IsNullOrWhiteSpace(_addressTo))
+        {
+            CallSnackBar("Vui lòng nhập đủ 2 địa chỉ", MudBlazor.Severity.Warning);
+            return;
+        }
+        try
+        {
+            _distanceLoading = true;
+            StateHasChanged();
+            var url = $"api/maps/distance?origin={Uri.EscapeDataString(_addressFrom)}&destination={Uri.EscapeDataString(_addressTo)}";
+            var absUri = Navigation.ToAbsoluteUri(url);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var resp = await Http.GetAsync(absUri, cts.Token);
+            var body = await resp.Content.ReadAsStringAsync(cts.Token);
+            if (!resp.IsSuccessStatusCode)
+            {
+                try
+                {
+                    using var errDoc = System.Text.Json.JsonDocument.Parse(body);
+                    if (errDoc.RootElement.TryGetProperty("message", out var msgEl))
+                    {
+                        _distanceError = msgEl.GetString();
+                    }
+                    else
+                    {
+                        _distanceError = "Không tính được khoảng cách (HTTP " + ((int)resp.StatusCode) + ")";
+                    }
+                }
+                catch
+                {
+                    _distanceError = "Không tính được khoảng cách (HTTP " + ((int)resp.StatusCode) + ")";
+                }
+                CallSnackBar(_distanceError, MudBlazor.Severity.Error);
+                return;
+            }
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var km = doc.RootElement.GetProperty("kilometers").GetDouble();
+            _distanceKmDisplay = km.ToString("0.00");
+        }
+        catch (Exception ex)
+        {
+            _distanceError = ex.Message;
+            CallSnackBar("Có lỗi khi tính khoảng cách: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _distanceLoading = false;
+        }
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_YeuCauTrucking> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_YeuCauTrucking m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(M_YeuCauTrucking item)
+    {
+        item.Nguoiyeucau = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.YeuCauTruckingID != Guid.Empty ? await yctsv.UpdateYCTruckingDetail(item) : await yctsv.CreateYCTruckingDetail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    async Task AddItem()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "YeuCauTrucking"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_YeuCauTrucking
+        {
+            Approve = false,
+            Editable= false,
+            Continued = true
+        };
+        item.Nguoiyeucau = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+    async Task DeleteItem(M_YeuCauTrucking item)
+    {
+        if (item.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Delete", "YeuCauTrucking"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await yctsv.DeleteYCTruckingDetail(item);
+            
+            await HistoryLogService.LogAsync(usr, "Delete Yeu Cau Trucking", "YeuCauTrucking", item.YeuCauTruckingID, item.YeuCauTruckingNo, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions 
+    {
+        ClassBackground = "class-dialog-custom",
+        FullWidth = true,
+        MaxWidth = MaxWidth.Medium,
+        CloseOnEscapeKey = false,
+        DisableBackdropClick = true
+    };
+    string search;
+
+    private bool FilterFunc1(M_YeuCauTrucking sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_YeuCauTrucking sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.YeuCauTruckingNo))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.YeuCauTruckingNo!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.YeuCauTruckingNo} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    private Func<M_YeuCauTrucking, string> _cellStyleFunc => x =>
+      {
+          string style = "";
+
+          if (string.IsNullOrEmpty(x.Trangthai))
+              return "color: #000000";
+
+          var rs = M_Trangthais
+          .Where(t => (t.Noidung).Contains(x.Trangthai, StringComparison.InvariantCultureIgnoreCase)
+              && t.Tieude.Equals("YeuCauTrucking", StringComparison.InvariantCultureIgnoreCase))
+          .Select(t => t.Mamau)
+          .FirstOrDefault();
+          return "color: " + rs;
+
+
+      };
+
+    async Task AttachFileToFTP(IBrowserFile file, M_YeuCauTrucking item)
+    {
+        try
+        {
+            var rs = await ssv.UploadfiletoFTP_YeuCauTrucking(file, (object)item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Throw exception code: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    async Task Deleteimg(M_YeuCauTrucking item ,string link)
+    {
+        try
+        {
+            if (item.Links!.Contains(";"))
+                link = link + ";";
+            item.Links = item.Links!.Replace(link, string.Empty);
+            //var rs = ssv.DeleteFileFromFTP(link);
+            //CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            StateHasChanged();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Throw exception code: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+    async Task SeeDetail(string link)
+    {
+
+        await JSRuntime.InvokeVoidAsync("open", link.Replace("ftp", "http"), "_blank");
+    }
+    List<string>Linksplit(string links)
+    {
+        if (string.IsNullOrEmpty(links))
+            return new List<string>();
+        return links.Split(';').ToList(); 
+    }
+    private bool _processingUpload = false;
+    async Task SendMailnotify(M_YeuCauTrucking item)
+    {
+        try
+        {
+            string[] users = item.Nguoitraloi.Split(',');
+            List<string> emails = new List<string>(); // Danh sách động, có thể thêm thoải mái
+
+            int index = 0;
+            foreach (var user in users)
+            {
+                if(string.IsNullOrEmpty(user)){
+
+                }else{
+                    string inputemail ="";
+                    inputemail = await gsv.GetEmailAsync(user);
+                    if (!string.IsNullOrEmpty(inputemail))
+                    {
+                        emails.Add(inputemail);
+                    }
+
+                }
+            }
+            string[] emailarray = emails.ToArray();
+            _processingUpload = true;
+            await Task.Delay(1);
+            StateHasChanged();
+            if (emails != null && emailarray.Length > 0)
+            {
+                var rs = await gsv.GuiThongBao_YeuCauTrucking(item, emailarray);
+                if(rs.Flag == true){
+                    if (item.YeuCauTruckingID == Guid.Empty)
+                    {
+                        item.Trangthai = "Emailed";
+                    }else{
+                        item.Trangthai = "Emailed";
+                        await yctsv.UpdateYCTruckingDetail(item);
+                        await Refresh();
+                    }
+                }
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+            }else{
+
+                CallSnackBar("Email is empty!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+
+
+
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Somethings went wrong!, error code: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+
+    }
+
+    private async Task<IEnumerable<string>> Search_User(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return ListUser;
+
+        return ListUser.Where(x => x.Contains(value, StringComparison.InvariantCultureIgnoreCase));
+    }
+
+    private async Task Getuser(M_YeuCauTrucking item)
+    {
+        if (string.IsNullOrEmpty(item.Nguoitraloi))
+        {
+            item.Nguoitraloi = UserHanding;
+        }
+        else
+        {
+            item.Nguoitraloi += "," + UserHanding + ",";
+        }
+    }
+
+    private async Task GetT_YCTruckingNo(M_YeuCauTrucking item)
+    {
+
+        int formattedYear = DateTime.Now.Year;
+        int formattedMonth = DateTime.Now.Month;
+
+        string usr = asv.GetAuth().Result.User.Identity!.Name!;
+        var refno = await supsv.GetRefNoByFunc("YeuCauTrucking", formattedMonth, formattedYear, usr);
+
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        item.YeuCauTruckingNo = cn + "YCTrucking_" + formattedYear.ToString() + formattedMonth.ToString() + refno.Value.ToString("D4");
+
+    }
+
+    private bool _processingUploadzalo = false;
+    async Task SendZalonotify(M_YeuCauTrucking item)
+    {
+        try
+        {
+            _processingUploadzalo = true;
+            await Task.Delay(1);
+            StateHasChanged();
+
+            if (string.IsNullOrEmpty(item.Nguoitraloi))
+            {
+                CallSnackBar("User is empty!", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            string[] users = item.Nguoitraloi.Split(',');
+            List<string> zaloid = new List<string>(); // Danh sách động, có thể thêm thoải mái
+
+            int index = 0;
+            foreach (var user in users)
+            {
+                if(string.IsNullOrEmpty(user)){
+
+                }else{
+             
+
+                    var userinfo = await asv.GetUserDetail_byname(user);
+                    if (!string.IsNullOrEmpty(userinfo.Zaloid))
+                    {
+                        zaloid.Add(userinfo.Zaloid);
+                    }
+
+                }
+            }
+
+            foreach (var u in zaloid)
+            {
+               
+                var rs = await gsv.SendMessageAsync(u, item.TieuDeEmail , item.NoidungEmail ,item.NoidungChitietEmail);
+                if (!rs.Flag)
+                {
+                    CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+                    return;
+                }
+            }
+            CallSnackBar("✅ Send Success!", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Somethings went wrong!, error code: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUploadzalo = false;
+        }
+
+    }
+
+    private async Task<IEnumerable<string>> Searchpol(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_pol.Where(x => !string.IsNullOrEmpty(x.PORT))
+               .Select(x => x.PORT);
+            }
+            // MBL.Porname = mst_Consignee;
+            return List_pol.Where(x => !string.IsNullOrEmpty(x.PORT) &&
+                            x.PORT.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.PORT);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> Searchpod(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return List_pod.Where(x => !string.IsNullOrEmpty(x.PORT))
+               .Select(x => x.PORT);
+            }
+
+            return List_pod.Where(x => !string.IsNullOrEmpty(x.PORT) &&
+                            x.PORT.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.PORT);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task OpenCreateDialog(Models.M_YeuCauTrucking tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "YeuCauTrucking"))
+        {
+
+        DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+        var parameters = new DialogParameters<ADD> { { x => x._YeuCauTrucking_Detail, tr }, { x => x.Status, "add" } };
+
+        var dialog = await DialogService.ShowAsync<ADD>(tr.YeuCauTruckingID == Guid.Empty ? "Trucking Requirements Create" : "Trucking Requirements Edit", parameters, optionsdialog);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            var data = (M_YeuCauTrucking)result.Data;
+                    var rs = await yctsv.UpdateCreateYCttruck(data);
+                await HistoryLogService.LogAsync(usr, "ADD YC Trucking", "YeuCauTrucking", data.YeuCauTruckingID, data.YeuCauTruckingNo, data);
+
+            MudBlazor.Severity severity;
+            if (rs[1] == "1")
+                severity = MudBlazor.Severity.Success;
+            else
+                severity = MudBlazor.Severity.Error;
+
+            CallSnackBar(rs[0], severity);
+
+            await HandleRefresh_create(data.YeuCauTruckingID);
+
+        }
+
+        return;
+
+        }
+        else
+        {
+        CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+        return;
+        }
+
+    }
+
+     private async Task OpenEditDialog(Models.M_YeuCauTrucking tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "YeuCauTrucking"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_YeuCauTrucking>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._YeuCauTrucking_Detail, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.YeuCauTruckingID == Guid.Empty ? "Trucking Requirements Edit" : "Trucking Requirements Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_YeuCauTrucking)result.Data;
+                var rs = await yctsv.UpdateCreateYCttruck(data);
+
+                await HistoryLogService.LogAsync(usr, "Update Yeu Cau Trucking", "YeuCauTrucking", data.YeuCauTruckingID, data.YeuCauTruckingNo, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OpenDuplicateDialog(Models.M_YeuCauTrucking tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "YeuCauTrucking"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_YeuCauTrucking>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._YeuCauTrucking_Detail, tr }, { x => x.Status, "Duplicate" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.YeuCauTruckingID == Guid.Empty ? "Trucking Requirements Create" : "Trucking Requirements Create", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_YeuCauTrucking)result.Data;
+                var rs = await yctsv.UpdateCreateYCttruck(data);
+
+                await HistoryLogService.LogAsync(usr, "Duplicate Yeu Cau Trucking", "YeuCauTrucking", data.YeuCauTruckingID, data.YeuCauTruckingNo, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+                await HandleRefresh_create(data.YeuCauTruckingID);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+            Listdata.Clear();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "YeuCauTrucking"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await yctsv.GetListYCTrucking_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    private async Task OnApproveCheckboxWrapper(M_YeuCauTrucking item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "YeuCauTrucking"))
+        {
+            var rs = await yctsv.UpdateCreateYCttruck(item);
+            MudBlazor.Severity severity;
+            if (rs[1] == "1")
+                severity = MudBlazor.Severity.Success;
+
+            else
+                severity = MudBlazor.Severity.Error;
+
+            CallSnackBar(rs[0], severity);
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+}

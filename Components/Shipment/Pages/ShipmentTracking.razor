@@ -1,0 +1,276 @@
+﻿﻿
+@page "/shipmenttracking"
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@using System.Globalization﻿
+
+
+<PageTitle>@Localizer["Shipment Tracking System"]</PageTitle>
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="TrackingGroupModel" Items="@GroupedData" Filterable="true" @ref="mudTable" Class="table-shipment-bg"
+                    FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="calc(100vh - 250px);" QuickFilter="_quickFilter"
+                    FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" RowClassFunc="@SelectedRowClassFunc"
+                    Bordered="true" @key="gridKey"
+                    ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+        <ToolBarContent>
+            <MudStack Row="true" Justify="Justify.FlexStart" Class="pa-2 gap-12">
+                <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+                <MudIconButton HtmlTag="label"
+                               OnClick="@(()=>Refresh(frmtoDate))" Disabled="_loading"
+                               Size="Size.Small" Color="Color.Primary" Variant="Variant.Text"
+                               Icon="@Icons.Material.Filled.Search" />
+                <a href="HDSDhtml/HDSD_TheoDoiLoiHang.html" target="_blank">
+                    <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">@Localizer["Help"]</MudButton>
+                </a>
+            </MudStack>
+            <MudSpacer />
+            <MudTextField @bind-Value="_searchString" Placeholder="Search" Adornment="Adornment.Start"
+                        Immediate="true" IconSize="Size.Medium" Class="mt-0"></MudTextField>
+        </ToolBarContent>
+
+        <Columns>
+            <PropertyColumn Property="x => GroupedData.IndexOf(x)+1" Title="@Localizer["No."]" Filterable="false" Required="false" IsEditable="false"><EditTemplate></EditTemplate></PropertyColumn> 
+            <PropertyColumn Property="x => x.HBLGroup" Title="@($"{Localizer["HBL"]}/{Localizer["Truck"]}/{Localizer["Customs"]}")" Required="false" IsEditable="false">
+                <CellTemplate>
+                    <span style="cursor: pointer; color: #0077cc;" @onclick="() => ShowDetailDialog(context.Item.OutboundId)">
+                        @context.Item.HBLGroup
+                    </span>
+                </CellTemplate>
+                <EditTemplate></EditTemplate>
+            </PropertyColumn> 
+            @foreach (var date in DateColumns)
+            {
+                <PropertyColumn Title="@date.ToString("dd/MM")" Sortable="false" Filterable="false"
+                    Property="x => GetRemarkGrouped(x, date)" IsEditable="false" CellStyle="text-align:center;" CellClass="no-wrap-cell">
+                    <CellTemplate>
+                        <span style="cursor: pointer; color: #0077cc;" @onclick="() => ShowRemarkDialog(GetRemarkGrouped(context.Item, date))">
+                           @GetRemarkGrouped(context.Item, date)
+                        </span>
+                    </CellTemplate>
+                </PropertyColumn>
+            }
+        </Columns>
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    Guid gridKey = Guid.NewGuid();
+    string usr;
+    AuthUser userdetail;
+    List<string> trangthais = new List<string>();
+    List<TrangThai> tts = new List<TrangThai>();
+    List<M_Customer> Customers = new List<M_Customer>();
+    List<ChargeModel> charges = new List<ChargeModel>();
+    CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            
+            _loading = true;
+            userdetail = asv.GetUserDetail();
+            Customers = await csv.GetList(userdetail);
+            tts = await supsv.GetListTrangThai();
+            trangthais = tts.Where(x => x.Tieude.ToLower() == "job").OrderBy(x=>x.Noidung).Select(x=>x.Noidung).ToList();
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            charges = await supsv.GetListCharge();
+            _loading = false;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+    }
+
+    bool _loading = false;
+    List<M_Theodoilohang> Listdata = new List<M_Theodoilohang>();
+    List<TrackingGroupModel> GroupedData = new List<TrackingGroupModel>();
+    List<M_HBL> ListHBLs = new List<M_HBL>();
+    List<DateTime> DateColumns = new();
+    M_Theodoilohang jobdetail;
+    async Task Refresh(DateRange frmtoDate)
+    {
+        try
+        {
+            _loading = true;
+            Listdata.Clear();
+            GroupedData.Clear();
+            DateColumns.Clear();
+            jobdetail = null;
+            gridKey = Guid.NewGuid();
+            await Task.Delay(500);
+            StateHasChanged();
+            if (!await ssv.CheckPermission(usr, "View", "ShipmentTracking"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            ListHBLs = await shipsv.GetListHBLALL();
+            Listdata = await shipsv.GetListTheoDoiLoHang(frmtoDate);
+            Listdata = Listdata.Where(l => ListHBLs.Any(h => h.hblID == l.outboundid)).ToList();
+
+            var hblDict = ListHBLs.ToDictionary(h => h.hblID, h => idtohbl(h.hblID));
+
+            GroupedData = Listdata
+                .Where(l => hblDict.ContainsKey(l.outboundid))
+                .GroupBy(l => l.outboundid)
+                .Select(g => new TrackingGroupModel
+                    {
+                        OutboundId = g.Key,
+                        HBLGroup = hblDict[g.Key],
+                        RemarksByDate = g
+                                .Where(x => !string.IsNullOrWhiteSpace(x.Timer) && !string.IsNullOrWhiteSpace(x.Remarks))
+                            .GroupBy(x => DateTime.Parse(x.Timer!))
+                            .ToDictionary(d => d.Key, d => d.First().Remarks ?? "")
+                    })
+                .ToList();
+
+            DateColumns = Listdata
+            .Where(x => !string.IsNullOrWhiteSpace(x.Timer) && !string.IsNullOrWhiteSpace(x.Remarks))
+            .Select(x => DateTime.Parse(x.Timer!))
+            .Distinct()
+            .OrderBy(d => d)
+            .ToList();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<TrackingGroupModel> mudTable;
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(TrackingGroupModel Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    string formatDate(DateTime? date)
+    {
+        if(date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MMM/yyyy");
+    }
+
+    private string _searchString;
+    private Func<TrackingGroupModel, bool> _quickFilter => x =>
+    {
+        bool matchSearch = true;
+        if (!string.IsNullOrWhiteSpace(_searchString))
+        {
+            matchSearch =
+                ListHBLs.Any(h => h.hblID == x.OutboundId &&
+                        h.hbl?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true);
+        }
+
+        return matchSearch;
+    };
+
+    string idtohbl(Guid? hblid)
+    {
+        if (hblid == null || hblid == Guid.Empty)
+            return string.Empty;
+        var rs = ListHBLs.FirstOrDefault(x => x.hblID == hblid);
+        return rs != null ? rs.hbl! : "DELETED!";
+    }
+
+    DateRange frmtoDate = new DateRange(new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-1),
+                                        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
+
+    string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    string CharidtoLoaidv(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.loaidichvu_charge}"!;
+    }
+    private string GetRemarkForDate(M_Theodoilohang item, DateTime date)
+    {
+        return DateTime.TryParse(item.Timer!, out DateTime timer) ? timer == date.Date ? item.Remarks ?? "" : "" : "";
+    }
+
+    class TrackingGroupModel
+    {
+        public string HBLGroup { get; set; } = string.Empty;
+        public Guid OutboundId { get; set; }
+        public Dictionary<DateTime, string> RemarksByDate { get; set; } = new();
+    }
+
+    private string GetRemarkGrouped(TrackingGroupModel item, DateTime date)
+    {
+        return item.RemarksByDate.TryGetValue(date, out var remark) ? remark : "";
+    }
+    private void ShowRemarkDialog(string remark)
+    {
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.ExtraSmall,
+                CloseOnEscapeKey = true,
+                DisableBackdropClick = true
+            };
+
+        var parameters = new DialogParameters<ShowContent> { { x => x.Content, remark } };
+        DialogService.Show<ShowContent>("Full Remark", parameters, optionsdialog);
+    }
+    private void ShowDetailDialog(Guid? hblid)
+    {
+        var hbl = ListHBLs.FirstOrDefault(x => x.hblID == hblid);
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.Medium,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true,
+                CloseButton = true
+            };
+
+        var parameters = new DialogParameters<TheoDoiLoHang> { { x => x.HBLDetail, hbl } };
+        DialogService.Show<TheoDoiLoHang>("Tracking", parameters, optionsdialog);
+    }
+}
+    

@@ -1,0 +1,853 @@
+@using System.Globalization﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<MudTabs SliderColor="Color.Success" >
+    <MudTabPanel Text="@(isDuty ? "Input" : "Debit")" BadgeColor="Color.Secondary" Class="custom-tab" >
+        <MudDataGrid T="M_Debit" Items="@Listdata" Filterable="true" @ref="mudTable"
+        FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true"
+        FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+        ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+        RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true"
+        ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false">
+            <Columns>
+                <TemplateColumn CellClass="d-flex justify-end" Filterable="false" ShowColumnOptions="false" Sortable="false">
+                    <HeaderTemplate>
+                        <MudStack Row="true" Justify="Justify.FlexStart" Spacing="2">
+
+                            <!-- Nút Reload -->
+                            <MudTooltip Text="@Localizer["Reload"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="Refresh"
+                                Variant="Variant.Filled"
+                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Class="btn-compact" />
+                            </MudTooltip>
+
+                            <MudTooltip Text="@Localizer["New"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.CreateNewFolder"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="NewItem"
+                                Variant="Variant.Filled"
+                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Class="btn-compact" />
+                            </MudTooltip>
+
+                            <MudTooltip Text="@Localizer["Add"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.Add"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="AddItem"
+                                Variant="Variant.Filled"
+                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Class="btn-compact" />
+                            </MudTooltip>
+
+
+
+                            <MudTooltip Text="@Localizer["Bills"]">
+                                <MudMenu Icon="@Icons.Material.Filled.Download"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                Variant="Variant.Filled"
+                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                AnchorOrigin="Origin.BottomCenter"
+                                TransformOrigin="Origin.TopCenter">
+                                    <MudMenuItem Disabled="_processingUpload" OnClick="ExportBill">
+                                        @if (_processingUpload)
+                                        {
+                                            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                                            <span class="ms-2">Exporting...</span>
+                                        }
+                                        else
+                                        {
+                                            @Localizer["Export Debit"]
+                                        }
+                                    </MudMenuItem>
+                                    @if(!isDuty)
+                                    {
+                                        <MudMenuItem OnClick="CreateInvoice">
+                                            @Localizer["Create Invoice"]
+                                        </MudMenuItem>
+                                    }
+                                </MudMenu>
+                            </MudTooltip>
+
+                            <MudTooltip Text="@Localizer["Copy_Debit"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.ControlPointDuplicate"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="CopyDebitQuotation"
+                                Variant="Variant.Filled"
+                                Disabled="@(HBLDetail == null || HBLDetail.hblID == Guid.Empty)"
+                                Class="btn-compact" />
+                            </MudTooltip>
+
+                            <MudTooltip Text="Copy Debit (MBL/HBL)">
+                                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="CopyDebitFromMblHbl"
+                                Variant="Variant.Filled"
+                                Disabled="@(isMBL ? ((MBLDetail?.MblID ?? Guid.Empty) == Guid.Empty) : ((HBLDetail?.hblID ?? Guid.Empty) == Guid.Empty))"
+                                Class="btn-compact" />
+                            </MudTooltip>
+
+                        </MudStack>
+                    </HeaderTemplate>
+                    <CellTemplate>
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(()=>TryStartEditing(context.Item))" Disabled="context.Item.khoa == true" />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" Disabled="context.Item.khoa == true" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.debitno" Title="@Localizer["Debit No."]" Required="false" >
+                    <EditTemplate>
+                        <MudTextField @bind-Value="context.Item.debitno" Immediate Label="Debit No." Required ReadOnly/>
+                        <MudDatePicker Label="@Localizer["Selected Date Get Debit No"]" DateChanged="((t)=>UpdateDebitNo(context.Item,(DateTime)t!))" 
+                        ImmediateText DateFormat="MM/yyyy"  Disabled="!string.IsNullOrEmpty(context.Item.debitno)"/>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x=>x.approve" Title="@Localizer["Approve"]" IsEditable="false" Required="false">
+                    <CellTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.approve" @bind-Value="context.Item.approve" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
+                    </CellTemplate>
+                    <EditTemplate>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.customerid" Label="@Localizer["Customer"]" Required
+                        SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" Clearable />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x =>  Charidtocharge(x.itemid)" Title="@Localizer["Item"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.itemid" Label="@Localizer["Item"]" Required
+                        SearchFunc="SearchCharge" ToStringFunc="Charidtocharge" Clearable/>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.dongia" Title="@Localizer["Unit Price"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.dongia" Class="text-right"
+                        Label="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" T="double?"
+                        TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x=>x.type" Title="@Localizer["Type"]" Required="false" >
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.type" Label="@Localizer["Type"]" Required
+                        SearchFunc="SearchType" CoerceValue/>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" Required="false">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.soluong"
+                        Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" T="double?"
+                        TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["Total Price"]" Format="#,##0.##" CellStyle="text-align: right;" Required="false">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.thanhtien" Label="@Localizer["Total Price"]" 
+                        Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+
+
+                <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" Required="false">
+                    <EditTemplate>
+                        <MudSelect @bind-Value="context.Item.tiente" Label="@Localizer["Currency"]">
+                            <MudSelectItem Value="@("VND")">VND</MudSelectItem>
+                            <MudSelectItem Value="@("USD")">USD</MudSelectItem>
+                        </MudSelect>
+                    </EditTemplate>
+                </PropertyColumn>
+
+
+                <PropertyColumn Property="x => x.thue" Title="@Localizer["VAT"]" Format="#,##0.##" Required="false">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.thue" Label="@Localizer["VAT"]"
+                        Format="#,##0.##" Culture="@_en" T="double?"
+                        TextChanged="@(e => CalculateThanhtiensauthue(context.Item))" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.thanhtiensauthue" Label="@Localizer["Total Price Inc. VAT"]"
+                        Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.thuho" Title="@Localizer["On Behaft"]" Required="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.thuho" Label="@Localizer["On Behaft"]" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.tigiadebit" Title="@Localizer["Exchange Rate Debit"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.tigiadebit" Label="@Localizer["Exchange Rate Debit"]"
+                        Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" Required />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.tigiahoandondaura" Title="@Localizer["Exchange Rate Invoice"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.tigiahoandondaura" Label="@Localizer["Exchange Rate Invoice"]"
+                        Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" Required />
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.ghichu" Title="@Localizer["Notes"]" Required="false">
+                    <EditTemplate>
+                        <MudTextField @bind-Value="context.Item.ghichu" Label="@Localizer["Notes"]" Placeholder="Notes..."
+                        Adornment="Adornment.Start" AdornmentIcon="Icons.Material.Filled.Notes"
+                        InputType="InputType.Text" Lines="3" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.daIndebit" Title="@Localizer["Debit Printed"]" >
+                    <CellTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.daIndebit" ReadOnly />
+                    </CellTemplate>
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.daIndebit" Label="@Localizer["Debit Printed"]" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.daXuatHoadon" Title="@Localizer["Invoice Printed"]">
+                    <CellTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.daXuatHoadon" ReadOnly />
+                    </CellTemplate>
+                    <EditTemplate>
+                        <MudStack Row>
+                            <MudCheckBox @bind-Checked="context.Item.daXuatHoadon" Label="@Localizer["Invoice Printed"]" />
+                            <MudTextField @bind-Value="context.Item.sohoadondaura" Label="@Localizer["Invoice No."]" ReadOnly />
+                        </MudStack>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.sohoadondaura" Title="@Localizer["Invoice No."]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                <PropertyColumn Property="x => x.khoa" Title="@Localizer["Locked"]">
+                    <CellTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.khoa" @bind-Checked:after="@(async () => await OnLockChanged(context.Item))" Disabled="context.Item.khoa == true && !canUnlockDebit" />
+                    </CellTemplate>
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.khoa" @bind-Checked:after="@(async () => await OnLockChanged(context.Item))" Label="@Localizer["Locked"]" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.InArrival" Title="@Localizer["Arrival Printed"]">
+                    <CellTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.InArrival" ReadOnly />
+                    </CellTemplate>
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.InArrival" Label="@Localizer["Arrival Printed"]" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                <PropertyColumn Property="x => x.continued" Title="@Localizer["Continued"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+            </Columns>
+        </MudDataGrid>
+        @if(Listdata.Count > 0)
+        {
+            <MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+                <MudText Typo="Typo.subtitle2" Align="Align.Center" GutterBottom="true" Style="margin-right:20px;">Total Inc. VAT: @(Listdata.Sum(x => x.thanhtiensauthue / (x.tiente == "VND" ? x.tigiadebit : 1))!.Value.ToString("#,##0.##", _en)) USD</MudText>
+                <MudText Typo="Typo.subtitle2" Align="Align.Center" GutterBottom="true">Total Inc. VAT: @(Listdata.Sum(x => x.thanhtiensauthue * (x.tiente == "USD" ? x.tigiadebit : 1))!.Value.ToString("#,##0.##", _en)) VND</MudText>
+                <MudText Typo="Typo.subtitle2" Align="Align.Center" GutterBottom="true">Total Hóa đơn:  @(ListdataHoaDon.Sum(x => x.thanhtiensauthue)!.Value.ToString("#,##0.##", _en)) VND</MudText>
+            </MudStack>
+        }
+    </MudTabPanel>
+    @if(!isDuty)
+    {
+        <MudTabPanel Text="Hóa Đơn Đầu Ra" Class="custom-tab" >
+            @if (isMBL)
+            {
+                <HoaDonDauRa MBLDetail="MBLDetail ==  null ? new M_MBL() : MBLDetail" Customers="Customers" />
+            }
+            else
+            {
+                <HoaDonDauRa HBLDetail="HBLDetail ==  null ? new M_HBL() : HBLDetail" Customers="Customers" />
+            }
+        </MudTabPanel>
+    }
+</MudTabs>
+@code {
+    [Parameter] public M_MBL? MBLDetail { get; set; } = default!;
+    [Parameter] public M_HBL? HBLDetail { get; set; } = default!;
+    [Parameter] public string Type { get; set; } = default!;
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    [Parameter] public List<M_Customer> Customers { get; set; } = default!;
+    [Parameter] public bool isDuty { get; set; }
+    M_Debit detail_Debit;
+    public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private void Submit()
+    {
+        MudDialog!.Close();
+    }
+
+    void Cancel() => MudDialog!.Cancel();
+    bool isMBL;
+    string usr;
+    bool canUnlockDebit;
+    List<ChargeModel> charges = new List<ChargeModel>();
+    string type = "";
+    List<M_HoaDonDauRa> ListdataHoaDon = new List<M_HoaDonDauRa>();
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+
+
+            isMBL = MBLDetail == null ? false : true;
+            if (isMBL)
+            {
+                if (MBLDetail!.MblID == Guid.Empty)
+                {
+                    CallSnackBar("Vui lòng chọn 1 dòng MBL", MudBlazor.Severity.Warning);
+                    return;
+                }
+            }
+            else
+            {
+                if (HBLDetail!.hblID == Guid.Empty)
+                {
+                    CallSnackBar("Vui lòng chọn 1 dòng HBL", MudBlazor.Severity.Warning);
+                    return;
+                }
+            }
+            Types = await shipsv.GetListTypeInDebitCredit();
+            type = await shipsv.GetTypeByMBLID(isMBL ? MBLDetail!.MblID : HBLDetail!.mblid); // Sea Air Truck HQ
+            charges = await supsv.GetListChargeDuty(isDuty);
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            var userDetail = asv.GetUserDetail();
+            var department = userDetail?.Department?.Trim();
+            canUnlockDebit = string.Equals(department, "ACCOUNT", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(department, "ADMIN", StringComparison.OrdinalIgnoreCase);
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+    }
+
+    bool _loading = false;
+    List<M_Debit> Listdata = new List<M_Debit>();
+    M_Debit detail;
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "MBL"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            if (isMBL)
+            {
+                Listdata = await shipsv.GetListDebitMBL(MBLDetail!.MblID);
+                ListdataHoaDon = await shipsv.GetListHoaDonDauRaMBL(MBLDetail!.MblID);
+            }
+            else
+            {
+                Listdata = await shipsv.GetListDebitHBL(HBLDetail!.hblID, isDuty);
+                ListdataHoaDon = await shipsv.GetListHoaDonDauRaHBL(HBLDetail!.hblID);
+            }
+
+            // check có còn tồn tại hóa đơn không
+            if (Listdata.Any(x => !string.IsNullOrWhiteSpace(x.sohoadondaura)))
+            {
+                var isexistinv = await shipsv.isExistInvoice(Listdata);
+                if (!isexistinv) // không tồn tại hóa đơn nữa thì update lại debit
+                {
+                    Listdata.ForEach(x => x.sohoadondaura = null);
+                    Listdata.ForEach(x => x.daXuatHoadon = false);
+                    var rs = await shipsv.UpdateDebitMBL(Listdata);
+                }
+            }
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_Debit> mudTable;
+    async Task AddItem()
+    {
+        if(detail  == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_Debit
+        {
+                debitno = detail.debitno,
+                customerid = detail.customerid,
+                itemid = detail.itemid
+        };
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+
+    private async Task CopyDebitQuotation()
+    {
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraLarge
+        };
+
+        if (HBLDetail == null || HBLDetail.hblID == Guid.Empty)
+        {
+            CallSnackBar("Please select 1 row HBL", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        // Copy theo Quotation (giữ nguyên chức năng cũ)
+        var parameters = new DialogParameters<Copy_Debit>
+        {
+            { x => x._HBL_details, HBLDetail }
+        };
+
+        var dialog = await DialogService.ShowAsync<Copy_Debit>("Copy Data Debit", parameters, optionsdialog);
+        var result = await dialog.Result;
+        await Refresh();
+        return;
+
+    }
+
+    private async Task CopyDebitFromMblHbl()
+    {
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraLarge
+        };
+
+        if (isMBL)
+        {
+            if (MBLDetail == null || MBLDetail.MblID == Guid.Empty)
+            {
+                CallSnackBar("Please select 1 row MBL", MudBlazor.Severity.Warning);
+                return;
+            }
+        }
+        else
+        {
+            if (HBLDetail == null || HBLDetail.hblID == Guid.Empty)
+            {
+                CallSnackBar("Please select 1 row HBL", MudBlazor.Severity.Warning);
+                return;
+            }
+        }
+
+        var parameters = new DialogParameters<Copy_Debit_HBL_MBL>
+        {
+            { x => x.MBLDetail, isMBL ? MBLDetail : null },
+            { x => x.HBLDetail, isMBL ? null : HBLDetail },
+            { x => x.isDuty, isDuty }
+        };
+
+        var dialog = await DialogService.ShowAsync<Copy_Debit_HBL_MBL>("Copy Data Debit", parameters, optionsdialog);
+        var result = await dialog.Result;
+
+        await Refresh();
+    }
+    async Task NewItem()
+    {
+        var item = new M_Debit
+        {
+                customerid = isMBL ? MBLDetail!.CustomerID : HBLDetail!.CustomerID
+        };
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+    async Task DeleteItem(M_Debit item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item.khoa.HasValue && item.khoa.Value)
+        {
+            CallSnackBar("This Debit is locked!", MudBlazor.Severity.Info);
+            return;
+        }
+
+        if (item.approve.HasValue && item.approve.Value)
+        {
+            CallSnackBar("This Debit is approved!", MudBlazor.Severity.Info);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await shipsv.DeleteDebitMBL(item);
+            await HistoryLogService.LogAsync(usr, "Delete Debit", "Shipment", item.debitId, item.debitno, new { OldData = item});
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    async Task CommittedItem(M_Debit item)
+    {
+        if (detail_Debit != null
+            && detail_Debit.debitId != Guid.Empty
+            && detail_Debit.khoa == true
+            && item.khoa != true
+            && !canUnlockDebit)
+        {
+            item.khoa = true;
+            CallSnackBar("Only ACCOUNT or ADMIN can unlock Debit!", MudBlazor.Severity.Warning);
+            return;
+        }
+        if(isMBL)
+            item.mblid = MBLDetail!.MblID;
+        else 
+            item.hblid = HBLDetail!.hblID;
+        item.userupdate = usr;
+        item.dateupdate = DateTime.Now.ToString();
+        var rs = item.debitId != Guid.Empty ? await shipsv.UpdateDebitMBL(item, detail_Debit) : await shipsv.CreateDebitMBL(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_Debit Sis, int rowNumber)
+    {
+        if (Sis.approve.HasValue && Sis.approve.Value)
+        {
+            return "custom-disable"; // Gán class "disable" nếu Approve = true
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            return "selected"; // Giữ lớp "selected" cho dòng đã chọn
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_Debit> args)
+    {
+        if (args.Item.approve.HasValue && args.Item.approve.Value)
+            CallSnackBar("Hóa đơn approved!", MudBlazor.Severity.Info);
+        else detail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_Debit> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.shortname + "_" + rs.COMPANY!;
+    }
+    string Charidtocharge(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    private bool _processingUpload = false;
+    string cur_type;
+    private async Task ExportBill()
+    {
+        try
+        {
+            var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.Small,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true,
+            };
+            var debitdetail = new M_Debit();
+            if (!isMBL)
+            {
+                var parameters = new DialogParameters<DebitComboboxHBL> { { x => x.hbldetail, HBLDetail } };
+                var dialog = await DialogService.ShowAsync<DebitComboboxHBL>("Selected Debit No.", parameters, optionsdialog);
+                var result = await dialog.Result;
+
+                if (result.Canceled) return;
+                var (debit, text) = ((M_Debit, string))result.Data;
+
+                debitdetail = debit;
+                cur_type = text;
+
+                // if (result.Canceled) return;
+                // debitdetail = (M_Debit)result.Data;
+            }
+            else
+            {
+                var parameters = new DialogParameters<DebitComboboxMBL> { { x => x.mbldetail, MBLDetail } };
+                var dialog = await DialogService.ShowAsync<DebitComboboxMBL>("Selected Debit No.", parameters, optionsdialog);
+                var result = await dialog.Result;
+                if (result.Canceled) return;
+                var (debit, text) = ((M_Debit, string))result.Data;
+
+                debitdetail = debit;
+                cur_type = text;
+
+            }
+
+            _processingUpload = true;
+            StateHasChanged();
+            await Task.Delay(1);
+
+            if (type == "SI")
+            {
+                if (isMBL){
+                    var rs = await shipsv.ExportDebitSI_mbl(debitdetail, cur_type);
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }else{
+                    var rs = await shipsv.ExportDebitSI(debitdetail, cur_type);
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }
+
+            }
+            else if (type == "SE")
+            {
+                if (isMBL){
+                    var rs = await shipsv.ExportDebitSE_mbl(debitdetail, cur_type);
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }else{
+                    var rs = await shipsv.ExportDebitSE(debitdetail, cur_type);
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }
+
+            }
+            else if (type == "AI")
+            {
+                if (isMBL){
+                    var rs = await shipsv.ExportDebitAI_mbl(debitdetail, cur_type);
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }else{
+                    var rs = await shipsv.ExportDebitAI(debitdetail, cur_type);
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }
+            }
+            else if (type == "AE")
+            {
+                if (isMBL){
+                    var rs = await shipsv.ExportDebitAE_mbl(debitdetail, cur_type);
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }else{
+                    var rs = await shipsv.ExportDebitAE(debitdetail, cur_type);
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }
+
+            }
+            else if(type == "Truck")
+            {
+                var rs = await shipsv.ExportDebitTruck(debitdetail, cur_type, isMBL);
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            }
+            else
+            {
+                CallSnackBar($"Chưa có mẫu bill cho loại '{type}' ", MudBlazor.Severity.Warning);
+                return;
+            }
+            var dbs = await shipsv.GetListDebit_Debitno(debitdetail.debitno);
+            dbs.ForEach(x => x.daIndebit = true);
+            var ud = await shipsv.UpdateDebitMBL(dbs); // update đã in debit
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+    async Task UpdateDebitNo(M_Debit item, DateTime value)
+    {
+        var refno = await supsv.GetRefNoByFunc("Debit", value.Month, value.Year, usr);
+        var tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");                                                                                   
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        var flc = await shipsv.GetFLCByMBLID(isMBL ? MBLDetail!.MblID : HBLDetail!.mblid);
+        item.debitno = cn + tiepdaungu + type + flc + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D4") : "RefNoError!");
+    }
+
+    private void CalculateTotal(M_Debit item)
+    {
+        if (item.soluong.HasValue && item.dongia.HasValue)
+        {
+
+            double soluong = item.soluong ?? 0;
+            double dongia = item.dongia ?? 0;
+            item.thanhtien = Math.Round(soluong * dongia, 2);
+            CalculateThanhtiensauthue(item);
+        }
+
+
+    }
+
+    private void CalculateThanhtiensauthue(M_Debit item)
+    {
+        if (item.thanhtien.HasValue && item.thue.HasValue)
+        {
+            double thanhtienValue = item.thanhtien ?? 0;
+            double thueValue = item.thue ?? 0;
+            item.thanhtiensauthue = Math.Round(thanhtienValue * (thueValue / 100 + 1), 2);
+        }
+
+
+    }
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<Guid>> SearchCharge(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return charges.Select(x => x.CHARGE_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return charges.Where(x => (x.CHARGE_CODE + "_" + x.CHARGE).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.CHARGE_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    List<string> Types = new List<string>();
+    private async Task<IEnumerable<string>> SearchType(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Types;
+            }
+            // MBL.Porname = mst_Consignee;
+            return Types.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task CreateInvoice()
+    {
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.Medium,
+                CloseOnEscapeKey = true,
+                DisableBackdropClick = true,
+                CloseButton = true
+            };
+
+        var parameters = new DialogParameters<CreateInvoice> { { x => x.Listdata, Listdata }, { x => x.Customers, Customers }, { x => x.isMBL, isMBL } };
+        var dialog = await DialogService.ShowAsync<CreateInvoice>($"Create Invoice", parameters, optionsdialog);
+        var rs = await dialog.Result;
+    }
+
+    async Task UpdatebyCheckboxClick(M_Debit item)
+    {
+        if (!await ssv.CheckPermission(usr, "Approve", "HBL"))
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        item.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", new CultureInfo("en-US"));
+        item.userupdate = usr;
+        var rs = await shipsv.UpdateDebitMBL_Approve(item);
+        if (!rs.Flag) CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+    async Task OnLockChanged(M_Debit item)
+    {
+        if (item.khoa != true && !canUnlockDebit)
+        {
+            item.khoa = true;
+            CallSnackBar("Only ACCOUNT or ADMIN can unlock Debit!", MudBlazor.Severity.Warning);
+            return;
+        }
+        var oldData = detail_Debit ?? JsonSerializer.Deserialize<M_Debit>(JsonSerializer.Serialize(item));
+        if (oldData != null)
+            oldData.khoa = !(item.khoa ?? false);
+        item.dateupdate = DateTime.Now.ToString();
+        item.userupdate = usr;
+        var rs = await shipsv.UpdateDebitMBL(item, oldData!);
+        if (!rs.Flag)
+            CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+    }
+    async Task TryStartEditing(M_Debit item)
+    {
+        if (item.khoa.HasValue && item.khoa.Value)
+        {
+            CallSnackBar("This Debit is locked!", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item.approve.HasValue && item.approve.Value)
+        {
+            CallSnackBar("This Debit is approved!", MudBlazor.Severity.Warning);
+            return;
+        }
+  
+        detail_Debit = JsonSerializer.Deserialize<M_Debit>(JsonSerializer.Serialize(item));
+        await mudTable.SetEditingItemAsync(item);
+    }
+}

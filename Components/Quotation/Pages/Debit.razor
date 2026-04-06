@@ -1,0 +1,510 @@
+﻿@using System.Globalization
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject QuotationService QuoSV
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject BookingService Bksv
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+@inject tigiaVCBservices Vcbsv
+@inject ShipmentService shipsv
+
+<style>
+    .text-right-input input {
+        text-align: right !important;
+    }
+
+    .custom-right-align {
+        text-align: right !important;
+    }
+</style>
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+    OnClick="RefreshDebitInfo"
+    Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+    StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+    <MudButton HtmlTag="label"
+    @onclick="@(() => AddItemMarketInfo())"
+    Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+    StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["new"]
+    </MudButton>
+</MudStack>
+<MudDataGrid T="M_Debit" Items="@listImport.ToList()" Filterable="true" @ref="mudDebit"
+FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+ReadOnly="false" CommittedItemChanges="@CommittedItemDebitInfo"
+ColumnResizeMode="ResizeMode.Column">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => {
+
+                                 detail = JsonSerializer.Deserialize<M_Debit>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+
+                       })" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItemDebitInfo(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.nhom" Title="@Localizer["group"]" Required="false">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.nhom" Label="@Localizer["group"]" Class="custom-label">
+                    @foreach (var item in nhoms)
+                    {
+                        <MudSelectItem Value="item">@item</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false">
+            <EditTemplate>
+                <MudAutocomplete Class="custom-label" T="Guid" Label="@Localizer["Customer"]"
+                                 @bind-Value="context.Item.customerid"
+                                 SearchFunc="Search_Customer"
+                                 ToStringFunc="GetCustomerLable" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.pol" Title="POL" Required="false">
+            <EditTemplate>
+                <MudAutocomplete Class="custom-label" T="string"
+                                 @bind-Value="context.Item.pol"
+                                 Label="@Localizer["POL"]"
+                                 SearchFunc="SearchPorts"
+                                 Immediate="true"
+                                 CoerceText="true"
+                                 Clearable="true"
+                                 MaxItems="100">
+                </MudAutocomplete>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.pod" Title="POD" Required="false">
+            <EditTemplate>
+                <MudAutocomplete Class="custom-label" T="string"
+                                 @bind-Value="context.Item.pod"
+                                 Label="@Localizer["POD"]"
+                                 SearchFunc="SearchPorts"
+                                 Immediate="true"
+                                 CoerceText="true"
+                                 Clearable="true"
+                                 MaxItems="100">
+                </MudAutocomplete>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.del" Title="DEL" Required="false">
+            <EditTemplate>
+                <MudAutocomplete Class="custom-label" T="string"
+                                 @bind-Value="context.Item.del"
+                                 Label="@Localizer["DEL"]"
+                                 SearchFunc="SearchPorts"
+                                 Immediate="true"
+                                 CoerceText="true"
+                                 Clearable="true"
+                                 MaxItems="100">
+                </MudAutocomplete>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.type" Title="@Localizer["Type"]" Required="false">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.type" Label="@Localizer["Type"]" Required
+                                 SearchFunc="SearchType" CoerceValue />
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => ItemidtoChargeName(x.itemid)" Title="@Localizer["Item"]" Required="false">
+            <EditTemplate>
+                <MudAutocomplete T="Guid" Label="@Localizer["Item"]" Class="custom-label"
+                                 @bind-Value="context.Item.itemid"
+                                 Required="true"
+                                 SearchFunc="Search_Charge"
+                                 ToStringFunc="GetChargeLabel" />
+
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.dongia" Title="@Localizer["unitprice"]" Format="#,##0.##" CellClass="custom-right-align" Required="false">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.dongia"
+                                 Label="@Localizer["unitprice"]" Format="#,##0.##" Culture="@_en" T="double?"
+                                 Class="text-right-input custom-label"
+                                 TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" CellClass="custom-right-align" Required="false">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.soluong"
+                                 Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" T="double?" Class="text-right-input custom-label"
+                TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["ThanhTien"]" Format="#,##0.##" CellClass="custom-right-align" Required="false">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.thanhtien" Label="@Localizer["ThanhTien"]" Class="text-right-input custom-label" HideSpinButtons="true"
+                Format="#,##0.##" Culture="@_en" T="double?" />
+            </EditTemplate>
+        </PropertyColumn>
+
+
+
+
+        <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" Required="false">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.tiente" Label="@Localizer["Loaitiente"]" Required="true" Class="custom-label" CoerceValue SearchFunc="SearchCurr" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.thue" Title="@Localizer["vat"]" Format="#,##0.##" CellClass="custom-right-align" Required="false">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.thue" Label="@Localizer["vat"]" HideSpinButtons="true"
+                                 Format="#,##0.##" Culture="@_en" T="double?" Class="text-right-input custom-label"
+                TextChanged="@(e => CalculateThanhtiensauthue(context.Item))" />
+            </EditTemplate>
+        </PropertyColumn> 
+        <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["thanhtiensauthue"]" Format="#,##0.##" CellClass="custom-right-align" Required="false">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.thanhtiensauthue" Label="@Localizer["thanhtiensauthue"]" Class="text-right-input custom-label" HideSpinButtons="true"
+                Format="#,##0.##" Culture="@_en" T="double?" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.thuho" Title="@Localizer["thuho"]" Required="false">
+            <EditTemplate>
+                <MudCheckBox @bind-Checked="context.Item.thuho" Label="@Localizer["thuho"]" Class="custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => x.tigiadebit" Title="@Localizer["tigia"]" Format="#,##0.##" CellClass="custom-right-align" Required="false">
+            <EditTemplate>
+                <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                               Style="min-width: 80px; height: 36px; padding: 5px 10px;"
+                               OnClick="@(() => GetTigia(context.Item))">
+                        @Localizer["gettigia"]
+                    </MudButton>
+
+                    <MudNumericField @bind-Value="context.Item.tigiadebit"
+                                     Label="@Localizer["tigia"]"
+                                     Format="#,##0.##" Culture="@_en"
+                                     T="double?" Required="true" HideSpinButtons="true"
+                                     Dense="true"
+                                     Class="text-right-input custom-label" />
+                </MudStack>
+            </EditTemplate>
+        </PropertyColumn>
+
+
+
+        <PropertyColumn Property="x => x.tigiahoandondaura" Title="@Localizer["tigia"]" Format="#,##0.##" CellClass="custom-right-align" Required="false">
+            <EditTemplate>
+                <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                               Style="min-width: 80px; height: 36px; padding: 5px 10px;"
+                               OnClick="@(() => GetTigia_hoadon(context.Item))">
+                        @Localizer["gettigia"]
+                    </MudButton>
+
+                    <MudNumericField @bind-Value="context.Item.tigiahoandondaura" Label="@Localizer["tigiahoadondaura"]" Class="text-right-input custom-label" HideSpinButtons="true"
+                                     Format="#,##0.##" Culture="@_en" T="double?" />
+                </MudStack>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.ghichu" Title="@Localizer["ghichu"]" Required="false">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.ghichu" Label="@Localizer["ghichu"]" 
+                              Adornment="Adornment.Start" AdornmentIcon="Icons.Material.Filled.Notes" Class="custom-label"
+                InputType="InputType.Text" Lines="3" />
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+        <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+
+    </Columns>
+</MudDataGrid>
+@code {
+    private MudDataGrid<Models.M_Debit> mudDebit;
+    private List<Models.M_Debit> listImport = new List<Models.M_Debit>();
+    private List<Models.PortModel> listport = new List<Models.PortModel>();
+    private List<Models.ChargeModel> charges = new List<Models.ChargeModel>();
+    [Parameter] public M_Quotation _QuotationDetail { get; set; }
+    // [Parameter] public List<M_Customer> customers { get; set; }
+    // [Parameter] public List<PortModel> Ports { get; set; }
+    List<M_Customer> customers = new List<M_Customer>();
+    List<PortModel> Ports = new List<PortModel>();
+    M_Debit detail;
+    string usr;
+    List<string> nhoms = new List<string>();
+    private List<string> ListType { get; set; } = new List<string>();
+    private double? _tigiadebit;
+    List<string> currs = new List<string>();
+
+    public double? Tigiadebit
+    {
+        get => _tigiadebit ?? 0; // Nếu null thì trả về 0
+        set => _tigiadebit = (value < 0) ? 0 : value; // Không cho phép giá trị âm
+    }
+
+    bool cusmarket_loading = false;
+
+    async Task AddItemMarketInfo()
+    {
+        if (_QuotationDetail.Approve == true)
+        {
+            CallSnackBar("Biểu giá đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_Debit();
+        listImport.Add(item);
+        await mudDebit.SetEditingItemAsync(listImport.LastOrDefault()!);
+    }
+
+    private void CalculateTotal(M_Debit item)
+    {
+        if (item.soluong.HasValue && item.dongia.HasValue)
+        {
+
+            double soluong = item.soluong ?? 0;
+            double dongia = item.dongia ?? 0;
+            item.thanhtien = Math.Round(soluong * dongia, 2);
+            CalculateThanhtiensauthue(item);
+        }
+
+
+    }
+    List<string> Types = new List<string>();
+    private async Task<IEnumerable<string>> SearchType(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Types;
+            }
+            // MBL.Porname = mst_Consignee;
+            return Types.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private void CalculateThanhtiensauthue(M_Debit item)
+    {
+        if (item.thanhtien.HasValue && item.thue.HasValue)
+        {
+            double thanhtienValue = item.thanhtien ?? 0;
+            double thueValue = item.thue ?? 0;
+            item.thanhtiensauthue = Math.Round(thanhtienValue * (thueValue / 100 + 1), 2);
+        }
+
+
+    }
+
+    protected async override Task OnInitializedAsync()
+    {
+        Types = await shipsv.GetListTypeInDebitCredit();
+
+        customers = await csv.GetList();
+        Ports = await Bksv.GetList_PORT();
+        charges = await QuoSV.Getcharge();
+        if (!string.IsNullOrEmpty(_QuotationDetail.o1)){
+            nhoms.Add(_QuotationDetail.o1);
+        }
+        if (!string.IsNullOrEmpty(_QuotationDetail.o2)){
+            nhoms.Add(_QuotationDetail.o2);
+        }
+        if (!string.IsNullOrEmpty(_QuotationDetail.o3)){
+            nhoms.Add(_QuotationDetail.o3);
+        }
+        if (!string.IsNullOrEmpty(_QuotationDetail.o4))
+        {
+            nhoms.Add(_QuotationDetail.o4);
+        }
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        currs = await Vcbsv.GetCur();
+        await RefreshDebitInfo();
+    }
+    private string sodebitno = "";
+    private string searchText = "";
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private string searchText_del = "";
+    private string searchText_item = "";
+
+    public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+ 
+    async Task CommittedItemDebitInfo(M_Debit item)
+    {
+        item.quotationid = _QuotationDetail.quotationID;
+        item.dateupdate = DateTime.Now.ToString();
+
+        item.userupdate =  asv.GetAuth().Result.User.Identity!.Name!;
+        var rs = item.debitId != Guid.Empty ? await QuoSV.UpdateQuotation_Debit(item,detail) : await QuoSV.CreateQuotation_Debit(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await RefreshDebitInfo();
+    }
+    async Task DeleteItemDebitInfo(M_Debit item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await QuoSV.DeleteDebit(item);
+            await HistoryLogService.LogAsync(usr, "Delete Debit Quotation", "Quotation", item.debitId, item.debitno, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await RefreshDebitInfo();
+        }
+
+    }
+    async Task RefreshDebitInfo()
+    {
+        try
+        {
+            cusmarket_loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            listImport.Clear();
+            StateHasChanged();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "Quotation"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            listImport = await QuoSV.GetListDebit(_QuotationDetail.quotationID);
+        }
+        finally
+        {
+            cusmarket_loading = false;
+        }
+
+    }
+    string CusidtoCusCode(Guid? cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.Customer_Code!+"_"+rs.COMPANY!;
+    }
+
+    string ItemidtoChargeName(Guid? itemid)
+    {
+        if (itemid == null || itemid == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == itemid);
+        return rs == null ? string.Empty : rs.CHARGE!;
+    }
+
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    private async Task<IEnumerable<string>> SearchPorts(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Ports
+                    .Where(x => !string.IsNullOrEmpty(x.PORT))
+                    .Select(x => x.PORT)
+                    .Distinct();
+            }
+
+            return Ports
+                .Where(x => !string.IsNullOrEmpty(x.PORT) &&
+                            x.PORT.Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.PORT)
+                .Distinct();
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<Guid>> Search_Customer(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return customers.Select(x => (Guid)x.Customer_ID);
+
+        return customers
+        .Where(x => !string.IsNullOrEmpty(x.COMPANY) && x.COMPANY.Contains(value, StringComparison.InvariantCultureIgnoreCase))
+        .Select(x => (Guid)x.Customer_ID)  // Convert Customer_ID to Guid?
+        .ToList();
+
+    }
+
+    private string GetCustomerLable(Guid id)
+    {
+        var customer = customers.FirstOrDefault(x => x.Customer_ID == id);
+        return customer != null ? customer.COMPANY : string.Empty;
+    }
+
+    private string GetChargeLabel(Guid id)
+    {
+        var customer = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return customer != null ? customer.CHARGE : string.Empty;
+    }
+
+    private async Task<IEnumerable<Guid>> Search_Charge(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return charges.Select(x => (Guid)x.CHARGE_ID);
+
+        return charges
+            .Where(x => (x.CHARGE).Contains(value, StringComparison.InvariantCultureIgnoreCase))
+            .Select(x => (Guid)x.CHARGE_ID);
+    }
+
+    private async Task<IEnumerable<string>> SearchCurr(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return currs;
+
+        return currs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+    private async Task GetTigia(M_Debit item)
+    {
+        double? tigia_ = await Vcbsv.Getexchange_cur(item.tiente);
+        item.tigiadebit = tigia_;
+    }
+    private async Task GetTigia_hoadon(M_Debit item)
+    {
+        double? tigia_ = await Vcbsv.Getexchange_cur(item.tiente);
+        item.tigiahoandondaura = tigia_;
+    }
+}

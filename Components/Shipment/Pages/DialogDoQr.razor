@@ -1,0 +1,124 @@
+@using MudBlazor
+@using NVOAMASIS.Services
+@inject DeliveryOrderQrService DoQrService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@Localizer["D/O"] QR Code</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+        }
+        else if (_result != null)
+        {
+            <MudStack Spacing="3">
+                <MudAlert Severity="MudBlazor.Severity.Info" Dense="true">
+                    @if (_result.IsExisting)
+                    {
+                        <span>Đây là QR đã xuất cho HBL này. Quét mã để lấy phiếu D/O. Hiệu lực đến <strong>@_result.ExpiresAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</strong>.</span>
+                    }
+                    else
+                    {
+                        <span>Quét mã QR bên dưới để lấy phiếu D/O. Link có hiệu lực <strong>@_result.ExpiresInHours</strong> giờ (đến @_result.ExpiresAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")).</span>
+                    }
+                </MudAlert>
+                <MudStack Row="true" Justify="Justify.Center" AlignItems="AlignItems.Center">
+                    <img src="@($"data:image/png;base64,{_result.QrImageBase64}")" alt="DO QR Code" style="max-width: 280px; height: auto;" />
+                </MudStack>
+                @if (!string.IsNullOrEmpty(HblNo))
+                {
+                    <MudText Typo="Typo.body2">HBL: <strong>@HblNo</strong></MudText>
+                }
+                <MudTextField Label="@Localizer["Link"]" ReadOnly="true" Value="@_result.Url" Variant="Variant.Outlined" />
+                <MudText Typo="Typo.caption">Sau khi sửa thông tin D/O, bấm "Tạo lại QR" để xuất link mới (link cũ sẽ hết hiệu lực).</MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="SwitchToCreateForm">Tạo lại QR</MudButton>
+            </MudStack>
+        }
+        else
+        {
+            <MudStack Spacing="3">
+                <MudText>Chưa có QR cho HBL này hoặc link đã hết hạn. Chọn ngày hết hạn và tạo QR (một HBL chỉ có một QR D/O).</MudText>
+                <MudDatePicker @bind-Date="_selectedExpiryDate"
+                               Label="Ngày hết hạn"
+                               Variant="Variant.Outlined"
+                               DateFormat="dd/MM/yyyy"
+                               MinDate="_minExpiryDate"
+                               MaxDate="_maxExpiryDate" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateQr" Disabled="_creating || !_selectedExpiryDate.HasValue">
+                    @if (_creating)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    }
+                    Tạo QR Code
+                </MudButton>
+            </MudStack>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close" Color="Color.Primary" Variant="Variant.Filled">@Localizer["Close"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    public MudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public Guid HblId { get; set; }
+
+    [Parameter]
+    public string Type { get; set; } = "";
+
+    [Parameter]
+    public string? HblNo { get; set; }
+
+    private bool _loading = true;
+    private bool _creating = false;
+    private DoQrResult? _result;
+    private DateTime? _selectedExpiryDate;
+    private DateTime? _minExpiryDate;
+    private DateTime? _maxExpiryDate;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _result = await DoQrService.GetExistingQrAsync(HblId, Type);
+        _loading = false;
+        var today = DateTime.Today;
+        _minExpiryDate = today.AddDays(1);
+        _maxExpiryDate = today.AddYears(1);
+        if (_result == null)
+            _selectedExpiryDate = today.AddDays(7);
+    }
+
+    private void SwitchToCreateForm()
+    {
+        _result = null;
+        var today = DateTime.Today;
+        _minExpiryDate ??= today.AddDays(1);
+        _maxExpiryDate ??= today.AddYears(1);
+        _selectedExpiryDate = today.AddDays(7);
+        StateHasChanged();
+    }
+
+    private async Task CreateQr()
+    {
+        if (_creating || !_selectedExpiryDate.HasValue) return;
+        _creating = true;
+        try
+        {
+            var d = _selectedExpiryDate.Value;
+            var expiresAt = new DateTimeOffset(d.Year, d.Month, d.Day, 23, 59, 0, TimeZoneInfo.Local.GetUtcOffset(DateTime.Now));
+            _result = await DoQrService.CreateQrAsync(HblId, Type, expiresAt);
+            StateHasChanged();
+        }
+        finally
+        {
+            _creating = false;
+        }
+    }
+
+    private void Close() => MudDialog.Close();
+}

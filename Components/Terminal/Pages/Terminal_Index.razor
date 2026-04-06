@@ -1,0 +1,209 @@
+@page "/sys/terminal"
+@inject NavigationManager navSvc
+@inject ILogger<Terminal_Index> Logger
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+@inject GlobalServices gsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@using System.Text.Json;
+
+<PageTitle>@Localizer["Terminal"]</PageTitle>
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label" OnClick="Refresh" Size="Size.Small" Color="Color.Primary"
+               Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+    <MudButton HtmlTag="label" @onclick="AddItem" Size="Size.Small" Color="Color.Secondary"
+               Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+</MudStack>
+
+<MudDataGrid T="Terminal_" Items="@Listdata" Filterable="true" @ref="mudTable" QuickFilter="@FilterFunc1"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" Bordered="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="SelectedRowClassFunc"
+             ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit"
+                               OnClick="@(() => { detail = JsonSerializer.Deserialize<Terminal_>(JsonSerializer.Serialize(context.Item)); context.Actions.StartEditingItemAsync(); })" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(() => DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.Code" Title="Code" Required="false">
+            <FilterTemplate>
+                <MudTextField @bind-Value="searchString1" />
+            </FilterTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.TermiNalName" Title="Terminal Name" Required="false" />
+        <PropertyColumn Property="x => x.Address" Title="Address" Required="false" />
+        <PropertyColumn Property="x => x.tel" Title="Tel" Required="false" />
+        <PropertyColumn Property="x => x.Capacity" Title="Capacity" Required="false">
+            <EditTemplate>
+                <MudNumericField T="int?" @bind-Value="context.Item.Capacity" Label="Capacity" Variant="Variant.Outlined" HideSpinButtons="true" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.FreeStorage" Title="Free Storage" Required="false">
+            <EditTemplate>
+                <MudNumericField T="double?" @bind-Value="context.Item.FreeStorage" Label="Free Storage" Variant="Variant.Outlined" HideSpinButtons="true" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.ValidOrder" Title="Valid Order" Required="false">
+            <EditTemplate>
+                <MudNumericField T="int?" @bind-Value="context.Item.ValidOrder" Label="Valid Order" Variant="Variant.Outlined" HideSpinButtons="true" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.OrderReport" Title="Order Report" Required="false">
+            <EditTemplate>
+                <MudNumericField T="int?" @bind-Value="context.Item.OrderReport" Label="Order Report" Variant="Variant.Outlined" HideSpinButtons="true" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Continued" Title="Continued" Required="false">
+            <EditTemplate>
+                <MudCheckBox T="bool?" @bind-Checked="context.Item.Continued" Label="Continued" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Editable" Title="Editable" Required="false">
+            <EditTemplate>
+                <MudCheckBox T="bool?" @bind-Checked="context.Item.Editable" Label="Editable" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Approve" Title="Approve" Required="false">
+            <EditTemplate>
+                <MudCheckBox T="bool?" @bind-Checked="context.Item.Approve" Label="Approve" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.code_nvocc" Title="Code NVOCC" Required="false" />
+        <PropertyColumn Property="x => x.UserID" Title="User Update" Editable="false" Required="false" />
+        <PropertyColumn Property="x => x.UpdateTime" Title="Date Update" Format="dd/MM/yyyy HH:mm" Editable="false" Required="false" />
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="Terminal_" PageSizeOptions="@(new int[] { 10, 20, 50 })" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    Terminal_? detail;
+    private string searchString1 = "";
+    private bool _loading = false;
+    List<Terminal_> Listdata = new List<Terminal_>();
+    MudDataGrid<Terminal_>? mudTable;
+    private int selectedRowNumber = -1;
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private bool FilterFunc1(Terminal_ item) => FilterFunc(item, searchString1);
+
+    private bool FilterFunc(Terminal_ item, string search)
+    {
+        if (string.IsNullOrWhiteSpace(search)) return true;
+        if (item.Code != null && item.Code.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
+        if (item.TermiNalName != null && item.TermiNalName.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
+        if (item.Address != null && item.Address.Contains(search, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Refresh();
+    }
+
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(200);
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "Terminal"))
+            {
+                CallSnackBar(@Localizer["You have not access to view"], MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await gsv.GetList_Terminal();
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task AddItem()
+    {
+        var item = new Terminal_ { TerminalID = Guid.Empty };
+        Listdata.Add(item);
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(50);
+        if (mudTable != null)
+            await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task DeleteItem(Terminal_ item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("Please select a row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item.TerminalID == Guid.Empty)
+        {
+            Listdata.Remove(item);
+            StateHasChanged();
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+            @Localizer["Warning"],
+            @Localizer["DeletingCannotBeUndone"],
+            yesText: @Localizer["Delete"], cancelText: @Localizer["Cancel"]);
+        if (resultMess.HasValue)
+        {
+            var rs = await gsv.DeleteTerminal(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (rs.Flag)
+                await Refresh();
+        }
+    }
+
+    async Task CommittedItem(Terminal_ item)
+    {
+        if (item.TerminalID == Guid.Empty && string.IsNullOrWhiteSpace(item.TermiNalName))
+        {
+            Listdata.Remove(item);
+            StateHasChanged();
+            return;
+        }
+        var rs = await gsv.SaveOrUpdateTerminal(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        if (rs.Flag)
+            await Refresh();
+    }
+
+    private string SelectedRowClassFunc(Terminal_ item, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        if (mudTable?.SelectedItem != null && mudTable.SelectedItem.Equals(item))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        return string.Empty;
+    }
+}

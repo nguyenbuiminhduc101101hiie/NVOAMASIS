@@ -1,0 +1,302 @@
+@attribute [Authorize]
+@using MudBlazor
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
+@using Microsoft.EntityFrameworkCore
+
+@inject ShipmentService shipsv
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+@inject IDbContextFactory<NVOAMASIS.Data.AppDbContext> DbFactory
+
+<PageTitle>7.6 @Localizer["Container Detail Report"]</PageTitle>
+
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="ContainerDetailRow" Items="@filteredRows" Dense="true" Bordered="true" Hover="true"
+                 FilterMode="DataGridFilterMode.Simple" FixedHeader="true" FixedFooter="true"
+                 Height="calc(100vh - 42vh)" Loading="_loading" Class="table-shipment-bg"
+                 HeaderClass="no-wrap" RowClass="no-wrap-cell"
+                 ColumnResizeMode="ResizeMode.Column">
+
+        <ToolBarContent>
+            <MudStack Row Spacing="3" AlignItems="AlignItems.Center">
+                <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+                <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Primary" Size="Size.Medium"
+                               OnClick="() => Refresh()" Disabled="_loading" />
+                <MudSelect T="string" Label="@Localizer["Status"]" Dense="true" Value="@selectedStatus"
+                           ValueChanged="@(val => { selectedStatus = val; ApplyFilter(); })"
+                           Style="min-width:140px" Clearable>
+                    <MudSelectItem Value="@("All")">All</MudSelectItem>
+                    <MudSelectItem Value="@("Active")">Active</MudSelectItem>
+                    <MudSelectItem Value="@("Decommissioned")">Decommissioned</MudSelectItem>
+                </MudSelect>
+                <MudTextField @bind-Value="_quickFilter" @bind-Value:after="ApplyFilter"
+                              Placeholder="@Localizer["Search Container..."]" Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" Dense="true" Clearable />
+            </MudStack>
+            <MudSpacer />
+            <MudText Typo="Typo.subtitle2" Color="Color.Primary">
+                @Localizer["Total"]: @filteredRows.Count @Localizer["containers"]
+            </MudText>
+        </ToolBarContent>
+
+        <Columns>
+            <PropertyColumn Property="x => x.STT" Title="#" Sortable="false" />
+            <PropertyColumn Property="x => x.ContainerNo" Title='@Localizer["container_no"]' />
+            <PropertyColumn Property="x => x.SizeType" Title='@Localizer["Size/Type"]' />
+            <PropertyColumn Property="x => x.IsoCode" Title="ISO Code" />
+            <PropertyColumn Property="x => x.OwnerType" Title="Owner Type" />
+            <PropertyColumn Property="x => x.OwnerName" Title="Owner" />
+            <PropertyColumn Property="x => x.Status" Title='@Localizer["Status"]' />
+            <PropertyColumn Property="x => x.StatusCont" Title="Status Cont" />
+            <PropertyColumn Property="x => x.Condition" Title="Condition" />
+            <PropertyColumn Property="x => x.Seal" Title="Seal" />
+            <PropertyColumn Property="x => x.MBL" Title="MBL" />
+            <PropertyColumn Property="x => x.HBL" Title="HBL" />
+            <PropertyColumn Property="x => x.JobNo" Title="Job No" />
+            <PropertyColumn Property="x => x.Vessel" Title="Vessel" />
+            <PropertyColumn Property="x => x.Voy" Title="Voy" />
+            <PropertyColumn Property="x => x.POL" Title="POL" />
+            <PropertyColumn Property="x => x.POD" Title="POD" />
+            <TemplateColumn Title="ETA">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.ETA.HasValue ? ctx.Item.ETA.Value.ToString("dd/MM/yyyy") : "")
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="ETD">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.ETD.HasValue ? ctx.Item.ETD.Value.ToString("dd/MM/yyyy") : "")
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="Gross Weight">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.GrossWeight.HasValue ? ctx.Item.GrossWeight.Value.ToString("N2") : "")
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="Net Weight">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.NetWeight.HasValue ? ctx.Item.NetWeight.Value.ToString("N2") : "")
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.CBM" Title="CBM" />
+            <PropertyColumn Property="x => x.Pkgs" Title="Pkgs" />
+            <PropertyColumn Property="x => x.Description" Title='@Localizer["Description"]' />
+            <PropertyColumn Property="x => x.InDepot" Title="In Depot" />
+            <PropertyColumn Property="x => x.InPort" Title="In Port" />
+            <PropertyColumn Property="x => x.NVOCCStatus" Title="NVOAMASIS Status" />
+            <PropertyColumn Property="x => x.LoaiHang" Title='@Localizer["Cargo Type"]' />
+            <TemplateColumn Title="Decommission">
+                <CellTemplate Context="ctx">
+                    @if (ctx.Item.Decommission == true)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Check" Color="Color.Error" Size="Size.Small" />
+                    }
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+
+        <NoRecordsContent>
+            <MudText Typo="Typo.body1">@Localizer["No data found"]</MudText>
+        </NoRecordsContent>
+
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    bool _loading = false;
+    string _quickFilter = string.Empty;
+    string selectedStatus = "All";
+    string usr = string.Empty;
+    AuthUser? userdetail;
+
+    DateRange frmtoDate = new DateRange(
+        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1),
+        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
+
+    List<ContainerDetailRow> allRows = new();
+    List<ContainerDetailRow> filteredRows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            userdetail = asv.GetUserDetail();
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Error: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            allRows.Clear();
+            filteredRows.Clear();
+            StateHasChanged();
+            await Task.Delay(100);
+
+            if (!await ssv.CheckPermission(usr, "View", "ContainerDetailReport"))
+            {
+                CallSnackBar("You do not have permission to view this report", MudBlazor.Severity.Warning);
+                _loading = false;
+                return;
+            }
+
+            using var db = await DbFactory.CreateDbContextAsync();
+
+            var dateFrom = frmtoDate.Start;
+            var dateTo = frmtoDate.End?.AddDays(1);
+
+            // Query containers joined with MBL, HBL, Job based on date range (ETA of HBL)
+            var query = from c in db.Container.AsNoTracking()
+                        join mbl in db.MBL.AsNoTracking() on c.mblid equals mbl.MblID into mblJoin
+                        from mbl in mblJoin.DefaultIfEmpty()
+                        join hbl in db.HBL.AsNoTracking() on c.hblid equals hbl.hblID into hblJoin
+                        from hbl in hblJoin.DefaultIfEmpty()
+                        join job in db.Job.AsNoTracking() on mbl.Jobid equals job.JobID into jobJoin
+                        from job in jobJoin.DefaultIfEmpty()
+                        where c.CONTINUED == true
+                            && (hbl == null || hbl.ETA == null
+                                || (hbl.ETA >= dateFrom && hbl.ETA < dateTo))
+                        orderby hbl.ETA descending, c.CONTAINER_NO
+                        select new ContainerDetailRow
+                        {
+                            CTN_ID = c.CTN_ID,
+                            ContainerNo = c.CONTAINER_NO,
+                            SizeType = c.CTN_SIZE_TYPE,
+                            IsoCode = c.IsoCode,
+                            OwnerType = c.OwnerType,
+                            OwnerName = c.OwnerName,
+                            Status = c.Status,
+                            StatusCont = c.Status_Cont,
+                            Condition = c.Condition,
+                            Seal = c.Seal,
+                            MBL = mbl != null ? mbl.Mbl : null,
+                            HBL = hbl != null ? hbl.hbl : null,
+                            JobNo = job != null ? job.JobNo : null,
+                            Vessel = hbl != null ? hbl.vessel : (mbl != null ? mbl.Vessel : null),
+                            Voy = hbl != null ? hbl.voy : (mbl != null ? mbl.Voy : null),
+                            POL = hbl != null ? hbl.polname : (mbl != null ? mbl.Polname : null),
+                            POD = hbl != null ? hbl.podname : (mbl != null ? mbl.Podname : null),
+                            ETA = hbl != null ? hbl.ETA : null,
+                            ETD = hbl != null ? hbl.ETD : null,
+                            GrossWeight = c.GrossWeight,
+                            NetWeight = c.NETWEIGHT,
+                            CBM = c.cbm,
+                            Pkgs = c.pkgs.HasValue ? c.pkgs.Value.ToString("N0") : null,
+                            Description = c.description,
+                            InDepot = c.In_Depot,
+                            InPort = c.In_Port,
+                            NVOCCStatus = c.NVOCC_Status,
+                            LoaiHang = c.loaihang,
+                            Decommission = c.Decommision
+                        };
+
+            allRows = await query.ToListAsync();
+
+            // Assign row numbers
+            for (int i = 0; i < allRows.Count; i++)
+                allRows[i].STT = i + 1;
+
+            ApplyFilter();
+
+            if (allRows.Count == 0)
+            {
+                CallSnackBar("No data found", MudBlazor.Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Error: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    void ApplyFilter()
+    {
+        var result = allRows.AsEnumerable();
+
+        // Filter by status
+        if (selectedStatus == "Active")
+            result = result.Where(x => x.Decommission != true);
+        else if (selectedStatus == "Decommissioned")
+            result = result.Where(x => x.Decommission == true);
+
+        // Filter by quick search text
+        if (!string.IsNullOrWhiteSpace(_quickFilter))
+        {
+            var q = _quickFilter.Trim();
+            result = result.Where(x =>
+                (x.ContainerNo ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (x.MBL ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (x.HBL ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (x.JobNo ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (x.Vessel ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (x.OwnerName ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                (x.Seal ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)
+            );
+        }
+
+        filteredRows = result.ToList();
+
+        // Re-number
+        for (int i = 0; i < filteredRows.Count; i++)
+            filteredRows[i].STT = i + 1;
+
+        StateHasChanged();
+    }
+
+    // ViewModel for each row in the report grid
+    public class ContainerDetailRow
+    {
+        public int STT { get; set; }
+        public Guid CTN_ID { get; set; }
+        public string? ContainerNo { get; set; }
+        public string? SizeType { get; set; }
+        public string? IsoCode { get; set; }
+        public string? OwnerType { get; set; }
+        public string? OwnerName { get; set; }
+        public string? Status { get; set; }
+        public string? StatusCont { get; set; }
+        public string? Condition { get; set; }
+        public string? Seal { get; set; }
+        public string? MBL { get; set; }
+        public string? HBL { get; set; }
+        public string? JobNo { get; set; }
+        public string? Vessel { get; set; }
+        public string? Voy { get; set; }
+        public string? POL { get; set; }
+        public string? POD { get; set; }
+        public DateTime? ETA { get; set; }
+        public DateTime? ETD { get; set; }
+        public double? GrossWeight { get; set; }
+        public double? NetWeight { get; set; }
+        public string? CBM { get; set; }
+        public string? Pkgs { get; set; }
+        public string? Description { get; set; }
+        public string? InDepot { get; set; }
+        public string? InPort { get; set; }
+        public string? NVOCCStatus { get; set; }
+        public string? LoaiHang { get; set; }
+        public bool? Decommission { get; set; }
+    }
+}

@@ -1,0 +1,156 @@
+﻿@page "/Refno"
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+
+
+<PageTitle>@Localizer["Ref No"]</PageTitle>
+<MudTabs>
+    <MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+        <MudButton HtmlTag="label"
+                    OnClick="Refresh"
+                    Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                    StartIcon="@Icons.Material.Filled.Refresh">
+            @Localizer["Reload"]
+        </MudButton>
+        <MudButton HtmlTag="label"
+                    @onclick="@(() => OpenDialog())"
+                    Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                    StartIcon="@Icons.Material.Filled.Add">
+            @Localizer["Insert"]
+        </MudButton>
+        <a href="HDSDhtml/HDSD_Ref_Number_Module_LMS.html" target="_blank">
+            <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">@Localizer["Help"]</MudButton>
+        </a>
+    </MudStack>
+    <MudDataGrid T="M_RefNo" Items="@Listdata" Filterable="true" @ref="mudTable"
+                    FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+                    FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+                 ReadOnly="false" RowClassFunc="@SelectedRowClassFunc" Bordered="true"
+                    RowClick="@RowClicked" RowContextMenuClick="RowRightClicked"
+                    ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+        <Columns>
+            <PropertyColumn Property="x => x.thang" Title="Month" Required="false" />
+            <PropertyColumn Property="x => x.nam" Title="Year" Required="false" />
+            <PropertyColumn Property="x => x.ref_number" Title="Ref Number" Required="false" />
+            <PropertyColumn Property="x => x.used_job" Title="Job Used" Required="false" />
+            <PropertyColumn Property="x => x.userused_job" Title="User ID Used Job" Required="false" />
+            <PropertyColumn Property="x => x.used_hbl" Title="HBL Used" Required="false" />
+            <PropertyColumn Property="x => x.userused_hbl" Title="User ID Used HBL" Required="false" />
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="M_RefNo" PageSizeOptions=@(new int[] {8, 10, 20}) />
+        </PagerContent>
+    </MudDataGrid>
+</MudTabs>
+        
+@code {
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    string usr;
+    AuthUser userdetail;
+    protected async override Task OnInitializedAsync()
+    {
+        userdetail = asv.GetUserDetail();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        // await Refresh();
+    }
+
+    bool _loading = false;
+    List<M_RefNo> Listdata = new List<M_RefNo>();
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            detail = null!;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "RefNo"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await supsv.GetListRefNo();
+             // .GroupBy(x => new { Thang = x.thang, Nam = x.nam })
+             //            .Select(g => new
+             //            {
+             //                Thang = g.Key.Thang,
+             //                Nam = g.Key.Nam,
+             //                TotalItems = g.Count()
+             //            }).ToList();
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_RefNo> mudTable;
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_RefNo Sis, int rowNumber)
+    {
+        if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            return "selected"; // Giữ lớp "selected" cho dòng đã chọn
+        }
+        else
+        {
+            return string.Empty;
+        }
+        // if (selectedRowNumber == rowNumber)
+        // {
+        //     selectedRowNumber = -1;
+        //     return string.Empty;
+        // }
+        // else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        // {
+        //     selectedRowNumber = rowNumber;
+        //     return "selected";
+        // }
+        // else
+        // {
+        //     return string.Empty;
+        // }
+    }
+    M_RefNo detail = new M_RefNo();
+    void RowClicked(DataGridRowClickEventArgs<M_RefNo> args)
+    {
+        detail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_RefNo> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private async Task OpenDialog()
+    { 
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.Medium,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true
+            };
+        var dialog = await DialogService.ShowAsync<Insert>($"Insert Ref", optionsdialog);
+    }
+}

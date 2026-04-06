@@ -1,0 +1,255 @@
+﻿@page "/sys/port"
+@inject NavigationManager navSvc
+@inject ILogger<Index> Logger
+@inject IJSRuntime js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<PageTitle>@Localizer["List Port"]</PageTitle>
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItem())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+    <a href="HDSDhtml/HDSD_PortList.html" target="_blank">
+        <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">Trợ giúp</MudButton>
+    </a>
+
+</MudStack>
+<MudDataGrid T="PortModel" Items="@Listdata" Filterable="true" @ref="mudTable" QuickFilter="@FilterFunc1"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" Bordered="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="SelectedRowClassFunc"
+             ColumnResizeMode="ResizeMode.Column" Loading="_loading" RowContextMenuClick="RowRightClicked">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => {
+
+                                 detail = JsonSerializer.Deserialize<PortModel>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+
+                       })" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.PORT_CODE" Title="Port Code" Required="false" >
+            <FilterTemplate>
+                <MudTextField @bind-Value="searchString1"/>
+            </FilterTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.PORT" Title="Port Name" Required="false"/>
+        <PropertyColumn Property="x => x.dept" Title="Dept.">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.dept" Label="Dept.">
+                    <MudSelectItem Value="@("SEA")">SEA</MudSelectItem>
+                    <MudSelectItem Value="@("AIR")">AIR</MudSelectItem>
+                    <MudSelectItem Value="@("DOM")">DOM</MudSelectItem>
+                    <MudSelectItem Value="@("WH")">WH</MudSelectItem>
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.show" Title="Show" Required="false">
+            <EditTemplate>
+                <MudCheckBox @bind-Checked="context.Item.show" Label="Show" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.TEL" Title="Tel" Required="false" />
+        <PropertyColumn Property="x => x.FAX" Title="Fax" Required="false" />
+        <PropertyColumn Property="x => x.MARKETCODETS" Title="Inland Code" Required="false" />
+        <PropertyColumn Property="x => x.MARKETCODESALE" Title="Market Code Sale" Required="false" />
+        <PropertyColumn Property="x => x.OverW20" Required="false" />
+        <PropertyColumn Property="x => x.OverW40" Required="false" />
+        <PropertyColumn Property="x => x.DATEEXP" Title="Expire Date">
+            <EditTemplate>
+                <MudDatePicker @bind-Date="context.Item.DATEEXP" Label="Expire Update" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.ADDRESS" Title="Address" Required="false" />
+        <PropertyColumn Property="x => x.COUNTRY" Title="Country" Required="false" />
+        <PropertyColumn Property="x => x.EDITABLE" Title="Editable" Required="false" />
+        <PropertyColumn Property="x => x.IG" Required="false" />
+        <PropertyColumn Property="x => x.TRADECODE" Title="W.House Code" Required="false" />
+        <PropertyColumn Property="x => x.APPROVE" Title="Approve" Required="false" />
+        <PropertyColumn Property="x => x.USERID" Title="User Update" IsEditable="false" Required="false" />
+        <PropertyColumn Property="x => x.UPDATETIME" Title="Date Update" IsEditable="false" Required="false">
+            <EditTemplate>
+                <MudTextField @bind-Date="context.Item.UPDATETIME" Disabled Label="Date Update"/>
+            </EditTemplate>
+        </PropertyColumn>
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="PortModel" PageSizeOptions=@(new int[] {10, 15, 25}) />
+    </PagerContent>
+</MudDataGrid>
+<script>
+    window.triggerGridClick = () => {
+        const gridElement = document.querySelector(".mudTable");
+        if (gridElement) {
+            gridElement.click();
+        }
+    }
+</script>
+@code {
+    PortModel detail;
+    [Parameter] public M_Customer customer { get; set; } = default!;
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    List<M_Agency> Agencys = new List<M_Agency>();
+    List<PortModel> Ports = new List<PortModel>();
+    protected async override Task OnInitializedAsync()
+    {
+        Agencys = await supsv.GetListAgency();
+        Ports = await supsv.GetListPort();
+        //await Refresh();
+    }
+
+    bool _loading = false;
+    List<PortModel> Listdata = new List<PortModel>();
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "ListPort"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await supsv.GetListPort();
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    string PODName(Guid? PODID)
+    {
+        var rs = Ports.FirstOrDefault(x => x.PORT_ID == PODID);
+        return rs != null ? rs.PORT! : "";
+    }
+    string POLName(Guid? POLID)
+    {
+        var rs = Ports.FirstOrDefault(x => x.PORT_ID == POLID);
+        return rs != null ? rs.PORT! : "";
+    }
+    string AgencyName(Guid? AgencyID)
+    {
+        var rs = Agencys.FirstOrDefault(x => x.Agency_ID == AgencyID);
+        return rs != null ? rs.AgencyName! : "";
+    }
+
+    MudDataGrid<PortModel> mudTable;
+    async Task AddItem()
+    {
+        var item = new PortModel();
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task DeleteItem(PortModel item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await supsv.DeletePortDetail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    private string searchString1 = "";
+    private string search_port = "";
+    private bool FilterFunc1(PortModel sbd) => FilterFunc(sbd, search_port);
+
+    private bool FilterFunc(PortModel sbd, string search_port)
+    {
+        if (string.IsNullOrWhiteSpace(search_port))
+            return true;
+        if (sbd.PORT_CODE!.Contains(search_port, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.PORT_CODE} ".Contains(search_port))
+            return true;
+        return false;
+    }
+    async Task CommittedItem(PortModel item)
+    {
+        item.USERID = asv.GetAuth().Result.User.Identity!.Name!;
+        item.UPDATETIME = DateTime.Now;
+        item.EDITABLE = item.APPROVE = item.CONTINUED = true;
+        var rs = item.PORT_ID != Guid.Empty ? await supsv.UpdatePortDetail(item,detail) : await supsv.CreatePortDetail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+        await TriggerGridClick();
+  
+
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(PortModel Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    private async Task TriggerGridClick()
+    {
+        await js.InvokeVoidAsync("triggerGridClick");
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<PortModel> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+}

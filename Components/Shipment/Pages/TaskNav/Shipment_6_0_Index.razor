@@ -1,0 +1,1241 @@
+﻿﻿
+@* @page "/shipment" *@
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject ShipmentService shipsv
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<PageTitle>@Localizer["Shipment"]</PageTitle>
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudStack Row Justify="Justify.FlexStart" Style="margin-bottom:15px; margin-top:15px; min-width:calc(100vw - 20vw);">
+        <MudSwitch @bind-Value="chkSearchAd" @bind-Value:after="@(() => isExpand = chkSearchAd)" Label="Search" Color="Color.Primary" Size="Size.Small" />
+         <MudExpansionPanels>
+            <MudExpansionPanel Text="Searching data from HBL" Icon="@Icons.Material.Filled.Search" @bind-IsExpanded="isExpand" Disabled="@(!chkSearchAd)">
+                <MudGrid>
+                    <MudGrid>
+                        <MudItem xs="4">
+                            <MudAutocomplete @bind-Value="SearchHBL" Label="HBL No" SearchFunc="SearchFuncHBL" ResetValueOnEmptyText Clearable />
+                        </MudItem>
+                        <MudItem xs="8">
+                            <MudStack Row>
+                                <MudAutocomplete @bind-Value="SearchSoHDNoiBo" Label="Số hóa đơn nội bộ" SearchFunc="SearchFuncSoHDnoibo" ResetValueOnEmptyText Clearable />
+                                <MudAutocomplete @bind-Value="SearchSoHDDienTu" Label="Số hóa đơn điện tử" SearchFunc="SearchFuncSoHDdientu" ResetValueOnEmptyText Clearable />
+                                <MudAutocomplete @bind-Value="SearchDebitNo" Label="Số Debit" SearchFunc="SearchFuncSoDebit" ResetValueOnEmptyText Clearable />
+                            </MudStack>
+                        </MudItem>
+                    </MudGrid>
+                    <MudItem xs="3">
+                        <MudStack Row>
+                            <MudAutocomplete @bind-Value="SearchPOL" Label="POL" SearchFunc="SearchPort" ResetValueOnEmptyText Clearable />
+                            <MudAutocomplete @bind-Value="SearchPOD" Label="POD" SearchFunc="SearchPort" ResetValueOnEmptyText Clearable />
+                        </MudStack>
+                    </MudItem>
+                    <MudItem xs="9">
+                        <MudStack Row>
+                            <MudAutocomplete @bind-Value="SearchDescription" Label="Description" SearchFunc="SearchFuncDes" ResetValueOnEmptyText Clearable />
+                            <MudAutocomplete @bind-Value="SearchShipper" Label="Shipper" SearchFunc="SearchFucnShipper" ResetValueOnEmptyText Clearable />
+                            <MudAutocomplete @bind-Value="SearchConsignee" Label="Consignee" SearchFunc="SearchFucnConsn" ResetValueOnEmptyText Clearable />
+                            <MudAutocomplete @bind-Value="SearchNotify" Label="Notify" SearchFunc="SearchFucnNotify" ResetValueOnEmptyText Clearable />
+                        </MudStack>
+                    </MudItem>
+                    <MudItem xs="4">
+                        <MudAutocomplete Style="min-width:180px;" @bind-Value="SearchCusID" Label="Customer" SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" ResetValueOnEmptyText Clearable />
+                    </MudItem>
+                    <MudItem xs="8">
+                        <MudStack Row>
+                            <MudAutocomplete @bind-Value="SearchContNo" Label="Container No" SearchFunc="SearchFuncContNo" ResetValueOnEmptyText Clearable />
+                            <MudAutocomplete @bind-Value="SearchPKGs" Label="PKGs" SearchFunc="SearchFucnPKGs" ResetValueOnEmptyText Clearable />
+                            <MudAutocomplete @bind-Value="SearchKGsCode" Label="PKGs Code" SearchFunc="SearchFucnPKGsCode" ResetValueOnEmptyText Clearable />
+                            <MudAutocomplete @bind-Value="SearchCBM" Label="CBM" SearchFunc="SearchFucnCBM" ResetValueOnEmptyText Clearable />
+                            <MudAutocomplete @bind-Value="SearchGrossWT" Label="Gross WT." SearchFunc="SearchFucnGrossWT" ResetValueOnEmptyText Clearable />
+                        </MudStack>
+                    </MudItem>
+                </MudGrid>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    </MudStack>
+    <MudStack Row="true" Style="margin-bottom:15px;" Class="gap-12">
+        <MudTooltip Text="@Localizer["Reload"]">
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           OnClick="Refresh"
+                           Variant="Variant.Filled"
+                           Class="btn-compact" />
+        </MudTooltip>
+        <MudTooltip Text="@Localizer["New"]">
+            <MudIconButton Icon="@Icons.Material.Filled.Add"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           OnClick="AddItem"
+                           Variant="Variant.Filled"
+                           Class="btn-compact" />
+        </MudTooltip>
+        <MudTooltip Text="@Localizer["Duplicate"]">
+            <MudIconButton 
+                    OnClick="@(() => DuplicateItem())"
+                    Size="Size.Small" 
+                    Color="Color.Tertiary"
+                           Variant="Variant.Filled"
+                    Icon="@Icons.Material.Filled.CopyAll"
+                           Class="btn-compact" />
+         </MudTooltip>
+        <MudTooltip Text="HBL & MBL">
+            <MudIconButton OnClick="@( () => {
+                            switch (jobdetail?.Loai)
+                            {
+                                case "Customs":
+                                    OpenDialogCustoms();
+                                    break;
+                                case "Truck":
+                                    OpenDialogTrucking();
+                                    break;
+                                default:
+                                    OpenDialog();
+                                    break;
+                            }
+                        })"
+                    Size="Size.Small" Color="Color.Success" Variant="Variant.Filled"
+                   Icon="@Icons.Material.Filled.NavigateNext" Class="btn-compact"/>
+         </MudTooltip>
+        <MudTooltip Text="@Localizer["Report"]">
+            <MudIconButton OnClick="@(() => OpenShipmentReport())"
+                           Size="Size.Small"
+                           Color="Color.Tertiary"
+                           Variant="Variant.Filled" 
+                           Icon="@Icons.Material.Filled.AddChart"
+                           Class="btn-compact" />
+        </MudTooltip>
+        <MudTooltip Text="@Localizer["Help"]">
+            <a href="HDSDhtml/Huong_dan_Tao_Moi_Job_Shipment.html" target="_blank">
+                <MudIconButton Icon="@Icons.Material.Filled.Info"
+                               Color="Color.Info"
+                               Size="Size.Small"
+                               Variant="Variant.Filled"
+                               Class="btn-compact" />
+            </a>
+        </MudTooltip>
+        <MudTooltip Text="Shipment grid colors">
+            <MudIconButton Icon="@Icons.Material.Filled.Palette"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           OnClick="@(() => showShipmentGridColorSettings = !showShipmentGridColorSettings)"
+                           Variant="Variant.Filled"
+                           Class="btn-compact" />
+        </MudTooltip>
+        <MudSwitch @bind-Value="chkSI" Label="SI" Color="Color.Primary" Size="Size.Small" />
+        <MudSwitch @bind-Value="chkSE" Label="SE" Color="Color.Primary" Size="Size.Small"/>
+        <MudSwitch @bind-Value="chkAI" Label="AI" Color="Color.Primary" Size="Size.Small"/>
+        <MudSwitch @bind-Value="chkAE" Label="AE" Color="Color.Primary" Size="Size.Small"/>
+        <MudSwitch @bind-Value="chkTruck" Label="Truck" Color="Color.Primary" Size="Size.Small" />
+        <MudSwitch @bind-Value="chkCustoms" Label="Customs" Color="Color.Primary" Size="Size.Small" />
+        @* <MudSwitch @bind-Value="chkSameCus" T="bool" CheckedChanged="@OnSameCustomerToggle" Label="More" Color="Color.Primary" Size="Size.Small"  /> *@
+    </MudStack>
+    @if (showShipmentGridColorSettings)
+    {
+        <MudCard Class="mb-4" Style="max-width: 520px;">
+            <MudCardContent>
+                <MudStack Spacing="3">
+                    <MudText Typo="Typo.subtitle1">Shipment grid colors</MudText>
+
+                    <MudText Typo="Typo.subtitle2">1) Header row</MudText>
+                    <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                        <input type="color" value="@shipmentHeaderBg"
+                               @onchange="@((ChangeEventArgs e) => shipmentHeaderBg = e.Value?.ToString() ?? shipmentHeaderBg)"
+                               style="width: 70px; height: 36px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;" />
+                        <MudTextField @bind-Value="shipmentHeaderBg" Label="Color" Variant="Variant.Outlined" />
+                    </MudStack>
+
+                    <MudText Typo="Typo.subtitle2">2) Selected row</MudText>
+                    <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                        <input type="color" value="@shipmentSelectedRowBg"
+                               @onchange="@((ChangeEventArgs e) => shipmentSelectedRowBg = e.Value?.ToString() ?? shipmentSelectedRowBg)"
+                               style="width: 70px; height: 36px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;" />
+                        <MudTextField @bind-Value="shipmentSelectedRowBg" Label="Color" Variant="Variant.Outlined" />
+                    </MudStack>
+
+                    <MudText Typo="Typo.subtitle2">3) Tab toolbar</MudText>
+                    <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                        <input type="color" value="@shipmentTabToolbarBg"
+                               @onchange="@((ChangeEventArgs e) => shipmentTabToolbarBg = e.Value?.ToString() ?? shipmentTabToolbarBg)"
+                               style="width: 70px; height: 36px; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;" />
+                        <MudTextField @bind-Value="shipmentTabToolbarBg" Label="Color" Variant="Variant.Outlined" />
+                    </MudStack>
+
+                    <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Justify="Justify.FlexEnd">
+                        <MudButton OnClick="ResetShipmentGridColors" Color="Color.Secondary" Variant="Variant.Text">Reset</MudButton>
+                        <MudButton OnClick="ApplyShipmentGridColors" Color="Color.Primary" Variant="Variant.Filled">Apply</MudButton>
+                        <MudButton OnClick="@(() => showShipmentGridColorSettings = false)" Color="Color.Secondary" Variant="Variant.Text">Close</MudButton>
+                    </MudStack>
+                </MudStack>
+            </MudCardContent>
+        </MudCard>
+    }
+    <MudDataGrid T="M_Job" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-shipment-bg"
+                 FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height=@($"calc(100vh - 33vh {(isExpand ? " - 13vh" : "")});") QuickFilter="_quickFilter"
+                 FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap" SortMode="SortMode.Single"
+                 ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+                 RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true" RowClass="no-wrap-cell"
+                 ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false" @ondblclick="@(() => OnRowDoubleClick(jobdetail))">
+        <Columns>
+            <HierarchyColumn T="M_Job" ButtonDisabledFunc="@(x => x.Approve.HasValue && x.Approve.Value)" />
+            <TemplateColumn CellClass="d-flex justify-end" Filterable="false" Sortable="false">
+                <CellTemplate>
+                    <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => {
+                           
+                                 detail = JsonSerializer.Deserialize<M_Job>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+                         
+                         
+                       })" />
+                    <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))"/>
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.Loai_Nvo_Fre" Title="@Localizer["NVOCC/Freight"]" Required CellStyleFunc="_cellStyleFunc">
+                <EditTemplate>
+                    <MudSelect @bind-Value="context.Item.Loai_Nvo_Fre" Label="@Localizer["NVOCC/Freight"]">
+                        <MudSelectItem Value="@("NVOCC")">NVOAMASIS</MudSelectItem>
+                        <MudSelectItem Value="@("Freight")">Freight</MudSelectItem>
+                    
+                    </MudSelect>
+                </EditTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.JobNo" Title="@Localizer["Job No"]" Required CellStyleFunc="_cellStyleFunc" >
+                <EditTemplate>
+                    <MudTextField @bind-Value="context.Item.JobNo" Immediate Label="@Localizer["Job No"]" Disabled Required />
+                    <MudDatePicker Label="@Localizer["Selected Date Create Job"]" DateChanged="((t)=>UpdateJobNo(context.Item,(DateTime)t!))" ImmediateText DateFormat="MM/yyyy" />
+                </EditTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => CountMBL(x.JobID)" Title="@Localizer["Total MBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x => CountHBL(x.JobID)" Title="@Localizer["Total HBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x => joinmbl(x.JobID)" Title="@Localizer["MBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x => joinhbl(x.JobID)" Title="@Localizer["HBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
+            
+            <PropertyColumn Property="x => x.FLC" Title="@Localizer["FLC"]" Required CellStyleFunc="_cellStyleFunc">
+                <EditTemplate>
+                    <MudSelect @bind-Value="context.Item.FLC" Label="@Localizer["FLC"]">
+                        <MudSelectItem Value="@("F")">F</MudSelectItem>
+                        <MudSelectItem Value="@("L")">L</MudSelectItem>
+                        <MudSelectItem Value="@("C")">C</MudSelectItem>
+                    </MudSelect>
+                </EditTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Loai" Title="@Localizer["Type"]" Required CellStyleFunc="_cellStyleFunc">
+                <EditTemplate>
+                    <MudSelect @bind-Value="context.Item.Loai" Label="@Localizer["Type"]">
+                        <MudSelectItem Value="@("AI")">AI</MudSelectItem>
+                        <MudSelectItem Value="@("AE")">AE</MudSelectItem>
+                        <MudSelectItem Value="@("SI")">SI</MudSelectItem>
+                        <MudSelectItem Value="@("SE")">SE</MudSelectItem>
+                        <MudSelectItem Value="@("Truck")">Truck</MudSelectItem>
+                        <MudSelectItem Value="@("Customs")">Customs</MudSelectItem>
+                    </MudSelect>
+                </EditTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.statusJob" Title="@Localizer["Status"]" Required CellStyleFunc="_cellStyleFunc">
+                <EditTemplate>
+                    <MudSelect @bind-Value="context.Item.statusJob" Label="@Localizer["Status"]">
+                        @foreach (var item in trangthais)
+                        {
+                            <MudSelectItem Value="item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </EditTemplate>
+            </PropertyColumn>
+
+             <PropertyColumn Property="x => x.Salecode" Title="@Localizer["Sale Name"]" Required CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudSelect @bind-Value="context.Item.Salecode" Label="@Localizer["Sale Name"]" Required>
+                            @foreach (var item in SaleNames)
+                            {
+                                <MudSelectItem Value="item">@item</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </EditTemplate>
+                </PropertyColumn>
+
+            <PropertyColumn Property="x => formatDate(x.Datecreate)" Title="@Localizer["Date Create"]" IsEditable="false" Required="false" CellStyleFunc="_cellStyleFunc"><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x=>x.Userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false" CellStyleFunc="_cellStyleFunc"><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x=> formatDate(x.Dateupdate)" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false" CellStyleFunc="_cellStyleFunc"><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x=>x.Approve" Title="@Localizer["Approve"]" IsEditable="false" Required="false" CellStyleFunc="_cellStyleFunc">
+                <CellTemplate>
+                    <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
+                </CellTemplate>
+                <EditTemplate>
+                </EditTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x=>x.Editable" Title="@Localizer["Editable"]" IsEditable="false" Required="false" CellStyleFunc="_cellStyleFunc">
+                <CellTemplate>
+                    <MudCheckBox @bind-Checked="context.Item.Editable" @bind-Value="context.Item.Editable" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
+                </CellTemplate>
+                <EditTemplate></EditTemplate>
+            </PropertyColumn>
+        </Columns>
+        <ChildRowContent>
+            @switch (context.Item.Loai)
+            {
+                case "Customs":
+                    <HQ_6_0 JobDetail="context.Item" Customers="Customers" />
+                    break;
+                case "Truck":
+                    <Trucking_6_0_MBL JobDetail="context.Item" Customers="Customers" />
+                    break;
+                default:
+                    <Index_6_0_MBL JobDetail="context.Item" Customers="Customers" />
+                    break;
+            }
+        </ChildRowContent>
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+    M_Job detail;
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private bool showShipmentGridColorSettings = false;
+
+    // Defaults should match values in wwwroot/app.css (:root + hardcoded legacy).
+    private string shipmentHeaderBg = "#0077b6";
+    private string shipmentSelectedRowBg = "#1E88E5";
+    private string shipmentTabToolbarBg = "#ffffff";
+
+    private sealed class ShipmentColorSettingsDto
+    {
+        public string? headerBg { get; set; }
+        public string? selectedBg { get; set; }
+        public string? tabToolbarBg { get; set; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        await LoadShipmentGridColorsFromStorage();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadShipmentGridColorsFromStorage()
+    {
+        try
+        {
+            var settings = await JS.InvokeAsync<ShipmentColorSettingsDto?>("nvoccGetShipmentColorSettings");
+            if (settings == null)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(settings.headerBg))
+                shipmentHeaderBg = settings.headerBg;
+            if (!string.IsNullOrWhiteSpace(settings.selectedBg))
+                shipmentSelectedRowBg = settings.selectedBg;
+            if (!string.IsNullOrWhiteSpace(settings.tabToolbarBg))
+                shipmentTabToolbarBg = settings.tabToolbarBg;
+
+            // Ensure the CSS variables are applied from stored values.
+            await JS.InvokeVoidAsync(
+                "nvoccApplyShipmentColorSettings",
+                shipmentHeaderBg,
+                shipmentSelectedRowBg,
+                shipmentTabToolbarBg);
+        }
+        catch
+        {
+            // Ignore JS/storage issues; app will use CSS defaults.
+        }
+    }
+
+    private async Task ApplyShipmentGridColors()
+    {
+        await JS.InvokeVoidAsync(
+            "nvoccApplyShipmentColorSettings",
+            shipmentHeaderBg,
+            shipmentSelectedRowBg,
+            shipmentTabToolbarBg);
+
+        CallSnackBar("Shipment grid colors updated.", MudBlazor.Severity.Success);
+    }
+
+    private async Task ResetShipmentGridColors()
+    {
+        shipmentHeaderBg = "#0077b6";
+        shipmentSelectedRowBg = "#1E88E5";
+        shipmentTabToolbarBg = "#ffffff";
+        await ApplyShipmentGridColors();
+    }
+
+    string usr;
+    AuthUser userdetail;
+    List<string> trangthais = new List<string>();
+    List<TrangThai> tts = new List<TrangThai>();
+    List<M_Customer> Customers = new List<M_Customer>();
+    List<string> SaleNames = new List<string>();
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            userdetail = asv.GetUserDetail();
+            Customers = await csv.GetList(userdetail);
+            tts = await supsv.GetListTrangThai();
+            trangthais = tts.Where(x => x.Tieude.ToLower() == "job").OrderBy(x=>x.Noidung).Select(x=>x.Noidung).ToList();
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            SaleNames = await supsv.GetListSale();
+            //await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+    }
+
+    bool _loading = false;
+    List<M_Job> Listdata = new List<M_Job>();
+    List<M_MBL> ListMBLs = new List<M_MBL>();
+    List<M_HBL> ListHBLs = new List<M_HBL>();
+    List<M_Container> ListConts = new List<M_Container>();
+    List<M_Debit> ListDebits = new List<M_Debit>();
+    List<M_HoaDonDauRa> ListHoaDonDRa = new List<M_HoaDonDauRa>();
+    List<M_HoaDonDauVao> ListHoaDonDVao = new List<M_HoaDonDauVao>();
+    M_Job jobdetail;
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            Listdata.Clear();
+            await Task.Delay(500);
+            StateHasChanged();
+            ListMBLs = await shipsv.GetListMBLALL();
+            ListHBLs = await shipsv.GetListHBLALL();
+            ListConts = shipsv.GetListContainerAll();
+            ListDebits = await shipsv.GetListDebitALL();
+            ListHoaDonDRa = await shipsv.GetListHoaDonDauRaALL();
+            ListHoaDonDVao = await shipsv.GetListHoaDonDauVaoALL();
+            jobdetail = null;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+
+            if (!await ssv.CheckPermission(usr, "View", "Shipment6"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await shipsv.GetListJob_by_roles_Dept();
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_Job> mudTable;
+    async Task UpdateJobNo(M_Job item ,DateTime value)
+    {
+        var refno = await supsv.GetRefNoByFunc("JOB", value.Month, value.Year, usr);
+        string tiepdaungu = "";
+        if(item.Loai_Nvo_Fre == "NVOCC")
+        {
+             tiepdaungu = await supsv.GetTiepDauNguByFunc("JOBNVO");
+        }
+        else
+        {
+             tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");
+        }
+
+        item.JobNo = tiepdaungu + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D5") : "RefNoError!");
+    }
+
+    async Task AddItem()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "Shipment6"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+        CopyOps = new();
+        var item = new M_Job();
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    CopyOptions CopyOps = new();
+    async Task DuplicateItem()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "Shipment6"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (jobdetail == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Small,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+        CopyOps = new();
+        var dialog = await DialogService.ShowAsync<DialogDuplicate>($"Duplicate Options", optionsdialog);
+        var resultMess = await dialog.Result;
+        if (!resultMess.Canceled)
+            CopyOps = (CopyOptions)resultMess.Data;
+        var item = jobdetail.DeepCopy();
+        if(!CopyOps.CopyMBLHBL) 
+            item.JobID = Guid.Empty;
+        item.JobNo = null;
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+    async Task DeleteItem(M_Job item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "Shipment6"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item == null)
+        {
+            CallSnackBar("You must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item.Approve.HasValue &&  item.Approve.Value)
+        {
+            CallSnackBar("You can't delete Job approved", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await shipsv.DeleteJobDetail(item);
+
+            await HistoryLogService.LogAsync(usr, "Delete Job", "Shipment", item.JobID, item.JobNo, item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    int CountMBL(Guid? i)
+    {
+        // total mbl & hbl
+        var list = ListMBLs.Where(x=>x.Jobid == i);
+        return list.Count();
+    }
+    int CountHBL(Guid? i)
+    {
+        var list = ListMBLs.Where(x => x.Jobid == i);
+        var listhbl = new List<M_HBL>();
+        foreach (var item in list)
+        {
+            var hbls = ListHBLs.Where(x => x.mblid == item.MblID);
+            listhbl.AddRange(hbls);
+        }
+        var TC = ListHBLs.Where(x => x.Jobid == i); // dem truck voi customs
+        listhbl.AddRange(TC);
+        //
+        return listhbl.Count();
+    }
+    async Task CommittedItem(M_Job item)
+    {
+        try
+        {
+            _loading = true;
+            var newjobid = Guid.NewGuid();
+            await mudTable.CancelEditingItemAsync();
+            if (CopyOps.CopyMBLHBL) //coppy các tab bên trong
+            {
+                var rs = await shipsv.DuplicateDetailList(item.JobID, newjobid, CopyOps);
+                await HistoryLogService.LogAsync(usr, "Duplicate Job", "Shipment", item.JobID, item.JobNo, item);
+                if (!rs.Flag)
+                {
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                    return;
+                }
+                item.JobID = Guid.Empty;
+            }
+            item.Userupdate = usr;
+            if(item.JobID == Guid.Empty)
+            {
+                item.JobID = newjobid;
+                item.Continued = item.Editable = true;
+                var rs = await shipsv.CreateJobDetail(item);
+                await HistoryLogService.LogAsync(usr, "Create Job", "Shipment", item.JobID, item.JobNo, item);
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            }
+            else
+            {
+                var rs = await shipsv.UpdateJobDetail(item);
+                await HistoryLogService.LogAsync(usr, "Update Job", "Shipment", item.JobID, item.JobNo, new { OldData = detail, NewData = item });
+   
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            }
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("somethings went wrong while commit Item, code: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task TryStartEditing(M_Job item)
+    {
+        if (item.Approve.HasValue && item.Approve.Value)
+        {
+            CallSnackBar("This Job is Approved!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await mudTable.SetEditingItemAsync(item);
+    }
+
+
+    private async Task OpenDialog()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "Shipment6"))
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (jobdetail == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (jobdetail.Approve.HasValue && jobdetail.Approve.Value)
+        {
+            CallSnackBar("this Job is approved", MudBlazor.Severity.Warning);
+            return;
+        }
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+
+        var parameters = new DialogParameters<DetailDialogMBL_6_0> { { x => x.Jobdetail, jobdetail }, { x=>x.Customers, Customers} };
+        var dialog = await DialogService.ShowAsync<DetailDialogMBL_6_0>($"MBL Job NO: {jobdetail.JobNo}", parameters, optionsdialog);
+    }
+    private async Task OpenDialogTrucking()
+    {
+
+        if (jobdetail == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Add", "Shipment6"))
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (jobdetail.Approve.HasValue && jobdetail.Approve.Value)
+        {
+            CallSnackBar("this Job is approved", MudBlazor.Severity.Warning);
+            return;
+        }
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.Medium,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true
+            };
+
+        var parameters = new DialogParameters<DetailDialogMBL_Truck_6_0> { { x => x.Jobdetail, jobdetail }, { x => x.Customers, Customers } };
+        var dialog = await DialogService.ShowAsync<DetailDialogMBL_Truck_6_0>($"MBL_Trucking Job NO: {jobdetail.JobNo}", parameters, optionsdialog);
+    }
+    private async Task OpenDialogCustoms()
+    {
+
+        if (jobdetail == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (jobdetail.Approve.HasValue && jobdetail.Approve.Value)
+        {
+            CallSnackBar("this Job is approved", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Add", "Shipment6"))
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.Medium,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true
+            };
+
+        var parameters = new DialogParameters<HQ_6_0> { { x => x.JobDetail, jobdetail }, { x => x.Customers, Customers } };
+        var dialog = await DialogService.ShowAsync<HQ_6_0>($"Customs Job NO: {jobdetail.JobNo}", parameters, optionsdialog);
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_Job Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_Job> args)
+    {
+        jobdetail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_Job> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private Func<M_Job, string> _cellStyleFunc => x =>
+    {
+        string style = "";
+
+        if (string.IsNullOrEmpty(x.statusJob))
+            return "color: #000000";
+
+        var rs = tts
+            .Where(t => (t.Noidung).Contains(x.statusJob, StringComparison.InvariantCultureIgnoreCase)
+                && t.Tieude.Equals("JOB", StringComparison.InvariantCultureIgnoreCase))
+            .Select(t => t.Mamau)
+            .FirstOrDefault();
+        return "color: " + rs;
+
+
+    };
+    string formatDate(DateTime? date)
+    {
+        if(date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MMM/yyyy");
+    }
+    private bool DisableButton(M_Job item)
+    {
+        return item.Loai == "Customs";
+    }
+    bool chkSI = false, chkSE = false, chkAI = false, chkAE = false, chkTruck = false, chkCustoms = false;
+
+
+    // private Func<M_Job, bool> _quickFilter => x =>
+    // {
+    //     if (!chkSI && !chkSE && !chkAI && !chkAE && !chkTruck && !chkCustoms)
+    //         return true;
+
+    //     if (chkSI && x.Loai?.Equals("SI", StringComparison.OrdinalIgnoreCase) == true)
+    //         return true;
+
+    //     if (chkSE && x.Loai?.Equals("SE", StringComparison.OrdinalIgnoreCase) == true)
+    //         return true;
+
+    //     if (chkAI && x.Loai?.Equals("AI", StringComparison.OrdinalIgnoreCase) == true)
+    //         return true;
+
+    //     if (chkAE && x.Loai?.Equals("AE", StringComparison.OrdinalIgnoreCase) == true)
+    //         return true;
+
+    //     if (chkTruck && x.Loai?.Equals("Truck", StringComparison.OrdinalIgnoreCase) == true)
+    //         return true;
+
+    //     if (chkCustoms && x.Loai?.Equals("Customs", StringComparison.OrdinalIgnoreCase) == true)
+    //         return true;
+
+    //     return false;
+    // };
+
+    private Func<M_Job, bool> _quickFilter => x =>
+    {
+        // 1. Kiểm tra theo loại (checkbox)
+        bool matchLoai = !chkSI && !chkSE && !chkAI && !chkAE && !chkTruck && !chkCustoms
+                         || (chkSI && x.Loai?.Equals("SI", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkSE && x.Loai?.Equals("SE", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkAI && x.Loai?.Equals("AI", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkAE && x.Loai?.Equals("AE", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkTruck && x.Loai?.Equals("Truck", StringComparison.OrdinalIgnoreCase) == true)
+                         || (chkCustoms && x.Loai?.Equals("Customs", StringComparison.OrdinalIgnoreCase) == true);
+
+        // 2. Kiểm tra theo search
+        bool matchSearch = true;
+
+        if (chkSearchAd)
+        {
+            bool hasContSearch =
+            !string.IsNullOrWhiteSpace(SearchContNo) ||
+            !string.IsNullOrWhiteSpace(SearchKGsCode) ||
+            !string.IsNullOrWhiteSpace(SearchCBM) ||
+            SearchPKGs.HasValue ||
+            SearchGrossWT.HasValue;
+
+            bool hasHDSearch =
+            !string.IsNullOrWhiteSpace(SearchSoHDNoiBo) ||
+            !string.IsNullOrWhiteSpace(SearchSoHDDienTu);
+
+            bool hasDebitSearch =
+            !string.IsNullOrWhiteSpace(SearchDebitNo);
+
+            matchSearch = ListHBLs.Any(h =>
+                ListMBLs.Any(m =>
+                    m.Jobid == x.JobID &&
+                    m.MblID == h.mblid &&
+
+                    // Chỉ kiểm tra container nếu có điều kiện lọc container
+                    (!hasContSearch || ListConts.Any(c =>
+                        c.hblid == h.hblID &&
+                        (string.IsNullOrWhiteSpace(SearchDescription) || (!string.IsNullOrWhiteSpace(c.description) && c.description.Contains(SearchDescription, StringComparison.OrdinalIgnoreCase))) &&
+                        (string.IsNullOrWhiteSpace(SearchContNo) || (!string.IsNullOrWhiteSpace(c.CONTAINER_NO) && c.CONTAINER_NO.Contains(SearchContNo, StringComparison.OrdinalIgnoreCase))) &&
+                        (string.IsNullOrWhiteSpace(SearchKGsCode) || (!string.IsNullOrWhiteSpace(c.pkgsCode) && c.pkgsCode.Contains(SearchKGsCode, StringComparison.OrdinalIgnoreCase))) &&
+                        (string.IsNullOrWhiteSpace(SearchCBM) || (!string.IsNullOrWhiteSpace(c.cbm) && c.cbm.Contains(SearchCBM, StringComparison.OrdinalIgnoreCase))) &&
+                        (!SearchPKGs.HasValue || (c.pkgs.HasValue && c.pkgs.Value == SearchPKGs.Value)) &&
+                        (!SearchGrossWT.HasValue || (c.GrossWeight.HasValue && c.GrossWeight.Value == SearchGrossWT.Value))
+                    )) &&
+
+                    // Chỉ kiểm tra HoaDon nếu có điều kiện lọc HoaDon
+                    (!hasHDSearch || ListHoaDonDRa.Any(hd =>
+                        hd.hblid == h.hblID &&
+                        (string.IsNullOrWhiteSpace(SearchSoHDNoiBo) || (!string.IsNullOrWhiteSpace(hd.sohoadonNoibo) && hd.sohoadonNoibo.Contains(SearchSoHDNoiBo, StringComparison.OrdinalIgnoreCase))) &&
+                        (string.IsNullOrWhiteSpace(SearchSoHDDienTu) || (!string.IsNullOrWhiteSpace(hd.sohoadonDientu) && hd.sohoadonDientu.Contains(SearchSoHDDienTu, StringComparison.OrdinalIgnoreCase)))
+                    )) &&
+
+                    // Chỉ kiểm tra Debit nếu có điều kiện lọc Debit
+                    (!hasDebitSearch || ListDebits.Any(db =>
+                        db.hblid == h.hblID &&
+                        (string.IsNullOrWhiteSpace(SearchDebitNo) || (!string.IsNullOrWhiteSpace(db.debitno) && db.debitno.Contains(SearchDebitNo, StringComparison.OrdinalIgnoreCase)))
+                    )) &&
+
+                    // Các điều kiện lọc theo HBL
+                    (SearchCusID == Guid.Empty || h.CustomerID == SearchCusID) &&
+                    (string.IsNullOrWhiteSpace(SearchPOL) || (!string.IsNullOrWhiteSpace(h.polname) && h.polname.Contains(SearchPOL, StringComparison.OrdinalIgnoreCase))) &&
+                    (string.IsNullOrWhiteSpace(SearchPOD) || (!string.IsNullOrWhiteSpace(h.podname) && h.podname.Contains(SearchPOD, StringComparison.OrdinalIgnoreCase))) &&
+                    (string.IsNullOrWhiteSpace(SearchHBL) || (!string.IsNullOrWhiteSpace(h.hbl) && h.hbl.Contains(SearchHBL, StringComparison.OrdinalIgnoreCase))) &&
+                    (string.IsNullOrWhiteSpace(SearchShipper) || (!string.IsNullOrWhiteSpace(h.shipper) && h.shipper.Contains(SearchShipper, StringComparison.OrdinalIgnoreCase))) &&
+                    (string.IsNullOrWhiteSpace(SearchConsignee) || (!string.IsNullOrWhiteSpace(h.consignee) && h.consignee.Contains(SearchConsignee, StringComparison.OrdinalIgnoreCase))) &&
+                    (string.IsNullOrWhiteSpace(SearchNotify) || (!string.IsNullOrWhiteSpace(h.notify1) && h.notify1.Contains(SearchNotify, StringComparison.OrdinalIgnoreCase))) 
+                )
+            );
+        }
+
+        return matchLoai && matchSearch;
+    };
+    string joinmbl(Guid jobid)
+    {
+        var rs = ListMBLs.Where(x => x.Jobid == jobid).Select(x=>x.Mbl).ToList();
+        return string.Join(";", rs);
+    }
+    string joinhbl(Guid jobid)
+    {
+        var list = ListMBLs.Where(x => x.Jobid == jobid);
+        var listhbl = new List<M_HBL>();
+        foreach (var item in list)
+        {
+            var hbls = ListHBLs.Where(x => x.mblid == item.MblID);
+            listhbl.AddRange(hbls);
+        }
+        var TC = ListHBLs.Where(x => x.Jobid == jobid); // dem truck voi customs
+        listhbl.AddRange(TC);
+        //
+        var rs = listhbl.Select(x => x.hbl).ToList();
+        return string.Join(";", rs);
+    }
+
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            var rs = ListHBLs.Select(x => x.CustomerID).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.ToString().Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : $"{rs.Customer_Code} - {rs.COMPANY!}";
+    }
+    private async Task<IEnumerable<string?>> SearchPort(string text)
+    {
+        try
+        {
+            var rs = ListHBLs.SelectMany(x => new[] { x.polname, x.podname }) // gom cả 2 field
+                    .Where(s => !string.IsNullOrWhiteSpace(s))       // loại null/empty
+                    .Distinct()
+                    .ToList();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFuncContNo(string? text)
+    {
+        try
+        {
+            var hblIds = ListHBLs.Select(h => h.hblID).ToList();
+            var rs = ListConts.Where(x => x.hblid.HasValue && hblIds.Contains(x.hblid.Value)).Select(x => x.CONTAINER_NO).Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFuncDes(string? text)
+    {
+        try
+        {
+            var rs = ListHBLs.Select(x => x.polname)
+                   .Where(s => !string.IsNullOrWhiteSpace(s))      
+                   .Distinct()
+                   .ToList();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFuncHBL(string? text)
+    {
+        try
+        {
+            var rs = ListHBLs.Select(x => x.hbl)
+                   .Where(s => !string.IsNullOrWhiteSpace(s))
+                   .Distinct()
+                   .ToList();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFucnShipper(string? text)
+    {
+        try
+        {
+            var rs = ListHBLs.Select(x => x.shipper)
+                   .Where(s => !string.IsNullOrWhiteSpace(s))
+                   .Distinct()
+                   .ToList();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFucnConsn(string? text)
+    {
+        try
+        {
+            var rs = ListHBLs.Select(x => x.consignee)
+                   .Where(s => !string.IsNullOrWhiteSpace(s))
+                   .Distinct()
+                   .ToList();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFucnNotify(string? text)
+    {
+        try
+        {
+            var rs = ListHBLs.Select(x => x.notify1)
+                   .Where(s => !string.IsNullOrWhiteSpace(s))
+                   .Distinct()
+                   .ToList();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFucnPKGsCode(string? text)
+    {
+        try
+        {
+            var hblIds = ListHBLs.Select(h => h.hblID).ToList();
+            var rs = ListConts.Where(x => x.hblid.HasValue && hblIds.Contains(x.hblid.Value)).Select(x => x.pkgsCode)
+                   .Where(s => !string.IsNullOrWhiteSpace(s))
+                   .Distinct()
+                   .ToList();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFucnCBM(string? text)
+    {
+        try
+        {
+            var hblIds = ListHBLs.Select(h => h.hblID).ToList();
+            var rs = ListConts.Where(x=> x.hblid.HasValue && hblIds.Contains(x.hblid.Value)).Select(x => x.cbm)
+                   .Where(s => !string.IsNullOrWhiteSpace(s))
+                   .Distinct()
+                   .ToList();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<double?>> SearchFucnPKGs(string? text)
+    {
+        try
+        {
+            var hblIds = ListHBLs.Select(h => h.hblID).ToList();
+            var rs = ListConts.Where(x=> x.hblid.HasValue && hblIds.Contains(x.hblid.Value)).Select(x => x.pkgs)
+                   .Where(s => s.HasValue)
+                   .Distinct();
+            if (string.IsNullOrEmpty(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Value.ToString().Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<double?>> SearchFucnGrossWT(string? text)
+    {
+        try
+        {
+            var hblIds = ListHBLs.Select(h => h.hblID).ToList();
+            var rs = ListConts.Where(x => x.hblid.HasValue && hblIds.Contains(x.hblid.Value)).Select(x => x.GrossWeight)
+                   .Where(s => s.HasValue)
+                   .Distinct();
+            if (string.IsNullOrEmpty(text))
+            {
+                return rs;
+            }
+            return rs.Where(x => x.Value.ToString().Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string?>> SearchFuncSoHDnoibo(string? text)
+    {
+        try
+        {
+            var hblIds = ListHBLs.Select(h => h.hblID).ToList();
+            var rs = ListHoaDonDRa.Where(x => hblIds.Contains(x.hblid)).Select(x => x.sohoadonNoibo)
+                   .Where(s => !string.IsNullOrEmpty(s))
+                   .Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchFuncSoHDdientu(string? text)
+    {
+        try
+        {
+            var hblIds = ListHBLs.Select(h => h.hblID).ToList();
+            var rs = ListHoaDonDRa.Where(x => hblIds.Contains(x.hblid)).Select(x => x.sohoadonDientu)
+                   .Where(s => !string.IsNullOrEmpty(s))
+                   .Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    
+    private async Task<IEnumerable<string?>> SearchFuncSoDebit(string? text)
+    {
+        try
+        {
+            var hblIds = ListHBLs.Select(h => h.hblID).ToList();
+            var rs = ListDebits.Where(x => hblIds.Contains(x.hblid)).Select(x => x.debitno)
+                   .Where(s => !string.IsNullOrEmpty(s))
+                   .Distinct();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return rs;
+            }
+
+            return rs.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase))!;
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    bool chkSearchAd, isExpand = false;
+    Guid SearchCusID;
+    string? SearchPOL, SearchPOD, SearchDescription , SearchHBL, SearchShipper, SearchConsignee, SearchNotify, SearchContNo, SearchKGsCode, SearchCBM, SearchSoHDNoiBo, SearchSoHDDienTu, SearchDebitNo;
+    double? SearchPKGs, SearchGrossWT;
+    //mo ta hang hoa, shipper, consignee, notify, hbl, 
+    // (container table) so cont, pkgs ,kgscode, cbm, gross wt
+
+    async Task  UpdatebyCheckboxClick(M_Job item)
+    {
+        if (!await ssv.CheckPermission(usr, "Approve", "Shipment6"))
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        var rs = await shipsv.UpdateJobDetail(item);
+        if(!rs.Flag) CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+    [CascadingParameter] Components.Layout.MainLayout? Layout { get; set; }
+    RenderFragment RenderComponent(Type componentType) => builder =>
+    {
+        builder.OpenComponent(0, componentType);
+        builder.CloseComponent();
+    };
+    void OpenShipmentReport()
+    {
+        if (Layout != null)
+        {
+            Layout.OpenTab("Shipment Report", Localizer["Shipment Report"], RenderComponent(typeof(ShipmentReport_Index)));
+        }        
+    }
+      private async Task OnRowDoubleClick(M_Job job)
+    {
+        // 1. Xóa hết filter cũ
+        await mudTable.ClearFiltersAsync();
+        chkSearchAd = false;
+
+        // 2. Tạo FilterDefinition cho JobNo == job.JobNo
+        var filter = new FilterDefinition<M_Job>
+            {
+                FilterFunction = x => x.JobNo == job.JobNo,
+                Title = nameof(M_Job.JobNo),
+                Operator = "equals",
+                Value = job.JobNo
+            };
+
+        // 3. Thêm filter vào grid
+        await mudTable.AddFilterAsync(filter);
+        mudTable.ToggleFiltersMenu();
+        StateHasChanged();
+    }
+}

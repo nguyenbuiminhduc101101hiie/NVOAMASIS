@@ -1,0 +1,286 @@
+﻿@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject LenhDieuXeServices ldxsv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject TKHQ_Services tkhqsv
+@inject ThuTucTuVanHQ_Services HQCOsv
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+
+
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItem())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+
+
+
+</MudStack>
+
+<MudDataGrid T="M_TraLoiYeuCauHQCO" Items="@Listdata.ToList()" Filterable="true" @ref="mudTable" Style="background-color: lightblue;"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)">
+    <Columns>
+        <HierarchyColumn T="M_TraLoiYeuCauHQCO" />
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Icon="@Icons.Material.Outlined.Edit"
+                               OnClick="@(() => {
+
+                                 detail_TL = JsonSerializer.Deserialize<M_TraLoiYeuCauHQCO>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+
+                       })" />
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x=>x.NoiDung" Title="@Localizer["noidung"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.NoiDung" Lines="3" AutoGrow Label="@Localizer["noidung"]" class="custom-label" Required="false" />
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x=>x.ThoiGian" Title="@Localizer["thoigian"]" Required="false" Format="dd/MMM/yyyy" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudDatePicker @bind-Date="context.Item.ThoiGian" Label="@Localizer["thoigian"]" DateFormat="dd/MMM/yyyy" class="custom-label" Required="false" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.NguoiTraLoi" Title="@Localizer["nguoitraloi"]" Required="false" IsEditable="false" CellStyleFunc="_cellStyleFunc" />
+
+        <PropertyColumn Property="x=>x.UserUpdate" Title="User Update" Required="false" IsEditable="false" CellStyleFunc="_cellStyleFunc" />
+        <PropertyColumn Property="x=>x.Dateupdate" Title="Date Update" Required="false" IsEditable="false" CellStyleFunc="_cellStyleFunc" />
+
+
+    </Columns>
+
+</MudDataGrid>
+
+@code {
+    List<M_TraLoiYeuCauHQCO> Listdata = new List<M_TraLoiYeuCauHQCO>();
+    [Parameter] public Models.M_YeuCauTuVanTTHQ _YeuCauTuVanTTHQ_Details { get; set; }
+    MudDataGrid<M_TraLoiYeuCauHQCO> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+
+    private bool _resizeColumn;
+    M_TraLoiYeuCauHQCO detail;
+    M_TraLoiYeuCauHQCO detail_TL;
+    private List<M_Customer> Cuss_Carr = new List<M_Customer>();
+    public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    protected async override Task OnInitializedAsync()
+    {
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        await Refresh();
+    }
+
+
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "Add", "YeuCauThuTucHQCO"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await HQCOsv.GetListTraLoiYeuCauHQCO(_YeuCauTuVanTTHQ_Details.YctvtthqcoID);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_TraLoiYeuCauHQCO> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_TraLoiYeuCauHQCO m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(M_TraLoiYeuCauHQCO item)
+    {
+        item.YctvtthqcoID = _YeuCauTuVanTTHQ_Details.YctvtthqcoID;
+        item.NguoiTraLoi = _YeuCauTuVanTTHQ_Details.UserYeuCau;
+        item.UserUpdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd-MMM-yyyy");
+        var rs = item.TraLoiyeuCauHQCOID != Guid.Empty ? await HQCOsv.UpdateTraLoiYeuCauHQCO_Detail(item,detail_TL) : await HQCOsv.CreateTraLoiYeuCauHQCO_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    int? index_no;
+    async Task AddItem()
+    {
+
+        if (!await ssv.CheckPermission(usr, "Add", "YeuCauThuTucHQCO"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_TraLoiYeuCauHQCO
+        {
+
+                Approve = false,
+        };
+        item.YctvtthqcoID = _YeuCauTuVanTTHQ_Details.YctvtthqcoID;
+        item.NguoiTraLoi = _YeuCauTuVanTTHQ_Details.UserYeuCau;
+        item.UserUpdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd-MMM-yyyy");
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+  
+
+    async Task DeleteItem(M_TraLoiYeuCauHQCO item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "YeuCauThuTucHQCO"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await HQCOsv.DeleteTraLoiYeuCauHQCO_Detail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    // private bool FilterFunc1(M_TraLoiYeuCauHQCO sbd) => FilterFunc(sbd, search);
+
+    // private bool FilterFunc(M_TraLoiYeuCauHQCO sbd, string searchString)
+    // {
+    //     if (string.IsNullOrWhiteSpace(sbd.Sotokhai))
+    //         return true;
+    //     if (string.IsNullOrWhiteSpace(searchString))
+    //         return true;
+    //     if (sbd.Sotokhai!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+    //         return true;
+    //     if ($"{sbd.Sotokhai} ".Contains(searchString))
+    //         return true;
+    //     return false;
+    // }
+
+    private Func<M_TraLoiYeuCauHQCO, string> _cellStyleFunc => x =>
+      {
+
+
+          return "color: #000000";
+      };
+
+
+    // async Task HandleRefresh_create(Guid? id)
+    // {
+    //     try
+    //     {
+
+    //         detail = null;
+
+    //         Listdata.Clear();
+
+    //         await Task.Delay(500);
+
+    //         if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "TKHQ"))
+    //         {
+    //             CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+    //             return;
+    //         }
+    //         Listdata = await tkhqsv.GetListTKHQ_create(id);
+    //         StateHasChanged();
+    //     }
+    //     finally
+    //     {
+
+
+        //     }
+    // }
+
+
+}

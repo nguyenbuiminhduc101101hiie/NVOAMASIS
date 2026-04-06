@@ -1,0 +1,249 @@
+﻿@using System.Globalization﻿
+﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<MudDataGrid T="M_CongNoHoaDonDauVao" Items="@Listdata" Filterable="true" @ref="mudTable"
+FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true"
+FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+RowClick="@RowClicked" RowContextMenuClick="RowRightClicked"
+ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end" Filterable="false" ShowColumnOptions="false" Sortable="false">
+            <HeaderTemplate>
+                <MudStack Row="true" Justify="Justify.FlexStart" Spacing="2">
+
+                    <!-- Nút Reload -->
+                    <MudTooltip Text="@Localizer["Reload"]">
+                        <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                        Color="Color.Success"
+                        Size="Size.Small"
+                        OnClick="Refresh"
+                        Variant="Variant.Filled"
+                        Disabled="@(HoaDonDetail!.hoadondauvaoid == Guid.Empty ? true : false)"
+                        Class="btn-compact" />
+                    </MudTooltip>
+
+                    <!-- Nút Add -->
+                    <MudTooltip Text="@Localizer["New"]">
+                        <MudIconButton Icon="@Icons.Material.Filled.Add"
+                        Color="Color.Success"
+                        Size="Size.Small"
+                        OnClick="AddItem"
+                        Variant="Variant.Filled"
+                        Disabled="@(HoaDonDetail!.hoadondauvaoid == Guid.Empty ? true : false)"
+                        Class="btn-compact" />
+                    </MudTooltip>
+                </MudStack>
+            </HeaderTemplate>
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => TryStartEditing(context.Item))" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => HoaDonDetail!.sohoadonNoibo" Title="@Localizer["Offline invoice number"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+        <PropertyColumn Property="x=>x.approve" Title="@Localizer["Approve"]" IsEditable="false" Required="false">
+            <CellTemplate>
+                <MudCheckBox @bind-Checked="context.Item.approve" @bind-Value="context.Item.approve" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
+            </CellTemplate>
+            <EditTemplate>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.tongtien" Title="@Localizer["Total Price"]" Required="false" Format="#,##0.##" Culture="@_en" />
+        <PropertyColumn Property="x => x.ngaytra" Title="@Localizer["Payment Date"]" Required="false" Format="dd/MMM/yyyy" Culture="@_en">
+            <EditTemplate>
+                <MudDatePicker @bind-Date="context.Item.ngaytra" Label="@Localizer["Payment Date"]" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" Required="false">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.tiente" Label="@Localizer["Currency"]">
+                    <MudSelectItem Value="@("VND")">VND</MudSelectItem>
+                    <MudSelectItem Value="@("USD")">USD</MudSelectItem>
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.tigia" Title="@Localizer["tigia"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
+            <EditTemplate>
+                <MudNumericField @bind-Value="context.Item.tigia" Label="@Localizer["tigia"]"
+                                 Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" Required="true" HideSpinButtons="true" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+        <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+        <PropertyColumn Property="x => x.continued" Title="@Localizer["Continued"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+    </Columns>
+</MudDataGrid>
+@code {
+    [Parameter] public M_HoaDonDauVao? HoaDonDetail { get; set; } = default!;
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    M_CongNoHoaDonDauVao detail_congno;
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private void Submit()
+    {
+        MudDialog!.Close();
+    }
+
+    void Cancel() => MudDialog!.Cancel();
+    string usr;
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+
+            if (HoaDonDetail.hoadondauvaoid == Guid.Empty)
+            {
+                CallSnackBar("Vui lòng chọn 1 dòng hóa đơn", MudBlazor.Severity.Warning);
+                return;
+            }
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+    }
+
+    bool _loading = false;
+    List<M_CongNoHoaDonDauVao> Listdata = new List<M_CongNoHoaDonDauVao>();
+    M_CongNoHoaDonDauVao detail;
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "MBL"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await shipsv.GetListCongNoHoaDonDauVaoMBL(HoaDonDetail!.hoadondauvaoid);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_CongNoHoaDonDauVao> mudTable;
+    async Task AddItem()
+    {
+        var item = new M_CongNoHoaDonDauVao();
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task DeleteItem(M_CongNoHoaDonDauVao item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item.approve.HasValue && item.approve.Value)
+        {
+            CallSnackBar("Hóa đơn approved!", MudBlazor.Severity.Info);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await shipsv.DeleteCongNoHoaDonDauVaoMBL(item);
+            await HistoryLogService.LogAsync(usr, "Delete Cong No Hoa Don Dau Vao MBL", "Product_Price", item.congnoHoadonDauvaoid, "", new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    async Task CommittedItem(M_CongNoHoaDonDauVao item)
+    {
+        item.hoadondauvaoid = HoaDonDetail!.hoadondauvaoid;
+        item.userupdate = usr;
+        item.dateupdate = DateTime.Now;
+        var rs = item.congnoHoadonDauvaoid != Guid.Empty ? await shipsv.UpdateCongNoHoaDonDauVaoMBL(item,detail_congno) : await shipsv.CreateCongNoHoaDonDauVaoMBL(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_CongNoHoaDonDauVao Sis, int rowNumber)
+    {
+        if (Sis.approve.HasValue && Sis.approve.Value)
+        {
+            return "custom-disable"; // Gán class "disable" nếu Approve = true
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            return "selected"; // Giữ lớp "selected" cho dòng đã chọn
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_CongNoHoaDonDauVao> args)
+    {
+        if (args.Item.approve.HasValue && args.Item.approve.Value)
+            CallSnackBar("Hóa đơn approved!", MudBlazor.Severity.Info);
+        else detail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_CongNoHoaDonDauVao> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    async Task UpdatebyCheckboxClick(M_CongNoHoaDonDauVao item)
+    {
+        if (!await ssv.CheckPermission(usr, "Approve", "HBL"))
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        item.dateupdate = DateTime.Now;
+        item.userupdate = usr;
+        var rs = await shipsv.UpdateCongNoHoaDonDauVaoMBL_approve(item);
+        if (!rs.Flag) CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+    async Task TryStartEditing(M_CongNoHoaDonDauVao item)
+    {
+        if (item.approve.HasValue && item.approve.Value)
+        {
+            CallSnackBar("Hóa đơn approved!", MudBlazor.Severity.Warning);
+            return;
+        }
+     
+        detail_congno = JsonSerializer.Deserialize<M_CongNoHoaDonDauVao>(JsonSerializer.Serialize(item));
+        await mudTable.SetEditingItemAsync(item);
+    }
+}

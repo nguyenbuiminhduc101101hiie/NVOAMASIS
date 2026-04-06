@@ -1,0 +1,224 @@
+﻿
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+
+@inject ISnackbar Snackbar
+@inject IDialogService Dialog
+@inject AccountService asv
+<PageTitle>@Localizer["User List"]</PageTitle>
+
+<div class="d-flex flex-wrap mt-4">
+    <MudButton Color="Color.Primary" Size=Size.Small OnClick=LoadAsync StartIcon="@Icons.Material.Filled.Refresh">@Localizer["reload"]</MudButton>
+    <div class="d-flex justify-start align-center">
+        <MudButton Color="Color.Success" Size=Size.Small OnClick="@(() => OpenDialog(new AuthUser(), false))" StartIcon="@Icons.Material.Filled.Add">@Localizer["new"]</MudButton>
+    </div>
+    <div class="d-flex justify-start align-center">
+        <MudButton Color="Color.Success" Size=Size.Small OnClick="@(() => OpenDialog(user, true))" StartIcon="@Icons.Material.Filled.Edit">@Localizer["edit"]</MudButton>
+    </div>
+    <div class="d-flex justify-start align-center">
+        <MudButton Color="Color.Secondary" Size=Size.Small OnClick="DeleteUser" StartIcon="@Icons.Material.Filled.Delete">@Localizer["delete"]</MudButton>
+    </div>
+    <div class="d-flex justify-start align-center">
+        <a href="HDSDhtml/Huong_dan_Danh_sach_User_LMS.html" target="_blank">
+            <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">@Localizer["Help"]</MudButton>
+        </a>
+    </div>
+    
+</div>
+<MudTable T="AuthUser" Bordered="true"
+          Items="@Users.OrderByDescending(x => x.Name)"
+          HeaderClass="custom-headertable-class"
+          Dense="true" ItemSize="10" Loading="_load"
+          RowClass="cursor-pointer" RowClassFunc="@((item, idx) => TblRowStyle(item, idx))"
+          OnRowClick="RowClickEvent"
+          Filter="new Func<AuthUser,bool>(FilterFunc1)">
+    <ToolBarContent>
+        <MudText Typo="Typo.h6">@Localizer["list_user"]</MudText>
+        <MudSpacer />
+        <MudTextField @bind-Value="searchString1" Immediate="true" Placeholder="@Localizer["Search"]" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0"></MudTextField>
+    </ToolBarContent>
+    <HeaderContent>
+        <MudTh>@Localizer["User Name"]</MudTh>
+        <MudTh>@Localizer["Name"]</MudTh>
+        <MudTh>@Localizer["Email"]</MudTh>
+        <MudTh>@Localizer["Department"]</MudTh>
+        <MudTh>@Localizer["Branch"]</MudTh>
+    </HeaderContent>
+    <RowTemplate Context="contextnew">
+        <MudTd> @contextnew.Usr</MudTd>
+        <MudTd> @contextnew.Name </MudTd>
+        <MudTd> @contextnew.Email</MudTd>
+        <MudTd> @contextnew.Department</MudTd>
+        <MudTd> @contextnew.Branch</MudTd>
+    </RowTemplate>
+     <PagerContent>
+        <MudTablePager />
+    </PagerContent>
+</MudTable>
+
+    @code {
+    AuthUser user = new AuthUser();
+
+    void CallSnackBar(string message, string type)
+    {
+        MudBlazor.Severity severity = MudBlazor.Severity.Normal;
+        if (type == "E")
+            severity = MudBlazor.Severity.Error;
+        else if (type == "S")
+            severity = MudBlazor.Severity.Success;
+        else if(type == "W")
+            severity = MudBlazor.Severity.Warning;
+        else if (type == "I")
+            severity = MudBlazor.Severity.Info;
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+
+    List<AuthUser> Users = new List<AuthUser>();
+
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        //await LoadAsync();
+    }
+    bool _load;
+    async Task LoadAsync()
+    {
+        try
+        {
+            Users.Clear();
+            _load = true;
+            await Task.Delay(500);
+            Users = await asv.GetListUser();
+
+        }
+        catch (Exception ex)
+        {
+
+        }
+        finally
+        {
+            _load = false;
+
+        }
+    }
+    async Task DeleteUser()
+    {
+        if(user == null)
+        {
+            CallSnackBar("You must select 1 row to delete", "W");
+            return;
+        }
+        var uname = await asv.GetAuth();
+        if (user.Name == uname.User.Identity.Name)
+        {
+            CallSnackBar("You cannot delete your own account","W");
+            return;
+        }
+
+        var resultMess = await Dialog.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await asv.DeleteUser(user);
+            CallSnackBar(rs.Message, rs.Flag ? "S" : "E");
+
+            await LoadAsync();
+        }
+
+    }
+
+
+    private string TblRowStyle(AuthUser item, int index)
+    {
+        if (item.UsrId == user?.UsrId)
+        {
+            return $"selected";
+        }
+        else
+        {
+            return "";
+        }
+    }
+    private async Task RowClickEvent(TableRowClickEventArgs<AuthUser> ItemSelect)
+    {
+        try
+        {
+            user = ItemSelect.Item;
+        }
+        catch
+        {
+            //nothing
+        }
+    }
+
+    private async Task OpenDialog(AuthUser item, bool Edit)
+    {
+        var options = new DialogOptions
+            {
+                MaxWidth = MaxWidth.ExtraExtraLarge,
+                FullWidth = true,
+                CloseButton = true,
+                DisableBackdropClick = false
+            };
+
+        try
+        {
+            if (Edit && item.UsrId == Guid.Empty)
+            {
+                CallSnackBar("Select User, Please!", "W");
+                return;
+            }
+
+            var parameters = new DialogParameters<Edit> { { x => x.user, item } };
+            var dialog = await Dialog.ShowAsync<Edit>(!Edit ? @Localizer["Register_User"] : @Localizer["Edit_User"], parameters, options);
+            var result = await dialog.Result;
+
+            if (!result.Canceled)
+            {
+
+            }
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw Error Code:" + ex.Message, "E");
+        }
+    }
+    private string searchString1 = "";
+    private bool FilterFunc1(AuthUser element) => FilterFunc(element, searchString1);
+
+    private bool FilterFunc(AuthUser element, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (element.Name.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (element.Usr.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{element.Name} {element.Usr}".Contains(searchString))
+            return true;
+        return false;
+    }
+    MudDataGrid<AuthUser> mudTable;
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(AuthUser Sis, int rowNumber)
+    {
+        if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            return "selected"; // Giữ lớp "selected" cho dòng đã chọn
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+}

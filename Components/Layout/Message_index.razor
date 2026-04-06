@@ -1,0 +1,109 @@
+﻿@inherits LayoutComponentBase
+@inject IStringLocalizer<SharedResource> Localizer
+@inject AccountService asv
+@inject FontService FontSizeService
+@inject IJSRuntime JS
+@inject CustomAuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject NotificationService _notificationService
+
+<MudBadge Content="@_unreadEmailCount"
+          Color="Color.Error"
+          Visible="_unreadEmailCount > 0"
+          Style="position: relative; top: -1px; right: -8px; margin-right: 40px;">
+    <MudIconButton Icon="@Icons.Material.Filled.Email"
+                   Color="Color.Inherit"
+                   @onclick="TogglePopover" Style="padding:0.5px" />
+
+    <MudPopover Open="@_open"
+                AnchorOrigin="Origin.BottomCenter"
+                TransformOrigin="Origin.TopCenter"
+                RelativeWidth="true"
+                Elevation="4"
+                Class="pa-2"
+                Style="min-width: 300px; max-height: 500px; overflow-y: auto; z-index: 1300;">
+        <MudText Typo="Typo.h6" Class="mb-2">Notifications</MudText>
+        @if (listitem?.Any() == true)
+        {
+            <MudListItem Class="mt-2" Style="cursor: pointer;" @onclick="ViewAllMessages">
+                <MudText Color="Color.Primary" Typo="Typo.body2" Class="text-center w-100">View all messages</MudText>
+            </MudListItem>
+
+            @foreach (var note in listitem)
+            {
+                <MudListItem>
+                    <MudText Typo="Typo.subtitle2">@note.Message</MudText>
+                    <MudText Typo="Typo.caption">@note.CreatedAt.ToString("MM/dd/yyyy")</MudText>
+                </MudListItem>
+                <MudDivider />
+
+            }
+         
+
+        }
+        else
+        {
+            <MudText Typo="Typo.body2">No notifications available.</MudText>
+            <MudListItem Class="mt-2" Style="cursor: pointer;" @onclick="ViewAllMessages">
+                <MudText Color="Color.Primary" Typo="Typo.body2" Class="text-center w-100">View all messages</MudText>
+            </MudListItem>
+        }
+    </MudPopover>
+</MudBadge>
+
+@code{
+    private int _unreadEmailCount = 0;
+    AuthUser user = new AuthUser();
+    private DynamicTabs? _tabs;
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+    private bool _open;
+    private MudPopover _popoverRef;
+    private List<Notification> listitem = new List<Notification>();
+    private MudIconButton _emailButtonRef;
+
+    protected async override Task OnInitializedAsync()
+    {
+        
+        user = asv.GetUserDetail();
+        _unreadEmailCount = await _notificationService.GetUnreadEmailCountAsync(user.UsrId);
+        
+    }
+    private async Task OpenTab(string key, string title, RenderFragment content)
+    {
+        if (OnTabRequest.HasDelegate)
+            await OnTabRequest.InvokeAsync((key, title, content));
+    }
+
+    private async Task TogglePopover()
+    {
+        _open = !_open;
+        if (_open && listitem.Count == 0)
+        {
+            listitem = await _notificationService.GetList_noti();
+          
+        }
+    }
+
+    RenderFragment RenderComponent(Type componentType) => builder =>
+      {
+          builder.OpenComponent(0, componentType);
+          builder.CloseComponent();
+      };
+
+
+    private async Task ViewAllMessages()
+    {
+        _open = false; // đóng popover
+        if (OnTabRequest.HasDelegate)
+            await OnTabRequest.InvokeAsync(("message", Localizer["message"], RenderComponent(typeof(Components.Noti_Message.Pages.Index))));
+    
+    }
+
+    private async Task OpenTab_all(string key, string title, RenderFragment content)
+    {
+        _tabs?.OpenTab(key, title, content);
+    }
+    
+}
+

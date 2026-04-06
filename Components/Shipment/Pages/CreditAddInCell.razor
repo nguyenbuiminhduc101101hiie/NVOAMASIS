@@ -1,0 +1,419 @@
+﻿@using System.Globalization
+@inject IDialogService DialogService
+@inject tigiaVCBservices Vcbsv
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ShipmentService shipsv
+@inject ISnackbar Snackbar
+<MudDialog>
+    <DialogContent>
+        <MudPaper Class="pa-4">
+            <!-- Bảng hiển thị các dòng M_Credit -->
+            <MudTable Items="@rows" Hover="true" Dense="true" FixedHeader>
+                <HeaderContent>
+                    <MudTh>Thao tác</MudTh>
+                    <MudTh>Tên phí</MudTh>
+                    <MudTh>Đơn giá</MudTh>
+                    <MudTh>Loại</MudTh>
+                    <MudTh>Số lượng</MudTh>
+                    <MudTh>Thành tiền</MudTh>
+                    <MudTh>Loại tiền</MudTh>
+                    <MudTh>Thuế (%)</MudTh>
+                    <MudTh>Thành tiền sau thuế</MudTh>
+                    <MudTh>Tỉ giá</MudTh>
+                    <MudTh>Tỉ giá hóa đơn</MudTh>
+                    <MudTh>Chi hộ</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="item">
+                     <MudTd>
+                        @if (item.editable == true)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Save" Size="Size.Small" OnClick="() => SaveRow(item)" />
+                        }
+                        else
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" OnClick="() => BeginEdit(item)" />
+                        }
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="() => DeleteRow(item)" />
+                    </MudTd>
+                    <MudTd>
+                        @if (item.editable == true)
+                        {
+                            <MudAutocomplete @bind-Value="item.itemid" Required
+                                             Placeholder="Phí" Lines="2"
+                                             SearchFunc="SearchCharge" ToStringFunc="Charidtocharge" Clearable />
+                        }
+                        else
+                        {
+                            @Charidtocharge(item.itemid)
+                        }
+                    </MudTd>
+                    <MudTd Class="text-align: right;">
+                        @if (item.editable == true)
+                        {
+                            <MudNumericField @bind-Value="item.dongia" Class="text-right"
+                                             Format="#,##0.##" Culture="@_en" T="double?"
+                                             Placeholder="Đơn giá" Immediate
+                                             TextChanged="@(e => CalculateTotal(item))" HideSpinButtons="true" />
+                        }
+                        else
+                        {
+                            @(item.dongia?.ToString("#,##0.##"))
+                        }
+                    </MudTd>
+
+                    <MudTd>
+                        @if (item.editable == true)
+                        {
+                            <MudAutocomplete @bind-Value="item.type" Required
+                                             Placeholder="Loại"
+                                             SearchFunc="SearchType" CoerceValue />
+                        }
+                        else
+                        {
+                            @(item.type)
+                        }
+                    </MudTd>
+
+                    <MudTd>
+                        @if (item.editable == true)
+                        {
+                            <MudNumericField T="double?" @bind-Value="item.soluong"
+                                             Placeholder="Số lượng" 
+                                             TextChanged="@(e => CalculateTotal(item))"
+                                             Immediate="true" />
+                        }
+                        else
+                        {
+                            @(item.soluong)
+                        }
+                    </MudTd>
+
+                    <MudTd Class="text-align: right;">
+                        @if (item.editable == true)
+                        {
+                            <MudNumericField T="double?" @bind-Value="item.thanhtien"
+                                             Placeholder="Thành tiền"
+                                             Format="#,##0.##" Culture="@_en" T="double?"
+                                             Immediate="true" HideSpinButtons="true" />
+                        }
+                        else
+                        {
+                            @(item.thanhtien?.ToString("#,##0.##"))
+                        }
+                    </MudTd>
+
+                    <MudTd>
+                        @if (item.editable == true)
+                        {
+                            <MudAutocomplete @bind-Value="item.tiente" Immediate
+                                             Placeholder="Loại tiền" @bind-Value:after="@(() => ChangeTiGia(item))"
+                                             Required="true" Class="custom-label" CoerceValue SearchFunc="SearchCurr" />
+                        }
+                        else
+                        {
+                            @(item.tiente)
+                        }
+                    </MudTd>
+                    <MudTd>
+                        @if (item.editable == true)
+                        {
+                            <MudNumericField @bind-Value="item.thue"
+                                             Placeholder="Thuế" Immediate
+                                             Format="#,##0.##" Culture="@_en" T="double?"
+                                             TextChanged="@(e => CalculateThanhtiensauthue(item))" HideSpinButtons="true" />
+                        }
+                        else
+                        {
+                            @(item.thue.ToString())
+                        }
+                    </MudTd>
+                    <MudTd Class="text-align: right;">
+                        @if (item.editable == true)
+                        {
+                            <MudNumericField @bind-Value="item.thanhtiensauthue"
+                                             Placeholder="Thành tiền sau thuế"
+                                             Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
+                        }
+                        else
+                        {
+                            @(item.thanhtiensauthue!.Value.ToString("#,##0.##"))
+                        }
+                    </MudTd>
+                    <MudTd Class="text-align: right;">
+                        @if (item.editable == true)
+                        {
+                            <MudNumericField @bind-Value="item.tigiacredit"
+                                            Placeholder="Tỉ giá" 
+                                             Format="#,##0.##" Culture="@_en"
+                                             T="double?" Required="true" HideSpinButtons="true"
+                                             Class="text-right" />
+                        }
+                        else
+                        {
+                            @(item.tigiacredit!.Value.ToString("#,##0.##"))
+                        }
+                    </MudTd>
+                    <MudTd Class="text-align: right;">
+                        @if (item.editable == true)
+                        {
+                            <MudNumericField @bind-Value="item.tigiahoadondauvao"
+                                             Placeholder="Tỉ giá hóa đơn"
+                                             Format="#,##0.##" Culture="@_en"
+                                             T="double?" Required="true" HideSpinButtons="true"
+                                             Class="text-right" />
+                        }
+                        else
+                        {
+                            @(item.tigiahoadondauvao!.Value.ToString("#,##0.##"))
+                        }
+                    </MudTd>
+                    <MudTd>
+                        @if (item.editable == true)
+                        {
+                            <MudCheckBox @bind-Value="item.chiho" />
+                        }
+                        else
+                        {
+                            <MudCheckBox Value="item.chiho" />
+                        }
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+
+            <MudDivider Class="my-4" />
+
+            <!-- Nút thêm dòng mới -->
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddNew">
+                Thêm dòng
+            </MudButton>
+        </MudPaper>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Đóng</MudButton>
+        @* <MudButton OnClick="Submit" Color="Color.Primary">Lưu</MudButton> *@
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; }
+    [Parameter] public List<M_Credit> Credit { get; set; } = new();
+    [Parameter] public List<M_Credit> Creditdf { get; set; } = new();
+    [Parameter] public List<string> currs { get; set; } = new();
+    [Parameter] public string Type { get; set; } = default!;
+    [Parameter] public string usr { get; set; } = default!;
+    [Parameter] public bool isMBL { get; set; } = default!;
+    [Parameter] public M_MBL? MBLDetail { get; set; } = default!;
+    [Parameter] public M_HBL? HBLDetail { get; set; } = default!;
+    [Parameter] public List<M_Customer> Customers { get; set; } = default!;
+    [Parameter] public List<string> Types { get; set; } = new();
+    [Parameter] public List<ChargeModel> charges { get; set; } = new();
+    [Parameter] public Guid maincus { get; set; } = new();
+    // Sao chép dữ liệu ra danh sách tạm để thao tác
+    private List<M_Credit> rows = new();
+
+    protected override void OnInitialized()
+    {
+        rows = Credit.Select(d =>
+        {
+            d.editable = false;
+            return d;
+        }).Where(x=>x.approve == false).ToList();
+        rows.AddRange(Creditdf.Select(d =>
+        {
+            d.editable = true;
+            return d;
+        }).Where(x => x.approve == false).ToList());
+
+        CallSnackBar($"Loaded {Creditdf.Count} from Credit Template", MudBlazor.Severity.Success);
+    }
+     protected async override Task OnParametersSetAsync()
+    {
+        Types = await shipsv.GetListTypeInDebitCredit();
+        foreach (var i in Creditdf)
+            i.tigiacredit = i.tigiahoadondauvao = await GetTigia(i.tiente);
+    }
+    async Task AddNew()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "HBL"))
+        {
+            CallSnackBar("You have not access to Add in HBL", MudBlazor.Severity.Warning);
+            return;
+        }
+        var newRow = new M_Credit
+            {
+                // debitId = Guid.NewGuid(),
+                customerid = maincus,
+                editable = true,
+                tiente = "VND",
+                type = Types.First(),
+                soluong = 1,
+                dongia = 0,
+                itemid = charges.First().CHARGE_ID,
+                thanhtien = 0,
+                thue = 0,
+                thanhtiensauthue = 0
+            };
+        if (isMBL)
+            newRow.mblid = MBLDetail!.MblID;
+        else
+            newRow.hblid = HBLDetail!.hblID;
+        newRow.userupdate = usr;
+        newRow.dateupdate = DateTime.Now.ToString();
+        newRow.tigiacredit = newRow.tigiahoadondauvao = await GetTigia(newRow.tiente);
+        rows.Add(newRow);
+    }
+
+    async Task BeginEdit(M_Credit row)
+    {
+        if (!await ssv.CheckPermission(usr, "Edit", "HBL"))
+        {
+            CallSnackBar("You have not access to Edit in HBL", MudBlazor.Severity.Warning);
+            return;
+        }
+        row.editable = true;
+        detail_Credit = row;
+    }
+    M_Credit detail_Credit = new();
+    async Task SaveRow(M_Credit item)
+    {
+        var rs = item.creditid != Guid.Empty ? await shipsv.UpdateCreditMBL(item, detail_Credit) : await shipsv.CreateCreditMBL(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        item.editable = false;
+    }
+
+    async Task DeleteRow(M_Credit row)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "HBL"))
+        {
+            CallSnackBar("You have not access to Delete in HBL", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await shipsv.DeleteCreditMBL(row);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if(rs.Flag)
+                rows.Remove(row);
+        }
+    }
+
+    void Cancel() => MudDialog.Cancel();
+
+    void Submit()
+    {
+        // Trả dữ liệu về component gọi dialog
+        rows.ForEach(x => x.editable = true);
+        MudDialog.Close(DialogResult.Ok(rows));
+    }
+
+    private async Task<double?> GetTigia(string? tiente)
+    {
+        var rs = await Vcbsv.Getexchange_cur(tiente);
+        return rs;
+    }
+    private async Task ChangeTiGia(M_Credit item)
+    {
+        double? tigia_ = await Vcbsv.Getexchange_cur(item.tiente ?? "");
+        item.tigiacredit = item.tigiahoadondauvao = tigia_;
+    }
+    private async Task<IEnumerable<string>> SearchCurr(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return currs;
+
+        return currs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+    private void CalculateTotal(M_Credit item)
+    {
+        if (item.soluong.HasValue && item.dongia.HasValue)
+        {
+
+            double soluong = item.soluong ?? 0;
+            double dongia = item.dongia ?? 0;
+            item.thanhtien = Math.Round(soluong * dongia, 2);
+            CalculateThanhtiensauthue(item);
+        }
+
+
+    }
+
+    private void CalculateThanhtiensauthue(M_Credit item)
+    {
+        if (item.thanhtien.HasValue && item.thue.HasValue)
+        {
+            double thanhtienValue = item.thanhtien ?? 0;
+            double thueValue = item.thue ?? 0;
+            item.thanhtiensauthue = Math.Round(thanhtienValue * (thueValue / 100 + 1), 2);
+        }
+
+
+    }
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    async Task<string> UpdateDebitNo(M_Credit item, DateTime value)
+    {
+        var refno = await supsv.GetRefNoByFunc("Debit", value.Month, value.Year, usr);
+        var tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        var flc = await shipsv.GetFLCByMBLID(isMBL ? MBLDetail!.MblID : HBLDetail!.mblid);
+        var debitno = cn + tiepdaungu + Type + flc + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D4") : "RefNoError!");
+        return debitno;
+    }
+    private async Task<IEnumerable<Guid>> SearchCharge(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return charges.Select(x => x.CHARGE_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return charges.Where(x => (x.CHARGE_CODE + "_" + x.CHARGE).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.CHARGE_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    string Charidtocharge(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+
+    private async Task<IEnumerable<string>> SearchType(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Types;
+            }
+            // MBL.Porname = mst_Consignee;
+            return Types.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}

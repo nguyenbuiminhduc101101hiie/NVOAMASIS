@@ -1,0 +1,408 @@
+﻿@using MudBlazor
+@using System.Globalization
+@using System.Linq
+@using MudBlazor.Components
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject CustomerService Cussv
+@inject PhieuThu_Chi_Services thuchisv
+@inject ReportServices rpsv
+@inject QuotationService Quosv
+@inject ProductPriceServices Prsv
+@inject IJSRuntime JSRuntime
+@inject QuotationService QuoSv
+
+<PageTitle>@Localizer["ReportRFQ"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["ReportRFQ"]</MudText>
+
+
+<MudGrid Class="pa-6">
+
+    <!-- From Month -->
+    <MudItem xs="1">
+        <MudSelect T="int" Label="Từ tháng" @bind-Value="fromThang" Dense="true">
+            @foreach (var m in Months)
+            {
+                <MudSelectItem T="int" Value="m">@m</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+
+    <!-- From Year -->
+    <MudItem xs="1">
+        <MudSelect T="int" Label="Từ năm" @bind-Value="fromNam" Dense="true">
+            @foreach (var y in Years)
+            {
+                <MudSelectItem T="int" Value="y">@y</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+
+    <MudItem xs="1">
+        <MudSelect T="int" Label="Đến tháng" @bind-Value="toThang" Dense="true">
+            @foreach (var m in Months)
+            {
+                <MudSelectItem T="int" Value="m">@m</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+
+    <!-- To Year -->
+    <MudItem xs="1">
+        <MudSelect T="int" Label="Đến năm" @bind-Value="toNam" Dense="true">
+            @foreach (var y in Years)
+            {
+                <MudSelectItem T="int" Value="y">@y</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+
+    <MudItem xs="1">
+        <MudSelect @bind-Value="type_search" Label="@Localizer["Type"]" Class="custom-label" Required="true">
+            <MudSelectItem Value="@("Import")">Import</MudSelectItem>
+            <MudSelectItem Value="@("Export")">Export</MudSelectItem>
+            <MudSelectItem Value="@("KTCL")">KTCL</MudSelectItem>
+            <MudSelectItem Value="@("Truck")">Truck</MudSelectItem>
+            <MudSelectItem Value="@("Customs")">Customs</MudSelectItem>
+        </MudSelect>
+    </MudItem>
+
+    <MudItem xs="4">
+        <MudAutocomplete T="Guid?" Label="@Localizer["Item"]" Class="custom-label"
+        @bind-Value="Search_Item"
+        Required="true"
+        SearchFunc="Search_Charge"
+        ToStringFunc="GetChargeLabel" />
+    </MudItem>
+
+    <MudItem xs="1">
+        <MudCheckBox @bind-Checked="Chk_all" Label="@Localizer["ALL Items"]" />
+    </MudItem>
+
+    <MudItem xs="2">
+        <MudButton HtmlTag="label"
+        OnClick="Search_By_months"
+        Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+        StartIcon="@Icons.Material.Filled.Refresh">
+            @Localizer["Search"]
+        </MudButton>
+    </MudItem>
+
+    <MudItem xs="3">
+        <MudAutocomplete Class="custom-label" T="string"
+                         @bind-Value="Search_POL"
+                         Label="@Localizer["cangdi"]"
+                         SearchFunc="SearchPorts"
+                         Immediate="true"
+                         CoerceText="true"
+                         Clearable="true"
+                         MaxItems="100">
+        </MudAutocomplete>
+    </MudItem>
+    <MudItem xs="1">
+        <MudCheckBox @bind-Checked="Chk_pol" Label="POL" />
+    </MudItem>
+
+    <MudItem xs="3">
+        <MudAutocomplete Class="custom-label" T="string"
+                         @bind-Value="Search_POD"
+                         Label="@Localizer["cangden"]"
+                         SearchFunc="SearchPorts"
+                         Immediate="true"
+                         CoerceText="true"
+                         Clearable="true"
+                         MaxItems="100">
+        </MudAutocomplete>
+    </MudItem>
+    <MudItem xs="1">
+        <MudCheckBox @bind-Checked="Chk_pod" Label="POD" />
+    </MudItem>
+</MudGrid>
+
+@if (MonthlyCharts?.Count > 0)
+{
+    <MudGrid>
+        @foreach (var chart in MonthlyCharts)
+        {
+            <MudItem xs="12" sm="6" md="6">
+                <MudPaper Class="pa-4 mb-4" Style="overflow-x:auto;">
+                    <MudText Typo="Typo.h6">@chart.Title</MudText>
+                    <MudChart ChartType="ChartType.Bar"
+                    ChartSeries="@chart.ChartSeries"
+                    XAxisLabels="@chart.XAxisLabels"
+                    Width="100%"
+                    Height="360px"
+                    ChartOptions="options" />
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+
+
+
+
+@code {
+    private DateRange _dateRange = new DateRange(DateTime.Now.Date, DateTime.Now.AddDays(5).Date);
+    private List<M_Product_Price_detail_ALL> Listdata = new List<M_Product_Price_detail_ALL>();
+    private List<M_Customer> List_Cus = new List<M_Customer>();
+    private List<ChargeModel> List_Charge = new List<ChargeModel>();
+    private double? soducuoiky;
+    private double? sodudauky;
+    private double? tongsotien;
+    private double? tongsotienthu;
+    private double? tongsotienchi;
+    private string _Cur = "VND";// Giá trị mặc định
+    private bool _processingUpload = false;
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    // Selected values
+    private int fromThang;
+    private int fromNam;
+    private int toThang;
+    private int toNam;
+    private string type_search;
+    private Guid? Search_Item;
+    private string? Search_POL;
+    private string? Search_POD;
+    private bool Chk_all = true;
+
+    private bool Chk_pol = false;
+    private bool Chk_pod = false;
+
+    // Data sources
+    private readonly int[] Months = Enumerable.Range(1, 12).ToArray();
+    private List<Models.ChargeModel> charges = new List<Models.ChargeModel>();
+    // Ví dụ: năm từ 2020 đến 2030
+    private readonly int[] Years = Enumerable.Range(2020, 11).ToArray();
+    List<PortModel> Ports = new List<PortModel>();
+
+    public class MonthlyChart
+    {
+        public string Title { get; set; }
+        public List<ChartSeries> ChartSeries { get; set; }
+        public string[] XAxisLabels { get; set; }
+    }
+
+
+    protected async override Task OnInitializedAsync()
+    {
+        charges = await QuoSv.Getcharge();
+        Ports = await bksv.GetList_PORT();
+        List_Charge =  await supsv.GetListCharge();
+        List_Cus = await Cussv.GetList();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "RFQ").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+    }
+    public class RFQCountByMonthAndStatus
+    {
+        public string MonthYear { get; set; } // ví dụ: "03/2025"
+        public string Status { get; set; }    // ví dụ: "Open", "Closed"
+        public int Count { get; set; }
+    }
+
+    private ChartOptions options = new ChartOptions
+        {
+            YAxisFormat = "#,##0"
+        };
+
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private double[] PieData = Array.Empty<double>();
+    private string[] PieLabels = Array.Empty<string>();
+    double[] inputData;
+    private string[] inputLabels;
+    bool _loading = false;
+    List<MonthlyChart> MonthlyCharts = new(); // <-- Thêm biến để chứa từng biểu đồ theo tháng
+
+    async Task Search_By_months()
+    {
+        MonthlyCharts.Clear(); // Xóa dữ liệu cũ nếu có
+
+        if (type_search == null)
+        {
+            CallSnackBar("Select Type", MudBlazor.Severity.Warning);
+            return;
+        }
+        if(Chk_all == true)
+        {
+            Search_Item = Guid.Empty;
+        }
+        else
+        {
+            if (Search_Item == null || Search_Item == Guid.Empty)
+            {
+                CallSnackBar("Select Item", MudBlazor.Severity.Warning);
+                return;
+            }
+        }
+        
+
+        if (fromThang != null && fromNam != null && toThang != null && toNam != null &&
+            fromThang != 0 && fromNam != 0 && toThang != 0 && toNam != 0)
+        {
+            Listdata = await Prsv.Get_ProductPrice_Detail_All(fromThang, fromNam, toThang, toNam, type_search,Search_Item,Search_POL,Search_POD,Chk_pol,Chk_pod);
+            if (Listdata.Count == 0)
+            {
+                CallSnackBar("No Data", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Danh sách tháng/năm có dữ liệu
+            var allMonthYears = Listdata
+                .Where(x => x.Ngaybaogia.HasValue)
+                .Select(x => new { x.Ngaybaogia.Value.Year, x.Ngaybaogia.Value.Month })
+                .Distinct()
+                .OrderBy(x => x.Year)
+                .ThenBy(x => x.Month)
+                .ToList();
+
+            foreach (var my in allMonthYears)
+            {
+                // Tháng thật
+                string labelCenter = $"{my.Month:D2}/{my.Year}";
+
+                // Tạo tháng ảo trước và sau
+                DateTime center = new DateTime(my.Year, my.Month, 1);
+                DateTime prev = center.AddMonths(-1);
+                DateTime next = center.AddMonths(1);
+
+                var xLabels = new[]
+                {
+                    "",
+                    labelCenter,
+                    ""
+                };
+
+                // Lọc dữ liệu chỉ của tháng thật
+                var monthData = Listdata
+                    .Where(x => x.Ngaybaogia.HasValue &&
+                                x.Ngaybaogia.Value.Month == my.Month &&
+                                x.Ngaybaogia.Value.Year == my.Year)
+                    .ToList();
+
+                var itemIds = monthData
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Itemid.ToString()))
+                    .Select(x => x.Itemid.ToString())
+                    .Distinct()
+                    .ToList();
+
+                var chartSeries = itemIds.Select(itemid =>
+                {
+                    var itemName = List_Charge.FirstOrDefault(c => c.CHARGE_ID.ToString() == itemid)?.CHARGE ?? itemid;
+
+                    double total = monthData
+                        .Where(x => x.Itemid.ToString() == itemid)
+                        .Sum(x => x.Cur == "USD"
+                            ? (x.Thanhtien ?? 0) * (x.Tigia ?? 1)
+                            : (x.Thanhtien ?? 0));
+
+                    return new ChartSeries
+                        {
+                            Name = itemName,
+                            Data = new double[] { 0, total, 0 } // Thêm 0 cho tháng ảo
+                        };
+                }).ToList();
+
+                MonthlyCharts.Add(new MonthlyChart
+                    {
+                        Title = $"Data - {labelCenter}",
+                        ChartSeries = chartSeries,
+                        XAxisLabels = xLabels
+                    });
+            }
+
+
+            _loading = false;
+        }
+        else
+        {
+            _loading = false;
+            CallSnackBar("Select Date Time Range", MudBlazor.Severity.Warning);
+        }
+    }
+
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = List_Cus.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.COMPANY! : "";
+    }
+
+    private Func<M_Product_Price_detail_ALL, string> _cellStyleFunc => x =>
+     {
+         string style = "";
+
+         if (string.IsNullOrEmpty(x.Itemid.ToString()))
+             return "color: #000000";
+
+         var rs = M_Trangthais
+     .Where(t => (t.Noidung).Contains(x.Itemid.ToString(), StringComparison.InvariantCultureIgnoreCase)
+         && t.Tieude.Equals("RFQ", StringComparison.InvariantCultureIgnoreCase))
+     .Select(t => t.Mamau)
+     .FirstOrDefault();
+         return "color: " + rs;
+
+     };
+
+
+    private string GetChargeLabel(Guid? id)
+    {
+        var customer = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return customer != null ? customer.CHARGE : string.Empty;
+    }
+
+    private async Task<IEnumerable<Guid?>> Search_Charge(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return charges.Select(x => (Guid?)x.CHARGE_ID);
+
+        return charges
+            .Where(x => (x.CHARGE).Contains(value, StringComparison.InvariantCultureIgnoreCase))
+            .Select(x => (Guid?)x.CHARGE_ID);
+    }
+
+    private async Task<IEnumerable<string>> SearchPorts(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Ports
+                    .Where(x => !string.IsNullOrEmpty(x.PORT))
+                    .Select(x => x.PORT)
+                    .Distinct();
+            }
+
+            return Ports
+                .Where(x => !string.IsNullOrEmpty(x.PORT) &&
+                            x.PORT.Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.PORT)
+                .Distinct();
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+}
+
+

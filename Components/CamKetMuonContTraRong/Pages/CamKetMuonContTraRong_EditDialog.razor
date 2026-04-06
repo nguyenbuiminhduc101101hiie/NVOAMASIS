@@ -1,0 +1,314 @@
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AccountService asv
+@inject SupportServices supsv
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <MudGrid>
+                <MudItem xs="12" md="4">
+                    <MudAutocomplete T="M_HBL"
+                                     Value="_selectedHbl"
+                                     ValueChanged="OnHblChanged"
+                                     Label="HBL (Job Loai = SI)"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     SearchFunc="SearchSiHbl"
+                                     ToStringFunc="HblToString"
+                                     Clearable="true"
+                                     Disabled="IsEdit" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudTextField @bind-Value="_model.Khorieng" Label="Kho rieng" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudAutocomplete T="string"
+                                     Value="_model.Noitrarong"
+                                     ValueChanged="OnNoiTraRongChanged"
+                                     Label="Noi tra rong"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     SearchFunc="SearchTerminal"
+                                     CoerceText="true"
+                                     CoerceValue="true"
+                                     Clearable="true" />
+                </MudItem>
+                <MudItem xs="12" md="2">
+                    <MudTextField @bind-Value="_model.Note" Label="Note" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+            </MudGrid>
+
+            <MudText Typo="Typo.subtitle2" Class="mt-2 mb-1">Containers cua HBL</MudText>
+            <MudDataGrid T="M_Container"
+                         Items="_containers"
+                         Dense="true"
+                         Striped="true"
+                         Bordered="true"
+                         Hover="true"
+                         RowClassFunc="ContainerRowClassFunc"
+                         Height="300px"
+                         FixedHeader="true">
+                <Columns>
+                    <TemplateColumn Title="Select" Filterable="false" Sortable="false">
+                        <CellTemplate>
+                            <MudCheckBox T="bool"
+                                         Value="@_selectedContainerIds.Contains(context.Item.CTN_ID)"
+                                         ValueChanged="@(v => ToggleContainer(context.Item.CTN_ID, v))"
+                                         Disabled="@IsDisabledContainer(context.Item)" />
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.CONTAINER_NO" Title="Container No" />
+                    <PropertyColumn Property="x => x.CTN_SIZE_TYPE" Title="Size Type" />
+                    <PropertyColumn Property="x => x.Seal" Title="Seal" />
+                    <TemplateColumn Title="Cam ket id">
+                        <CellTemplate>
+                            @(context.Item.CamketmuonCont_id?.ToString() ?? "")
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="So Cam Ket">
+                        <CellTemplate>
+                            @GetCamKetNo(context.Item.CamketmuonCont_id)
+                        </CellTemplate>
+                    </TemplateColumn>
+                </Columns>
+            </MudDataGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public M_CamKetMuonCont_TraRong? Model { get; set; }
+    [Parameter] public bool IsEdit { get; set; }
+
+    public class CamKetDialogResult
+    {
+        public bool IsEdit { get; set; }
+        public Guid Id { get; set; }
+        public Guid HblId { get; set; }
+        public string? No { get; set; }
+        public string? Khorieng { get; set; }
+        public string? Noitrarong { get; set; }
+        public string? Note { get; set; }
+        public List<Guid> SelectedContainerIds { get; set; } = new();
+    }
+
+    private MudForm? _form;
+    private M_CamKetMuonCont_TraRong _model = new();
+    private M_HBL? _selectedHbl;
+    private List<M_Container> _containers = new();
+    private List<string> _terminalOptions = new();
+    private readonly HashSet<Guid> _selectedContainerIds = new();
+    private readonly Dictionary<Guid, string> _camKetNoById = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTerminalOptions();
+
+        _model = new M_CamKetMuonCont_TraRong
+        {
+            id = Model?.id ?? Guid.Empty,
+            hblid = Model?.hblid,
+            Khorieng = Model?.Khorieng,
+            Noitrarong = Model?.Noitrarong,
+            Note = Model?.Note
+        };
+
+        if (_model.hblid.HasValue && _model.hblid != Guid.Empty)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _selectedHbl = await db.HBL.AsNoTracking().FirstOrDefaultAsync(x => x.hblID == _model.hblid.Value);
+            await LoadContainersByHbl(_model.hblid.Value);
+        }
+    }
+
+    private async Task LoadTerminalOptions()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _terminalOptions = await db.Terminal
+            .AsNoTracking()
+            .Where(x => !string.IsNullOrWhiteSpace(x.TermiNalName))
+            .Select(x => x.TermiNalName!.Trim())
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+    }
+
+    private Task<IEnumerable<string>> SearchTerminal(string? value)
+    {
+        var keyword = value?.Trim() ?? string.Empty;
+        IEnumerable<string> result = _terminalOptions;
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            result = _terminalOptions.Where(x =>
+                x.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return Task.FromResult(result.Take(50));
+    }
+
+    private Task OnNoiTraRongChanged(string? value)
+    {
+        _model.Noitrarong = value?.Trim();
+        return Task.CompletedTask;
+    }
+
+    private async Task<IEnumerable<M_HBL>> SearchSiHbl(string? value)
+    {
+        var keyword = value?.Trim() ?? string.Empty;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var query = from h in db.HBL.AsNoTracking()
+                    join m in db.MBL.AsNoTracking() on h.mblid equals m.MblID
+                    join j in db.Job.AsNoTracking() on m.Jobid equals j.JobID
+                    where j.Loai == "SI"
+                    select h;
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            query = query.Where(x =>
+                (x.hbl != null && x.hbl.Contains(keyword)) ||
+                (x.bkno != null && x.bkno.Contains(keyword)));
+        }
+
+        return await query
+            .OrderByDescending(x => x.ETA)
+            .ThenByDescending(x => x.hblID)
+            .Take(50)
+            .ToListAsync();
+    }
+
+    private async Task OnHblChanged(M_HBL? hbl)
+    {
+        _selectedHbl = hbl;
+        _selectedContainerIds.Clear();
+        _containers.Clear();
+
+        if (hbl is null)
+        {
+            _model.hblid = null;
+            return;
+        }
+
+        _model.hblid = hbl.hblID;
+        await LoadContainersByHbl(hbl.hblID);
+    }
+
+    private async Task LoadContainersByHbl(Guid hblId)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _containers = await db.Container
+            .AsNoTracking()
+            .Where(x => x.hblid == hblId)
+            .OrderBy(x => x.CONTAINER_NO)
+            .ToListAsync();
+
+        _camKetNoById.Clear();
+        foreach (var camKetId in _containers
+                     .Where(x => x.CamketmuonCont_id.HasValue && x.CamketmuonCont_id.Value != Guid.Empty)
+                     .Select(x => x.CamketmuonCont_id!.Value)
+                     .Distinct())
+        {
+            var no = await db.CamKetMuonContTraRong
+                .AsNoTracking()
+                .Where(x => x.id == camKetId)
+                .Select(x => x.No)
+                .FirstOrDefaultAsync();
+            _camKetNoById[camKetId] = string.IsNullOrWhiteSpace(no) ? camKetId.ToString() : no!;
+        }
+
+        foreach (var c in _containers.Where(x => x.CamketmuonCont_id == _model.id))
+            _selectedContainerIds.Add(c.CTN_ID);
+    }
+
+    private bool IsDisabledContainer(M_Container c)
+        => c.CamketmuonCont_id.HasValue && c.CamketmuonCont_id != _model.id;
+
+    private void ToggleContainer(Guid containerId, bool selected)
+    {
+        if (selected)
+            _selectedContainerIds.Add(containerId);
+        else
+            _selectedContainerIds.Remove(containerId);
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Save()
+    {
+        if (_form is not null)
+            await _form.Validate();
+
+        if (!_model.hblid.HasValue || _model.hblid == Guid.Empty)
+            return;
+
+        if (_selectedContainerIds.Count == 0)
+            return;
+
+        var generatedNo = _model.No;
+        if (!IsEdit)
+            generatedNo = await GenerateCamKetNo();
+
+        MudDialog.Close(DialogResult.Ok(new CamKetDialogResult
+        {
+            IsEdit = IsEdit,
+            Id = _model.id,
+            HblId = _model.hblid.Value,
+            No = generatedNo,
+            Khorieng = _model.Khorieng,
+            Noitrarong = _model.Noitrarong,
+            Note = _model.Note,
+            SelectedContainerIds = _selectedContainerIds.ToList()
+        }));
+    }
+
+    private string ContainerRowClassFunc(M_Container row, int _)
+    {
+        if (_selectedContainerIds.Contains(row.CTN_ID))
+            return "camket-selected-cont-row";
+        if (row.CamketmuonCont_id.HasValue)
+            return "camket-assigned-cont-row";
+        return string.Empty;
+    }
+
+    private string GetCamKetNo(Guid? camKetId)
+    {
+        if (!camKetId.HasValue || camKetId.Value == Guid.Empty)
+            return string.Empty;
+        return _camKetNoById.TryGetValue(camKetId.Value, out var no) ? no : camKetId.Value.ToString();
+    }
+
+    private async Task<string?> GenerateCamKetNo()
+    {
+        int formattedYear = DateTime.Now.Year;
+        int formattedMonth = DateTime.Now.Month;
+        var auth = await asv.GetAuth();
+        string usr = auth.User.Identity?.Name ?? string.Empty;
+        var refno = await supsv.GetRefNoByFunc("CamKet", formattedMonth, formattedYear, usr);
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        return cn + "CK_" + formattedYear + formattedMonth + refno.Value.ToString("D4");
+    }
+
+    private static string HblToString(M_HBL? hbl)
+        => hbl is null ? string.Empty : $"{hbl.hbl} ({hbl.bkno})";
+}
+
+<style>
+    .camket-selected-cont-row {
+        background-color: red !important;
+    }
+
+    .camket-assigned-cont-row {
+        background-color: red !important;
+    }
+</style>

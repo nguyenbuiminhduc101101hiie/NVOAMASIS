@@ -1,0 +1,171 @@
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="py-2" Spacing="2">
+    <MudButton HtmlTag="label"
+    OnClick="RefreshMarketInfo"
+    Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+    StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+    <MudButton HtmlTag="label"
+    @onclick="@(() => AddItemMarketInfo())"
+    Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+    StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+    <a href="HDSDhtml/Huong_dan_Customer_Market_Info.html" target="_blank">
+        <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">Trợ giúp</MudButton>
+    </a>
+</MudStack>
+<MudDataGrid T="MarketJoin" Items="@datajoin" Filterable="true" @ref="MartketInfomudTable"
+FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+ReadOnly="false" CommittedItemChanges="@CommittedItemMarketInfo"
+ColumnResizeMode="ResizeMode.Column" Loading="cusmarket_loading">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@context.Actions.StartEditingItemAsync" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItemMarketInfo(context.Item.customerMarket))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.mARKET.MarketCode" Title="Market">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.customerMarket.Market_ID" Required Margin="@Margin.Dense">
+                    @foreach (var item in Mks)
+                    {
+                        <MudSelectItem Value="item.Market_ID">@item.MarketCode - @item.Market</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.customerMarket.exim" Title="Ex/In">
+            <EditTemplate>
+                <MudSelect T="string" @bind-Value="context.Item.customerMarket.exim" Required Margin="@Margin.Dense">
+                    <MudSelectItem Value=@("Ex")>Ex</MudSelectItem>
+                    <MudSelectItem Value=@("In")>In</MudSelectItem>
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.customerMarket.country_market" Title="Country">
+            <EditTemplate>
+                <MudTextField Label="Country" @bind-Value="context.Item.customerMarket.country_market" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.customerMarket.port" Title="Port">
+            <EditTemplate>
+                <MudTextField Label="Port" @bind-Value="context.Item.customerMarket.port" />
+            </EditTemplate>
+        </PropertyColumn>
+    </Columns>
+</MudDataGrid>
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@code {
+    class MarketJoin {
+        public CustomerMarket customerMarket { get; set; } = new CustomerMarket();
+        public MARKET mARKET { get; set; } = new MARKET();
+    }
+    [Parameter] public M_Customer customer { get; set; } = default!;
+    List<CustomerMarket> CustomerMKs = new List<CustomerMarket>();
+    List<MARKET> Mks = new List<MARKET>();
+    List<MarketJoin> datajoin = new List<MarketJoin>();
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    protected async override Task OnInitializedAsync()
+    {
+        CustomerMKs = await csv.GetListCustomerMarket(customer.Customer_ID);
+        Mks = await csv.GetListMarket();
+        await RefreshMarketInfo();
+    }
+
+    string GetMarketfromID(Guid id)
+    {
+        var result = csv.GetMarketfromID(id);
+        var data = $"{result.MarketCode} - {result.Market}";
+        return data;
+    }
+
+    bool cusmarket_loading = false;
+    async Task RefreshMarketInfo()
+    {
+        try
+        {
+            cusmarket_loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            CustomerMKs.Clear();
+            datajoin.Clear();
+            StateHasChanged();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "System-Customer"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            CustomerMKs = await csv.GetListCustomerMarket(customer.Customer_ID);
+            foreach(var item in CustomerMKs)
+            {
+                var data = new MarketJoin();
+                data.customerMarket = item;
+                data.mARKET = (Mks.FirstOrDefault(x => x.Market_ID == item.Market_ID) != null) ? Mks.FirstOrDefault(x => x.Market_ID == item.Market_ID) : new MARKET();
+                datajoin.Add(data);
+            }
+        }
+        finally
+        {
+            cusmarket_loading = false;
+        }
+
+    }
+    MudDataGrid<MarketJoin> MartketInfomudTable;
+    async Task AddItemMarketInfo()
+    {
+        var cusnew = new CustomerMarket();
+        var marnew = new MARKET();
+        var data = new MarketJoin();
+        data.customerMarket =cusnew;
+        data.mARKET =marnew;
+        // CustomerMKs.Add(cusnew);
+        datajoin.Add(data);
+        await MartketInfomudTable.SetEditingItemAsync(datajoin.LastOrDefault()!);
+    }
+
+    async Task DeleteItemMarketInfo(CustomerMarket item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await csv.DeleteCustomerMarket(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await RefreshMarketInfo();
+        }
+
+    }
+    async Task CommittedItemMarketInfo(MarketJoin item)
+    {
+        item.customerMarket.Customer_ID = customer.Customer_ID;
+        var rs = item.customerMarket.CustomerMarket_Id != Guid.Empty ? await csv.UpdateCustomerMarket(item.customerMarket) : await csv.CreateCustomerMarket(item.customerMarket);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await RefreshMarketInfo();
+    }
+    Guid? marketidtest;
+}

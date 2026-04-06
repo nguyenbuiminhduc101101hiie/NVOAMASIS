@@ -1,0 +1,197 @@
+@using System.Globalization
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject TrainScheduleServices trainsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject SharedServices ssv
+@inject LocalChargesServices lcsv
+@inject SupportServices supsv
+@inject LenhDieuXeServices ldxsv
+@inject TKHQ_Services tkhqsv
+@inject GlobalServices gsv
+@inject Bieugianangha_Services BGRRsv
+@inject CustomerService CusSV
+@inject IJSRuntime JSRuntime
+
+
+<MudDialog>
+    <DialogContent>
+        <MudContainer Class="pa-3">
+            <MudCard Elevation="0" Class="pa-2">
+                <MudForm Model="@_BieuGiaLuuKho_Detail" @ref="@form">
+                    <MudCardContent Class="pa-3">
+                        <MudGrid Spacing="1">
+                            <MudItem xs="12">
+                                <MudGrid Spacing="1">
+                                    <MudItem xs="12" sm="1">
+                                        <MudButton Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary"
+                                            Disabled="@(Status == "edit")"
+                                            OnClick="() => Get_BGNHNo()">>>></MudButton>
+                                    </MudItem>
+                                    <MudItem xs="12" sm="5">
+                                        <MudTextField @bind-Value="_BieuGiaLuuKho_Detail.Bieugialuukhono" Disabled="true" Label="@Localizer["Bieugialuukhono"]"
+                                            Class="custom-label" Margin="Margin.Dense" Required="true" />
+                                    </MudItem>
+                                </MudGrid>
+                            </MudItem>
+                            <MudItem xs="12">
+                                <MudGrid Spacing="1">
+                                    <MudItem xs="12" sm="6">
+                                        <MudAutocomplete Class="custom-label" T="Guid?" Label="@Localizer["Vender"]"
+                                            @bind-Value="_BieuGiaLuuKho_Detail.VenderID"
+                                            Margin="Margin.Dense"
+                                            SearchFunc="Search_customer"
+                                            ToStringFunc="GetCustomerLabel" />
+                                    </MudItem>
+                                    <MudItem xs="12" sm="6">
+                                        <MudDatePicker Class="custom-label" @bind-Date="_BieuGiaLuuKho_Detail.NgayHieuLuc"
+                                            For="@(() => _BieuGiaLuuKho_Detail.NgayHieuLuc)"
+                                            Label="@Localizer["NgayHieuLuc"]"
+                                            Margin="Margin.Dense"
+                                            DateFormat="dd/MM/yyyy"
+                                            Required="true" />
+                                    </MudItem>
+                                    <MudItem xs="12" sm="6">
+                                        <MudSelect @bind-Value="_BieuGiaLuuKho_Detail.Trangthai" Label="@Localizer["status"]" Class="custom-label" Margin="Margin.Dense">
+                                            @foreach (var item in trangthais)
+                                            {
+                                                <MudSelectItem Value="@item">@item</MudSelectItem>
+                                            }
+                                        </MudSelect>
+                                    </MudItem>
+                                    <MudItem xs="12" sm="6">
+                                        <MudTextField @bind-Value="_BieuGiaLuuKho_Detail.GhiChu" Label="@Localizer["GhiChu"]" Class="custom-label" Margin="Margin.Dense" />
+                                    </MudItem>
+                                </MudGrid>
+                            </MudItem>
+                        </MudGrid>
+                    </MudCardContent>
+                </MudForm>
+            </MudCard>
+        </MudContainer>
+    </DialogContent>
+    <DialogActions>
+
+        <MudButton OnClick="@(async () => await Submit())">Save</MudButton>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+
+    </DialogActions>
+</MudDialog>
+
+
+
+@code {
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    [Parameter] public Models.M_BieuGiaLuuKho _BieuGiaLuuKho_Detail { get; set; }
+    List<M_Customer> customers = new List<M_Customer>();
+    [Parameter] public string Status { get; set; }
+    MudForm form;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    private List<Terminal_> Terminals = new List<Terminal_>();
+    private List<Terminal_> Terminals_Address = new List<Terminal_>();
+    List<M_BieuGiaLuuKho> BGRRs = new List<M_BieuGiaLuuKho>();
+    string UserHanding;
+    private List<string> ListUser { get; set; } = new List<string>();
+    protected async override Task OnInitializedAsync()
+    {
+        if (Status == "Duplicate")
+        {
+            _BieuGiaLuuKho_Detail.BieuGiaLuuKhoID = Guid.Empty;
+            _BieuGiaLuuKho_Detail.Bieugialuukhono = "";
+            _BieuGiaLuuKho_Detail.Approve = false;
+        }
+        customers = await CusSV.GetList();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "Bieugialuukho").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        BGRRs = await BGRRsv.GetList_BieuGiaLuuKho();
+        Terminals_Address = await gsv.GetList_Terminal_add();
+        Terminals = await gsv.GetList_Terminal();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+
+    }
+
+    private async Task Get_BGNHNo()
+    {
+
+        int formattedYear = DateTime.Now.Year;
+        int formattedMonth = DateTime.Now.Month;
+
+        string usr = asv.GetAuth().Result.User.Identity!.Name!;
+        var refno = await supsv.GetRefNoByFunc("KTCL", formattedMonth, formattedYear, usr);
+
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        _BieuGiaLuuKho_Detail.Bieugialuukhono = cn + "BGLK_" + formattedYear.ToString() + formattedMonth.ToString() + refno.Value.ToString("D4");
+    }
+
+    private async Task Submit()
+    {
+        if ((await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "Bieugialuukho") || await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "New", "Bieugialuukho")))
+        {
+
+            await form.Validate();
+
+            if (form.IsValid)
+            {
+
+                var UserName = asv.GetAuth().Result.User.Identity!.Name!;
+                _BieuGiaLuuKho_Detail.Approve = true;
+                _BieuGiaLuuKho_Detail.Continued = true;
+                _BieuGiaLuuKho_Detail.DateUpdate = DateTime.Now.ToString("dd/MMM/yyyy");
+                _BieuGiaLuuKho_Detail.UserUpdate = UserName;
+                MudDialog!.Close(_BieuGiaLuuKho_Detail);
+
+            }
+        }
+
+    }
+    void Cancel() => MudDialog.Cancel();
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+  
+     private async Task<IEnumerable<Guid?>> Search_customer(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return customers.Select(x => (Guid?)x.Customer_ID);
+
+        return customers
+            .Where(x => (x.shortname+"___"+x.COMPANY).Contains(value, StringComparison.InvariantCultureIgnoreCase))
+            .Select(x => (Guid?)x.Customer_ID);
+    }
+    private string GetCustomerLabel(Guid? id)
+    {
+        var customer = customers.FirstOrDefault(x => x.Customer_ID == id);
+        return customer != null ? customer.shortname + "___" + customer.COMPANY : string.Empty;
+    }
+
+    private async Task<IEnumerable<string>> SearchTerminal(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName))
+               .Select(x => x.TermiNalName);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName) &&
+                            x.TermiNalName.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.TermiNalName);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+  
+}

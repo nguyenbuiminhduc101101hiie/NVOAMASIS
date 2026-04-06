@@ -1,0 +1,62 @@
+﻿@inject IDialogService DialogService
+@inject SupportServices supsv
+
+<MudDialog>
+  <DialogContent>
+    <MudText>Bạn có muốn tạo các Debit/Credit template mặc định cho loại này không?</MudText>
+        <MudCheckBox @bind-Checked="IncludeCustomerId" Label=@($"Bao gồm theo điều kiện {(DebitCredit == "Debit" ? "Customer" : "Vendor")}?") Color="Color.Primary" />
+
+    @if (IncludeCustomerId && DebitCredit.Equals("Credit", StringComparison.OrdinalIgnoreCase))
+    {
+      <MudSelect T="Guid" @bind-Value="SelectedCustomerId" Label="Chọn CustomerId" Required="true">
+        @foreach (var id in CustomerOptions)
+        {
+            <MudSelectItem Value="id">@CusidtoCusCode(id)</MudSelectItem>
+        }
+      </MudSelect>
+    }
+  </DialogContent>
+  <DialogActions>
+    <MudButton OnClick="() => Submit(false)">Không</MudButton>
+    <MudButton OnClick="() => Submit(true)" Disabled="isSubmitDisabled" Color="Color.Primary">Có</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; }
+    [Parameter] public bool IncludeCustomerId { get; set; }
+    [Parameter] public List<M_Customer> Customers { get; set; } = new();
+    [Parameter] public string DebitCredit { get; set; } = "Debit";
+
+  List<Guid> CustomerOptions = new();
+  Guid SelectedCustomerId;
+  bool isSubmitDisabled => IncludeCustomerId 
+                            && DebitCredit.Equals("Credit", StringComparison.OrdinalIgnoreCase) 
+                            && SelectedCustomerId == Guid.Empty;
+
+  protected override async Task OnInitializedAsync()
+  {
+    if (DebitCredit.Equals("Credit", StringComparison.OrdinalIgnoreCase))
+    {
+      // 1. Lấy tất cả template
+      var allTpl = await supsv.GetAllDebitCreditAsync();
+      // 2. Filter Credit + theo user/type nếu cần
+      CustomerOptions = allTpl
+        .Where(t => t.DebitCredit.Equals("Credit", StringComparison.OrdinalIgnoreCase))
+        .Select(t => t.CustomerId)
+        .Distinct()
+        .ToList();
+    }
+  }
+    string CusidtoCusCode(Guid cusid)
+    {
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : $"{rs.Customer_Code} - {rs.COMPANY!}";
+    }
+  void Submit(bool result)
+    => MudDialog.Close(DialogResult.Ok(new {
+         Result            = result,
+         IncludeCustomerId = IncludeCustomerId,
+         SelectedCustomerId
+       }));
+}

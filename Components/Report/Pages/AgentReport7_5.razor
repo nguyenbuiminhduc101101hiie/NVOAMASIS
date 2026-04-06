@@ -1,0 +1,252 @@
+﻿
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Components
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using System.Linq
+@inject IDbContextFactory<NVOAMASIS.Data.AppDbContext> DbFactory
+@inject NVOAMASIS.Services.SupportServices supsv
+@inject ISnackbar Snackbar
+@inject CustomerService csv
+@inject AccountService asv
+@inject SharedServices ssv
+@inject ShipmentService shipsv
+@inject ReportServices rsv
+
+<PageTitle>Debt Report</PageTitle>
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="DebtReportRow" Items="@rows" @ref="grid" Dense Bordered Hover FilterMode="DataGridFilterMode.Simple"
+                 FixedHeader Height="calc(100vh - 42vh)" Loading="_loading">
+        <ToolBarContent>
+            <MudStack Row Spacing="3" AlignItems="AlignItems.Center">
+                <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+
+              
+                <MudSelect T="string" Label="Chọn loại báo cáo" @bind-Value="type" Dense="true" Style="min-width:160px">
+                    <MudSelectItem Value=@("Debit")>Debit</MudSelectItem>
+                    <MudSelectItem Value=@("Credit")>Credit</MudSelectItem>
+                </MudSelect>
+
+                 <MudAutocomplete @bind-Value="_searchCus" Placeholder="Search Customers" Adornment="Adornment.Start" Immediate="true"
+                                 AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0"
+                                 Clearable ResetValueOnEmptyText SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" />
+
+                <MudSelect T="string" Label="Cur" @bind-Value="cur" Dense="true" Style="min-width:160px">
+                    <MudSelectItem Value=@("VND")>VND</MudSelectItem>
+                    <MudSelectItem Value=@("USD")>USD</MudSelectItem>
+                </MudSelect>
+
+                <MudButton Disabled="_loading" OnClick="() => Refresh(frmtoDate)" Color="Color.Tertiary" Variant="Variant.Filled" Size="Size.Small">
+                    @if (_loading)
+                    {
+                        <MudProgressCircular Indeterminate Size="Size.Small" Class="ms-n1" />
+                        <MudText Class="ms-2">Processing</MudText>
+                    }
+                    else
+                    {
+                        <MudText>Search</MudText>
+                    }
+                </MudButton>
+
+                <MudButton Disabled="_processingExport" OnClick="() => Export()" Color="Color.Tertiary" StartIcon="@Icons.Material.Filled.Download" Variant="Variant.Filled" Size="Size.Small">
+                    @if (_processingExport)
+                    {
+                        <MudProgressCircular Indeterminate Size="Size.Small" Class="ms-n1" />
+                        <MudText Class="ms-2">Processing</MudText>
+                    }
+                    else
+                    {
+                        <MudText>Export</MudText>
+                    }
+                </MudButton>
+
+                <MudSpacer />
+            </MudStack>
+            <MudSpacer />
+        </ToolBarContent>
+        <Columns>
+            <TemplateColumn Title="No.">
+                <CellTemplate Context="ctx">@ctx.Item.No</CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.Description" Title="DESCRIPTION" />
+            <PropertyColumn Property="x => x.Hbl" Title="HB/L" />
+            <PropertyColumn Property="x => x.Qty" Title="QTY" />
+            <PropertyColumn Property="x => x.Unit" Title="UNIT" />
+  
+            <TemplateColumn Title="TOTAL DEBIT">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.Total_Debit.HasValue
+                                        ? ctx.Item.Total_Debit.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="TOTAL CREDIT">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.Total_Credit.HasValue
+                                        ? ctx.Item.Total_Credit.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="TOTAL HOA DON DAU RA">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.Total_HoaDonDauRa.HasValue
+                                        ? ctx.Item.Total_HoaDonDauRa.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="TOTAL HOA DON DAU VAO">
+                <CellTemplate Context="ctx">
+                    @(ctx.Item.Total_HoaDonDauVao.HasValue
+                                        ? ctx.Item.Total_HoaDonDauVao.Value.ToString("N0") + " ₫"
+                                        : "0 ₫")
+                </CellTemplate>
+            </TemplateColumn>
+          
+            <PropertyColumn Property="x => x.InvoiceNo" Title="INVOICE NO" />
+        </Columns>
+    </MudDataGrid>
+</MudContainer>
+
+
+@code {
+    enum DisplayMode { Debit, Credit }
+    MudDataGrid<DebtReportRow>? grid;
+    MudBlazor.DateRange frmtoDate = new(DateTime.Today.AddDays(-7), DateTime.Today);
+    bool _loading = false;
+    bool _processingExport = false;
+    string _quickFilter = string.Empty;
+    private string type = "Debit"; // mặc định là Debit
+    string selectedBranch = "All";
+    MudSelect<string>? loaiSelect;
+
+    List<ChargeModel> allCharges = new();
+    List<ChargeModel> visibleCharges = new();
+
+    List<DebtReportRow> rows = new();
+    // aggregated maps for recalculation
+    Dictionary<string, double> aggDebit = new();
+    Dictionary<string, double> aggCredit = new();
+
+    private Guid _searchCus;
+    List<M_Customer> Customers = new List<M_Customer>();
+    string cur = "VND";
+    string? usr;
+
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _loading = true;
+
+            Customers = await csv.GetList();
+            usr = (await asv.GetAuth()).User.Identity!.Name!;
+            allCharges = await supsv.GetListCharge();
+        }
+        finally { _loading = false; }
+    }
+
+    async Task Refresh(MudBlazor.DateRange range)
+    {
+        try
+        {
+            _loading = true;
+            rows.Clear();
+            if (_searchCus == Guid.Empty)
+            {
+                Snack("Select Customer", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (!await ssv.CheckPermission(usr!, "View", "Debt_Reports"))
+            {
+                Snack("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            rows = await shipsv.GetDebtReportRows(range, type, _searchCus, cur);
+
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+
+    // string FormatNumber(double? v) => v.HasValue ? string.Format(System.Globalization.CultureInfo.GetCultureInfo("en-US"), "{0:##,##0.##}", v.Value) : "";
+
+    void Snack(string msg, MudBlazor.Severity sev)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(msg, sev);
+    }
+
+    async Task Export()
+    {
+        try
+        {
+            _processingExport = true;
+            StateHasChanged();
+            await Task.Delay(1);
+
+            if (_searchCus == Guid.Empty)
+            {
+                Snack("Select Customer", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            string name = csv.GetCompanyNameFromID(_searchCus);
+            if (rows.Count == 0)
+            {
+                Snack("No Data", MudBlazor.Severity.Warning);
+                return;
+            }
+            var rs = await rsv.ExportDebtReportToExcelWithTemplateAsync(rows, name,cur);
+            Snack(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snack("Export error: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingExport = false;
+        }
+    }
+
+}

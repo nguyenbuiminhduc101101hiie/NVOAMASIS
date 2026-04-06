@@ -1,0 +1,300 @@
+﻿
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject Bieugianangha_Services Bgnhsv
+@inject CustomerService Cussv
+@inject DNTUServices DNTUSV
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+
+
+</MudStack>
+
+<MudDataGrid T="M_ChiTietBieuGiaLuuKho" Items="@Listdata.ToList()" Filterable="true" @ref="mudTable" Style="background-color: lightblue;"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)">
+    <Columns>
+        <HierarchyColumn T="M_ChiTietBieuGiaLuuKho" />
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x => CustomerName(x.BieuGiaLuuKhoID)" Title="@Localizer["BGLKNo"]" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.BieuGiaLuuKhoID" Label="@Localizer["BGLKNo"]">
+                    @foreach (var item in M_BieuGiaLuuKhos)
+                    {
+                        <MudSelectItem Value="@item.BieuGiaLuuKhoID">@item.Bieugialuukhono</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.DienGiai" Title="@Localizer["Diengiai"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.LoaiContainerHangHoa" Title="@Localizer["loaicont"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.DonViTinh" Title="@Localizer["Unit"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+           <PropertyColumn Property="x=>x.GiaTien" Title="@Localizer["sotien"]" Format="#,##0.##" Culture="@_en" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+        
+        <PropertyColumn Property="x=>x.TienTe" Title="@Localizer["Loaitiente"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.GhiChuHangHoa" Title="@Localizer["ghichu"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.UserUpdate" Title="@Localizer["UserUpdate"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Dateupdate" Title="@Localizer["Dateupdate"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+
+
+        <PropertyColumn Property="x=>x.Continued" Title="@Localizer["Continued"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+    </Columns>
+
+</MudDataGrid>
+
+@code {
+    List<M_ChiTietBieuGiaLuuKho> Listdata = new List<M_ChiTietBieuGiaLuuKho>();
+    [Parameter] public Models.M_BieuGiaLuuKho _BGLK_details { get; set; }
+    MudDataGrid<M_ChiTietBieuGiaLuuKho> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    M_ChiTietBieuGiaLuuKho detail;
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<M_Customer> filteredCarr = new List<M_Customer>();
+    private List<M_Customer> Cuss_Carr = new List<M_Customer>();
+    private List<Terminal_> Terminals = new List<Terminal_>();
+    private List<M_BieuGiaLuuKho> M_BieuGiaLuuKhos = new List<M_BieuGiaLuuKho>();
+    List<string> DNTUs = new List<string>();
+
+
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    protected async override Task OnInitializedAsync()
+    {
+        CustomerList = await Cussv.GetList();
+        M_BieuGiaLuuKhos =await Bgnhsv.GetList_BieuGiaLuuKho();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "ChiTietBieuGiaLuuKho").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+      
+        DNTUs = M_BieuGiaLuuKhos.Select(x => x.Bieugialuukhono).ToList();
+
+        Terminals = await gsv.GetList_Terminal();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Cuss_Carr = await lcsv.GetList_Customer_line();
+        await Refresh();
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = M_BieuGiaLuuKhos.FirstOrDefault(x => x.BieuGiaLuuKhoID == customerID);
+        return rs != null ? rs.Bieugialuukhono! : "";
+    }
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "ChiTietBieuGiaLuuKho"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = DNTUSV.GetListCTLK_by_idTU(_BGLK_details.BieuGiaLuuKhoID);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_ChiTietBieuGiaLuuKho> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_ChiTietBieuGiaLuuKho m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(M_ChiTietBieuGiaLuuKho item)
+    {
+        item.UserUpdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.ChiTietBieuGiaLuuKhoID != Guid.Empty ? await DNTUSV.UpdatechiTietBieuGiaLuuKho_Detail(item) : await DNTUSV.CreatechiTietBieuGiaLuuKho_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    int? index_no;
+
+    async Task DeleteItem(M_ChiTietBieuGiaLuuKho item)
+    {
+        if (item.Approve == true)
+        {
+            CallSnackBar("Biểu giá đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Delete", "ChiTietBieuGiaLuuKho"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await DNTUSV.DeletchiTietBieuGiaLuuKho_Detail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(M_ChiTietBieuGiaLuuKho sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_ChiTietBieuGiaLuuKho sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.So))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.So!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.So} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    private Func<M_ChiTietBieuGiaLuuKho, string> _cellStyleFunc => x =>
+       {
+       
+           return "color: #000000";
+
+
+       };
+
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+            Listdata.Clear();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "ChiTietBieuGiaLuuKho"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await DNTUSV.GetListchiTietBieuGiaLuuKhog_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+
+
+}

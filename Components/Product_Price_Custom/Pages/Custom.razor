@@ -1,0 +1,638 @@
+
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject Bieugianangha_Services Bgnhsv
+@inject CustomerService Cussv
+@inject DNTUServices DNTUSV
+@inject ProductPriceServices prsv;
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<PageTitle>@Localizer["Customs_clearance_price"] </PageTitle>
+<MudContainer Class="pa-2">
+<MudText Class="py-1" Typo="Typo.h6">@Localizer["Customs_clearance_price"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="py-2" Spacing="2">
+
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenCreateDialog(new Models.M_CustomCostRequest()))"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["new"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenEditDialog(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Edit">
+        @Localizer["edit"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@(() => OpenAddDetailDialog(detail))"
+               Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.CopyAll">
+        @Localizer["ADD_Detail"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenDuplicateDialog(detail))"
+               Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.CopyAll">
+        @Localizer["duplicate"]
+    </MudButton>
+
+
+</MudStack>
+
+<MudDataGrid T="M_CustomCostRequest" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-2" Bordered="true"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" RowClassFunc="@SelectedRowClassFunc"
+             RowClick="@RowClicked" EditDialogOptions="@options"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" Loading="_loading">
+    <Columns>
+        <HierarchyColumn T="M_CustomCostRequest"></HierarchyColumn>
+
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x=>x.MaRFQ" Title="@Localizer["MaRFQ"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Loaihang" Title="@Localizer["TenHang_gs"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Loaihinh" Title="@Localizer["Loaihinh"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Noidung" Title="@Localizer["noidung"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+         <PropertyColumn Property="x=>x.NgayYeuCau" Title="@Localizer["Ngayguiyeucau"]" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Trangthai" Title="@Localizer["status"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Userhandle" Title="@Localizer["Userhandle"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+
+        <TemplateColumn Title="@Localizer["Approve"]">
+            <CellTemplate>
+                <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                </MudCheckBox>
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x=>x.Continued" Title="@Localizer["Continued"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.Editable" Title="@Localizer["Editable"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+
+        <PropertyColumn Property="x=>x.UserUpdate" Title="@Localizer["Userupdate"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.DateUpdate" Title="@Localizer["Dateupdate"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+
+        <PropertyColumn Property="x=>x.CreateAt" Title="@Localizer["CreatedAt"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x=>x.UserCreate" Title="@Localizer["Nguoilap"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+
+    </Columns>
+
+    <ChildRowContent>
+
+                <Add_Detail_Customs__Index _ProductPrice_Customs_Details="context.Item" />
+
+    </ChildRowContent>
+
+
+    <PagerContent>
+        <MudDataGridPager T="M_CustomCostRequest" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+<div class="py-2">
+    <MudChart ChartType="ChartType.Bar"
+              ChartSeries="@Series"
+              XAxisLabels="@XAxisLabels"
+              Height="350px" Width="100%"
+              ChartOptions="options_chart" />
+</div>
+</MudContainer>
+
+@code {
+    List<M_CustomCostRequest> Listdata = new List<M_CustomCostRequest>();
+    MudDataGrid<M_CustomCostRequest> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    M_CustomCostRequest detail;
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<M_DNTT_Logistics> DNTTs = new List<M_DNTT_Logistics>();
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    private List<M_Product_Price_detail_ALL> M_details_Alls = new List<M_Product_Price_detail_ALL>();
+    private List<M_Product_Price_detail_ALL> List_detail = new List<M_Product_Price_detail_ALL>();
+    private List<ChargeModel> List_Charge = new List<ChargeModel>();
+
+    public List<ChartSeries> Series = new List<ChartSeries>
+    {
+        new ChartSeries() { Name = "Fee", Data = new double[] { } }
+    };
+    public string[] XAxisLabels = { };
+
+    protected async override Task OnInitializedAsync()
+    {
+        CustomerList = await Cussv.GetList();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "ProductPrice").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        DNTTs = DNTUSV.GetListDNTT_all();
+        List_Charge = await supsv.GetListCharge();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+
+        // await Refresh();
+    }
+
+    string CustomerName(Guid? iddntt)
+    {
+        var rs = DNTTs.FirstOrDefault(x => x.Id == iddntt);
+        return rs != null ? rs.So! : "";
+    }
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "Product_Price_Custom"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await prsv.GetProduct_Price_Customs();
+            await GetChart();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_CustomCostRequest> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_CustomCostRequest m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+
+    int? index_no;
+
+    async Task DeleteItem(M_CustomCostRequest item)
+    {
+        if (item.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Delete", "Product_Price_Custom"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await prsv.DeleteProductPrice_Customs(item);
+            await prsv.DeleteDetail_All(item.Id);
+            await HistoryLogService.LogAsync(usr, "Delete", "Product_Price_Custom", item.Id, item.MaRFQ, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(M_CustomCostRequest sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_CustomCostRequest sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.MaRFQ))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.MaRFQ!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.MaRFQ} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    private Func<M_CustomCostRequest, string> _cellStyleFunc => x =>
+       {
+
+           string style = "";
+
+           if (string.IsNullOrEmpty(x.Trangthai))
+               return "color: #000000";
+
+           var rs = M_Trangthais
+           .Where(t => (t.Noidung).Contains(x.Trangthai, StringComparison.InvariantCultureIgnoreCase)
+               && t.Tieude.Equals("ProductPrice", StringComparison.InvariantCultureIgnoreCase))
+           .Select(t => t.Mamau)
+           .FirstOrDefault();
+           return "color: " + rs;
+
+
+       };
+
+    private async Task OpenCreateDialog(Models.M_CustomCostRequest tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Product_Price_Custom"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<Add_Customs> { { x => x._ProductPrice_Customs_Details, tr }, { x => x.Status, "add" } };
+
+            var dialog = await DialogService.ShowAsync<Add_Customs>(tr.Id == Guid.Empty ? "Customs Procedure Cost Price Create" : "Customs Procedure Cost Price Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                var data = (M_CustomCostRequest)result.Data;
+                var rs = await prsv.UpdateCreateProduct_Customs(data);
+
+                await HistoryLogService.LogAsync(usr, "ADD", "Product_Price_Custom", data.Id, data.MaRFQ, data);
+
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                await HandleRefresh_create(data.Id);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+
+            if (Listdata != null)
+            {
+                Listdata.Clear();
+            }
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "Product_Price_Custom"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await prsv.GetProduct_price_Customs_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    private async Task OpenEditDialog(Models.M_CustomCostRequest tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "Product_Price_Custom"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_CustomCostRequest>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<Add_Customs> { { x => x._ProductPrice_Customs_Details, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<Add_Customs>(tr.Id == Guid.Empty ? "Customs Procedure Cost Price Edit" : "Customs Procedure Cost Price Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_CustomCostRequest)result.Data;
+                var rs = await prsv.UpdateCreateProduct_Customs(data);
+                await HistoryLogService.LogAsync(usr, "Update", "Product_Price_Custom", data.Id, data.MaRFQ, new { OldData = OldData, NewData = data });
+
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OpenAddDetailDialog(Models.M_CustomCostRequest tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.ExtraExtraLarge };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Product_Price_Custom"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<Add_Detail_Customs> { { x => x._ProductPrice_Customs_Details, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<Add_Detail_Customs>(tr.Id == Guid.Empty ? "Add Detail Customs Procedure Cost Price" : "Add Detail Customs Procedure Cost Price", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_CustomCostRequest)result.Data;
+                var rs = await prsv.UpdateCreateProduct_Customs(data);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OpenDuplicateDialog(Models.M_CustomCostRequest tr)
+    {
+        Guid id_temp = tr.Id;
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Product_Price_Custom"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_CustomCostRequest>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<Add_Customs> { { x => x._ProductPrice_Customs_Details, tr }, { x => x.Status, "Duplicate" } };
+
+            var dialog = await DialogService.ShowAsync<Add_Customs>(tr.Id == Guid.Empty ? "Customs Procedure Cost Price Create" : "Customs Procedure Cost Price Create", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_CustomCostRequest)result.Data;
+                var rs = await prsv.UpdateCreateProduct_Customs(data);
+                await HistoryLogService.LogAsync(usr, "Duplicate", "Product_Price_Custom", data.Id, data.MaRFQ, new { OldData = OldData, NewData = data });
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                if (rs[1] == "1")
+                {
+                    M_details_Alls = await prsv.GetListProductPriceDetails_ALL(id_temp);
+                    foreach(var item in M_details_Alls)
+                    {
+                        item.Id=Guid.Empty;
+                        item.RFQ_Id = tr.Id;
+                        item.Ngaybaogia = DateTime.Now;
+                        item.Createat = DateTime.Now.ToString();
+                        var UserName = asv.GetAuth().Result.User.Identity!.Name!;
+                        item.Usercreate = UserName;
+                        item.Userupdate = UserName;
+                        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+                        item.Continued=true;
+                        item.Editable=true;
+                        item.Approve = false;
+                        await prsv.UpdateCreateProduct_Detail_truck(item);
+                    }
+                }
+
+                await HandleRefresh_create(data.Id);
+
+             
+
+
+                
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OnApproveCheckboxWrapper(M_CustomCostRequest item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "Product_Price_Custom"))
+        {
+            var rs = await prsv.UpdateCreateProduct_Customs(item);
+            MudBlazor.Severity severity;
+            if (rs[1] == "1")
+                severity = MudBlazor.Severity.Success;
+            else
+                severity = MudBlazor.Severity.Error; 
+
+            CallSnackBar(rs[0], severity);
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private ChartOptions options_chart = new ChartOptions
+        {
+            YAxisFormat = "#,##0"
+        };
+
+    public async Task GetChart()
+    {
+        List_detail = await prsv.GetProduct_Price_Detail_ByType("Customs");
+        if (List_detail.Count == 0)
+        {
+            CallSnackBar("No Data Chart", MudBlazor.Severity.Warning);
+            return;
+        }
+        List_Charge = await supsv.GetListCharge();
+        var xLabels = new[]
+                {
+                    "",
+                    "",
+                    ""
+                };
+        // Nhóm theo Itemid, lấy tên item từ List_Charge
+        var chartData = List_detail
+             .GroupBy(x => x.Itemid)
+             .Select(g =>
+             {
+                 var itemName = List_Charge.FirstOrDefault(c => c.CHARGE_ID == g.Key)?.CHARGE ?? $"Unknown ({g.Key})";
+
+                 double totalAmount = g.Sum(x => x.Cur == "USD"
+                     ? Convert.ToDouble((x.Thanhtien ?? 0) * (x.Tigia ?? 1))
+                     : Convert.ToDouble(x.Thanhtien ?? 0));
+
+                 return new
+                 {
+                     ItemName = itemName,
+                     TotalAmount = totalAmount
+                 };
+             }).ToList();
+
+        // Trục X là tên từng item
+        XAxisLabels = chartData.Select(x => x.ItemName).ToArray();
+
+        // Series có 1 ChartSeries với data là tổng amount theo item, đúng thứ tự với XAxisLabels
+        Series = chartData.Select(x => new ChartSeries
+            {
+                Name = x.ItemName,           // Tên cột là tên item
+                Data = new double[] { 0, x.TotalAmount, 0 }  // 1 điểm dữ liệu (1 cột)
+            }).ToList();
+
+        // Trục X có thể là tên tháng, hoặc 1 giá trị dummy nếu bạn chỉ có 1 điểm cho mỗi series
+        // Nếu biểu đồ dạng cột theo item, bạn có thể để XAxisLabels = new string[] { "" };
+        XAxisLabels = new string[] { "" };
+
+    }
+  
+}

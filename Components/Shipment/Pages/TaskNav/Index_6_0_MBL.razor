@@ -1,0 +1,646 @@
+@inject ReportServices rsv
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@using System.Globalization﻿
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<MudTabs SliderColor="Color.Primary">
+    <MudTabPanel Text="@($"MBL [{(Mbldetail != null ? Mbldetail.Mbl : null)}]")" Class="custom-tab">
+
+        <MudDataGrid T="M_MBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-mbl-bg"
+        FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true"
+        FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+        ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc" Bordered="true"
+        RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" EditDialogOptions="optionsdialog"
+        ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false">
+            <Columns>
+                <HierarchyColumn T="M_MBL" ButtonDisabledFunc="@(x=>x.Approve == true)" />
+                <TemplateColumn CellClass="d-flex justify-end" Filterable="false" ShowColumnOptions="false" Sortable="false">
+                    <HeaderTemplate>
+                        <MudStack Row="true" Justify="Justify.FlexStart" Spacing="2">
+                            <!-- Nút Reload -->
+                            <MudTooltip Text="@Localizer["Reload"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="Refresh"
+                                Variant="Variant.Filled"
+                                Class="btn-compact" />
+                            </MudTooltip>
+
+                            <!-- Nút Add -->
+                            <MudTooltip Text="@Localizer["New"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.Add"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="AddItem" 
+                                Variant="Variant.Filled"
+                                Class="btn-compact" />
+                            </MudTooltip>
+                            <MudTooltip Text="@Localizer["HBL"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.NavigateNext"
+                                Color="Color.Success"
+                                Size="Size.Small" 
+                                Variant="Variant.Filled"
+                                OnClick="@(() => OpenDialog())"
+                                Class="btn-compact" />
+                            </MudTooltip>
+                            <MudTooltip Text="@Localizer["EManifest"]">
+                                <MudIconButton OnClick="@(() => ExportManifestReport())"
+                                               Disabled="_processingUploadManifest"
+                                               Size="Size.Small"
+                                               Color="Color.Tertiary"
+                                               Variant="Variant.Filled"
+                                               Icon="@Icons.Material.Filled.ImportExport"
+                                               Class="btn-compact" />
+                            </MudTooltip>
+                        </MudStack>
+                    </HeaderTemplate>
+                    <CellTemplate>
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Filled.EditCalendar" OnClick="@(()=>OpenImportDialog(context.Item))"  />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => TryStartEditing(context.Item))" />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))"  />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.Mbl" Title="@Localizer["MBL"]" Required="false" >
+               
+                </PropertyColumn>
+                <PropertyColumn Property="x=>x.Approve" Title="@Localizer["Approve"]" IsEditable="false" Required="false">
+                    <CellTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
+                    </CellTemplate>
+                    <EditTemplate>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.dathudebit" Title="@Localizer["Debit Received"]" Required="false" Filterable="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.dathudebit" Label="@Localizer["Debit Received"]" />
+                    </EditTemplate>
+                    <CellTemplate>
+                        <MudCheckBox Value="context.Item.dathudebit.HasValue ? context.Item.dathudebit.Value : false" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.dachicredit" Title="@Localizer["Spent Credit"]" Required="false" Filterable="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.dachicredit" Label="@Localizer["Spent Credit"]" />
+                    </EditTemplate>
+                    <CellTemplate>
+                        <MudCheckBox Value="context.Item.dachicredit.HasValue ? context.Item.dachicredit.Value : false" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.dathuchidaily" Title="@Localizer["Received & Spent Agent"]" Required="false" Filterable="false">
+                    <EditTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.dathuchidaily" Label="@Localizer["Received & Spent Agent"]" />
+                    </EditTemplate>
+                    <CellTemplate>
+                        <MudCheckBox Value="context.Item.dathuchidaily.HasValue ? context.Item.dathuchidaily.Value : false" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => formatDate(x.ETA)" Title="@Localizer["ETA"]">
+                    <EditTemplate>
+                        <MudDatePicker @bind-Date="context.Item.ETA" @bind-Date:after="@(()=>SetActualdeldate(context.Item))" Label="@Localizer["ETA"]" DateFormat="dd/MMM/yyyy" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => formatDate(x.ETD)" Title="@Localizer["ETD"]">
+                    <EditTemplate>
+                        <MudDatePicker @bind-Date="context.Item.ETD" @bind-Date:after="@(()=>SetActualdeldate(context.Item))" Label="@Localizer["ETD"]" DateFormat="dd/MMM/yyyy" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => formatDate(x.ActualDelDate)" Title="@Localizer["ActualDel Date"]">
+                    <EditTemplate>
+                        <MudDatePicker @bind-Date="context.Item.ActualDelDate" Label="@Localizer["ActualDel Date"]" DateFormat="dd/MMM/yyyy" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.statusMBL" Title="@Localizer["Status"]" Required="false">
+                    <EditTemplate>
+                        <MudSelect @bind-Value="context.Item.statusMBL" Label="@Localizer["Status"]">
+                            @foreach (var item in trangthais)
+                            {
+                                <MudSelectItem Value="item">@item</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => CusidtoCusCode(x.CustomerID)" Title="@Localizer["Main Customer"]" Required CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.CustomerID" Label="@Localizer["Main Customer"]" Required
+                        SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode"/>
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.Shipper" Title="@Localizer["Shipper"]" Required="false" CellClass="no-wrap-cell" Hidden="true">
+                    <EditTemplate>
+
+                        <MudAutocomplete T="string" @bind-Value="@search_shipper" Label="@Localizer["Shipper"]"  AutoFocus="false"
+                        SearchFunc="SearchShipper" MaxItems="50" />
+                        <MudStack Row>
+                            <MudItem>
+                                <MudButton Class="pl-4 pa-10" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary" OnClick="() => Get_linkshipper(context.Item)">>>></MudButton>
+                            </MudItem>
+
+                            <MudTextField @bind-Value="context.Item.Shipper" Label="@Localizer["Shipper"]" Lines="4" Required />
+                        </MudStack>
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.Consignee" Title="@Localizer["Consignee"]" Required="false" CellClass="no-wrap-cell" Hidden="true">
+                    <EditTemplate>
+                        <MudAutocomplete T="string" @bind-Value="search_Consignee" Label="@Localizer["Consignee"]"
+                        SearchFunc="SearchConsignee" AutoFocus="false" MaxItems="50" />
+                        <MudStack Row>
+                            <MudItem>
+                                <MudButton Class="pl-4 pa-10" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary" OnClick="() => Get_linkConsignee(context.Item)">>>></MudButton>
+                            </MudItem>
+
+                            <MudTextField @bind-Value="context.Item.Consignee" Label="@Localizer["Consignee"]" Lines="4" Required />
+                        </MudStack>
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.Notify1" Title="@Localizer["Notify"]" Required="false" CellClass="no-wrap-cell" Hidden="true">
+                    <EditTemplate>
+
+                        <MudAutocomplete T="string" @bind-Value="@search_Notify" Label="@Localizer["Notify"]" AutoFocus="false"
+                        SearchFunc="SearchNotify" MaxItems="50" />
+                        <MudStack Row>
+                            <MudItem>
+                                <MudButton Class="pl-4 pa-10" Style="background-color: #007BFF; color: white;" Size="Size.Small" Color="Color.Primary" OnClick="() => Get_linkNotify(context.Item)">>>></MudButton>
+                            </MudItem>
+
+                            <MudTextField @bind-Value="context.Item.Notify1" Label="@Localizer["Notify"]" Lines="4" Required />
+                        </MudStack>
+                    </EditTemplate>
+                </PropertyColumn>
+            </Columns>
+            <ChildRowContent>
+                <Index_6_0_HBL MBLDetail="context.Item" Customers="Customers"/>
+            </ChildRowContent>
+        </MudDataGrid>
+    </MudTabPanel>
+    <MudTabPanel Text="Container" Class="custom-tab" Disabled="@(JobDetail.Loai == "AI")">
+        <ContainerTab MBLDetail="@(Mbldetail ==  null ? new M_MBL() : Mbldetail)" />
+    </MudTabPanel>
+    <MudTabPanel Text="Debit" Class="custom-tab" Disabled>
+        <DebitTab Type="MBL" MBLDetail="@(Mbldetail ==  null ? new M_MBL() : Mbldetail)" Customers="@Customers" isDuty="false"/>
+    </MudTabPanel>
+    <MudTabPanel Text="Credit" Class="custom-tab" Disabled>
+        <CreditTab Type="MBL" MBLDetail="@(Mbldetail ==  null ? new M_MBL() : Mbldetail)" Customers="@Customers" isCommission="false"/>
+    </MudTabPanel>
+</MudTabs>
+@code {
+    [Parameter] public M_Job? JobDetail { get; set; } = default!;
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    M_MBL detail_mbl;
+    string search_shipper = "";
+    string search_Consignee = "";
+    string search_Notify = "";
+
+    [Parameter] public List<M_Customer>? Customers { get; set; } = default!;
+
+    private void Submit()
+    {
+        MudDialog!.Close();
+    }
+
+    void Cancel() => MudDialog!.Cancel();
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    DialogOptions optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraLarge,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true,
+        };
+    string usr;
+    List<PortModel> Ports = new List<PortModel>();
+    List<M_VesselSpace> VesselSpaces = new List<M_VesselSpace>();
+    List<string> Shippers = new List<string>();
+    List<string> Consignees = new List<string>();
+    List<string> Notify1 = new List<string>();
+    List<string> Voys = new List<string>();
+
+    AuthUser userdetail;
+    List<string> trangthais = new List<string>();
+    List<string> SaleNames = new List<string>();
+    string type = "";
+    string salecode_injob = "";
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            var tts = await supsv.GetListTrangThai();
+            trangthais = tts.Where(x => x.Tieude == "MBL").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+            userdetail = asv.GetUserDetail();
+            VesselSpaces = await supsv.GetListVesselSpace();
+            Ports = await supsv.GetListPort();
+            SaleNames = await supsv.GetListSale();
+            Shippers = Customers.Select(x => x.EnglishName + "\n" + x.addresstiengviet + "\n" + x.Tel + "\n" + x.Fax).Distinct().ToList();
+            Consignees = Customers.Select(x => x.EnglishName + "\n" + x.addresstiengviet + "\n" + x.Tel + "\n" + x.Fax).Distinct().ToList();
+            Voys = VesselSpaces.Select(x => x.Voy).ToList()!;
+            type = JobDetail!.Loai!; // Air Sea Truck HQ
+            salecode_injob = await shipsv.GetsaleinJob_byJobId(JobDetail.JobID);
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            await Refresh();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Somethings went wrong while render!, " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    bool _loading = false;
+    List<M_MBL> Listdata = new List<M_MBL>();
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            Mbldetail = null!;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            Listdata = await shipsv.GetListMBL(JobDetail!.JobID);
+            if (Listdata.Count > 0)
+                Mbldetail = Listdata[0];
+        }
+        finally
+        {
+            _loading = false;
+        }
+        await InvokeAsync(StateHasChanged);
+        if (mudTable != null && Listdata.Count > 0)
+            await mudTable.SetSelectedItemAsync(Listdata[0]);
+    }
+    MudDataGrid<M_MBL> mudTable;
+    async Task AddItem()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "MBL"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_MBL
+        {
+            Jobid = JobDetail!.JobID,
+            SaleName = salecode_injob
+        };
+        var addTitle = $"{Localizer["Add"]} MBL";
+        await ShowMblEditDialogAsync(item, addTitle, checkApproved: false);
+    }
+
+    async Task DeleteItem(M_MBL item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "MBL"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (item.Approve.HasValue && item.Approve.Value)
+        {
+            CallSnackBar("This MBL is approved!", MudBlazor.Severity.Info);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await shipsv.DeleteMBLDetail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    async Task CommittedItem(M_MBL item)
+    {
+        item.Shipper = (item.Shipper ?? string.Empty).Replace("\r\n", "\n");
+        item.Jobid = JobDetail!.JobID;
+        item.DateUpdate = DateTime.Now.ToString("dd/MMM/yyyy", new CultureInfo("en-US"));
+        var rs = item.MblID != Guid.Empty ? await shipsv.UpdateMBLDetail(item, detail_mbl) : await shipsv.CreateMBLDetail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_MBL Sis, int rowNumber)
+    {
+        if (Sis.Approve.HasValue && Sis.Approve.Value)
+        {
+            return "custom-disable"; // Gán class "disable" nếu Approve = true
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            return "selected"; // Giữ lớp "selected" cho dòng đã chọn
+        }
+        else
+        {
+            return string.Empty;
+        }
+        // if (selectedRowNumber == rowNumber)
+        // {
+        //     selectedRowNumber = -1;
+        //     return string.Empty;
+        // }
+        // else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        // {
+        //     selectedRowNumber = rowNumber;
+        //     return "selected";
+        // }
+        // else
+        // {
+        //     return string.Empty;
+        // }
+    }
+    M_MBL Mbldetail = new M_MBL();
+    void RowClicked(DataGridRowClickEventArgs<M_MBL> args)
+    {
+        if (args.Item.Approve.HasValue && args.Item.Approve.Value)
+            CallSnackBar("This HBL is approved!", MudBlazor.Severity.Info);
+        else Mbldetail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_MBL> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private async Task OpenDialog()
+    {
+        if (Mbldetail == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.Medium,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true
+            };
+        var parameters = new DialogParameters<DetailDialogHBL_6_0> { { x => x.detail, Mbldetail}, { x=>x.Customers, Customers} };
+        var dialog = await DialogService.ShowAsync<DetailDialogHBL_6_0>($"HBL Job NO: {JobDetail!.JobNo} MBL NO: {Mbldetail.Mbl}", parameters, optionsdialog);
+    }
+    private async Task OpenImportDialog(M_MBL item)
+    {
+        if (item.Approve.HasValue && item.Approve.Value)
+        {
+            CallSnackBar("This HBL is approved!", MudBlazor.Severity.Info);
+            return;
+        }
+        detail_mbl = JsonSerializer.Deserialize<M_MBL>(JsonSerializer.Serialize(item));
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.ExtraLarge,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true,
+            };
+        if (type == "SI" || type == "SE")
+        {
+            var parameters = new DialogParameters<Importbill> { { x => x.MBLDetail, item } };
+            var dialog = await DialogService.ShowAsync<Importbill>("Master Bill", parameters, optionsdialog);
+            var result = await dialog.Result;
+
+            if (!result.Canceled)
+            {
+                var data = (M_MBL)result.Data;
+                data.UserUpdate = usr;
+                var rs = await shipsv.UpdateMBLDetail(data, detail_mbl);
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                // await HandleRefresh();
+            }
+        }
+        else if (type == "AI" || type == "AE")
+        {
+            var parameters = new DialogParameters<FormMBLAir> { { x => x.MBLdetail, item } };
+            var dialog = await DialogService.ShowAsync<FormMBLAir>("Master Bill Air", parameters, optionsdialog);
+            var result = await dialog.Result;
+
+            if (!result.Canceled)
+            {
+                var data = (M_MBL)result.Data;
+                data.UserUpdate = usr;
+                var rs = await shipsv.UpdateMBLDetail(data, detail_mbl);
+                CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                // await HandleRefresh();
+            }
+        }
+        else
+        {
+            CallSnackBar("Chưa có form edit cho loại Job này!", MudBlazor.Severity.Warning);
+        }
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+
+    string formatDate(DateTime? date)
+    {
+        if (date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MM/yyyy");
+    }
+
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x=>x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.COMPANY + x.shortname).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x=>x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> SearchConsignee(string? text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Consignees;
+            }
+            // MBL.Porname = mst_Consignee;
+            return Consignees.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string>> SearchShipper(string? text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Shippers;
+            }
+            // MBL.Porname = mst_Consignee;
+            return Shippers.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<string>> SearchNotify(string? text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Consignees;
+            }
+            // MBL.Porname = mst_Consignee;
+            return Consignees.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task Get_linkshipper(M_MBL item)
+    {
+        item.Shipper = search_shipper;
+    }
+    private async Task Get_linkConsignee(M_MBL item)
+    {
+        item.Consignee = search_Consignee;
+    }
+
+    private async Task Get_linkNotify(M_MBL item)
+    {
+        item.Notify1 = search_Notify;
+    }
+    async Task SetActualdeldate(M_MBL item)
+    {
+        var loaihang = JobDetail.Loai;
+        //e là xuất, k là nhập
+        item.ActualDelDate = loaihang.Contains("E") ? item.ETA : item.ETD;
+    }
+    async Task UpdatebyCheckboxClick(M_MBL item)
+    {
+        if (!await ssv.CheckPermission(usr, "Approve", "MBL"))
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        item.DateUpdate = DateTime.Now.ToString("dd/MMM/yyyy", new CultureInfo("en-US"));
+        item.UserUpdate = usr;
+        var rs = await shipsv.UpdateMBLDetail_approve(item);
+        if (!rs.Flag) CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+    async Task ShowMblEditDialogAsync(M_MBL sourceItem, string title, bool checkApproved = true)
+    {
+        if (checkApproved && sourceItem.Approve.HasValue && sourceItem.Approve.Value)
+        {
+            CallSnackBar("This MBL is approved!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        // Use copies so Cancel doesn't mutate the page's data.
+        detail_mbl = sourceItem.DeepCopy();
+        var editModel = sourceItem.DeepCopy();
+
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraLarge,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+
+        var dialog = await DialogService.ShowAsync<DialogEditMBL_6_0>(
+            title,
+            new DialogParameters<DialogEditMBL_6_0>
+            {
+                { x => x.Item, editModel },
+                { x => x.FormTitle, title },
+                { x => x.Customers, Customers ?? new List<M_Customer>() },
+                { x => x.TrangThai, trangthais ?? new List<string>() },
+                { x => x.SetActualdeldateAsync, SetActualdeldate },
+                { x => x.UpdatebyCheckboxClickAsync, UpdatebyCheckboxClick }
+            },
+            optionsdialog);
+
+        var result = await dialog.Result;
+        if (result.Canceled)
+            return;
+
+        var updated = (M_MBL)(result.Data ?? editModel);
+        await CommittedItem(updated);
+    }
+
+    async Task TryStartEditing(M_MBL item)
+    {
+        var editTitle = $"{Localizer["Edit"]} MBL";
+        await ShowMblEditDialogAsync(item, editTitle);
+    }
+
+    private bool _processingUploadManifest = false;
+    async Task ExportManifestReport()
+    {
+        try
+        {
+            if (Mbldetail == null)
+            {
+                CallSnackBar("you must select 1 MBL.", MudBlazor.Severity.Warning);
+                return;
+            }
+            _processingUploadManifest = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            var rs = await rsv.Emanifest(Mbldetail);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUploadManifest = false;
+        }
+    }
+}

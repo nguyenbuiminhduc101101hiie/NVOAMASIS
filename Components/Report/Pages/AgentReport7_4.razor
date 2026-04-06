@@ -1,0 +1,125 @@
+@attribute [Authorize]
+@using MudBlazor
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
+
+@inject ShipmentService shipsv
+@inject ReportServices rsv
+@inject AccountService asv
+@inject SharedServices ssv
+@inject ISnackbar Snackbar
+
+<PageTitle>7.4 Agent Report</PageTitle>
+
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="AgentReportRow" Items="@Rows" @ref="grid" Dense Bordered Hover FilterMode="DataGridFilterMode.Simple"
+                 FixedHeader Height="calc(100vh - 42vh)" Loading="_loading">
+        <ToolBarContent>
+            <MudStack Row Spacing="3" AlignItems="AlignItems.Center">
+                <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+                <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Primary" OnClick="() => Refresh(frmtoDate)" />
+                <MudButton Disabled="_processingExport" OnClick="@Export" StartIcon="@Icons.Material.Filled.Download" Color="Color.Tertiary" Variant="Variant.Filled" Size="Size.Small">
+                    @if (_processingExport)
+                    {
+                        <MudProgressCircular Indeterminate Size="Size.Small" Class="ms-n1" />
+                        <MudText Class="ms-2">Processing</MudText>
+                    }
+                    else
+                    {
+                        <MudText>Export 7.4</MudText>
+                    }
+                </MudButton>
+            </MudStack>
+            <MudSpacer />
+        </ToolBarContent>
+        <Columns>
+            <TemplateColumn Title="No.">
+                <CellTemplate Context="ctx">@ctx.Item.No</CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.JobFileNo" Title="JOB FILE NO" />
+            <PropertyColumn Property="x => x.POL" Title="POL" />
+            <PropertyColumn Property="x => x.POD" Title="POD" />
+            <PropertyColumn Property="x => x.Agentname" Title="AGENT Name" />
+            <PropertyColumn Property="x => x.Carrier" Title="CARRIER" />
+            <PropertyColumn Property="x => x.HBL" Title="HB/L" />
+            <PropertyColumn Property="x => x.MBL" Title="MB/L" />
+            <PropertyColumn Property="x => x.Amount" Title="AMOUNT" />
+            <PropertyColumn Property="x => x.Client" Title="CLIENT" />
+        </Columns>
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+    bool _loading;
+    bool _processingExport;
+    List<AgentReportRow> Rows = new();
+    MudDataGrid<AgentReportRow>? grid;
+    string? usr;
+
+    DateRange frmtoDate = new(
+        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1),
+        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
+
+    protected override async Task OnInitializedAsync()
+    {
+        usr = (await asv.GetAuth()).User.Identity!.Name!;
+        await Refresh(frmtoDate);
+    }
+
+    void Snack(string msg, MudBlazor.Severity sev)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(msg, sev);
+    }
+
+    async Task Refresh(DateRange range)
+    {
+        try
+        {
+            if (_loading) return;
+            _loading = true;
+            Rows.Clear();
+            if (!await ssv.CheckPermission(usr!, "View", "Agent_Reports"))
+            {
+                Snack("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Rows = await shipsv.GetAgentReportRows(range);
+        }
+        catch (Exception ex)
+        {
+            Snack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    async Task Export()
+    {
+        try
+        {
+            _processingExport = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if(Rows.Count == 0)
+            {
+                Snack("No Data", MudBlazor.Severity.Warning);
+                return;
+            }
+            var rs = await rsv.AgentReportExportExcel(Rows, frmtoDate);
+            Snack(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snack("Export error: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingExport = false;
+        }
+    }
+}

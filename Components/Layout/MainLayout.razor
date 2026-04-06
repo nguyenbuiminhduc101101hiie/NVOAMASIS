@@ -1,0 +1,609 @@
+@inherits LayoutComponentBase
+@inject IStringLocalizer<SharedResource> Localizer
+@inject AccountService asv
+@inject FontService FontSizeService
+@inject IJSRuntime JS
+@inject CustomAuthenticationStateProvider AuthenticationStateProvider
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@inject NotificationService _notificationService
+@inject AttendanceService AttendanceService
+@inject SharedServices SharedService
+@using Microsoft.AspNetCore.SignalR.Client
+@inject SingletonSerivce singsv
+@inject HttpClient Http
+@inject IDialogService DialogService
+@inject IHttpContextAccessor HttpContextAccessor
+
+<MudThemeProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+<style>
+    .mud-appbar {
+    z-index: 1300 !important;
+    }
+    
+</style>
+
+<style>
+    .appbar-custom {
+    }
+    .mud-drawer-content {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .mud-drawer-content .nav-menu-full-height {
+        height: 100%;
+        min-height: 0;
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+</style>
+<CascadingValue Value="this">
+
+    <MudLayout>
+        <MudAppBar Elevation="1" Class="appbar-custom" Style="@($"background-color: {mainLayoutBackgroundColor} !important;")">
+
+            <MudIconButton Icon=@Icons.Material.Filled.Menu Color=Color.Inherit Edge=Edge.Start OnClick=DrawerToggle />
+            @* <MudImage Src="Logo.png" Alt="LMS" Height="50" ObjectFit="ObjectFit.ScaleDown" Class="rounded-lg" /> *@
+            <MudText Typo=Typo.h5 Class="ml-3">LMS - NVOAMASIS</MudText>
+            <MudSpacer />
+
+            <div class="mud-toolbar mud-toolbar-dense">
+                <div class="flex-grow-1"></div>
+                <AuthorizeView Context="auth">
+                    <NotAuthorized>
+                        <MudNavLink Href="/Account/Login" Icon=@Icons.Material.Filled.Login IconColor=Color.Success>@Localizer["Login"]</MudNavLink>
+                    </NotAuthorized>
+                    <Authorized>
+                        @*  <Message_index OnTabRequest="@((t) => OpenTab(t.Key,t.Title,t.Content))" /> *@
+
+                        <MudBadge Content="@_unreadEmailCount"
+                        Color="Color.Error"
+                        Visible="_unreadEmailCount > 0"
+                        Style="position: relative; top: -1px; right: -8px; margin-right: 40px;">
+                            <MudIconButton Icon="@Icons.Material.Filled.Email"
+                            Color="Color.Inherit"
+                            @onclick="TogglePopover" Style="padding:0.5px" />
+
+                            <MudPopover Open="@_open"
+                            AnchorOrigin="Origin.BottomCenter"
+                            TransformOrigin="Origin.TopCenter"
+                            RelativeWidth="true"
+                            Elevation="4"
+                            Class="pa-2"
+                            Style="min-width: 300px; max-height: 500px; overflow-y: auto; z-index: 1300;">
+                                <MudText Typo="Typo.h6" Class="mb-2">Notifications</MudText>
+                                @if (listitem?.Any() == true)
+                                {
+                                    <MudListItem Class="mt-2" Style="cursor: pointer;" @onclick="ViewAllMessages">
+                                        <MudText Color="Color.Primary" Typo="Typo.body2" Class="text-center w-100">View all messages</MudText>
+                                    </MudListItem>
+
+                                    <MudListItem Class="mt-2" Style="cursor: pointer;" @onclick="MarkAllAsRead">
+                                        <MudText Color="Color.Secondary" Typo="Typo.body2" Class="text-center w-100">Read All</MudText>
+                                    </MudListItem>
+
+                                    @foreach (var note in listitem)
+                                    {
+                                        <MudListItem @onclick="@(() => UpdateNotification(note))"
+                                                     Style="@(note.IsRead == false ? "background-color: #e0f7fa;" : null)">
+                                            <MudText Typo="Typo.subtitle2">@note.Message</MudText>
+                                            <MudText Typo="Typo.caption">@note.CreatedAt.ToString("MM/dd/yyyy")</MudText>
+                                        </MudListItem>
+                                        <MudDivider />
+
+                                    }
+
+
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body2">No notifications available.</MudText>
+                                    <MudListItem Class="mt-2" Style="cursor: pointer;" @onclick="ViewAllMessages">
+                                        <MudText Color="Color.Primary" Typo="Typo.body2" Class="text-center w-100">View all messages</MudText>
+                                    </MudListItem>
+                                }
+                            </MudPopover>
+                        </MudBadge>
+
+                        @* OutRequest Popup trigger (non-admin) *@
+                        @if (!IsAdmin)
+                        {
+                            @* <MudIconButton Icon="@Icons.Material.Filled.AirportShuttle" Color="Color.Inherit" @onclick="OpenOutRequestTab" Style="margin-right:20px" /> *@
+                            @if (_canViewLeaveRequests)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.EventNote" Color="Color.Inherit" @onclick="OpenLeaveRequestTab" Style="margin-right:20px" />
+                            }
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_checkedInToday" OnClick="CheckIn" Style="margin-right:20px; min-width:140px">
+                                @(_checkedInToday ? Localizer["Đã chấm"] : Localizer["Chấm công"])
+                            </MudButton>
+                        }
+                        else
+                        {
+                            @* <MudIconButton Icon="@Icons.Material.Filled.AssignmentTurnedIn" Color="Color.Inherit" @onclick="OpenAdminOutRequest" Style="margin-right:20px" /> *@
+                            @if (_canApproveLeaveRequests)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.AssignmentLate" Color="Color.Inherit" @onclick="OpenAdminLeaveRequest" Style="margin-right:20px" />
+                            }
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_checkedInToday" OnClick="CheckIn" Style="margin-right:20px; min-width:140px">
+                                @(_checkedInToday ? Localizer["Đã chấm"] : Localizer["Chấm công"])
+                            </MudButton>
+                        }
+
+
+                        <MudChip Icon=@Icons.Material.Filled.Person Color=Color.Secondary IconColor=Color.Inherit>
+                            @(auth.User.Identity?.Name) - @(user.Department)
+                        </MudChip>
+                        <MudNavLink Href="/Account/Logout" Icon=@Icons.Material.Filled.Logout IconColor=Color.Success>
+                            @Localizer["Logout"]
+                        </MudNavLink>
+
+                        <MudIconButton Icon="@Icons.Material.Filled.Palette" Color="Color.Inherit" @onclick="OpenThemeSelector" 
+                                      Title="@Localizer["ThemeSettings"]" Style="margin-right: 10px;" />
+                        <MudIconButton Icon="@Icons.Material.Filled.TableChart" Color="Color.Inherit" @onclick="OpenShipmentGridColorSelector"
+                                      Title="Shipment grid colors" Style="margin-right: 10px;" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Translate" Color="Color.Inherit" @onclick="OpenLocalizationEditor" 
+                                      Title="@Localizer["EditLanguage"]" Style="margin-right: 10px;" />
+                        <CultureSelector />
+                    </Authorized>
+                </AuthorizeView>
+            </div>
+        </MudAppBar>
+        <MudDrawer Open=_drawerOpen ClipMode=DrawerClipMode.Always Elevation=2
+        Variant="DrawerVariant.Responsive"
+        Breakpoint="Breakpoint.Md" DisableOverlay>
+            <NavMenu OnTabRequest="@((t) => OpenTab(t.Key,t.Title,t.Content))" @ref="_navMenuRef" />
+        </MudDrawer>
+        <MudMainContent>
+            @* @Body *@
+            <DynamicTabs @ref="_tabs" />
+            <div class="mud-container mud-container-maxwidth-lg" style="position:fixed; bottom:0; width:100%">
+                <div class="mud-toolbar mud-toolbar-dense">
+                    <MudText Typo="Typo.caption">Copyright © @DateTime.Now.Year LMS.</MudText>
+
+                </div>
+            </div>
+            <div class="mud-container mud-container-maxwidth-lg">
+                <div class="mud-toolbar mud-toolbar-dense">
+                </div>
+            </div>
+
+        </MudMainContent>
+    </MudLayout>
+
+    @* AI Assistant - only visible when authenticated *@
+    <AuthorizeView>
+        <Authorized>
+            <NVOAMASIS.Components.ChatGPT.Pages.ChatGPTPanel />
+        </Authorized>
+    </AuthorizeView>
+</CascadingValue>
+
+<div id="blazor-error-ui" style="background-color:black; color:white; text-align: right;">
+    An unhandled error has occurred,
+    <a href="" class="reload"> Reload please!</a>
+    <a class="dismiss">🗙</a>
+</div>
+
+@code {
+    bool _drawerOpen = true;
+    AuthUser user = new AuthUser();
+    void DrawerToggle() => _drawerOpen = !_drawerOpen;
+    private int _unreadEmailCount = 0;
+    private bool _checkedInToday = false;
+    // Removed popup approach; using tab instead
+    //private bool _openOutRequest = false;
+    // Xác định admin dựa trên Department
+    private bool IsAdmin => string.Equals(user?.Department, "ADMIN", StringComparison.OrdinalIgnoreCase);
+    private Timer? _checkInTimer;
+
+    // Permission variables
+    private bool _canViewLeaveRequests = false;
+    private bool _canApproveLeaveRequests = false;
+
+    // private ISnackbar? _checkInReminder;
+    private MudBlazor.Snackbar? _checkInReminder;
+    private bool _disposed;
+    private string mainLayoutBackgroundColor = ThemeDefaults.MainLayoutBackgroundColor;
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = asv.GetUserDetail() ?? new();
+        if (user != null && user.UsrId != Guid.Empty)
+        {
+            _unreadEmailCount = await _notificationService.GetUnreadEmailCountAsync(user.UsrId);
+            
+            // Check permissions
+            if (!string.IsNullOrEmpty(user.Usr))
+            {
+                _canViewLeaveRequests = await SharedService.CheckPermission(user.Usr, "view", "LeaveRequests");
+                _canApproveLeaveRequests = await SharedService.CheckPermission(user.Usr, "approve", "LeaveRequests");
+            }
+        }
+
+        await LoadThemePreference();
+        await StartHub();
+        // await LoadCheckInStatus();
+        ScheduleNextCheck();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        try
+        {
+            // Apply saved Shipment grid colors globally (CSS variables + localStorage).
+            await JS.InvokeVoidAsync("nvoccLoadShipmentColorSettings");
+        }
+        catch
+        {
+            // ignore JS errors
+        }
+    }
+
+    private async Task LoadThemePreference()
+    {
+        try
+        {
+            var url = Navigation.ToAbsoluteUri("api/theme/get");
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            
+            // Add cookies from HttpContext to request
+            if (HttpContextAccessor.HttpContext != null)
+            {
+                var cookies = HttpContextAccessor.HttpContext.Request.Cookies;
+                var cookieHeader = string.Join("; ", cookies.Select(c => $"{c.Key}={c.Value}"));
+                if (!string.IsNullOrEmpty(cookieHeader))
+                {
+                    request.Headers.Add("Cookie", cookieHeader);
+                }
+            }
+            
+            var httpResponse = await Http.SendAsync(request);
+            
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                var errorContent = await httpResponse.Content.ReadAsStringAsync();
+                Console.WriteLine($"API Error: {httpResponse.StatusCode} - {errorContent.Substring(0, Math.Min(200, errorContent.Length))}");
+                return;
+            }
+
+            var response = await httpResponse.Content.ReadFromJsonAsync<ThemeResponse>();
+            if (response != null)
+            {
+                if (!string.IsNullOrEmpty(response.MainLayoutBackgroundColor))
+                {
+                    mainLayoutBackgroundColor = response.MainLayoutBackgroundColor;
+                    Console.WriteLine($"Loaded MainLayout color: {mainLayoutBackgroundColor}");
+                }
+                // Reload NavMenu theme as well
+                if (_navMenuRef != null)
+                {
+                    await _navMenuRef.ReloadThemeAsync();
+                }
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading theme: {ex.Message}");
+            Console.WriteLine($"StackTrace: {ex.StackTrace}");
+        }
+    }
+
+    private async Task OpenThemeSelector()
+    {
+        var parameters = new DialogParameters();
+        var options = new DialogOptions() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<ThemeSelector.Pages.ThemeSelector>(Localizer["ThemeSettings"], parameters, options);
+        var result = await dialog.Result;
+        
+        if (result != null && !result.Canceled)
+        {
+            // Reload theme after changes - this will reload both MainLayout and NavMenu
+            await LoadThemePreference();
+        }
+    }
+
+    private async Task OpenShipmentGridColorSelector()
+    {
+        var parameters = new DialogParameters();
+        var options = new DialogOptions() { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<ThemeSelector.Pages.ShipmentGridColorSelector>("Shipment grid colors", parameters, options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled)
+        {
+            // Ensure the saved settings are applied immediately across the app.
+            try
+            {
+                await JS.InvokeVoidAsync("nvoccLoadShipmentColorSettings");
+            }
+            catch { }
+        }
+    }
+
+    private async Task OpenLocalizationEditor()
+    {
+        if (!IsAdmin)
+        {
+            Snackbar.Add(Localizer["AdminAccessRequired"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var options = new DialogOptions() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        await DialogService.ShowAsync<LocalizationEditor.Pages.LocalizationEditor>(Localizer["EditLanguage"], options);
+    }
+
+    private class ThemeResponse
+    {
+        public string? NavMenuBackgroundColor { get; set; }
+        public string? MainLayoutBackgroundColor { get; set; }
+    }
+    private void ScheduleNextCheck()
+    {
+        if (_disposed) return;
+
+        var now = DateTime.Now;
+        var next = now.Hour < 8 ? now.Date.AddHours(8)
+                  : now.Hour < 13 ? now.Date.AddHours(13)
+                  : now.Date.AddDays(1).AddHours(8);
+
+        var delay = next - now;
+
+        _checkInTimer = new Timer(async _ =>
+        {
+            if (_disposed) return;
+
+            await InvokeAsync(async () =>
+            {
+                await LoadCheckInStatus();
+                StateHasChanged();
+                ScheduleNextCheck();
+            });
+        }, null, delay, Timeout.InfiniteTimeSpan);
+    }
+
+
+
+    private DynamicTabs? _tabs;
+    private NavMenu? _navMenuRef;
+
+    public async Task OpenTab(string key, string title, RenderFragment content)
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        if (!user.Identity?.IsAuthenticated ?? false)
+        {
+            Navigation.NavigateTo("/account/login", forceLoad: true);
+            return;
+        }
+        _tabs?.OpenTab(key, title, content);
+    }
+
+    private HubConnection? _hubConnection;
+    public async Task StartHub()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var usr = authState.User;
+
+        if (usr.Identity != null && usr.Identity.IsAuthenticated)
+        {
+
+            _hubConnection = new HubConnectionBuilder()
+                    .WithUrl(Navigation.ToAbsoluteUri($"/notificationhub?userid={user.UsrId}"))
+                    .WithAutomaticReconnect()
+                    .Build();
+
+            _hubConnection.On<string>("ReceiveNotification", (message) =>
+            {
+                Snackbar.Add($"🔔 {message}", MudBlazor.Severity.Info, options =>
+                {
+                    // Admin: giữ nguyên đến khi tự đóng
+                    options.RequireInteraction = IsAdmin;
+                    options.Action = IsAdmin ? Localizer["Đóng"].Value : "";
+                    options.Onclick = snackbar =>
+                    {
+                        return OpenTab("INBOX", Localizer["Inbox"], RenderComponent(typeof(Components.Noti_Message.Pages.Index)));
+                    };
+                });
+                // Tăng số lượng chưa đọc ngay lập tức
+                _unreadEmailCount++;
+                InvokeAsync(StateHasChanged);
+            });
+
+
+            _hubConnection.On<int>("UpdateUnreadEmailCount", (newCount) =>
+            {
+                _unreadEmailCount = newCount;
+                InvokeAsync(StateHasChanged); 
+            });
+
+            await InvokeAsync(StateHasChanged);
+            await _hubConnection.StartAsync();
+        }
+
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection != null)
+        {
+            await _hubConnection.DisposeAsync();
+        }
+    }
+
+    RenderFragment RenderComponent(Type componentType) => builder =>
+      {
+          builder.OpenComponent(0, componentType);
+          builder.CloseComponent();
+      };
+
+    private bool _open;
+    private MudPopover? _popoverRef;
+    private List<Notification> listitem = new List<Notification>();
+    private MudIconButton? _emailButtonRef;
+    private Task OpenOutRequestTab(){
+        _tabs?.OpenTab("outreq_submit", Localizer["Out Request"], RenderComponent(typeof(Components.OutRequests.OutRequestSubmit)));
+        return Task.CompletedTask; }
+    private Task OpenAdminOutRequest(){
+        _tabs?.OpenTab("outreq_approve", Localizer["Approve Out Requests"], RenderComponent(typeof(Components.OutRequests.OutRequestApprove))); 
+        return Task.CompletedTask; }
+    private Task OpenLeaveRequestTab(){
+        _tabs?.OpenTab("leave_submit", "Đăng ký nghỉ phép", RenderComponent(typeof(Components.LeaveRequests.LeaveRequestSubmit)));
+        return Task.CompletedTask; }
+    private Task OpenAdminLeaveRequest(){
+        _tabs?.OpenTab("leave_approve", "Duyệt nghỉ phép", RenderComponent(typeof(Components.LeaveRequests.LeaveRequestApprove))); 
+        return Task.CompletedTask; }
+    private async Task TogglePopover()
+    {
+        _open = !_open;
+
+        listitem = await _notificationService.GetList_noti();
+        // Re-sync unread count from server list
+        _unreadEmailCount = listitem.Count(x => !x.IsRead);
+        await InvokeAsync(StateHasChanged);
+
+    }
+
+    private Task ViewAllMessages()
+    {
+        _open = false; // đóng popover
+        // if (OnTabRequest.HasDelegate)
+        //     await OnTabRequest.InvokeAsync(("message", Localizer["message"], RenderComponent(typeof(Components.Noti_Message.Pages.Index))));
+
+        _tabs?.OpenTab("message", Localizer["message"], RenderComponent(typeof(Components.Noti_Message.Pages.Index)));
+        return Task.CompletedTask;
+    }
+
+    private async Task MarkAllAsRead()
+    {
+        if (listitem.Count > 0)
+        {
+            foreach (var item in listitem)
+            {
+                item.IsRead = true;
+                var rs = await _notificationService.UpdateSentNoti(item);
+            }
+        }
+        listitem = await _notificationService.GetList_noti();
+        _unreadEmailCount = 0;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task UpdateNotification(Notification note)
+    {
+
+        note.IsRead = true;
+
+
+        await _notificationService.UpdateSentNoti(note);
+        if (_unreadEmailCount > 0)
+            _unreadEmailCount--;
+        await InvokeAsync(StateHasChanged);
+
+    }
+
+    private Task OpenTab_all(string key, string title, RenderFragment content)
+    {
+        _tabs?.OpenTab(key, title, content);
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadCheckInStatus()
+    {
+        var now = DateTime.Now;
+        var today = DateTime.Today;
+
+        var morningStart = today.AddHours(8);
+        var morningEnd = today.AddHours(9);
+        var afternoonStart = today.AddHours(13);
+        var afternoonEnd = today.AddHours(14);
+
+        string session = "";
+        if (now >= morningStart && now <= morningEnd)
+            session = "morning";
+        else if (now >= afternoonStart && now <= afternoonEnd)
+            session = "afternoon";
+
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var usr = authState.User;
+        var uidClaim = usr.Claims.FirstOrDefault(c => c.Type.EndsWith("/nameidentifier") || c.Type == "sub" || c.Type == "UsrId");
+
+        if (uidClaim != null && Guid.TryParse(uidClaim.Value, out Guid uid))
+        {
+            _checkedInToday = await AttendanceService.HasCheckedInTodayAsync(uid, session);
+
+            if (!string.IsNullOrEmpty(session) && !_checkedInToday)
+            {
+                if (_checkInReminder == null)
+                {
+                    _checkInReminder = Snackbar.Add(
+                        "Bạn đang trong giờ chấm công, vui lòng chấm ngay!",
+                        MudBlazor.Severity.Error,
+                        cfg =>
+                        {
+                            cfg.RequireInteraction = true;
+                            cfg.VisibleStateDuration = 0;
+                            cfg.ShowCloseIcon = false;
+                        });
+                }
+            }
+            else
+            {
+                if (_checkInReminder != null)
+                {
+                    Snackbar.Remove(_checkInReminder);
+                    _checkInReminder = null;
+                }
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _checkInTimer?.Dispose();
+    }
+
+    private async Task CheckIn()
+    {
+        if (_checkedInToday) return;
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var usr = authState.User;
+        var uidClaim = usr.Claims.FirstOrDefault(c => c.Type.EndsWith("/nameidentifier") || c.Type == "sub" || c.Type == "UsrId");
+        if (uidClaim == null || !Guid.TryParse(uidClaim.Value, out var uid))
+        {
+            Snackbar.Add(Localizer["Không xác định user"], MudBlazor.Severity.Error); return;
+        }
+        var rs = await AttendanceService.CheckInAsync(uid);
+        Snackbar.Add(rs.Message, rs.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        if (rs.Success) _checkedInToday = true;
+
+        await LoadCheckInStatus();
+    }
+
+}
+@* <script>
+  (function(d,t) {
+    var BASE_URL="https://app.chatwoot.com";
+    var g=d.createElement(t),s=d.getElementsByTagName(t)[0];
+    g.src=BASE_URL+"/packs/js/sdk.js";
+    g.async = true;
+    s.parentNode.insertBefore(g,s);
+    g.onload=function(){
+      window.chatwootSDK.run({
+        websiteToken: 'JdzgH5cQMqzdDo1xVwnFYjUs',
+        baseUrl: BASE_URL
+      })
+    }
+  })(document,"script");
+</script> *@
+
+

@@ -1,0 +1,167 @@
+@page "/GeneralLedgerEntries586"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["GeneralLedgerEntries.Title"]</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudText Typo="Typo.h6" Class="fw-700">5.8.6 @Localizer["GeneralLedgerEntries.Title"]</MudText>
+
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddAsync" Disabled="_busy">@Localizer["new"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditAsync" Disabled="_busy || _selected is null">@Localizer["edit"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">@Localizer["delete"]</MudButton>
+            <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-2">
+        <MudDataGrid T="M_GeneralLedgerEntries" Items="_rows" Dense="true" Striped="true" Hover="true" Bordered="true"
+                     RowClassFunc="RowClass" SelectedItem="_selected" SelectedItemChanged="OnSelectedChanged">
+            <Columns>
+                <PropertyColumn Property="x => x.VoucherNo" Title="@Localizer["GeneralLedgerEntries.VoucherNo"]" />
+                <PropertyColumn Property="x => x.PostingDate" Title="@Localizer["GeneralLedgerEntries.PostingDate"]" />
+                <PropertyColumn Property="x => x.VoucherDate" Title="@Localizer["GeneralLedgerEntries.VoucherDate"]" />
+                <PropertyColumn Property="x => x.AccountCode" Title="@Localizer["GeneralLedgerEntries.AccountCode"]" />
+                <PropertyColumn Property="x => x.Description" Title="@Localizer["noidung"]" />
+                <PropertyColumn Property="x => x.Debit" Title="@Localizer["GeneralLedgerEntries.Debit"]" />
+                <PropertyColumn Property="x => x.Credit" Title="@Localizer["GeneralLedgerEntries.Credit"]" />
+                <PropertyColumn Property="x => x.CurrencyCode" Title="@Localizer["GeneralLedgerEntries.CurrencyCode"]" />
+                <PropertyColumn Property="x => x.ExchangeRate" Title="@Localizer["GeneralLedgerEntries.ExchangeRate"]" />
+                <PropertyColumn Property="x => x.SourceModule" Title="@Localizer["GeneralLedgerEntries.SourceModule"]" />
+                <PropertyColumn Property="x => x.IsTaxBook" Title="@Localizer["GeneralLedgerEntries.IsTaxBook"]" />
+                <PropertyColumn Property="x => x.IsManagementBook" Title="@Localizer["GeneralLedgerEntries.IsManagementBook"]" />
+                <PropertyColumn Property="x => x.LedgerType" Title="@Localizer["GeneralLedgerEntries.LedgerType"]" />
+                <PropertyColumn Property="x => x.CreatedBy" Title="@Localizer["GeneralLedgerEntries.CreatedBy"]" />
+                <PropertyColumn Property="x => x.CreatedAt" Title="@Localizer["GeneralLedgerEntries.CreatedAt"]" />
+            </Columns>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private readonly string PermissionMenuName = "GeneralLedgerEntries";
+    private bool _busy;
+    private string _usr = string.Empty;
+    private List<M_GeneralLedgerEntries> _rows = new();
+    private M_GeneralLedgerEntries? _selected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+            _rows.Clear();
+            _selected = null;
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _rows = await db.GeneralLedgerEntries
+                .AsNoTracking()
+                .OrderByDescending(x => x.PostingDate)
+                .ThenByDescending(x => x.CreatedAt)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnSelectedChanged(M_GeneralLedgerEntries? item) => _selected = item;
+
+    private string RowClass(M_GeneralLedgerEntries element, int rowNumber)
+        => _selected is not null && element.Id == _selected.Id ? "selected-row-blue" : string.Empty;
+
+    private async Task OpenAddAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            Snackbar.Add(Localizer["NoPermission"], MudBlazor.Severity.Warning);
+            return;
+        }
+        var dr = await DialogService.ShowAsync<GeneralLedgerEntry_AddEditDialog>(Localizer["GeneralLedgerEntries.Title"], new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dr.Result;
+        if (!result.Canceled) await LoadAsync();
+    }
+
+    private async Task OpenEditAsync()
+    {
+        if (_selected is null) return;
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            Snackbar.Add(Localizer["NoPermission"], MudBlazor.Severity.Warning);
+            return;
+        }
+        var parameters = new DialogParameters<GeneralLedgerEntry_AddEditDialog> { { x => x.EntryId, _selected.Id } };
+        var dr = await DialogService.ShowAsync<GeneralLedgerEntry_AddEditDialog>(Localizer["GeneralLedgerEntries.Title"], parameters, new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dr.Result;
+        if (!result.Canceled) await LoadAsync();
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null) return;
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            Snackbar.Add(Localizer["NoPermission"], MudBlazor.Severity.Warning);
+            return;
+        }
+        var confirm = await DialogService.ShowMessageBox(Localizer["confirm"], Localizer["askDelete"], yesText: Localizer["yes"], cancelText: Localizer["cancel"]);
+        if (confirm != true) return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var row = await db.GeneralLedgerEntries.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (row is null)
+            {
+                Snackbar.Add("Row not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+            db.GeneralLedgerEntries.Remove(row);
+            await db.SaveChangesAsync();
+            _selected = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+}
+
+<style>
+    .selected-row-blue {
+        background-color: #2196f3 !important;
+        color: #fff !important;
+    }
+</style>
+

@@ -1,0 +1,464 @@
+@using NVOAMASIS.Models
+@using MudBlazor
+@attribute [Authorize]
+@inject ShipmentService shipsv
+@inject InventoryExportService exportService
+@inject IJSRuntime JSRuntime
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+@inject SharedServices ssv
+@inject AccountService asv
+
+<PageTitle>@Localizer["Container Inventory"]</PageTitle>
+
+<MudStack Row="true" Class="mt-2 px-4" Justify="Justify.FlexStart" AlignItems="AlignItems.Center">
+    <MudTooltip Text="@Localizer["Reload"]">
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   OnClick="Refresh"
+                   Disabled="_loading">
+            @Localizer["Refresh"]
+        </MudButton>
+    </MudTooltip>
+</MudStack>
+
+<MudContainer Class="mt-4 px-4" MaxWidth="MaxWidth.False">
+    <!-- Status summary cards -->
+    <MudGrid Class="mb-6">
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="pa-4">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <MudStack>
+                        <MudText Typo="Typo.subtitle2">@Localizer["In Depot"]</MudText>
+                        <MudText Typo="Typo.body2" Class="mt-1">@Localizer["Container"]</MudText>
+                        <MudText Typo="Typo.h5" Class="mt-2">@InDepotCount</MudText>
+                    </MudStack>
+                    <MudAvatar Color="Color.Primary" Variant="Variant.Filled">
+                        <MudIcon Icon="@Icons.Material.Filled.Inventory2" />
+                    </MudAvatar>
+                </MudStack>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="pa-4">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <MudStack>
+                        <MudText Typo="Typo.subtitle2">@Localizer["Waiting Port Arrival"]</MudText>
+                        <MudText Typo="Typo.body2" Class="mt-1">@Localizer["Container"]</MudText>
+                        <MudText Typo="Typo.h5" Class="mt-2">@WaitingPortArrivalCount</MudText>
+                    </MudStack>
+                    <MudAvatar Color="Color.Info" Variant="Variant.Filled">
+                        <MudIcon Icon="@Icons.Material.Filled.AlarmOn" />
+                    </MudAvatar>
+                </MudStack>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="pa-4">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <MudStack>
+                        <MudText Typo="Typo.subtitle2">@Localizer["Arrived at Port"]</MudText>
+                        <MudText Typo="Typo.body2" Class="mt-1">@Localizer["Container"]</MudText>
+                        <MudText Typo="Typo.h5" Class="mt-2">@ArrivedAtPortCount</MudText>
+                    </MudStack>
+                    <MudAvatar Color="Color.Success" Variant="Variant.Filled">
+                        <MudIcon Icon="@Icons.Material.Filled.LocalShipping" />
+                    </MudAvatar>
+                </MudStack>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="pa-4">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <MudStack>
+                        <MudText Typo="Typo.subtitle2">@Localizer["In Transit"]</MudText>
+                        <MudText Typo="Typo.body2" Class="mt-1">@Localizer["Container"]</MudText>
+                        <MudText Typo="Typo.h5" Class="mt-2">@InTransitCount</MudText>
+                    </MudStack>
+                    <MudAvatar Color="Color.Warning" Variant="Variant.Filled">
+                        <MudIcon Icon="@Icons.Material.Filled.DirectionsBoatFilled" />
+                    </MudAvatar>
+                </MudStack>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    <!-- Detail tables -->
+    <MudGrid>
+        <!-- In Depot table -->
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2" Class="pa-4">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+                    <MudStack Row="true" Spacing="1">
+                        <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" OnClick="ExportExcelDepot" Disabled="_loading">Excel</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small">CSV</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" OnClick="ExportPdfDepot" Disabled="_loading">PDF</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">@Localizer["Print"]</MudButton>
+                    </MudStack>
+                    <MudTextField @bind-Value="searchInDepot"
+                                  Placeholder="@Localizer["Search"]"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Size="Size.Small"
+                                  Immediate="true"
+                                  DebounceInterval="300"
+                                  Class="ml-2" />
+                </MudStack>
+
+                <MudTable T="InventoryGroupRow" Items="FilteredInDepotRows" Dense="true" Hover="true" Bordered="true" Striped="true">
+                    <HeaderContent>
+                        <MudTh>@Localizer["IN DEPOT"]</MudTh>
+                        <MudTh>@Localizer["OwnerName"]</MudTh>
+                        <MudTh>@Localizer["CONTAINER COUNT"]</MudTh>
+                
+                        @foreach (var sizeType in DistinctSizeTypes)
+                        {
+                            <MudTh>@sizeType</MudTh>
+                        }
+                        <MudTh>@Localizer["Decommision"]</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="@Localizer["IN DEPOT"]">@context.Location</MudTd>
+                        <MudTd DataLabel="@Localizer["OwnerName"]">@(context.OwnerNames != null && context.OwnerNames.Count > 0 ? string.Join(", ", context.OwnerNames) : "")</MudTd>
+                        <MudTd DataLabel="@Localizer["CONTAINER COUNT"]">@context.ContainerCount</MudTd>
+                        @foreach (var sizeType in DistinctSizeTypes)
+                        {
+                            <MudTd DataLabel="@sizeType">@context.GetSizeCount(sizeType)</MudTd>
+                        }
+                        <MudTd DataLabel="@Localizer["Decommision"]">@context.DecommissionCount</MudTd>
+                    </RowTemplate>
+                    <PagerContent>
+                        <MudTablePager PageSizeOptions="new int[] { 10, 25, 50 }" />
+                    </PagerContent>
+                </MudTable>
+            </MudCard>
+        </MudItem>
+
+        <!-- Arrived at Port table -->
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="2" Class="pa-4">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3">
+                    <MudStack Row="true" Spacing="1">
+                        <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" OnClick="ExportExcelPort" Disabled="_loading">Excel</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small">CSV</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" OnClick="ExportPdfPort" Disabled="_loading">PDF</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">@Localizer["Print"]</MudButton>
+                    </MudStack>
+                    <MudTextField @bind-Value="searchInPort"
+                                  Placeholder="@Localizer["Search"]"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Size="Size.Small"
+                                  Immediate="true"
+                                  DebounceInterval="300"
+                                  Class="ml-2" />
+                </MudStack>
+
+                <MudTable T="InventoryGroupRow" Items="FilteredInPortRows" Dense="true" Hover="true" Bordered="true" Striped="true">
+                    <HeaderContent>
+                        <MudTh>@Localizer["IN PORT"]</MudTh>
+                        <MudTh>@Localizer["CONTAINER COUNT"]</MudTh>
+                        <MudTh>@Localizer["OwnerName"]</MudTh>
+                        @foreach (var sizeType in DistinctSizeTypes)
+                        {
+                            <MudTh>@sizeType</MudTh>
+                        }
+                        <MudTh>@Localizer["Decommision"]</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="@Localizer["IN PORT"]">@context.Location</MudTd>
+                        <MudTd DataLabel="@Localizer["CONTAINER COUNT"]">@context.ContainerCount</MudTd>
+                        <MudTd DataLabel="@Localizer["OwnerName"]">@(context.OwnerNames != null && context.OwnerNames.Count > 0 ? string.Join(", ", context.OwnerNames) : "")</MudTd>
+                        @foreach (var sizeType in DistinctSizeTypes)
+                        {
+                            <MudTd DataLabel="@sizeType">@context.GetSizeCount(sizeType)</MudTd>
+                        }
+                        <MudTd DataLabel="@Localizer["Decommision"]">@context.DecommissionCount</MudTd>
+                    </RowTemplate>
+                    <PagerContent>
+                        <MudTablePager PageSizeOptions="new int[] { 10, 25, 50 }" />
+                    </PagerContent>
+                </MudTable>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+@code {
+    private bool _loading;
+    private List<M_Container> _containers = new();
+    private List<string> DistinctSizeTypes { get; set; } = new List<string>();
+
+    // Status counts
+    private int InDepotCount { get; set; }
+    private int WaitingPortArrivalCount { get; set; }
+    private int ArrivedAtPortCount { get; set; }
+    private int InTransitCount { get; set; }
+
+    // Grouped rows
+    private List<InventoryGroupRow> inDepotRows = new();
+    private List<InventoryGroupRow> inPortRows = new();
+    AuthUser userdetail;
+    // Search terms
+    private string? searchInDepot;
+    private string? searchInPort;
+
+    private IEnumerable<InventoryGroupRow> FilteredInDepotRows =>
+        string.IsNullOrWhiteSpace(searchInDepot)
+            ? inDepotRows
+            : inDepotRows.Where(r => (!string.IsNullOrWhiteSpace(r.Location) &&
+                                      r.Location!.Contains(searchInDepot, StringComparison.OrdinalIgnoreCase)) ||
+                                     (r.OwnerNames?.Any(o => !string.IsNullOrWhiteSpace(o) && o.Contains(searchInDepot, StringComparison.OrdinalIgnoreCase)) == true));
+
+    private IEnumerable<InventoryGroupRow> FilteredInPortRows =>
+        string.IsNullOrWhiteSpace(searchInPort)
+            ? inPortRows
+            : inPortRows.Where(r => (!string.IsNullOrWhiteSpace(r.Location) &&
+                                     r.Location!.Contains(searchInPort, StringComparison.OrdinalIgnoreCase)) ||
+                                    (r.OwnerNames?.Any(o => !string.IsNullOrWhiteSpace(o) && o.Contains(searchInPort, StringComparison.OrdinalIgnoreCase)) == true));
+
+    protected override void OnInitialized()
+    {
+        userdetail = asv.GetUserDetail();
+
+        _ = LoadData();
+    }
+
+    private async Task Refresh()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        try
+        {
+            if (!await ssv.CheckPermission(userdetail.Usr, "View", "Inventory"))
+            {
+                CallSnackBar("You have not access to View", MudBlazor.Severity.Warning);
+                return;
+            }
+            _loading = true;
+            StateHasChanged();
+            _containers = shipsv.GetListContainerAll() ?? new List<M_Container>();
+            BuildDashboard();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Cannot load container inventory: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+        await Task.CompletedTask;
+    }
+
+    private void BuildDashboard()
+    {
+        InDepotCount = _containers.Count(c => string.Equals(c.NVOCC_Status, "In Depot", StringComparison.OrdinalIgnoreCase));
+        WaitingPortArrivalCount = _containers.Count(c => string.Equals(c.NVOCC_Status, "Waiting Port Arrival", StringComparison.OrdinalIgnoreCase));
+        ArrivedAtPortCount = _containers.Count(c => string.Equals(c.NVOCC_Status, "Arrived at Port", StringComparison.OrdinalIgnoreCase));
+        InTransitCount = _containers.Count(c => string.Equals(c.NVOCC_Status, "In Transit", StringComparison.OrdinalIgnoreCase));
+
+        var containersForTables = _containers.Where(c =>
+            string.Equals(c.NVOCC_Status, "In Depot", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(c.NVOCC_Status, "Arrived at Port", StringComparison.OrdinalIgnoreCase));
+
+        DistinctSizeTypes = containersForTables
+            .Select(c => c.CTN_SIZE_TYPE?.Trim())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .GroupBy(s => s!, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(GetLeadingNumber)
+            .ThenBy(GetSuffix, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        inDepotRows = BuildGroupedRows(
+            _containers.Where(c => string.Equals(c.NVOCC_Status, "In Depot", StringComparison.OrdinalIgnoreCase)),
+            c => c.In_Depot,
+            DistinctSizeTypes);
+
+        inPortRows = BuildGroupedRows(
+            _containers.Where(c => string.Equals(c.NVOCC_Status, "Arrived at Port", StringComparison.OrdinalIgnoreCase)),
+            c => c.In_Port,
+            DistinctSizeTypes);
+    }
+
+    private static int GetLeadingNumber(string? sizeType)
+    {
+        if (string.IsNullOrWhiteSpace(sizeType))
+            return int.MaxValue;
+
+        var s = sizeType.Trim();
+        var i = 0;
+        while (i < s.Length && char.IsDigit(s[i]))
+            i++;
+
+        if (i == 0)
+            return int.MaxValue;
+
+        return int.TryParse(s.Substring(0, i), out var n) ? n : int.MaxValue;
+    }
+
+    private static string GetSuffix(string? sizeType)
+    {
+        if (string.IsNullOrWhiteSpace(sizeType))
+            return string.Empty;
+
+        var s = sizeType.Trim();
+        var i = 0;
+        while (i < s.Length && char.IsDigit(s[i]))
+            i++;
+        return i < s.Length ? s.Substring(i) : string.Empty;
+    }
+
+    private static List<InventoryGroupRow> BuildGroupedRows(
+        IEnumerable<M_Container> source,
+        Func<M_Container, string?> keySelector,
+        IReadOnlyList<string> sizeTypes)
+    {
+        return source
+            .GroupBy(keySelector)
+            .Select(g => new InventoryGroupRow
+            {
+                Location = string.IsNullOrWhiteSpace(g.Key) ? "N/A" : g.Key,
+                ContainerCount = g.Count(),
+                SizeCounts = sizeTypes.ToDictionary(
+                    st => st,
+                    st => g.Count(x => string.Equals(x.CTN_SIZE_TYPE?.Trim(), st, StringComparison.OrdinalIgnoreCase)),
+                    StringComparer.OrdinalIgnoreCase),
+                DecommissionCount = g.Count(x => x.Decommision == true),
+                OwnerNames = g.Select(c => c.OwnerName).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+            })
+            .OrderBy(r => r.Location)
+            .ToList();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private static List<InventoryExportRow> ToExportRows(IEnumerable<InventoryGroupRow> rows)
+    {
+        return rows.Select(r => new InventoryExportRow
+        {
+            Location = r.Location,
+            ContainerCount = r.ContainerCount,
+            SizeCounts = r.SizeCounts,
+            DecommissionCount = r.DecommissionCount
+        }).ToList();
+    }
+
+    private async Task ExportExcelDepot()
+    {
+        try
+        {
+            var depot = ToExportRows(FilteredInDepotRows);
+            var bytes = exportService.ExportSingleTableToExcel(
+                depot,
+                DistinctSizeTypes,
+                "IN DEPOT Containers",
+                Localizer["IN DEPOT"]?.ToString() ?? "IN DEPOT",
+                Localizer["Decommision"]?.ToString() ?? "Decommision");
+            var base64 = Convert.ToBase64String(bytes);
+            await JSRuntime.InvokeVoidAsync("saveAsFile", "IN DEPOT Containers.xlsx", base64);
+            CallSnackBar("Excel exported.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Export failed: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task ExportExcelPort()
+    {
+        try
+        {
+            var port = ToExportRows(FilteredInPortRows);
+            var bytes = exportService.ExportSingleTableToExcel(
+                port,
+                DistinctSizeTypes,
+                "IN PORT Containers",
+                Localizer["IN PORT"]?.ToString() ?? "IN PORT",
+                Localizer["Decommision"]?.ToString() ?? "Decommision");
+            var base64 = Convert.ToBase64String(bytes);
+            await JSRuntime.InvokeVoidAsync("saveAsFile", "IN PORT Containers.xlsx", base64);
+            CallSnackBar("Excel exported.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Export failed: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task ExportPdfDepot()
+    {
+        try
+        {
+            var depot = ToExportRows(FilteredInDepotRows);
+            var title = "IN DEPOT Containers";
+            var html = exportService.GetSingleTablePrintHtml(
+                depot,
+                DistinctSizeTypes,
+                title,
+                Localizer["IN DEPOT"]?.ToString() ?? "IN DEPOT",
+                Localizer["Decommision"]?.ToString() ?? "Decommision");
+            await JSRuntime.InvokeVoidAsync("printInventoryHtml", html);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("PDF print failed: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task ExportPdfPort()
+    {
+        try
+        {
+            var port = ToExportRows(FilteredInPortRows);
+            var title = "IN PORT Containers";
+            var html = exportService.GetSingleTablePrintHtml(
+                port,
+                DistinctSizeTypes,
+                title,
+                Localizer["IN PORT"]?.ToString() ?? "IN PORT",
+                Localizer["Decommision"]?.ToString() ?? "Decommision");
+            await JSRuntime.InvokeVoidAsync("printInventoryHtml", html);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("PDF print failed: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private class InventoryGroupRow
+    {
+        public string? Location { get; set; }
+        public int ContainerCount { get; set; }
+        public Dictionary<string, int> SizeCounts { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        public int DecommissionCount { get; set; }
+        public List<string> OwnerNames { get; set; } = new();
+
+        public int GetSizeCount(string sizeType)
+        {
+            if (string.IsNullOrWhiteSpace(sizeType))
+                return 0;
+            return SizeCounts.TryGetValue(sizeType, out var count) ? count : 0;
+        }
+    }
+}

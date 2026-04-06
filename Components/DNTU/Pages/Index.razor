@@ -1,0 +1,913 @@
+﻿@using System.Globalization
+
+
+@inject IDialogService Dialog
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject SupportServices supsv
+@inject SharedServices sv
+@inject ShipmentService shipsv
+@inject DNTUServices DNTUSv
+@inject SharedServices ssv
+@inject CustomerService csv
+@attribute [Authorize]
+@inject IDialogService DialogService
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+
+<PageTitle>@Localizer["Payment_to_partner"]</PageTitle>
+
+<div class="pa-4" style="margin-top:15px; margin-bottom:10px;">
+    <MudGrid>
+        <MudItem xs=6>
+            <MudAutocomplete T="Guid" ValueChanged="Refresh_hbl" Label="@Localizer["search_hbl"]"
+                             SearchFunc="SearchHBL" ToStringFunc="hblidtoCusCode" MaxItems="10" Clearable />
+        </MudItem>
+        <MudItem xs=6>
+
+        </MudItem>
+        <MudItem xs=6>
+            <MudDataGrid T="M_HBL" Items="@HBLs" Filterable="true" MultiSelection="true" Class="custom-credit"
+                         FilterMode="@DataGridFilterMode.Simple" Dense="true" Bordered="true" Virtualize Height="550px;"
+                         FixedHeader="true" HeaderClass="no-wrap" SelectOnRowClick="false" FooterClass="nondisplay"
+                         ReadOnly="false" ColumnResizeMode="ResizeMode.Column" Loading="_loading" SelectedItemsChanged="SelectedItemsChangedHBL">
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">@Localizer["HBL List"]</MudText>
+                    <MudSpacer />
+                    <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                               StartIcon="@Icons.Material.Filled.Search" OnClick="RefreshDebit">
+                        @Localizer["getcredit"]
+                    </MudButton>
+                </ToolBarContent>
+                <Columns>
+                    <SelectColumn T="M_HBL" />
+                    <PropertyColumn Property="x => Getjobno(x.mblid)" Title="@Localizer["Job No."]" Required="false" />
+                    <PropertyColumn Property="x => x.hbl" Title="@Localizer["HBL"]" />
+                    <PropertyColumn Property="x => x.dathudebit" Title="@Localizer["Debit_Received"]" Required="false" Filterable="false">
+                        <CellTemplate>
+                            <MudCheckBox Value="context.Item.dathudebit.HasValue ? context.Item.dathudebit.Value : false" ReadOnly />
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.dachicredit" Title="@Localizer["Spent_Credit"]" Required="false" Filterable="false">
+                        <CellTemplate>
+                            <MudCheckBox Value="context.Item.dachicredit.HasValue ? context.Item.dachicredit.Value : false" ReadOnly />
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.dathuchidaily" Title="@Localizer["Received_Spent_Agent"]" Required="false" Filterable="false">
+                        <CellTemplate>
+                            <MudCheckBox Value="context.Item.dathuchidaily.HasValue ? context.Item.dathuchidaily.Value : false" ReadOnly />
+                        </CellTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => formatDate(x.ETA)" Title="@Localizer["ETA"]" />
+                    <PropertyColumn Property="x => formatDate(x.ETD)" Title="@Localizer["ETD"]" />
+                    <PropertyColumn Property="x => CusidtoCusCode(x.CustomerID)" Title="@Localizer["Main_Customer"]" Required CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => AgentidtoName(x.AgentID)" Title="@Localizer["Agent"]" Required CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.bkno" Title="@Localizer["No."]" />
+                    <PropertyColumn Property="x => x.Air_wareHouse" Title="@Localizer["Warehouse"]" />
+                    <PropertyColumn Property="x => x.Air_type" Title="@Localizer["CFS-CY"]" />
+                    <PropertyColumn Property="x => x.shipper" Title="@Localizer["Shipper"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.consignee" Title="@Localizer["consignee"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.notify1" Title="@Localizer["Notify"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.SaleName" Title="@Localizer["SaleName"]" Required CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.statusHBL" Title="@Localizer["status"]" Required="false" />
+                </Columns>
+            </MudDataGrid>
+        </MudItem>
+        <MudItem xs=6>
+            <MudDataGrid T="M_Credit" Items="@Listdata" Filterable="true" MultiSelection="true" SelectedItemsChanged="@SelectedItemsChanged"
+                         FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="550px;" Class="custom-credit"
+                         FixedHeader="true" HeaderClass="no-wrap" SelectOnRowClick="false" FooterClass="nondisplay"
+                         ReadOnly="true" Bordered="true" ColumnResizeMode="ResizeMode.Column" Loading="_loadingCredit">
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">@Localizer["Credits"]</MudText>
+                    <MudSpacer />
+                </ToolBarContent>
+                <Columns>
+                    <SelectColumn T="M_Credit" />
+                    <PropertyColumn Property="x => GetHBL(x.hblid)" Title="@Localizer["HBL"]" Required="false" />
+                    <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x =>  Charidtocharge(x.itemid)" Title="@Localizer["Item"]" Required="false" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.dongia" Title="@Localizer["unitprice"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["ThanhTien"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" Required="false" />
+                    <PropertyColumn Property="x => x.thue" Title="@Localizer["vat"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["thanhtiensauthue"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.chiho" Title="@Localizer["thuho"]" Required="false" />
+                    <PropertyColumn Property="x => x.tigiacredit" Title="@Localizer["Exc_Credit"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.tigiahoadondauvao" Title="@Localizer["Output_Invoice_Rate"]" Format="#,##0.##" Required="false" />
+                    <PropertyColumn Property="x => x.approve" Title="@Localizer["Approve"]" />
+                    <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                    <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                    <PropertyColumn Property="x => x.continued" Title="@Localizer["Continued"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                </Columns>
+            </MudDataGrid>
+        </MudItem>
+
+        <MudItem xs=6></MudItem>
+        <MudItem xs=6>
+            <MudStack Row Class="pa-4">
+
+            </MudStack>
+        </MudItem>
+
+    </MudGrid>
+    <MudText Class="pa-2" Typo="Typo.h6">@Localizer["DNTU"]</MudText>
+    <MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+        <MudButton HtmlTag="label"
+                   OnClick="Refresh_DNTT"
+                   Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Refresh">
+            @Localizer["reload"]
+        </MudButton>
+        <MudButton HtmlTag="label"
+                   @onclick="@((e) => OpenCreateDialog(new Models.M_DNTU()))"
+                   Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Add">
+            @Localizer["new"]
+        </MudButton>
+
+        <MudButton HtmlTag="label"
+                   @onclick="@((e) => OpenEditDialog(detail))"
+                   Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Edit">
+            @Localizer["edit"]
+        </MudButton>
+
+        <MudButton HtmlTag="label"
+                   @onclick="@((e) => OpenDuplicateDialog(detail))"
+                   Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.CopyAll">
+            @Localizer["duplicate"]
+        </MudButton>
+
+       @*  <MudButton Disabled="_processingUpload"
+                   OnClick="ExportBill"
+                   Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Download">
+            @if (_processingUpload)
+            {
+                <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                <MudText Class="ms-2">Processing</MudText>
+            }
+            else
+            {
+                <MudText>@Localizer["Export_Bill"]</MudText>
+            }
+        </MudButton> *@
+
+
+    </MudStack>
+
+
+    <MudDataGrid T="M_DNTU" Items="@Listdata_DNTU" Filterable="true" @ref="mudTable" Class="pa-4" Bordered="true"
+                 FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+                 FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+                 ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+                 RowClick="@RowClicked" EditDialogOptions="@options"
+                 ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" Loading="_loading">
+
+        <Columns>
+          
+
+            <TemplateColumn CellClass="d-flex justify-end">
+                <CellTemplate>
+                    <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+                </CellTemplate>
+            </TemplateColumn>
+
+            <PropertyColumn Property="x=>x.So" Title="@Localizer["So"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.NGAY" Title="@Localizer["NGAY"]" Required="false" CellStyleFunc="_cellStyleFunc" Format="dd/MM/yyyy">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Kinhgui" Title="@Localizer["Kinhgui"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Tennguoidenghi" Title="@Localizer["Tennguoidenghi"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Bophan" Title="@Localizer["bophan"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Noidung" Title="@Localizer["noidung"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Sotien" Title="@Localizer["sotien"]" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Sotienhoanung" Title="@Localizer["sotienhoanung"]" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Loaitiente" Title="@Localizer["Loaitiente"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.tigia" Title="@Localizer["tigia"]" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Sotienconlai" Title="@Localizer["sotienconlai"]" Format="#,##0.##" Culture="@_en" Required="false" CellClass="custom-right-align" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Chungtukemtheo" Title="@Localizer["Chungtukemtheo"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Bkno" Title="@Localizer["BookingNo"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Hbl" Title="@Localizer["HBL"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <PropertyColumn Property="x=>x.Files" Title="@Localizer["Files"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+            <TemplateColumn Title="@Localizer["Approve"]">
+                <CellTemplate>
+                    <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                    </MudCheckBox>
+                </CellTemplate>
+            </TemplateColumn>
+
+            <PropertyColumn Property="x=>x.Continued" Title="@Localizer["Continued"]" Required="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="M_DNTU" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+        </PagerContent>
+    </MudDataGrid>
+</div>
+@code {
+    string usr;
+    List<M_Customer> Customers = new List<M_Customer>();
+
+    List<ChargeModel> charges = new List<ChargeModel>();
+    List<M_Credit> CreditSelecteds = new List<M_Credit>();
+    List<M_HBL> HBLSelecteds = new List<M_HBL>();
+    List<M_HBL> HBLs = new List<M_HBL>();
+    List<M_HBL> HBLs_search = new List<M_HBL>();
+    List<(M_Job job, Guid mblid)> Jobs = new List<(M_Job job, Guid mblid)>();
+    List<M_DNTU> Listdata_DNTU = new List<M_DNTU>();
+    private M_DNTU selectedRow;
+    private bool _resizeColumn;
+    MudDataGrid<M_DNTU> mudTable;
+    string search_string;
+    string search;
+    M_DNTU detail;
+    private bool FilterFunc1(M_DNTU sbd) => FilterFunc(sbd, search);
+    public M_DNTU DNTTs_by_id { get; set; }
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    Guid? customer_id;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+
+    double? sotientruocthue;
+    double? sotienthue;
+    double? sotiensauthue;
+    string? BKNO;
+    string? HBL;
+    string? CUR;
+    double? TIGIA;
+    string? STK;
+
+
+    private bool FilterFunc(M_DNTU sbd, string searchString)
+    {
+
+        if (string.IsNullOrWhiteSpace(sbd.So))
+
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+
+            return true;
+        if (sbd.So!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+
+            return true;
+        if ($"{sbd.So} ".Contains(searchString))
+
+            return true;
+
+        return false;
+    }
+    protected async override Task OnInitializedAsync()
+    {
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "DNTU").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        HBLs_search = await shipsv.GetListHBLALL();
+        charges = await supsv.GetListCharge();
+        // Customers = await csv.GetList_Bymaincus("Vendor");
+        Customers = await csv.GetList();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Jobs = await shipsv.GetListJobNoAndMBLID();
+        // await Refresh_DNTT();
+    }
+    bool _loading = false;
+    List<M_Credit> Listdata = new List<M_Credit>();
+    async Task Refresh(Guid CustomerSelected)
+    {
+        try
+        {
+            if (CustomerSelected == null || CustomerSelected == Guid.Empty)
+            {
+                CallSnackBar("Nothing to search!", MudBlazor.Severity.Warning);
+                return;
+            }
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            HBLs.Clear();
+            HBLSelecteds.Clear();
+            Listdata.Clear();
+            CreditSelecteds.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "HBL"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            HBLs = await DNTUSv.GetListHBL_ByCus(CustomerSelected);
+            customer_id = CustomerSelected;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Somethings went wrong, {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    async Task Refresh_hbl(Guid HBLSelected)
+    {
+        try
+        {
+            if (HBLSelected == null || HBLSelected == Guid.Empty)
+            {
+                CallSnackBar("Nothing to search!", MudBlazor.Severity.Warning);
+                return;
+            }
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            HBLs.Clear();
+            HBLSelecteds.Clear();
+            Listdata.Clear();
+            CreditSelecteds.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "HBL"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            HBLs = await DNTUSv.GetListHBL_ByHBL(HBLSelected);
+
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Somethings went wrong, {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    async Task Refresh_DNTT()
+    {
+        try
+        {
+
+            detail = null!;
+            _loading = true;
+
+            if (Listdata_DNTU != null)
+            {
+                Listdata_DNTU.Clear();
+            }
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "DNTU"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata_DNTU = DNTUSv.GetListDNTU();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    bool _loadingCredit = false;
+    async Task RefreshDebit()
+    {
+        try
+        {
+            if (HBLSelecteds.Count == 0)
+            {
+                CallSnackBar("Nothing to find!", MudBlazor.Severity.Warning);
+                return;
+            }
+            BKNO = HBLSelecteds[0].bkno;
+            HBL =  HBLSelecteds[0].hbl;
+            _loadingCredit = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            CreditSelecteds.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            // Listdata = await shipsv.GetListCreditHBL_where_maincode(HBLSelecteds, "Vendor");
+            Listdata = await shipsv.GetListCreditHBL_where_Credit_DNTU_False(HBLSelecteds);
+        
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Somethings went wrong, {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loadingCredit = false;
+        }
+    }
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.shortname + "_" + rs.COMPANY!;
+    }
+
+    string hblidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = HBLs_search.FirstOrDefault(x => x.hblID == cusid);
+        return rs == null ? string.Empty : rs.hbl!;
+    }
+    string Charidtocharge(Guid? id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.DVT} - {rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+
+    async Task SelectedItemsChanged(HashSet<M_Credit> items)
+    {
+        CreditSelecteds = items.ToList();
+        sotientruocthue = CreditSelecteds.Sum(x => x.thanhtien);
+        sotiensauthue = CreditSelecteds.Sum(x => x.thanhtiensauthue);
+        sotienthue = CreditSelecteds.Sum(x => x.thue);
+        var hblList = CreditSelecteds
+            .Select(x => GetHBL(x.hblid))
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .ToList();
+
+        var distinctHblList = hblList.Distinct().ToList();
+        var distinctHBL = distinctHblList.Count == 1 ? distinctHblList[0] : string.Join(", ", distinctHblList);
+
+        HBL = distinctHBL;
+
+        var bknoList = await DNTUSv.GetListBKno_from_hbl(distinctHBL);
+        BKNO = bknoList.Count == 1
+            ? bknoList[0]
+            : string.Join(", ", bknoList.Distinct());
+
+        TIGIA = CreditSelecteds.FirstOrDefault()?.tigiacredit;
+        CUR = CreditSelecteds.FirstOrDefault()?.tiente;
+        customer_id = CreditSelecteds.FirstOrDefault()?.customerid;
+
+    }
+    void SelectedItemsChangedHBL(HashSet<M_HBL> items)
+    {
+        HBLSelecteds = items.ToList();
+    }
+    private async Task<IEnumerable<Guid>> SearchCus(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => !string.IsNullOrEmpty(x.COMPANY) && !string.IsNullOrEmpty(x.shortname) && !string.IsNullOrEmpty(x.Customer_Code) && (x.MainCode).Contains("Vendor", StringComparison.OrdinalIgnoreCase)
+            && (x.shortname + "_" + x.COMPANY + "_" + x.Customer_Code).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task<IEnumerable<Guid>> SearchHBL(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return HBLs_search.Select(x => x.hblID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return HBLs_search.Where(x => !string.IsNullOrEmpty(x.hbl) && (x.hbl).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.hblID);
+
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private bool _processingUpload = false;
+    string cur_type = "VND"; // default
+    private async Task ExportBill()
+    {
+        try
+        {
+            _processingUpload = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if (detail == null)
+            {
+                CallSnackBar("you must select 1 Data.", MudBlazor.Severity.Warning);
+                return;
+            }
+            var rs = await DNTUSv.ExportBill_DNTT(detail.Id!);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+
+    string formatDate(DateTime? date)
+    {
+        if (date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MM/yyyy");
+    }
+
+    string AgentidtoName(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == id);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+    string Getjobno(Guid? mblid)
+    {
+        if (mblid == Guid.Empty) return string.Empty;
+        var rs = Jobs.FirstOrDefault(x => x.mblid != Guid.Empty && x.mblid == mblid);
+        return string.IsNullOrEmpty(rs.job.JobNo) ? string.Empty : rs.job.JobNo;
+    }
+    string GetHBL(Guid? hblid)
+    {
+        if (hblid == Guid.Empty) return string.Empty;
+        var rs = HBLs.FirstOrDefault(x => x.hblID != Guid.Empty && x.hblID == hblid);
+        return string.IsNullOrEmpty(rs.hbl) ? string.Empty : rs.hbl;
+    }
+
+
+    async Task CommittedItem(M_DNTU item)
+    {
+        item.UserUpdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.Id != Guid.Empty ? await DNTUSv.UpdateDeNghiTamUng_Detail(item) : await DNTUSv.CreateDeNghiTamUng_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh_DNTT();
+    }
+    int? index_no;
+
+    async Task DeleteItem(M_DNTU item)
+    {
+        if (item.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Delete", "DNTU"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var item_dntt = item;
+            var rs = await DNTUSv.DeleteDeNghiTamUng_Detail(item);
+            await HistoryLogService.LogAsync(usr, "Delete DNTU", "DNTU", item.Id, item.So, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh_DNTT();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    void RowClicked(DataGridRowClickEventArgs<M_DNTU> args)
+    {
+
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_DNTU m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.COMPANY! : "";
+    }
+
+    private async Task OpenCreateDialog(Models.M_DNTU tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "DNTU"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            // var parameters = new DialogParameters<ADD> { { x => x._DNTT_Detail, tr }, { x => x.Status, "add" }, { x => x.Customer_id, customer_id }, { x => x.sotientruocthue, sotientruocthue }, { x => x.sotienthue, sotienthue }, { x => x.sotiensauthue, sotiensauthue }, { x => x.BKNO, BKNO }, { x => x.HBL, HBL } };
+            STK = csv.GetCus_BankFromID(customer_id);
+
+
+            // var parameters = new DialogParameters<ADD> { { x => x._DNTU_Detail, tr }, { x => x.Status, "add" } };
+            var parameters = new DialogParameters
+            {
+                { nameof(ADD._DNTU_Detail), tr },
+                { nameof(ADD.Status), "add" },
+                { nameof(ADD.sotien), sotiensauthue },
+                { nameof(ADD.CUR), CUR },
+                { nameof(ADD.HBL), HBL },
+                { nameof(ADD.BKNO), BKNO },
+            };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.Id == Guid.Empty ? "Advance Payment Request Create" : "Advance Payment Request Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                var data = (M_DNTU)result.Data;
+                var rs = await DNTUSv.UpdateCreateDeNghiTamUng(data);
+                await HistoryLogService.LogAsync(usr, "ADD DNTU ", "DNTU", data.Id, data.So, data);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                {
+                    severity = MudBlazor.Severity.Success;
+                    foreach (var items in CreditSelecteds)
+                    {
+                        var creditList = await shipsv.GetCredit_ByID(items.creditid);
+                        var credit = creditList.FirstOrDefault();
+                        if (credit != null)
+                        {
+                            credit.DNTU = true;
+                            await shipsv.UpdateCreditMBL_DNTT(credit);
+                        }
+
+
+                    }
+
+                }
+
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                await HandleRefresh_create(data.Id);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+            if (Listdata_DNTU != null)
+            {
+                Listdata_DNTU.Clear();
+            }
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "DNTU"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata_DNTU = await DNTUSv.GetListDeNghiTamUng_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    private async Task OpenEditDialog(Models.M_DNTU tr)
+    {
+
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "DNTU"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_DNTU>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._DNTU_Detail, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.Id == Guid.Empty ? "Advance Payment Request Edit" : "Advance Payment Request Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_DNTU)result.Data;
+                var rs = await DNTUSv.UpdateCreateDeNghiTamUng(data);
+                await HistoryLogService.LogAsync(usr, "Update DNTU", "DNTU", data.Id, data.So, new { OldData = OldData, NewData = data });
+
+
+
+                //--------------------------------------------
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+                await HandleRefresh_create(data.Id);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+    private async Task OpenDuplicateDialog(Models.M_DNTU tr)
+    {
+
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+      
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "DNTU"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_DNTU>(JsonSerializer.Serialize(tr));
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._DNTU_Detail, tr }, { x => x.Status, "Duplicate" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.Id == Guid.Empty ? "Advance Payment Request Create" : "Advance Payment Request Create", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_DNTU)result.Data;
+                var rs = await DNTUSv.UpdateCreateDeNghiTamUng(data);
+                await HistoryLogService.LogAsync(usr, "Duplicate DNTU", "DNTU", data.Id, data.So, new { OldData = OldData, NewData = data });
+
+
+                //--------------------------------------------
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task OnApproveCheckboxWrapper(M_DNTU item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "DNTU"))
+        {
+            var rs = await DNTUSv.UpdateCreateDeNghiTamUng(item);
+            MudBlazor.Severity severity;
+            if (rs[1] == "1")
+                severity = MudBlazor.Severity.Success;
+
+            else
+                severity = MudBlazor.Severity.Error;
+
+            CallSnackBar(rs[0], severity);
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private Func<M_DNTU, string> _cellStyleFunc => x =>
+    {
+        string style = "";
+
+        if (string.IsNullOrEmpty(x.Trangthai))
+            return "color: #000000";
+
+        var rs = M_Trangthais
+        .Where(t => (t.Noidung).Contains(x.Trangthai, StringComparison.InvariantCultureIgnoreCase)
+            && t.Tieude.Equals("DNTU", StringComparison.InvariantCultureIgnoreCase))
+        .Select(t => t.Mamau)
+        .FirstOrDefault();
+        return "color: " + rs;
+
+
+    };
+}

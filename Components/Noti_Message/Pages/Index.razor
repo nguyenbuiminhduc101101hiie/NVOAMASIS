@@ -1,0 +1,215 @@
+﻿@inject IDialogService Dialog
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject SupportServices supsv
+@inject SharedServices sv
+@inject ShipmentService shipsv
+@inject SharedServices ssv
+@inject CustomerService csv
+@inject GlobalServices gsv
+@attribute [Authorize]
+@inject NotificationService _notificationService
+@inject IDialogService DialogService
+
+<style>
+    .unread-row {
+        background-color: #e0f7fa !important; /* Xanh nhạt */
+    }
+</style>
+
+<PageTitle>@Localizer["Message"]</PageTitle>
+<MudButton HtmlTag="label"
+           OnClick="Refresh"
+           Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+           StartIcon="@Icons.Material.Filled.Refresh">
+    @Localizer["reload"]
+</MudButton>
+<div class="pa-4" style="margin-top:15px; margin-bottom:10px;">
+    <MudGrid>
+        <MudItem xs=6>
+            <MudDataGrid T="Notification" Items="@listmess_dagui" @ref="mudTable" Filterable="true" Class="custom-credit"
+                         FilterMode="@DataGridFilterMode.Simple" Dense="true" Bordered="true" Virtualize Height="550px;"
+                         FixedHeader="true" HeaderClass="no-wrap" SelectOnRowClick="false" FooterClass="nondisplay"
+                         ReadOnly="false" ColumnResizeMode="ResizeMode.Column" Loading="_loading" RowClassFunc="@SelectedRowClassFunc"
+                         RowClick="@RowClicked">
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">@Localizer["message_dagui"]</MudText>
+                    <MudSpacer />
+                </ToolBarContent>
+                <Columns>
+                    <PropertyColumn Property="x => GetUsername(x.ReceiverUserId)" Title="@Localizer["UserGui"]" Required="false" />
+                    <PropertyColumn Property="x => x.Message" Title="@Localizer["noidung"]" />
+                    <PropertyColumn Property="x => x.CreatedAt" Title="@Localizer["NGAY"]" />
+                </Columns>
+
+                <PagerContent>
+                    <MudDataGridPager T="Notification" PageSizeOptions="@(new int[] {20 })" />
+                </PagerContent>
+            </MudDataGrid>
+        </MudItem>
+
+        <MudItem xs=6>
+
+                <MudDataGrid T="Notification" Items="@listmess_nhan" Filterable="true" @ref="mudTable"  Bordered="true"
+                         FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize Height="550px;" QuickFilter="@FilterFunc1"
+                         FixedHeader="true" HeaderClass="no-wrap" FooterClass="nondisplay"
+                             ReadOnly="false"  RowClassFunc="@SelectedRowClassFunc_nhan"
+                             RowClick="@RowClicked" EditDialogOptions="@options"
+                             ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">@Localizer["message_danhan"]</MudText>
+                    <MudSpacer />
+                </ToolBarContent>
+
+                <Columns>
+
+                    <PropertyColumn Property="x => GetUsername(x.ReceiverUserId)" Title="@Localizer["UserNhan"]" Required="false" />
+                    <PropertyColumn Property="x => x.Message" Title="@Localizer["noidung"]" />
+                    <PropertyColumn Property="x => x.CreatedAt" Title="@Localizer["NGAY"]" />
+                </Columns>
+
+                <PagerContent>
+                    <MudDataGridPager T="Notification" PageSizeOptions="@(new int[] {20 })" />
+                </PagerContent>
+
+            </MudDataGrid>
+        </MudItem>
+    </MudGrid>
+</div>
+@code {
+    string usr;
+
+    List<AuthUser> listusers = new List<AuthUser>();
+    List<Notification> listmess_dagui = new List<Notification>();
+    List<Notification> listmess_nhan = new List<Notification>();
+    Notification detail;
+    MudDataGrid<Notification> mudTable;
+
+    protected async override Task OnInitializedAsync()
+    {
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        listusers = gsv.GetListuser();
+        await Refresh();
+
+    }
+    bool _loading = false;
+
+    async Task Refresh()
+    {
+        try
+        {
+            listmess_dagui.Clear();
+            listmess_nhan.Clear();
+            listmess_dagui = await _notificationService.GetList_notisent_all();
+            listmess_nhan = await _notificationService.GetList_noti_nhan_all();
+            StateHasChanged();
+
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Somethings went wrong, {ex.Message}", MudBlazor.Severity.Error);
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+
+    string GetUsername(Guid? userid)
+    {
+        if (userid == Guid.Empty) return string.Empty;
+        var rs = listusers.FirstOrDefault(x => x.UsrId != Guid.Empty && x.UsrId == userid);
+        return string.IsNullOrEmpty(rs.Name) ? string.Empty : rs.Name;
+    }
+
+    async Task DeleteItem(Notification item)
+    {
+
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await _notificationService.Deletenoti(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+
+    async Task RowClicked(DataGridRowClickEventArgs<Notification> args)
+    {
+        detail = args.Item;
+
+        detail.IsRead = true;
+        var rs = await _notificationService.UpdateSentNoti(detail);
+        MudBlazor.Severity severity;
+        if (rs[1] == "1")
+            severity = MudBlazor.Severity.Success;
+        else
+            severity = MudBlazor.Severity.Error;
+    }
+    private int selectedRowNumber = -1;
+
+    private string SelectedRowClassFunc(Notification m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable != null && mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    private string SelectedRowClassFunc_nhan(Notification m, int rowNumber)
+    {
+        if (m.IsRead==false)
+        {
+            return m.IsRead == false ? "unread-row" : string.Empty;
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    string search;
+    private bool FilterFunc1(Notification sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(Notification sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.Message))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.Message!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.Message} ".Contains(searchString))
+            return true;
+        return false;
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+}

@@ -1,0 +1,398 @@
+@using System.Globalization﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@using MudBlazor.Extensions
+@using MudExtensions.Utilities
+
+<MudDialog>
+    <DialogContent>
+
+        <MudStepper Class="pa-4" Loading="_loading" @ref="_stepper" Color="Color.Secondary"
+        PreventStepChangeAsync="new Func<StepChangeDirection, int, Task<bool>>(CheckChange)">
+            <MudStep Icon="@Icons.Material.Filled.LooksOne">
+                <MudText Typo="Typo.body2">Select fees to generate invoice.</MudText>
+                <MudDataGrid T="M_Debit" Items="@Listdata" Filterable="true" MultiSelection="true" SelectedItemsChanged="@SelectedItemsChanged"
+                             FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="400px;"
+                             FixedHeader="true" HeaderClass="no-wrap" SelectOnRowClick="false" FooterClass="nondisplay"
+                             ReadOnly="true" Bordered="true" ColumnResizeMode="ResizeMode.Column" ShowColumnOptions="false">
+                    <ToolBarContent>
+                        <MudText Typo="Typo.h6">@Localizer["Debits"]</MudText>
+                        <MudCheckBox @bind-Checked="isCombine" Label="@Localizer["Combine"]" Size="Size.Small" Color="Color.Primary" UnCheckedColor="Color.Error"/>
+                    </ToolBarContent>
+                    <Columns>
+                        <SelectColumn T="M_Debit" />
+                        <PropertyColumn Property="x => x.debitno" Title="@Localizer["Debit No."]" Required="false" />
+                        <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x =>  Charidtocharge(x.itemid)" Title="@Localizer["Item"]" Required="false" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => x.dongia" Title="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" Required="false" CellStyle="text-align: right;" />
+                        <PropertyColumn Property="x=>x.type" Title="@Localizer["Type"]" Required="false" />
+                        <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" Required="false" />
+                        <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["Total Amount"]" Format="#,##0.##" Culture="@_en" Required="false" CellStyle="text-align: right;" />
+                        <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" Required="false" />
+                        <PropertyColumn Property="x => x.thue" Title="@Localizer["VAT"]" Format="#,##0.##" Culture="@_en" Required="false" CellStyle="text-align: right;" />
+                        <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Amount Inc. VAT"]" Format="#,##0.##" Culture="@_en" Required="false" CellStyle="text-align: right;" />
+                        <PropertyColumn Property="x => x.thuho" Title="@Localizer["On Behalf"]" Required="false" />
+                        <PropertyColumn Property="x => x.tigiadebit" Title="@Localizer["Exchange Rate Debit"]" Format="#,##0.##" Culture="@_en" Required="false" CellStyle="text-align: right;" />
+                        <PropertyColumn Property="x => x.tigiahoandondaura" Title="@Localizer["Output Invoice Rate"]" Format="#,##0.##" Culture="@_en" Required="false" CellStyle="text-align: right;" />
+                        <PropertyColumn Property="x => x.ghichu" Title="@Localizer["Notes"]" Required="false" />
+                        <PropertyColumn Property="x => x.daIndebit" Title="@Localizer["Debit Printed"]" />
+                        <PropertyColumn Property="x => x.daXuatHoadon" Title="@Localizer["Invoice Printed"]" />
+                        <PropertyColumn Property="x => x.khoa" Title="@Localizer["Locked"]" />
+                        <PropertyColumn Property="x => x.InArrival" Title="@Localizer["Arrival Printed"]" />
+                        <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                        <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                        <PropertyColumn Property="x => x.continued" Title="@Localizer["Continued"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                    </Columns>
+                </MudDataGrid>
+            </MudStep>
+            <MudStep Icon="@Icons.Material.Filled.LooksTwo">
+                <MudContainer Class="mt-16" MaxWidth="MaxWidth.Medium">
+                    <MudText Typo="Typo.h5" Align="Align.Center" GutterBottom="true">Invoice</MudText>
+                    <MudForm @ref="form">
+                        <MudTabs Border DisableSliderAnimation >
+                            @foreach(var InvoiceDetail in Invoices)
+                            {
+                                <MudTabPanel Text="@($"({Invoices.IndexOf(InvoiceDetail)+1})")">
+                                    <MudGrid Spacing="12" Class="mt-16">
+                                        <MudItem xs="7" Class="pa-4">
+                                            <MudGrid Style="background-color:antiquewhite;">
+                                                <MudItem xs="12">
+                                                    <MudTextField @bind-Value="InvoiceDetail.sohoadonNoibo" Label="@Localizer["Offline invoice number"]" Required />
+                                                </MudItem>
+                                                <MudItem xs="12">
+                                                    <MudTextField @bind-Value="InvoiceDetail.sohoadonDientu" Label="@Localizer["Online invoice number"]" />
+                                                </MudItem>
+                                                <MudItem xs="12">
+                                                    <MudAutocomplete @bind-Value="InvoiceDetail.customerid" Label="@Localizer["Customer"]" Required
+                                                                     SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" Validation="ValidateGuid" />
+                                                </MudItem>
+                                                <MudItem xs="12">
+                                                    <MudAutocomplete @bind-Value="InvoiceDetail.itemid" Label="@Localizer["Item"]" Required
+                                                                     SearchFunc="SearchCharge" ToStringFunc="Charidtocharge" Validation="ValidateGuid" />
+                                                </MudItem>
+                                                <MudItem xs="6">
+                                                    <MudDatePicker @bind-Date=InvoiceDetail.ngayphathanhhoadonDientu Label="@Localizer["Invoice issue date"]" Required />
+                                                </MudItem>
+                                                <MudItem xs="6">
+                                                    <MudSelect @bind-Value="InvoiceDetail.tiente" Label="@Localizer["Currency"]" Required>
+                                                        <MudSelectItem Value="@("VND")">VND</MudSelectItem>
+                                                        <MudSelectItem Value="@("USD")">USD</MudSelectItem>
+                                                    </MudSelect>
+                                                </MudItem>
+                                            </MudGrid>
+                                        </MudItem>
+                                        <MudItem xs="5" Class="pa-4">
+                                            <MudGrid Style="background-color:antiquewhite;">
+                                                <MudItem xs="6">
+                                                    <MudNumericField @bind-Value="InvoiceDetail.dongia" Class="text-right"
+                                                                     Label="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" T="double?" Required
+                                                                     TextChanged="@(e => CalculateTotal(InvoiceDetail))" HideSpinButtons="true" />
+                                                </MudItem>
+                                                <MudItem xs="6">
+                                                    <MudNumericField @bind-Value="InvoiceDetail.soluong"
+                                                                     Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" T="double?" Required
+                                                                     TextChanged="@(e => CalculateTotal(InvoiceDetail))" HideSpinButtons="true" />
+                                                </MudItem>
+                                                <MudItem xs="9">
+                                                    <MudNumericField @bind-Value="InvoiceDetail.thanhtien" Variant="Variant.Text" Label="@Localizer["Total Price"]" ReadOnly
+                                                                     Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
+                                                </MudItem>
+                                                <MudItem xs="3">
+                                                    <MudNumericField @bind-Value="InvoiceDetail.thue" Label="@Localizer["VAT"]" Required
+                                                                     Format="#,##0.##" Culture="@_en" T="double?"
+                                                                     TextChanged="@(e => CalculateThanhtiensauthue(InvoiceDetail))" HideSpinButtons="true" />
+                                                </MudItem>
+                                                <MudItem xs="12">
+                                                    <MudNumericField @bind-Value="InvoiceDetail.thanhtiensauthue" Label="@Localizer["Total Price Inc. VAT"]" ReadOnly
+                                                                     Format="#,##0.##" Variant="Variant.Text" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
+                                                </MudItem>
+                                            </MudGrid>
+                                        </MudItem>
+                                    </MudGrid>
+                                </MudTabPanel>
+                            }
+                        </MudTabs>
+                    </MudForm>
+                </MudContainer>
+            </MudStep>
+        </MudStepper>
+    </DialogContent>
+</MudDialog>
+
+
+@code {
+    [Parameter] public List<M_Debit> Listdata { get; set; } = default!;
+    [Parameter] public List<M_Customer> Customers { get; set; } = default!;
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    [Parameter] public bool isMBL { get; set; }
+    List<ChargeModel> charges = new List<ChargeModel>();
+    List<M_Debit> DebitSelecteds = new List<M_Debit>();
+    List<M_HoaDonDauRa> Invoices = new List<M_HoaDonDauRa>();
+    string usr;
+    bool _loading, isConvertCur, isCombine = false;
+    MudStepper _stepper;
+    MudForm form;
+    private List<M_Debit> _lastSelectedDebits = new();
+    private bool _lastSelectedCombine = false;
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+
+            charges = await supsv.GetListCharge();
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+}
+    void SelectedItemsChanged(HashSet<M_Debit> items)
+    {
+        DebitSelecteds = items.ToList();
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.shortname + "_" + rs.COMPANY!;
+    }
+    string Charidtocharge(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.DVT} - {rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    private async Task<bool> CheckChange(StepChangeDirection direction, int targetIndex)
+    {
+        // Always allow stepping backwards, even if forms are invalid
+        if (direction == StepChangeDirection.Backward)
+        {
+            return false;
+        }
+        if (_stepper?.GetActiveIndex() == 0)
+        {
+            _loading = true;
+            StateHasChanged();
+            await Task.Delay(1000);
+            _loading = false;
+            StateHasChanged();
+            if(DebitSelecteds.Count == 0)
+            {
+                CallSnackBar("Bạn phải chọn ít nhất một dòng phí!", MudBlazor.Severity.Warning);
+                return true;
+            }
+            if(DebitSelecteds.Any(x=>x.daXuatHoadon == true))
+            {
+                CallSnackBar("Phí bạn chọn đã được xuất hóa đơn!", MudBlazor.Severity.Warning);
+                return true;
+            }
+            bool isSameGroup = DebitSelecteds
+                .Select(x => new { x.customerid, x.thue })
+                .Distinct()
+                .Count() == 1;
+            if (!isSameGroup)
+            {
+                CallSnackBar("Có sự khác biệt trong nhóm Customer / VAT", MudBlazor.Severity.Warning);
+                return true;
+            }
+            bool isSameItem = DebitSelecteds
+               .Select(x => new { x.itemid })
+               .Distinct()
+               .Count() == 1;
+
+            // So sánh nếu danh sách không thay đổi => bỏ qua tính lại
+            if (IsSameSelection(DebitSelecteds, _lastSelectedDebits) && isCombine == _lastSelectedCombine)
+                return false;
+            _lastSelectedDebits = DebitSelecteds.ToList();
+            _lastSelectedCombine = isCombine;
+            isConvertCur = false;
+            Invoices = new List<M_HoaDonDauRa>();
+            var sohd = await getinvoiceno();
+            if (!isCombine) // không combine
+            {
+                foreach (var item in DebitSelecteds)
+                {
+                    var InvoiceDetail = new M_HoaDonDauRa();
+                    InvoiceDetail.sohoadonNoibo = sohd;
+                    if (isMBL)
+                        InvoiceDetail.mblid = item.mblid;
+                    else
+                        InvoiceDetail.hblid = item.hblid;
+                    InvoiceDetail.customerid = item.customerid;
+                    InvoiceDetail.itemid = item.itemid; // không cùng thì bỏ trống
+                    if (item.tiente == "USD")
+                    {
+                        isConvertCur = true;
+                        InvoiceDetail.dongia = item.dongia * item.tigiahoandondaura;
+                    }
+                    else
+                        InvoiceDetail.dongia = item.dongia;
+                    InvoiceDetail.tiente = "VND";
+                    InvoiceDetail.soluong = item.soluong;
+                    InvoiceDetail.ngayphathanhhoadonDientu = DateTime.Now;
+                    InvoiceDetail.thue = item.thue;
+                    InvoiceDetail.userupdate = usr;
+                    InvoiceDetail.dateupdate = DateTime.Now.ToString("dd-MMM-yyyy");
+                    InvoiceDetail.approve = InvoiceDetail.editable = InvoiceDetail.continued = true;
+                    Invoices.Add(InvoiceDetail);
+                }
+            }
+            else // combine
+            {
+                var InvoiceDetail = new M_HoaDonDauRa();
+                InvoiceDetail.sohoadonNoibo = sohd;
+                if (isMBL)
+                    InvoiceDetail.mblid = DebitSelecteds.First().mblid;
+                else
+                    InvoiceDetail.hblid = DebitSelecteds.First().hblid;
+                InvoiceDetail.customerid = DebitSelecteds.First().customerid;
+                InvoiceDetail.itemid = isSameItem ? DebitSelecteds.First().itemid : Guid.Empty; // không cùng thì bỏ trống
+                if(DebitSelecteds.Any(x=>x.tiente == "USD"))
+                {
+                    double? totalunitprice = 0;
+                    isConvertCur = true;
+                    foreach (var item in DebitSelecteds)
+                        totalunitprice += item.tiente == "USD" ? (item.dongia * item.soluong * item.tigiahoandondaura) : item.dongia * item.soluong;
+                    InvoiceDetail.dongia = totalunitprice;
+                }  
+                else
+                    InvoiceDetail.dongia = DebitSelecteds.Sum(x => x.dongia * x.soluong);
+                InvoiceDetail.tiente = "VND";
+                InvoiceDetail.ngayphathanhhoadonDientu = DateTime.Now;
+                InvoiceDetail.soluong = 1;
+                InvoiceDetail.thue = DebitSelecteds.First().thue;
+                InvoiceDetail.userupdate = usr;
+                InvoiceDetail.dateupdate = DateTime.Now.ToString("dd-MMM-yyyy");
+                InvoiceDetail.approve = InvoiceDetail.editable = InvoiceDetail.continued = true;
+                Invoices.Add(InvoiceDetail);
+            }
+            if(isConvertCur) CallSnackBar("Đã chuyển đổi đồng USD thành đồng VND!", MudBlazor.Severity.Info);
+            return false; // true là chưa hợp lệ, false là hợp lệ
+        }
+        else if (_stepper?.GetActiveIndex() == 1)
+        {
+            _loading = true;
+            StateHasChanged();
+            await Task.Delay(1000);
+            _loading = false;
+            StateHasChanged();
+            await form.Validate();
+            if (!form.IsValid)
+                return true;
+            //insert data
+            DebitSelecteds.ForEach(x => x.sohoadondaura = Invoices.First().sohoadonNoibo);
+            DebitSelecteds.ForEach(x => x.daXuatHoadon = true);
+            DebitSelecteds.ForEach(x => x.khoa = true);
+            // update so hoa don vao debit
+            var rs = await shipsv.UpdateDebitMBL(DebitSelecteds);
+            // create inv
+            Invoices.ForEach(x=>x.soThuTu = Invoices.IndexOf(x)+1);
+            var rsInv = await shipsv.CreateHoaDonDauRaMBL(Invoices);
+            CallSnackBar(rsInv.Message, rsInv.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            return !rsInv.Flag;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<Guid>> SearchCharge(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return charges.Select(x => x.CHARGE_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return charges.Where(x => (x.CHARGE_CODE + "_" + x.CHARGE).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.CHARGE_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private void CalculateTotal(M_HoaDonDauRa item)
+    {
+        if (item.soluong.HasValue && item.dongia.HasValue)
+        {
+
+            double soluong = item.soluong ?? 0;
+            double dongia = item.dongia ?? 0;
+            item.thanhtien = Math.Round(soluong * dongia, 2);
+            CalculateThanhtiensauthue(item);
+        }
+
+
+    }
+
+    private void CalculateThanhtiensauthue(M_HoaDonDauRa item)
+    {
+        if (item.thanhtien.HasValue && item.thue.HasValue)
+        {
+            double thanhtienValue = item.thanhtien ?? 0;
+            double thueValue = item.thue ?? 0;
+            item.thanhtiensauthue = Math.Round(thanhtienValue * (thueValue / 100 + 1), 2);
+        }
+
+
+    }
+    async Task<string> getinvoiceno()
+    {
+        var rs = await shipsv.GetInvoiceNo();
+        return rs;
+    }
+    private bool IsSameSelection(List<M_Debit> current, List<M_Debit> last)
+    {
+        if (current.Count != last.Count)
+            return false;
+
+        var currentIds = current.Select(x => x.debitId).OrderBy(x => x).ToList();
+        var lastIds = last.Select(x => x.debitId).OrderBy(x => x).ToList();
+
+        return currentIds.SequenceEqual(lastIds);
+    }
+
+    private IEnumerable<string> ValidateGuid(Guid value)
+    {
+        if (value == Guid.Empty)
+            yield return "Data is Required!";
+    }
+}

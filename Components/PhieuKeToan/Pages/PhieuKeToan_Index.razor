@@ -1,0 +1,629 @@
+﻿@page "/PhieuKeToan"
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject CustomerService Cussv
+@inject PhieuThu_Chi_Services thuchisv
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+
+
+<style>
+    .class-dialog-custom {
+        backdrop-filter: blur(10px);
+        transition: none !important;
+        animation: none !important;
+    }
+
+    .selected {
+        background: #855ff3 !important;
+    }
+
+    .selected > td {
+        color: white !important;
+    }
+
+    .selected > td .mud-input {
+        color: white !important;
+    }
+
+    .labelCustomColor label {
+        font-weight: bold;
+        color: #118AB2 !important;
+    }
+
+    .mud-table thead {
+        background-color: #118AB2;
+    }
+
+    .mud-table th {
+        background-color: #118AB2 !important;
+        color: white !important;
+    }
+
+    .mud-table-foot tr {
+        background-color: #118AB2 !important;
+    }
+
+    .footer-cell {
+        background-color: #118AB2 !important;
+        color: white !important;
+    }
+
+    .filter-header-cell {
+        background-color: white !important;
+        color: black !important;
+    }
+
+    .mud-menu {
+        display: none;
+    }
+
+    .no-wrap {
+        white-space: nowrap;
+    }
+
+    .custom-right-align {
+        text-align: right !important;
+    }
+
+    .custom-label .mud-input-label {
+        color: blue !important;
+    }
+</style>
+
+<PageTitle>@Localizer["PhieuKeToan"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["PhieuKeToan"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenCreateDialog(new Models.M_PhieuKeToan()))"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["new"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenEditDialog(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Edit">
+        @Localizer["edit"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenCreateDialog_themtiep(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["themtiep"]
+    </MudButton>
+
+    <MudButton Disabled="_processingUpload"
+               OnClick="ExportBill"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Download">
+        @if (_processingUpload)
+        {
+            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+            <MudText Class="ms-2">Processing</MudText>
+        }
+        else
+        {
+            <MudText>@Localizer["Export_Bill"]</MudText>
+        }
+    </MudButton>
+
+</MudStack>
+
+<MudDataGrid T="M_PhieuKeToan" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4" Bordered="true"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+             RowClick="@RowClicked" EditDialogOptions="@options"
+             ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" Loading="_loading">
+    <Columns>
+        <HierarchyColumn T="M_PhieuKeToan" />
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Property="x=>x.Sophieuketoan" Title="@Localizer["Sophieuketoan"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => CustomerName(x.Customer_ID)" Title="@Localizer["Customer"]" CellStyleFunc="_cellStyleFunc">
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.Customer_ID" Label="@Localizer["Customer"]">
+                    @foreach (var item in List_Cus)
+                    {
+                        <MudSelectItem Value="@item.Customer_ID">@item.COMPANY</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+
+
+        <PropertyColumn Property="x => x.Ngay" Title="@Localizer["NGAY"]" Required="false" CellStyleFunc="_cellStyleFunc" Format="dd/MM/yyyy">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.TKnophieuketoan" Title="@Localizer["TKNo"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.TKCophieuketoan" Title="@Localizer["TKCO"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Sotien" Title="@Localizer["sotien"]" Required="false" Format="#,##0.##" Culture="@_en" CellStyleFunc="_cellStyleFunc" CellClass="custom-right-align">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Tigia" Title="@Localizer["tigia"]" Required="false" Format="#,##0.##" Culture="@_en" CellStyleFunc="_cellStyleFunc" CellClass="custom-right-align">
+        </PropertyColumn>
+       
+        <PropertyColumn Property="x=>x.Currency" Title="@Localizer["Loaitiente"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.PTTT" Title="@Localizer["PTTT"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <PropertyColumn Property="x=>x.Noidung" Title="@Localizer["noidung"]" Required="false" CellStyleFunc="_cellStyleFunc">
+        </PropertyColumn>
+
+        <TemplateColumn Title="@Localizer["Approve"]">
+            <CellTemplate>
+                <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))">
+                </MudCheckBox>
+            </CellTemplate>
+        </TemplateColumn>
+
+    </Columns>
+
+    <PagerContent>
+        <MudDataGridPager T="Models.M_PhieuKeToan" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    List<M_PhieuKeToan> Listdata = new List<M_PhieuKeToan>();
+    MudDataGrid<M_PhieuKeToan> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+    private bool _resizeColumn;
+    M_PhieuKeToan detail;
+
+    private List<M_Customer> filteredCarr = new List<M_Customer>();
+    private List<M_Customer> Cuss_Carr = new List<M_Customer>();
+    private List<Terminal_> Terminals = new List<Terminal_>();
+    private List<M_Customer> List_Cus = new List<M_Customer>();
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+  
+    protected async override Task OnInitializedAsync()
+    {
+        List_Cus = await Cussv.GetList();
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "PhieuKeToan").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        Terminals = await gsv.GetList_Terminal();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Cuss_Carr = await lcsv.GetList_Customer_line();
+        // await Refresh();
+    }
+
+    private bool _processingUpload = false;
+
+    private async Task OnApproveCheckboxWrapper(M_PhieuKeToan item)
+    {
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "PhieuKeToan"))
+        {
+            var rs = await thuchisv.UpdateCreatePhieuketoan(item);
+        }
+        else
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+       
+    }
+    private async Task ExportBill()
+    {
+        try
+        {
+            _processingUpload = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if (detail == null)
+            {
+                CallSnackBar("you must select 1 Data.", MudBlazor.Severity.Warning);
+                return;
+            }
+            var rs = await thuchisv.ExportBill_PKT(detail.PhieuketoanID!, detail.Sophieuketoan);
+             CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+          
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+         
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "PhieuKeToan"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await thuchisv.GetList_PhieuKeToan();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_PhieuKeToan> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_PhieuKeToan m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(M_PhieuKeToan item)
+    {
+        item.Userid = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Updatetime = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.PhieuketoanID != Guid.Empty ? await thuchisv.UpdatePhieuketoan_Detail(item) : await thuchisv.CreatePhieuketoan_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    int? index_no;
+
+    async Task DeleteItem(M_PhieuKeToan item)
+    {
+        if (item.Approve == true)
+        {
+            CallSnackBar("Data đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Delete", "PhieuKeToan"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await thuchisv.DeletePhieuketoan_Detail(item);
+            await HistoryLogService.LogAsync(usr, "Delete Phieu Ke Toan", "PhieuKeToan", item.PhieuketoanID, item.Sophieuketoan, item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(M_PhieuKeToan sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(M_PhieuKeToan sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(sbd.Sophieuketoan))
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.Sophieuketoan!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.Sophieuketoan} ".Contains(searchString))
+            return true;
+        return false;
+    }
+
+    private Func<M_PhieuKeToan, string> _cellStyleFunc => x =>
+       {
+           string style = "";
+
+           if (string.IsNullOrEmpty(x.Trangthai))
+               return "color: #000000";
+
+           var rs = M_Trangthais
+           .Where(t => (t.Noidung).Contains(x.Trangthai, StringComparison.InvariantCultureIgnoreCase)
+               && t.Tieude.Equals("PhieuKeToan", StringComparison.InvariantCultureIgnoreCase))
+           .Select(t => t.Mamau)
+           .FirstOrDefault();
+           return "color: " + rs;
+
+
+       };
+
+    private async Task OpenCreateDialog(Models.M_PhieuKeToan tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "PhieuKeToan"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._PhieuKeToan_Detail, tr }, { x => x.Status, "add" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.PhieuketoanID == Guid.Empty ? "Accounting Voucher Create" : "Accounting Voucher Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                var data = (M_PhieuKeToan)result.Data;
+                var rs = await thuchisv.UpdateCreatePhieuketoan(data);
+                await HistoryLogService.LogAsync(usr, "ADD Phieu Ke Toan", "PhieuKeToan", data.PhieuketoanID, data.Sophieuketoan, data);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                await HandleRefresh_create(data.PhieuketoanID);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+            Listdata.Clear();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "PhieuKeToan"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await thuchisv.GetListPhieuketoan_create(id);
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    private async Task OpenEditDialog(Models.M_PhieuKeToan tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (tr.Approve == true)
+        {
+            CallSnackBar("Phiếu Kế Toán đã được Approve!!! , vui lòng bỏ Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "PhieuKeToan"))
+        {
+            var OldData = JsonSerializer.Deserialize<M_PhieuKeToan>(JsonSerializer.Serialize(tr));
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._PhieuKeToan_Detail, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.PhieuketoanID == Guid.Empty ? "Accounting Voucher Edit" : "Accounting Voucher Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_PhieuKeToan)result.Data;
+                var rs = await thuchisv.UpdateCreatePhieuketoan(data);
+                await HistoryLogService.LogAsync(usr, "Update Phieu Ke Toan", "PhieuKeToan", data.PhieuketoanID, data.Sophieuketoan, new { OldData = OldData, NewData = data });
+
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+
+    private async Task OpenCreateDialog_themtiep(Models.M_PhieuKeToan tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "PhieuKeToan"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._PhieuKeToan_Detail, tr }, { x => x.Status, "themtiep" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.PhieuketoanID == Guid.Empty ? "Accounting Voucher Edit" : "Accounting Voucher Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (M_PhieuKeToan)result.Data;
+                var rs = await thuchisv.UpdateCreatePhieuketoan(data);
+                await HistoryLogService.LogAsync(usr, "Them Tiep Phieu Ke Toan", "PhieuKeToan", data.PhieuketoanID, data.Sophieuketoan, data);
+
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                await HandleRefresh_create(data.PhieuketoanID);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    private async Task<IEnumerable<string>> searchTerminal(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName))
+               .Select(x => x.TermiNalName);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName) &&
+                            x.TermiNalName.Contains(text, StringComparison.OrdinalIgnoreCase))
+               .Select(x => x.TermiNalName);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private async Task GetT_BieugiananghaNo(M_PhieuKeToan item)
+    {
+
+        int formattedYear = DateTime.Now.Year;
+        int formattedMonth = DateTime.Now.Month;
+
+        string usr = asv.GetAuth().Result.User.Identity!.Name!;
+        var refno = await supsv.GetRefNoByFunc("PKT", formattedMonth, formattedYear, usr);
+
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        item.Sophieuketoan = cn + "PKT_" + formattedYear.ToString() + formattedMonth.ToString() + refno.Value.ToString("D4");
+
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = List_Cus.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.COMPANY! : "";
+    }
+
+}

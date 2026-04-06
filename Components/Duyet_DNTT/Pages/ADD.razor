@@ -1,0 +1,178 @@
+﻿@using System.Globalization
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject TrainScheduleServices trainsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject SharedServices ssv
+@inject LocalChargesServices lcsv
+@inject SupportServices supsv
+@inject LenhDieuXeServices ldxsv
+@inject TKHQ_Services tkhqsv
+@inject GlobalServices gsv
+@inject Bieugianangha_Services BGRRsv
+@inject CustomerService CusSV
+@inject DNTUServices DNTUSV
+@inject BookingService Bksv
+@inject ShipmentService shipmentsv
+@inject NavigationManager NavigationManager
+@inject tigiaVCBservices Vcbsv
+@inject IJSRuntime JSRuntime
+@inject IWebHostEnvironment _env
+<MudDialog>
+    <DialogContent>
+        <MudSpacer></MudSpacer>
+        <MudContainer>
+            <!-- PHẦN PREVIEW REPORT -->
+            <MudPaper Class="pa-2" Style="height: 500px; overflow: auto;">
+                <iframe src="@reportUrl" width="100%" height="100%" style="border: none;"></iframe>
+            </MudPaper>
+
+            <MudCard>
+                <MudForm Model="@_DNTT_Detail" @ref="@form">
+                    <MudCardContent>
+
+                        <MudGrid>
+                            <MudItem xs="2">
+                                <MudCheckBox @bind-Value="_DNTT_Detail.Approve" Label="@Localizer["Duyet_DNTT"]" Class="custom-label" />
+                            </MudItem>
+                            <MudItem xs="10">
+                                <MudTextField @bind-Value="_DNTT_Detail.Lidoduyet" Label="@Localizer["Lidoduyet"]" Class="custom-label" Lines="3" />
+                            </MudItem>
+                           
+                        </MudGrid>
+
+
+                    </MudCardContent>
+                </MudForm>
+
+            </MudCard>
+        </MudContainer>
+    </DialogContent>
+    <DialogActions>
+
+        <MudButton OnClick="@(async () => await Submit())">Save</MudButton>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+
+    </DialogActions>
+</MudDialog>
+
+
+
+@code {
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+
+    List<M_Customer> customers = new List<M_Customer>();
+    [Parameter] public Models.M_DNTT_Logistics _DNTT_Detail { get; set; }
+    [Parameter] public string Status { get; set; }
+    [Parameter] public Guid Customer_id { get; set; }
+    [Parameter] public double? sotientruocthue { get; set; }
+    [Parameter] public double? sotienthue { get; set; }
+    [Parameter] public double? sotiensauthue { get; set; }
+    [Parameter] public string? HBL { get; set; }
+    [Parameter] public string? BKNO { get; set; }
+    [Parameter] public string? TYPE { get; set; }
+    [Parameter] public string? CUR { get; set; }
+    [Parameter] public double? TIGIA { get; set; }
+    [Parameter] public string? STK { get; set; }
+    List<string> currs = new List<string>();
+
+    MudForm form;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    private List<Terminal_> Terminals = new List<Terminal_>();
+    private List<Terminal_> Terminals_Address = new List<Terminal_>();
+
+    string UserHanding;
+    private List<string> ListUser { get; set; } = new List<string>();
+    List<M_DNTT_Logistics> DNTTs = new List<M_DNTT_Logistics>();
+
+    List<string> Bookings = new List<string>();
+    List<Booking> M_Bookings = new List<Booking>();
+
+    List<string> HBLs = new List<string>();
+    List<M_HBL> M_HBLs = new List<M_HBL>();
+    // List<M_DNTU> DNTUs_by_id = new List<M_DNTU>;
+    // public M_DNTU DNTUs_by_id { get; set; }
+    string? reportUrl;
+    protected async override Task OnInitializedAsync()
+    {
+        await GenerateReportPreview(_DNTT_Detail.Id);
+    }
+
+    private async Task GenerateReportPreview(Guid id)
+    {
+        try
+        {
+            var report = new StiReport();
+            var rpt = Path.Combine(_env.WebRootPath, "Reports", "PhieuDNTT.mrt");
+
+            StiBlazorHelper.Initialize(JSRuntime);
+
+            report.Load(rpt);
+            report.Culture = "en-US";
+            report.Dictionary.Variables["ID"].Value = id.ToString();
+
+            var list_PT = await DNTUSV.GetListDNTT_id(id);
+
+            foreach (var item_PT in list_PT)
+            {
+                report.Dictionary.Variables["sodntt"].Value = item_PT.So;
+            }
+
+            report.Render();
+
+            using var ms = new MemoryStream();
+            report.ExportDocument(StiExportFormat.Pdf, ms);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+            reportUrl = $"data:application/pdf;base64,{base64}";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Report generation failed: " + ex.Message);
+        }
+    }
+
+    private async Task Submit()
+    {
+        if ((await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "DNTT") || await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "New", "DNTT")))
+        {
+
+            await form.Validate();
+
+            if (form.IsValid)
+            {
+
+                var UserName = asv.GetAuth().Result.User.Identity!.Name!;
+                if (_DNTT_Detail.Approve == true)
+                {
+                    _DNTT_Detail.timeDuyet = DateTime.Now.ToString("dd/MMM/yyyy");
+                }
+                else
+                {
+                    _DNTT_Detail.timeDuyet ="";
+                }
+
+
+                //----update sotienhoanung , Conlai
+
+                MudDialog!.Close(_DNTT_Detail);
+
+            }
+        }
+
+    }
+    void Cancel() => MudDialog.Cancel();
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+
+    
+}

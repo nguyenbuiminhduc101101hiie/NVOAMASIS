@@ -1,0 +1,386 @@
+@page "/Danhmuctaikhoan"
+@using System.Globalization
+@attribute [Authorize]
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject IJSRuntime JSRuntime
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject LocalChargesServices lcsv
+@inject PhieuThu_Chi_Services Dmtksv
+@inject CustomerService Cussv
+@inject Danhmuctaikhoan_services Dmtksv
+
+
+<PageTitle>@Localizer["Danhmuctaikhoan"] </PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["Danhmuctaikhoan"]</MudText>
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["reload"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenCreateDialog(new Models.DanhMucTaiKhoan()))"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        @Localizer["new"]
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               @onclick="@((e) => OpenEditDialog(detail))"
+               Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Edit">
+        @Localizer["edit"]
+    </MudButton>
+    <a href="HDSDhtml/HDSD_AccountList.html" target="_blank">
+        <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">@Localizer["Help"]</MudButton>
+    </a>
+</MudStack>
+
+<MudDataGrid T="DanhMucTaiKhoan" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4" Bordered="true"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow"  Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc" Ite
+             RowClick="@RowClicked" EditDialogOptions="@options"
+             ColumnResizeMode="@(ResizeMode.Column)" Loading="_loading"
+             onchange="RecalculateTotal">
+
+    <Columns>
+        <HierarchyColumn T="DanhMucTaiKhoan" />
+
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+
+        <PropertyColumn Property="x => x.Taikhoan" Title="@Localizer["Taikhoan"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Tentaikhoan" Title="@Localizer["Tentaikhoan"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Diengiai" Title="Diễn giải" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Accountname" Title="@Localizer["Accountname"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Manguyente" Title="@Localizer["Loaitiente"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.AccountType" Title="AccountType" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.IsPosting" Title="IsPosting" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.RequiresCustomer" Title="RequiresCustomer" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.RequiresSupplier" Title="RequiresSupplier" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.RequiresEmployee" Title="RequiresEmployee" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.RequiresShipment" Title="RequiresShipment" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.IsActive" Title="IsActive" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Approve" Title="@Localizer["Approve"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Userupdate" Title="@Localizer["UserUpdate"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+        <PropertyColumn Property="x => x.Dateupdate" Title="@Localizer["Dateupdate"]" CellStyleFunc="_cellStyleFunc"></PropertyColumn>
+    </Columns>
+
+    <PagerContent>
+        <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <div style="font-weight: bold;">
+                Total Amount:
+                <span style="color: darkgreen">
+                    @(FilteredTotalAmount?.ToString("#,##0.##") ?? "0")
+                </span>
+            </div>
+            <MudDataGridPager T="DanhMucTaiKhoan" PageSizeOptions="@(new int[] { 8, 10, 20 })" />
+        </div>
+    </PagerContent>
+
+
+</MudDataGrid>
+
+@code {
+    List<DanhMucTaiKhoan> Listdata = new List<DanhMucTaiKhoan>();
+    private List<DanhMucTaiKhoan> filteredItems;
+    MudDataGrid<DanhMucTaiKhoan> mudTable;
+    AuthUser user;
+    string mailtp, mailpp;
+    string usr;
+    private List<string> ListUser { get; set; } = new List<string>();
+    string UserHanding;
+    List<string> trangthais = new List<string>();
+    private List<Models.TrangThai> M_Trangthais = new List<Models.TrangThai>();
+    private string searchText_pol = "";
+    private string searchText_pod = "";
+    private List<PortModel> filteredPorts = new List<PortModel>();
+    private List<PortModel> filteredPorts_pod = new List<PortModel>();
+    private List<PortModel> Ports = new List<PortModel>();
+
+    private bool _resizeColumn;
+    DanhMucTaiKhoan detail;
+    private string _searchString;
+    private List<M_Customer> filteredCarr = new List<M_Customer>();
+    private List<M_Customer> Cuss_Carr = new List<M_Customer>();
+    private List<M_Customer> List_Cus = new List<M_Customer>();
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    public decimal? FilteredTotalAmount;
+
+    protected async override Task OnInitializedAsync()
+    {
+        M_Trangthais = await supsv.GetListTrangThai();
+        var tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude == "Danhmuctaikhoan").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+        List_Cus = await Cussv.GetList();
+        ListUser = await asv.GetList_User_handle() ?? new List<string>();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        Cuss_Carr = await lcsv.GetList_Customer_line();
+        await Refresh();
+    }
+
+    bool _loading = false;
+    async Task Refresh()
+    {
+        try
+        {
+
+            detail = null!;
+            _loading = true;
+            Listdata.Clear();
+
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "Danhmuctaikhoan"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await Dmtksv.GetList_Danhmuctaikhoan();
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Something went wrong!, error code: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+   
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    void RowClicked(DataGridRowClickEventArgs<DanhMucTaiKhoan> args)
+    {
+        detail = args.Item;
+    }
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(DanhMucTaiKhoan m, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(m))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    async Task CommittedItem(DanhMucTaiKhoan item)
+    {
+        item.Userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now.ToString("dd/MMM/yyyy");
+        var rs = item.Id != Guid.Empty ? await Dmtksv.UpdateDanhMucTaiKhoan_Detail(item,detail) : await Dmtksv.CreateDanhMucTaiKhoan_Detail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        await Refresh();
+    }
+    int? index_no;
+
+    async Task DeleteItem(DanhMucTaiKhoan item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "Danhmuctaikhoan"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await Dmtksv.DeleteDanhMucTaiKhoan_Detail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+    }
+
+    DialogOptions options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Medium,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+    string search;
+
+    private bool FilterFunc1(DanhMucTaiKhoan sbd) => FilterFunc(sbd, search);
+
+    private bool FilterFunc(DanhMucTaiKhoan sbd, string searchString)
+    {
+
+        if (string.IsNullOrWhiteSpace(sbd.Taikhoan))
+
+            return true;
+        if (string.IsNullOrWhiteSpace(searchString))
+
+            return true;
+        if (sbd.Taikhoan!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+
+            return true;
+        if ($"{sbd.Taikhoan} ".Contains(searchString))
+
+            return true;
+
+        return false;
+    }
+
+    private Func<DanhMucTaiKhoan, string> _cellStyleFunc => x =>
+       {
+           return "color: #000000";
+
+       };
+
+    private async Task OpenCreateDialog(Models.DanhMucTaiKhoan tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Danhmuctaikhoan"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._Danhmuctaikhoan_Detail, tr }, { x => x.Status, "add" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.Id == Guid.Empty ? "Payment Account Create" : "Payment Account Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                var data = (DanhMucTaiKhoan)result.Data;
+                var rs = await Dmtksv.UpdateCreateDanhMucTaiKhoan(data,detail);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+
+                await HandleRefresh_create(data.Id);
+
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    async Task HandleRefresh_create(Guid? id)
+    {
+        try
+        {
+
+            detail = null;
+
+            Listdata.Clear();
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "Danhmuctaikhoan"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+
+                return;
+            }
+            Listdata = await Dmtksv.GetListDanhMucTaiKhoan_create(id);
+
+            StateHasChanged();
+        }
+        finally
+        {
+
+
+        }
+    }
+
+    private async Task OpenEditDialog(Models.DanhMucTaiKhoan tr)
+    {
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        if (tr == null)
+        {
+            CallSnackBar("Please select Data", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "Danhmuctaikhoan"))
+        {
+
+            DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+            var parameters = new DialogParameters<ADD> { { x => x._Danhmuctaikhoan_Detail, tr }, { x => x.Status, "edit" } };
+
+            var dialog = await DialogService.ShowAsync<ADD>(tr.Id == Guid.Empty ? "Payment Account Edit" : "Payment Account Edit", parameters, optionsdialog);
+            var result = await dialog.Result;
+            // Giữ nguyên dòng được chọn
+            selectedRowNumber = selectedRowNumber;
+            StateHasChanged();
+
+            if (!result.Canceled)
+            {
+                var data = (DanhMucTaiKhoan)result.Data;
+                var rs = await Dmtksv.UpdateCreateDanhMucTaiKhoan(data,detail);
+                MudBlazor.Severity severity;
+                if (rs[1] == "1")
+                    severity = MudBlazor.Severity.Success;
+                else
+                    severity = MudBlazor.Severity.Error;
+
+                CallSnackBar(rs[0], severity);
+            }
+
+            return;
+
+        }
+        else
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+    }
+
+    string CustomerName(Guid? customerID)
+    {
+        var rs = List_Cus.FirstOrDefault(x => x.Customer_ID == customerID);
+        return rs != null ? rs.COMPANY! : "";
+    }
+
+}

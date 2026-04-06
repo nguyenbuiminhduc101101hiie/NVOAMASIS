@@ -1,0 +1,125 @@
+﻿
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            @foreach (var cond in Conditions)
+            {
+                <MudStack Row="true" Spacing="2">
+                    <MudAutocomplete @bind-Value="cond.PropertyName" Label="Field" SearchFunc="SearchDispName" ToStringFunc="PropNameToDisName" />
+                    <MudSelect T="string" @bind-Value="cond.Operator" Label="Operator" Variant="Variant.Filled">
+                        <MudSelectItem Value="@("Equals")">Equals</MudSelectItem>
+                        <MudSelectItem Value="@("Contains")">Contains</MudSelectItem>
+                    </MudSelect>
+
+                    @if (cond.PropertyName == "Customer")
+                    {
+                        <MudAutocomplete @bind-Value="cond.ValueGuid" Label="Value" SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode"/>
+                    }
+                    else if(cond.PropertyName == "POL" || cond.PropertyName == "POD")
+                    {
+                        <MudAutocomplete @bind-Value="cond.Valuestring" Label="Value" SearchFunc="mst_Ports"/>
+                    }
+                    else
+                    {
+                        <MudTextField @bind-Value="cond.Valuestring" Label="Value" Immediate="true" />
+                    }
+
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" OnClick="() => RemoveCondition(cond)" />
+                </MudStack>
+            }
+
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddCondition">Add Condition</MudButton>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@Submit" Color="Color.Primary">Apply</MudButton>
+        <MudButton OnClick="@Cancel" Color="Color.Secondary">Cancel</MudButton>
+    </DialogActions>
+</MudDialog>
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<FilterCondition> Conditions { get; set; } = new();
+    [Parameter] public List<M_Customer> Customers { get; set; } = new();
+    [Parameter] public List<string> ports { get; set; } = new();
+    List<PropertyOption> PropertyList = new();
+
+    protected async override Task OnInitializedAsync()
+    {
+        PropertyList = typeof(M_HBL)
+                    .GetProperties()
+                    .Select(p => new PropertyOption
+                        {
+                            PropertyName = p.Name,
+                            DisplayName = p.GetCustomAttribute<DisplayAttribute>()?.Name ?? p.Name
+                        })
+                    .Where(x=>!string.IsNullOrEmpty(x.DisplayName))
+                    .ToList();
+    }
+    void Submit() => MudDialog.Close(Conditions);
+    void Cancel() => MudDialog.Cancel();
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+    private async Task<IEnumerable<string>> mst_Ports(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return ports;
+            }
+            // MBL.Porname = mst_Consignee;
+            return ports.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    string PropNameToDisName(string PropName)
+    {
+        if (string.IsNullOrEmpty(PropName))
+            return string.Empty;
+        var rs = PropertyList.FirstOrDefault(x => x.PropertyName == PropName);
+        return rs == null ? string.Empty : rs.DisplayName!;
+    }
+    private async Task<IEnumerable<string>> SearchDispName(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return PropertyList.Select(x => x.PropertyName);
+            }
+            // MBL.Porname = mst_Consignee;
+            return PropertyList.Where(x => x.DisplayName.Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.PropertyName);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    void AddCondition() => Conditions.Add(new FilterCondition());
+
+    void RemoveCondition(FilterCondition cond) => Conditions.Remove(cond);
+}

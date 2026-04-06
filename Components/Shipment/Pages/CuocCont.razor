@@ -1,0 +1,419 @@
+﻿@using System.Globalization﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+@inject tigiaVCBservices Vcbsv
+
+<MudTabs SliderColor="Color.Success">
+    <MudTabPanel Text="INPUT" BadgeColor="Color.Secondary" Class="custom-tab">
+        <MudDataGrid  T="M_CuocCont" Items="@Listdata" Filterable="true" @ref="mudTable"
+                     FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true"
+                     FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+                     ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+                     RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true"
+                     ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false">
+            <Columns>
+
+                <TemplateColumn CellClass="d-flex justify-end" Filterable="false" ShowColumnOptions="false" Sortable="false">
+                    <HeaderTemplate>
+                        <MudStack Row="true" Justify="Justify.FlexStart" Spacing="2">
+                            <!-- Nút Reload -->
+                            <MudTooltip Text="@Localizer["Reload"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                                               Color="Color.Success"
+                                               Size="Size.Small"
+                                               OnClick="Refresh"
+                                               Variant="Variant.Filled"
+                                               
+                                               Class="btn-compact" />
+                            </MudTooltip>
+
+                            <MudTooltip Text="@Localizer["New"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.CreateNewFolder"
+                                               Color="Color.Success"
+                                               Size="Size.Small"
+                                               OnClick="NewItem"
+                                               Variant="Variant.Filled"
+                                               Disabled="HBLDetail!.hblID == Guid.Empty ? true : false"
+                                               Class="btn-compact" />
+                            </MudTooltip>
+
+
+                        </MudStack>
+                    </HeaderTemplate>
+                    <CellTemplate>
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => TryStartEditing(context.Item))" />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(() => DeleteItem(context.Item))" />
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <PropertyColumn Property="x => x.No" Title="@Localizer["No"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudTextField @bind-Value="context.Item.No" Label="@Localizer["No"]" Required ReadOnly />
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => Charidtocharge(x.itemid)" Title="@Localizer["Item"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.itemid" Label="@Localizer["Item"]" Required
+                                         SearchFunc="SearchCharge" ToStringFunc="Charidtocharge" Clearable />
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.customerid" Label="@Localizer["Customer"]" Required
+                                         SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" Clearable />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.unitprice" Title="@Localizer["Unit Price"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.unitprice" Class="text-right"
+                                         Label="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" T="double?"
+                                         TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.quantity" Title="@Localizer["Quantity"]" Format="#,##0.##" Required="false">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.quantity"
+                                         Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" T="double?"
+                                         TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.total" Title="@Localizer["Total Price"]" Format="#,##0.##" CellStyle="text-align: right;" Required="false">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.total" Label="@Localizer["Total Price"]"
+                                         Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+
+
+                <PropertyColumn Property="x => x.cur" Title="@Localizer["Loaitiente"]" Required="false">
+                    <EditTemplate>
+                        <MudAutocomplete @bind-Value="context.Item.cur" Label="@Localizer["Currency"]" Required="true" Class="custom-label" CoerceValue SearchFunc="SearchCurr" />
+                    </EditTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn Property="x => x.Vat" Title="@Localizer["VAT"]" Format="#,##0.##" Required="false">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.Vat" Label="@Localizer["VAT"]"
+                                         Format="#,##0.##" Culture="@_en" T="double?"
+                                         TextChanged="@(e => CalculateThanhtiensauthue(context.Item))" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
+                    <EditTemplate>
+                        <MudNumericField @bind-Value="context.Item.thanhtiensauthue" Label="@Localizer["Total Price Inc. VAT"]"
+                                         Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.exc" Title="@Localizer["Exchange Rate"]" Format="#,##0.##" Required="false">
+                    <EditTemplate>
+                        <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
+                            <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                                       Style="min-width: 80px; height: 36px; padding: 5px 10px;"
+                                       OnClick="@(() => GetTigia(context.Item))">
+                                @Localizer["gettigia"]
+                            </MudButton>
+
+                            <MudNumericField @bind-Value="context.Item.exc"
+                                             Label="@Localizer["Exchange Rate"]"
+                                             Format="#,##0.##" Culture="@_en"
+                                             T="double?" Required="true" HideSpinButtons="true"
+                                             Class="text-right" />
+                        </MudStack>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+                <PropertyColumn Property="x => x.continued" Title="@Localizer["Continued"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+            </Columns>
+        </MudDataGrid>
+       
+    </MudTabPanel>
+   
+</MudTabs>
+@code {
+
+    [Parameter] public M_HBL? HBLDetail { get; set; } = default!;
+    [Parameter] public List<M_Customer> Customers { get; set; } = default!;
+    M_CuocCont detail_Debit;
+    List<string> currs = new List<string>();
+
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private void Submit()
+    {
+        MudDialog!.Close();
+    }
+
+    void Cancel() => MudDialog!.Cancel();
+    bool isMBL;
+    string usr;
+    List<ChargeModel> charges = new List<ChargeModel>();
+    string type = "";
+    List<M_HoaDonDauRa> ListdataHoaDon = new List<M_HoaDonDauRa>();
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            currs = await Vcbsv.GetCur();
+            charges = await supsv.GetListCharge();
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+    }
+    string Charidtocharge(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    bool _loading = false;
+    List<M_CuocCont> Listdata = new List<M_CuocCont>();
+    M_CuocCont detail;
+    async Task TryStartEditing(M_CuocCont item)
+    {
+        if (item.approve.HasValue && item.approve.Value)
+        {
+            CallSnackBar("This Debit is approved!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        detail_Debit = JsonSerializer.Deserialize<M_CuocCont>(JsonSerializer.Serialize(item));
+        await mudTable.SetEditingItemAsync(item);
+    }
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.shortname + "_" + rs.COMPANY!;
+    }
+
+    private async Task<IEnumerable<string>> SearchCurr(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return currs;
+
+        return currs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private void CalculateTotal(M_CuocCont item)
+    {
+        if (item.quantity.HasValue && item.unitprice.HasValue)
+        {
+
+            double soluong = item.quantity ?? 0;
+            double dongia = item.unitprice ?? 0;
+            item.total = Math.Round(soluong * dongia, 2);
+            CalculateThanhtiensauthue(item);
+        }
+
+
+    }
+    private void CalculateThanhtiensauthue(M_CuocCont item)
+    {
+        if (item.total.HasValue && item.Vat.HasValue)
+        {
+            double thanhtienValue = item.total ?? 0;
+            double thueValue = item.Vat ?? 0;
+            item.thanhtiensauthue = Math.Round(thanhtienValue * (thueValue / 100 + 1), 2);
+        }
+
+
+    }
+    private async Task GetTigia(M_CuocCont item)
+    {
+        double? tigia_ = await Vcbsv.Getexchange_cur(item.cur);
+        item.exc = tigia_;
+    }
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            Listdata = await shipsv.GetCuocCOnt_hblid(HBLDetail.hblID);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    private async Task<IEnumerable<Guid>> SearchCharge(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return charges.Select(x => x.CHARGE_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return charges.Where(x => (x.CHARGE_CODE + "_" + x.CHARGE).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.CHARGE_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    MudDataGrid<M_CuocCont> mudTable;
+    // async Task AddItem()
+    // {
+    //     if (detail == null)
+    //     {
+    //         CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+    //         return;
+    //     }
+    //     var item = new M_CuocCont
+    //     {
+    //         debitno = detail.debitno,
+    //         customerid = detail.customerid,
+    //         itemid = detail.itemid
+    //     };
+    //     Listdata.Add(item);
+    //     await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    // }
+
+    string cuoccont_no = "";
+    async Task NewItem()
+    {
+        await Get_No();
+        var item = new M_CuocCont
+        {
+           No=cuoccont_no
+        };
+
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+    private async Task Get_No()
+    {
+
+        int formattedYear = DateTime.Now.Year;
+        int formattedMonth = DateTime.Now.Month;
+
+        string usr = asv.GetAuth().Result.User.Identity!.Name!;
+        var refno = await supsv.GetRefNoByFunc("CC", formattedMonth, formattedYear, usr);
+
+        var rs = asv.GetUserDetail();
+        var cn = rs.Branch;
+        cuoccont_no = cn + "CC_" + formattedYear.ToString() + formattedMonth.ToString() + refno.Value.ToString("D4");
+    }
+    async Task DeleteItem(M_CuocCont item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (item.approve.HasValue && item.approve.Value)
+        {
+            CallSnackBar("This Debit is approved!", MudBlazor.Severity.Info);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await shipsv.DeleteCuocCont(item);
+            await HistoryLogService.LogAsync(usr, "Delete Cuoc Cont", "Shipment", item.id, item.No, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    async Task CommittedItem(M_CuocCont item)
+    {
+     
+        item.hblid = HBLDetail!.hblID;
+        item.userupdate = usr;
+        item.dateupdate = DateTime.Now.ToString();
+       
+        var rs = item.id != Guid.Empty ? await shipsv.UpdateCuocCont(item, detail_Debit) : await shipsv.CreateCuoccont(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_CuocCont Sis, int rowNumber)
+    {
+        if (Sis.approve.HasValue && Sis.approve.Value)
+        {
+            return "custom-disable"; // Gán class "disable" nếu Approve = true
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            return "selected"; // Giữ lớp "selected" cho dòng đã chọn
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_CuocCont> args)
+    {
+
+         detail_Debit = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_CuocCont> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+ 
+}

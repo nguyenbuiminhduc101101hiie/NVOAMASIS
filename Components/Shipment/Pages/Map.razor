@@ -1,0 +1,317 @@
+﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject IJSRuntime JSRuntime
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh" Disabled="@(HBLDetail!.hblID == Guid.Empty)"
+               Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        @Localizer["Reload"]
+    </MudButton>
+    <MudSelect @bind-Value="selectedMapType" @bind-Value:after="OnMapTypeChanged" Label="Loại bản đồ" Variant="Variant.Outlined" 
+               Style="min-width: 150px; margin-left: 10px;" Size="Size.Small">
+        <MudSelectItem Value="@("osm")">OpenStreetMap</MudSelectItem>
+        <MudSelectItem Value="@("satellite")">Vệ tinh</MudSelectItem>
+        <MudSelectItem Value="@("terrain")">Địa hình</MudSelectItem>
+        <MudSelectItem Value="@("dark")">Bản đồ tối</MudSelectItem>
+    </MudSelect>
+    <a href="HDSDhtml/Huong_dan_Tab_MAP.html" target="_blank">
+        <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">@Localizer["Help"]</MudButton>
+    </a>
+</MudStack>
+
+<div id="map" style="width: 100%; height: 400px;"></div>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<!-- Leaflet JavaScript -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+    let map;
+    let markers = [];
+    let currentLayer;
+    let polyline;
+
+    window.initMap = () => {
+        if (typeof L === "undefined") {
+            console.error("Leaflet chưa load xong!");
+            return;
+        }
+
+        // Khởi tạo map với OpenStreetMap
+        map = L.map('map').setView([10.7769, 106.7009], 12);
+        
+        // Thêm layer mặc định
+        currentLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+    };
+
+    window.changeMapType = (mapType) => {
+        if (typeof L === "undefined" || !map) {
+            return;
+        }
+        
+        // Xóa layer hiện tại
+        if (currentLayer) {
+            map.removeLayer(currentLayer);
+        }
+        
+        // Thêm layer mới dựa trên loại bản đồ
+        switch(mapType) {
+            case 'satellite':
+                currentLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                    attribution: '© Esri'
+                });
+                break;
+            case 'terrain':
+                currentLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenTopoMap contributors'
+                });
+                break;
+            case 'dark':
+                currentLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '© CartoDB'
+                });
+                break;
+            default: // osm
+                currentLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors'
+                });
+        }
+        
+        currentLayer.addTo(map);
+    };
+
+    window.loadMarkers = (jsonLocations) => {
+        if (typeof L === "undefined") {
+            console.error("Leaflet chưa load xong!");
+            return;
+        }
+
+        let locations;
+        try {
+            locations = JSON.parse(jsonLocations);
+        } catch (error) {
+            console.error("Lỗi khi parse JSON:", error);
+            return;
+        }
+
+        if (!Array.isArray(locations) || locations.length === 0) {
+            console.error("Danh sách tọa độ không hợp lệ!");
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+            return;
+        }
+
+        // Xóa markers và polyline cũ
+        markers.forEach(m => map.removeLayer(m));
+        markers = [];
+        
+        if (polyline) {
+            map.removeLayer(polyline);
+            polyline = null;
+        }
+
+        let bounds = L.latLngBounds();
+        let polylinePoints = [];
+
+        locations.forEach(location => {
+            const lat = parseFloat(location.Latitude);
+            const lng = parseFloat(location.Longitude);
+            
+            // Tạo marker với icon tùy chỉnh
+            const customIcon = L.divIcon({
+                className: 'custom-marker',
+                html: '<div style="background-color: #1976d2; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">📍</div>',
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            });
+
+            const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+            
+            // Tạo popup với thông tin chi tiết
+            const popupContent = `
+                <div style="padding: 10px; font-family: Arial, sans-serif; min-width: 200px;">
+                    <h4 style="margin: 0 0 10px 0; color: #1976d2;">Thông tin vị trí</h4>
+                    <p style="margin: 5px 0;"><strong>Latitude:</strong> ${location.Latitude}</p>
+                    <p style="margin: 5px 0;"><strong>Longitude:</strong> ${location.Longitude}</p>
+                    <p style="margin: 5px 0;"><strong>Thời gian:</strong> ${location.ngay || 'N/A'}</p>
+                </div>
+            `;
+            
+            marker.bindPopup(popupContent);
+            markers.push(marker);
+            bounds.extend([lat, lng]);
+            polylinePoints.push([lat, lng]);
+        });
+        
+        // Tạo polyline nối các markers
+        if (polylinePoints.length > 1) {
+            polyline = L.polyline(polylinePoints, {
+                color: '#1976d2',
+                weight: 4,
+                opacity: 0.8,
+                smoothFactor: 1,
+                dashArray: '10, 10'
+            }).addTo(map);
+            
+            // Thêm popup cho polyline
+            const totalDistance = calculateTotalDistance(polylinePoints);
+            polyline.bindPopup(`
+                <div style="padding: 10px; font-family: Arial, sans-serif;">
+                    <h4 style="margin: 0 0 10px 0; color: #1976d2;">Thông tin hành trình</h4>
+                    <p style="margin: 5px 0;"><strong>Tổng số điểm:</strong> ${polylinePoints.length}</p>
+                    <p style="margin: 5px 0;"><strong>Khoảng cách ước tính:</strong> ${totalDistance.toFixed(2)} km</p>
+                </div>
+            `);
+        }
+        
+        // Tự động zoom để hiển thị tất cả markers
+        if (markers.length > 0) {
+            map.fitBounds(bounds, { padding: [20, 20] });
+            
+            // Nếu chỉ có 1 marker, zoom vào mức phù hợp
+            if (markers.length === 1) {
+                map.setZoom(15);
+            }
+        }
+    };
+
+    // Hàm tính khoảng cách giữa hai điểm (Haversine formula)
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371; // Bán kính Trái Đất tính bằng km
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        return R * c;
+    }
+
+    // Hàm tính tổng khoảng cách của hành trình
+    function calculateTotalDistance(points) {
+        let totalDistance = 0;
+        for (let i = 0; i < points.length - 1; i++) {
+            totalDistance += calculateDistance(
+                points[i][0], points[i][1],
+                points[i + 1][0], points[i + 1][1]
+            );
+        }
+        return totalDistance;
+    }
+</script>
+@code {
+@using System.Text.Json
+
+    [Parameter] public M_HBL? HBLDetail { get; set; } = default!;
+[CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+
+protected override async Task OnAfterRenderAsync(bool firstRender)
+{
+    if (firstRender)
+    {
+        await JSRuntime.InvokeVoidAsync("initMap");
+    }
+}
+
+void CallSnackBar(string message, MudBlazor.Severity severity)
+{
+
+    Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+    Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+    Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+    Snackbar.Add(message, severity);
+}
+
+private void Submit()
+{
+    MudDialog!.Close();
+}
+bool isMBL;
+void Cancel() => MudDialog!.Cancel();
+string usr;
+bool canapprove = true;
+protected async override Task OnInitializedAsync()
+{
+    try
+    {
+        if (HBLDetail.hblID == Guid.Empty)
+        {
+            CallSnackBar("Vui lòng chọn 1 dòng HBL", MudBlazor.Severity.Warning);
+            return;
+        }
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        canapprove = !await ssv.CheckPermission(usr, "approve", "HBL");
+        await Refresh();
+    }
+    catch (Exception ex)
+    {
+        CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+    }
+}
+bool _loading = false;
+List<M_HBLViTriLoHang> Listdata = new List<M_HBLViTriLoHang>();
+M_HBLViTriLoHang detail;
+string selectedMapType = "osm";
+async Task Refresh()
+{
+    try
+    {
+        _loading = true;
+        // Simulate asynchronous loading to demonstrate a loading indicator
+        Listdata.Clear();
+        StateHasChanged();
+        Listdata = await shipsv.GetlistVitrilohang(HBLDetail!.hblID);
+        await LoadMap(Listdata);
+    }
+    finally
+    {
+        _loading = false;
+    }
+
+}
+MudDataGrid<M_HBLViTriLoHang> mudTable;
+
+async Task LoadMap(List<M_HBLViTriLoHang> locations)
+{
+    var ds = JsonSerializer.Serialize(locations);
+    await JSRuntime.InvokeVoidAsync("loadMarkers", ds);
+}
+
+async Task OnMapTypeChanged()
+{
+    await JSRuntime.InvokeVoidAsync("changeMapType", selectedMapType);
+}
+
+private int selectedRowNumber = -1;
+private string SelectedRowClassFunc(M_HBLViTriLoHang Sis, int rowNumber)
+{
+    if (selectedRowNumber == rowNumber)
+    {
+        selectedRowNumber = -1;
+        return string.Empty;
+    }
+    else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+    {
+        selectedRowNumber = rowNumber;
+        return "selected";
+    }
+    else
+    {
+        return string.Empty;
+    }
+}
+}

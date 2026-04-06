@@ -1,0 +1,401 @@
+﻿﻿
+@page "/THCN"
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@using System.Globalization﻿
+
+<PageTitle>@Localizer["Summary_of_debt"]</PageTitle>
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-shipment-bg"
+                 FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="calc(100vh - 30vh);" QuickFilter="_quickFilter"
+                 FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap" RowClassFunc="@SelectedRowClassFunc"
+                 RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true" RowClass="no-wrap-cell"
+                 ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+        <ToolBarContent>
+            <MudStack Row="true" Justify="Justify.FlexStart" Class="gap-12">
+                <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+                <MudIconButton HtmlTag="label"
+                               OnClick="@(()=>Refresh(frmtoDate))" Disabled="_loading"
+                               Size="Size.Small" Color="Color.Primary" Variant="Variant.Text"
+                               Icon="@Icons.Material.Filled.Search" />
+            </MudStack>
+            <MudStack Row Spacing="2" Style="margin-left:20px;">
+                <MudSwitch @bind-Value="chkSI" Label="SI" Color="Color.Primary" Size="Size.Small" />
+                <MudSwitch @bind-Value="chkSE" Label="SE" Color="Color.Primary" Size="Size.Small" />
+                <MudSwitch @bind-Value="chkAI" Label="AI" Color="Color.Primary" Size="Size.Small" />
+                <MudSwitch @bind-Value="chkAE" Label="AE" Color="Color.Primary" Size="Size.Small" />
+                <MudSwitch @bind-Value="chkTruck" Label="Truck" Color="Color.Primary" Size="Size.Small" />
+                <MudSwitch @bind-Value="chkCustoms" Label="Customs" Color="Color.Primary" Size="Size.Small" />
+            </MudStack>
+            <MudSpacer />
+            <MudTextField @bind-Value="_searchString" Placeholder="Search By HBL, off - online invoice number" Adornment="Adornment.Start" Immediate="true"
+                          AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0"></MudTextField>
+        </ToolBarContent>
+        <Columns>
+            <PropertyColumn Property="x => x.hbl" Title="@Localizer["HBL"]" Required CellStyleFunc="_cellStyleFunc">
+                <CellTemplate>
+                    <MudLink OnClick="@(() => OpenDetailHBL(context.Item))">@context.Item.hbl</MudLink>
+                </CellTemplate>
+                 <FooterTemplate>
+                    Total
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => T_hdDR(x.hblID)" Title="@Localizer["Hóa đơn đầu ra"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => T_hdDR(x.hblID))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => T_CNhdDR(x.hblID)" Title="@Localizer["Công nợ hóa đơn đầu ra"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => T_CNhdDR(x.hblID))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => T_hdDRIssue(x.hblID, false)" Title="@Localizer["Hóa đơn đầu ra chưa issue"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => T_hdDRIssue(x.hblID, false))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => T_hdDRIssue(x.hblID, true)" Title="@Localizer["Hóa đơn đầu ra đã issue"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => T_hdDRIssue(x.hblID, true))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => T_hdDV(x.hblID)" Title="@Localizer["Hóa đơn đầu vào"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => T_hdDR(x.hblID))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => T_CNhdDV(x.hblID)" Title="@Localizer["Công nợ hóa đơn đầu vào"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                <FooterTemplate>
+                    @mudTable.FilteredItems.Sum(x => T_CNhdDV(x.hblID))!.Value.ToString("##,##0.##", _en)
+                </FooterTemplate>
+            </PropertyColumn>
+        </Columns>
+    </MudDataGrid>
+    <MudChart ChartType="ChartType.Bar"
+              ChartSeries="@_series"
+              XAxisLabels="@_xAxisLabels"
+              Height="350px" Width="100%"
+              ChartOptions=@options />
+</MudContainer>
+
+@code {
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    string usr;
+    AuthUser userdetail;
+    List<string> trangthais = new List<string>();
+    List<TrangThai> tts = new List<TrangThai>();
+    List<M_Customer> Customers = new List<M_Customer>();
+    List<ChargeModel> charges = new List<ChargeModel>();
+    CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    protected async override Task OnInitializedAsync()
+    {
+
+        _loading = true;
+        userdetail = asv.GetUserDetail();
+        Customers = await csv.GetList(userdetail);
+        tts = await supsv.GetListTrangThai();
+        trangthais = tts.Where(x => x.Tieude.ToLower() == "job").OrderBy(x=>x.Noidung).Select(x=>x.Noidung).ToList();
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        charges = await supsv.GetListCharge();
+        _loading = false;
+    }
+
+    bool _loading = false;
+    List<M_HBL> Listdata = new List<M_HBL>();
+    List<M_HBL> ListHBLs = new List<M_HBL>();
+    List<M_HoaDonDauRa> ListHoaDonDRa = new List<M_HoaDonDauRa>();
+    List<M_HoaDonDauVao> ListHoaDonDVao = new List<M_HoaDonDauVao>();
+    List<M_CongNoHoaDonDauRa> ListCNHoaDonDRa = new List<M_CongNoHoaDonDauRa>();
+    List<M_CongNoHoaDonDauVao> ListCNHoaDonDVao = new List<M_CongNoHoaDonDauVao>();
+    M_HBL detail;
+    List<M_MBL> MBLs = new List<M_MBL>();
+    List<M_Job> Jobs = new List<M_Job>();
+    async Task Refresh(DateRange frmtoDate)
+    {
+        try
+        {
+            _loading = true;
+            Listdata.Clear();
+            detail = null;
+            await Task.Delay(500);
+            StateHasChanged();
+            if (!await ssv.CheckPermission(usr, "View", "Profit"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            ListHBLs = await shipsv.GetListHBLALL();
+            ListHoaDonDRa = await shipsv.GetListHoaDonDauRaALL();
+            ListHoaDonDVao = await shipsv.GetListHoaDonDauVaoALL();
+            ListCNHoaDonDRa = await shipsv.GetListCongNoHoaDonDauRaALL();
+            ListCNHoaDonDVao = await shipsv.GetListCongNoHoaDonDauVaoALL();
+            Listdata = await shipsv.GetListHBLDateRange(frmtoDate);
+            if (Listdata.Count > 0)
+                ListdataToArraayTheoThang(Listdata);
+            if (Listdata.Count > 0)
+                MBLs = await shipsv.GetListMBLHBLs(Listdata);
+            if (MBLs.Count > 0)
+                Jobs = await shipsv.GetListJobByMBLs(MBLs);
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_HBL> mudTable;
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_HBL Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_HBL> args)
+    {
+        detail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_HBL> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private Func<M_HBL, string> _cellStyleFunc => x =>
+    {
+        // var profitFreight = TProfit_Job(x.JobID, "FREIGHT");
+        // var profitLocal = TProfit_Job(x.JobID, "LOCAL");
+        // var profitAll = TProfit_Job(x.JobID, "");
+        // var profitNotCom = TProfit_Job(x.JobID, "notCOM");
+
+        // if (profitFreight < 0 || profitLocal < 0 || profitAll < 0 || profitNotCom < 0)
+        //     return "color: #FF5733";
+
+        return "color: #087210"; // XANH
+
+    };
+    string formatDate(DateTime? date)
+    {
+        if(date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MMM/yyyy");
+    }
+
+    bool chkSI = false, chkSE = false, chkAI = false, chkAE = false, chkTruck = false, chkCustoms = false, chkVAT = false, chkUSD = false, chkVND = false;
+
+    private string _searchString;
+    private Func<M_HBL, bool> _quickFilter => x =>
+    {
+        var mbl = MBLs.FirstOrDefault(m => m.MblID == x.mblid);
+        var job = mbl != null ? Jobs.FirstOrDefault(j => j.JobID == mbl.Jobid) : null;
+        var loai = job?.Loai;
+        bool matchLoai2 = !chkSI && !chkSE && !chkAI && !chkAE && !chkTruck && !chkCustoms
+              || (chkSI && loai?.Equals("SI", StringComparison.OrdinalIgnoreCase) == true)
+              || (chkSE && loai?.Equals("SE", StringComparison.OrdinalIgnoreCase) == true)
+              || (chkAI && loai?.Equals("AI", StringComparison.OrdinalIgnoreCase) == true)
+              || (chkAE && loai?.Equals("AE", StringComparison.OrdinalIgnoreCase) == true)
+              || (chkTruck && loai?.Equals("Truck", StringComparison.OrdinalIgnoreCase) == true)
+              || (chkCustoms && loai?.Equals("Customs", StringComparison.OrdinalIgnoreCase) == true);
+       
+        // 2. Kiểm tra theo search
+        bool matchSearch = true;
+
+        if (!string.IsNullOrWhiteSpace(_searchString))
+        {
+            matchSearch =
+                (x.hbl?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true) ||
+                (ListHoaDonDRa.Any(m => m.hblid == x.hblID &&
+                                   (m.sohoadonNoibo?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true) ||
+                                   (m.sohoadonDientu?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true)
+                )) ||
+                (ListHoaDonDVao.Any(m => m.hblid == x.hblID &&
+                                   (m.sohoadonNoibo?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true) ||
+                                   (m.sohoadonDientu?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) == true)
+                ));
+        }
+
+        return matchSearch && matchLoai2;
+    };
+
+    DateRange frmtoDate = new DateRange(new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-4),
+                                        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
+
+    string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    string CharidtoLoaidv(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.loaidichvu_charge}"!;
+    }
+    double? T_hdDR(Guid id)
+    {
+        var hbls = ListHBLs.Where(x => x.hblID == id).ToList();
+        var hddr = ListHoaDonDRa.Where(x => hbls.Select(h=>h.hblID).Contains(x.hblid)).ToList();
+        return hddr.Sum(x => x.thanhtiensauthue);
+    }
+    double? T_hdDRIssue(Guid id, bool IssueOrNot)
+    {
+        var hbls = ListHBLs.Where(x => x.hblID == id).ToList();
+        var hddr = ListHoaDonDRa.Where(x => hbls.Select(h => h.hblID).Contains(x.hblid) && (IssueOrNot ? !string.IsNullOrEmpty(x.sohoadonDientu) : string.IsNullOrEmpty(x.sohoadonDientu))).ToList();
+        return hddr.Sum(x => x.thanhtiensauthue);
+    }
+    double? T_CNhdDR(Guid id)
+    {
+        var hbls = ListHBLs.Where(x => x.hblID == id).ToList();
+        var hddr = ListHoaDonDRa.Where(x => hbls.Select(h => h.hblID).Contains(x.hblid)).ToList();
+        var cnhddr = ListCNHoaDonDRa.Where(x => hddr.Select(h => h.hoadondauraid).Contains(x.hoadondauraid)).ToList();
+        return cnhddr.Sum(x => x.tongtien);
+    }
+    double? T_hdDV(Guid? id)
+    {
+        var hbls = ListHBLs.Where(x => x.hblID == id).ToList();
+        var hddv = ListHoaDonDVao.Where(x => hbls.Select(h => h.hblID).Contains(x.hblid)).ToList();
+        return hddv.Sum(x => x.thanhtiensauthue);
+    }
+    double? T_CNhdDV(Guid id)
+    {
+        var hbls = ListHBLs.Where(x => x.hblID == id).ToList();
+        var hddr = ListHoaDonDVao.Where(x => hbls.Select(h => h.hblID).Contains(x.hblid)).ToList();
+        var cnhddr = ListCNHoaDonDVao.Where(x => hddr.Select(h => h.hoadondauvaoid).Contains(x.hoadondauvaoid)).ToList();
+        return cnhddr.Sum(x => x.tongtien);
+    }
+
+    double? T_hdDVIssue(Guid id, bool IssueOrNot)
+    {
+        var hbls = ListHBLs.Where(x => x.hblID == id).ToList();
+        var hddr = ListHoaDonDRa.Where(x => hbls.Select(h => h.hblID).Contains(x.hblid) && (IssueOrNot ? !string.IsNullOrEmpty(x.sohoadonDientu) : string.IsNullOrEmpty(x.sohoadonDientu))).ToList();
+        return hddr.Sum(x => x.thanhtiensauthue);
+    }
+    private List<ChartSeries> _series = new List<ChartSeries>()
+    {
+        new ChartSeries() { Name = "", Data = new double[] { 0, 0, 0, 0} }
+    };
+    private string[] _xAxisLabels = { "", "", "", "" };
+
+    void ListdataToArraayTheoThang(List<M_HBL> listitems)
+    {
+        var maxDate = Listdata.Where(x => x.datereport.HasValue).Max(x => x.datereport.Value);
+        var distinctMonths = Listdata
+            .Where(x => x.datereport.HasValue)
+            .Select(x => new { Month = x.datereport.Value.Month, Year = x.datereport.Value.Year })
+            .Distinct()
+            .OrderBy(x => x.Year).ThenBy(x => x.Month)
+            .ToList();
+
+        while (distinctMonths.Count < 4)
+        {
+            var last = distinctMonths.FirstOrDefault() ?? new { Month = maxDate.Month, Year = maxDate.Year };
+            var prev = new DateTime(last.Year, last.Month, 1).AddMonths(-1);
+            distinctMonths.Insert(0, new { Month = prev.Month, Year = prev.Year });
+        }
+
+        var monthNames = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.AbbreviatedMonthNames;
+        _xAxisLabels = distinctMonths.Select(x => monthNames[x.Month - 1]).ToArray();
+
+        double[] hdDR = new double[distinctMonths.Count];
+        double[] cnHdDR = new double[distinctMonths.Count];
+        double[] hdDV = new double[distinctMonths.Count];
+        double[] cnHdDV = new double[distinctMonths.Count];
+
+        for (int i = 0; i < distinctMonths.Count; i++)
+        {
+            var month = distinctMonths[i];
+            var hbls = Listdata.Where(x => x.datereport.HasValue &&
+                                           x.datereport.Value.Month == month.Month &&
+                                           x.datereport.Value.Year == month.Year).ToList();
+
+            hdDR[i] = hbls.Sum(x => T_hdDR(x.hblID) ?? 0);
+            cnHdDR[i] = hbls.Sum(x => T_CNhdDR(x.hblID) ?? 0);
+            hdDV[i] = hbls.Sum(x => T_hdDV(x.hblID) ?? 0);
+            cnHdDV[i] = hbls.Sum(x => T_CNhdDV(x.hblID) ?? 0);
+        }
+
+        _series.Clear();
+        _series.Add(new ChartSeries { Name = "HĐ đầu ra", Data = hdDR });
+        _series.Add(new ChartSeries { Name = "CN HĐ đầu ra", Data = cnHdDR });
+        _series.Add(new ChartSeries { Name = "HĐ đầu vào", Data = hdDV });
+        _series.Add(new ChartSeries { Name = "CN HĐ đầu vào", Data = cnHdDV });
+    }
+    void ListdataToArraay(List<M_HBL> listitems)
+    {
+        var listhbls = Listdata.Select(x => x.hbl).ToArray();
+        // while (listhbls.ToList().Count < 4)
+        // {
+        //     listhbls.Insert(0,"");
+        // }
+        _xAxisLabels = listhbls;
+        var hdDR = Listdata.Select(x => T_hdDR(x.hblID) ?? 0).ToArray();
+        var cnHdDR = Listdata.Select(x => T_CNhdDR(x.hblID) ?? 0).ToArray();
+        var hdDV = Listdata.Select(x => T_hdDV(x.hblID) ?? 0).ToArray();
+        var cnHdDV = Listdata.Select(x => T_CNhdDV(x.hblID) ?? 0).ToArray();
+
+
+        _series.Clear();
+        _series.Add(new ChartSeries { Name = "HĐ đầu ra", Data = hdDR });
+        _series.Add(new ChartSeries { Name = "CN HĐ đầu ra", Data = cnHdDR });
+        _series.Add(new ChartSeries { Name = "HĐ đầu vào", Data = hdDV });
+        _series.Add(new ChartSeries { Name = "CN HĐ đầu vào", Data = cnHdDV });
+
+    }
+    private ChartOptions options = new ChartOptions
+    {
+        YAxisFormat = "#,##0"
+    };
+    private async Task OpenDetailHBL(M_HBL item)
+    {
+        var mbl = await shipsv.GetMBL_byHBLid(item.mblid);
+        if (mbl == null)
+        {
+            CallSnackBar("Data not found!", MudBlazor.Severity.Warning);
+            return;
+        }
+        var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
+        var parameters = new DialogParameters<Shipment.Pages.DetailDialogHBL> { { x => x.detail, mbl }, { x => x.Customers, Customers } };
+        var dialog = await DialogService.ShowAsync<Shipment.Pages.DetailDialogHBL>($"HBs", parameters, optionsdialog);
+        var result = await dialog.Result;
+        StateHasChanged();
+        return;
+    }
+}

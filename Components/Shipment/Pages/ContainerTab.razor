@@ -1,0 +1,511 @@
+
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject GlobalServices gsv
+@inject BookingService bksv
+
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<MudDataGrid T="M_Container" Items="@Listdata" Filterable="true" @ref="mudTable" Bordered="true"
+FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true"
+FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+RowClick="@RowClicked" RowContextMenuClick="RowRightClicked"
+ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end" Filterable="false" ShowColumnOptions="false" Sortable="false">
+            <HeaderTemplate>
+                <MudStack Row="true" Justify="Justify.FlexStart" Spacing="2">
+
+                    <!-- Nút Reload -->
+                    <MudTooltip Text="@Localizer["Reload"]">
+                        <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                        Color="Color.Success"
+                        Size="Size.Small"
+                        OnClick="Refresh"
+                        Variant="Variant.Filled"
+                        Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                        Class="btn-compact" />
+                    </MudTooltip>
+
+                    <!-- Nút Add -->
+                    <MudTooltip Text="@Localizer["New"]">
+                        <MudIconButton Icon="@Icons.Material.Filled.Add"
+                        Color="Color.Success"
+                        Size="Size.Small"
+                        OnClick="AddItem"
+                        Variant="Variant.Filled"
+                        Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                        Class="btn-compact" />
+                    </MudTooltip>
+                    <MudTooltip Text="@Localizer["Help"]">
+                        <a href="HDSDhtml/Huong_dan_Tab_Container.0_Shipment.html" target="_blank">
+                            <MudIconButton Icon="@Icons.Material.Filled.Info"
+                                           Color="Color.Info"
+                                           Size="Size.Small"
+                                           Variant="Variant.Filled"
+                                           Class="btn-compact" />
+                        </a>
+                    </MudTooltip>
+                </MudStack>
+            </HeaderTemplate>
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(()=>TryStartEditing(context.Item))" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.CTN_SIZE_TYPE" Title="@Localizer["Cont. Size Type"]" Required="false">
+            <EditTemplate>
+                @* <MudAutocomplete @bind-Value="context.Item.CTN_SIZE_TYPE" Label="@Localizer["Cont. Size Type"]" CoerceValue SearchFunc="SearchContSizeType" /> *@
+                 <MudSelect Class="pa-4 labelCustomColor" @bind-Value="context.Item.CTN_SIZE_TYPE" Label="@Localizer["Cont. Size Type"]">
+                    @foreach (var item in contType)
+                    {
+                        <MudSelectItem Value="item">@item</MudSelectItem>
+                    }
+                </MudSelect> 
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.CONTAINER_NO" Title="@Localizer["Cont. No."]" Required="false" >
+            <EditTemplate>
+                <MudAutocomplete Class="pa-4 labelCustomColor" @bind-Value="context.Item.CONTAINER_NO"
+                                 OnBlur="@(() => OnContainerNoBlur(context.Item))"
+                                 Label="@Localizer["Cont. No."]"
+                                 CoerceValue
+                                 SearchFunc="SearchContNo" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x=>x.APPROVE" Title="@Localizer["Approve"]" IsEditable="false" Required="false">
+            <CellTemplate>
+                <MudCheckBox Class="pa-4 labelCustomColor" @bind-Checked="context.Item.APPROVE" @bind-Value="context.Item.APPROVE" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
+            </CellTemplate>
+            <EditTemplate>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Seal" Title="@Localizer["Seal"]" Required="false">
+            <EditTemplate>
+                <MudAutocomplete Class="pa-4 labelCustomColor" @bind-Value="context.Item.Seal" Label="@Localizer["Seal"]" CoerceValue SearchFunc="SearchSeal" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.pkgs" Title="@Localizer["PKGs"]" Required="false" CellStyle="text-align: right;" >
+            <EditTemplate>
+                <MudAutocomplete Class="pa-4 labelCustomColor" @bind-Value="context.Item.pkgs" Label="@Localizer["PKGs"]" CoerceValue SearchFunc="SearchKGs" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.pkgsCode" Title="@Localizer["PKGs Code"]" Required="false">
+            <EditTemplate>
+                @* <MudAutocomplete @bind-Value="context.Item.pkgsCode" Label="@Localizer["KGs Code"]" CoerceValue SearchFunc="SearchKGsCode" /> *@
+                <MudSelect Class="pa-4 labelCustomColor" @bind-Value="context.Item.pkgsCode" Label="@Localizer["PKGs Code"]">
+                    @foreach (var item in pkgType)
+                    {
+                        <MudSelectItem Value="item">@item</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.cbm" Title="@Localizer["CBM"]" Required="false" CellStyle="text-align: right;" />
+        <PropertyColumn Property="x => x.NETWEIGHT" Title="@Localizer["Net WT."]" Required="false" />
+        <PropertyColumn Property="x => x.GrossWeight" Title="@Localizer["Gross WT."]" Required="false" />
+        <PropertyColumn Property="x => x.description" Title="@Localizer["Description"]" Required="false" >
+            <EditTemplate>
+                <MudTextField Class="pa-4 labelCustomColor" @bind-Value="context.Item.description" Label="@Localizer["Description"]" Lines="3" AutoGrow />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.NVOCC_Status" Title="@Localizer["NVOCC_Status"]" Required="false" CellClass="no-wrap-cell">
+            <EditTemplate>
+                <MudAutocomplete T="string" Class="pa-4 labelCustomColor" @bind-Value="context.Item.NVOCC_Status"
+                                 Label="@Localizer["NVOCC_Status"]" CoerceValue SearchFunc="SearchNVOCC_Status" Clearable />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Status_Cont" Title="@Localizer["Status_Cont"]" Required="false">
+            <EditTemplate>
+                <MudTextField Class="pa-4 labelCustomColor" @bind-Value="context.Item.Status_Cont" Label="@Localizer["Status_Cont"]" Lines="3" AutoGrow />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.In_Depot" Title="@Localizer["In Depot"]" Required="false">
+            <EditTemplate>
+                <MudAutocomplete T="string" Class="pa-4 labelCustomColor" @bind-Value="context.Item.In_Depot"
+                                 Label="@Localizer["In Depot"]" CoerceValue SearchFunc="SearchTerminal" Clearable />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.In_Port" Title="@Localizer["In Port"]" Required="false">
+            <EditTemplate>
+                <MudAutocomplete T="string" Class="pa-4 labelCustomColor" @bind-Value="context.Item.In_Port"
+                                 Label="@Localizer["In Port"]" CoerceValue SearchFunc="SearchPorts" Clearable />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Decommision" Title="@Localizer["Decommision"]" Required="false">
+            <CellTemplate>
+                <MudCheckBox T="bool?" Class="pa-4 labelCustomColor" @bind-Value="context.Item.Decommision" Label="@Localizer["Decommision"]" />
+            </CellTemplate>
+            <EditTemplate>
+                <MudCheckBox T="bool?" Class="pa-4 labelCustomColor" @bind-Value="context.Item.Decommision" Label="@Localizer["Decommision"]" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.USERID" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false" />
+        <PropertyColumn Property="x => x.UPDATETIME" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false" />
+    </Columns>
+</MudDataGrid>
+@code {
+    [Parameter] public M_MBL? MBLDetail { get; set; } = default!;
+    [Parameter] public M_HBL? HBLDetail { get; set; } = default!;
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+    M_Container detail;
+    List<string> NVOCC_Status = new List<string> { "In Depot", "Waiting Port Arrival", "Arrived at Port", "In Transit" };
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private void Submit()
+    {
+        MudDialog!.Close();
+    }
+    bool isMBL;
+    void Cancel() => MudDialog!.Cancel();
+    string usr;
+    List<M_Container> Conts = new List<M_Container>();
+    private List<Terminal_> Terminals = new List<Terminal_>();
+    private List<PortModel> Ports = new List<PortModel>();
+
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            isMBL = MBLDetail == null ? false : true;
+            if (isMBL)
+            {
+                if (MBLDetail.MblID == Guid.Empty)
+                {
+                    CallSnackBar("Vui lòng chọn 1 dòng MBL", MudBlazor.Severity.Warning);
+                    return;
+                }
+            }
+            else
+            {
+                if (HBLDetail.hblID == Guid.Empty)
+                {
+                    CallSnackBar("Vui lòng chọn 1 dòng HBL", MudBlazor.Severity.Warning);
+                    return;
+                }
+            }
+            Conts = shipsv.GetListContainerAll();
+            Terminals = await gsv.GetList_Terminal();
+            Ports = await bksv.GetList_PORT();
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+    }
+
+    bool _loading = false;
+    List<M_Container> Listdata = new List<M_Container>();
+    M_Container detail_cont;
+    List<string> contType = new List<string> { "20DC", "40DC", "40HC", "40RH", "45HC", "20RF", "40RF", "20OT", "40OT", "20FR", "40FR" };
+    List<string> pkgType = new List<string> { "BARREL(S)", "BUNDLE(S)", "BAG(S)", "BASKET(S)", "BALE'S)", "BAR(S)", "BOX(S)", "CAN(S)", "CAG(S)", "CONTAINER(S)", "CRATE(S)", "CASE(S)", "CARTON(S)", "DRUM(S)", "FLEXIBAG(S)", "NET(S)", "PARCEL(S)", "PEN(S)", "PLATE(S)", "PIPE(S)", "PACKAGE(S)", "PAIL(S)", "PALLET(S)", "PIECE(S)", "TRAY(S)", "ROLL(S)", "TANK(S)", "WOODENCASE(S)", "WOODENBOX(ES)", "OTHER" };
+    List<string> List_Terminal = new List<string>();
+
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "HBL"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            if(isMBL)
+                Listdata = shipsv.GetListContainerMBL(MBLDetail!.MblID);
+            else 
+                Listdata = shipsv.GetListContainerHBL(HBLDetail!.hblID);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_Container> mudTable;
+    async Task AddItem()
+    {
+        var item = new M_Container();
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task DeleteItem(M_Container item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (item.APPROVE.HasValue && item.APPROVE.Value)
+        {
+            CallSnackBar("This Container is approved!", MudBlazor.Severity.Info);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await shipsv.DeleteContainerMBL(item);
+            await HistoryLogService.LogAsync(usr, "Delete Container", "Shipment", item.CTN_ID, item.CONTAINER_NO, new { OldData = item });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    async Task CommittedItem(M_Container item)
+    {
+        if (isMBL) item.mblid = MBLDetail!.MblID;
+        else item.hblid = HBLDetail!.hblID;
+
+        item.USERID = usr;
+        item.UPDATETIME = DateTime.Now;
+        var rs = item.CTN_ID != Guid.Empty ? await shipsv.UpdateContainerMBL(item,detail_cont) : await shipsv.CreateContainerMBL(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_Container Sis, int rowNumber)
+    {
+        if (Sis.APPROVE.HasValue && Sis.APPROVE.Value)
+        {
+            return "custom-disable"; // Gán class "disable" nếu Approve = true
+        }
+        else if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_Container> args)
+    {
+        if (args.Item.APPROVE.HasValue && args.Item.APPROVE.Value)
+            CallSnackBar("This Container is approved!", MudBlazor.Severity.Info);
+        else detail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_Container> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+    private async Task<IEnumerable<double?>> SearchKGs(string? text)
+    {
+        try
+        {
+            var items = Conts.Select(x => x.pkgs).Distinct();
+            if (string.IsNullOrEmpty(text))
+            {
+                return items;
+            }
+            // MBL.Porname = mst_Consignee;
+            return items.Where( x => x != null && x.Equals(text));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchKGsCode(string? text)
+    {
+        try
+        {
+            var items = Conts.Select(x => x.pkgsCode).Distinct();
+            if (string.IsNullOrEmpty(text))
+            {
+                return items;
+            }
+            // MBL.Porname = mst_Consignee;
+            return items.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchType(string? text)
+    {
+        try
+        {
+            var items = Conts.Select(x => x.loaihang).Distinct();
+            if (string.IsNullOrEmpty(text))
+            {
+                return items;
+            }
+            // MBL.Porname = mst_Consignee;
+            return items.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchContSizeType(string? text)
+    {
+        try
+        {
+            var items = !isMBL ? Conts.Where(x => x.mblid == HBLDetail.mblid).Select(x => x.CTN_SIZE_TYPE).Distinct() 
+                                : Conts.Select(x => x.CTN_SIZE_TYPE).Distinct(); // chỉ lấy của mbl
+            //var items = Conts.Select(x => x.CTN_SIZE_TYPE).Distinct(); 
+            if (string.IsNullOrEmpty(text))
+            {
+                return items;
+            }
+            // MBL.Porname = mst_Consignee;
+            return items.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchContNo(string? text)
+    {
+        try
+        {
+            var items = !isMBL ? Conts.Where(x => x.mblid == HBLDetail.mblid).Select(x => x.CONTAINER_NO).Distinct()
+                                : Conts.Select(x => x.CONTAINER_NO).Distinct(); // chỉ lấy của mbl
+            if (string.IsNullOrEmpty(text))
+            {
+                return items;
+            }
+            // MBL.Porname = mst_Consignee;
+            return items.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private void OnContainerNoBlur(M_Container item)
+    {
+        if (string.IsNullOrWhiteSpace(item?.CONTAINER_NO)) return;
+        var result = shipsv.CheckContainerNumber(item.CONTAINER_NO.Trim());
+        if (result == "Container Number is OK!")
+            CallSnackBar(result, MudBlazor.Severity.Success);
+        else
+            CallSnackBar(result, MudBlazor.Severity.Warning);
+    }
+    private async Task<IEnumerable<string?>> SearchSeal(string? text)
+    {
+        try
+        {
+            var items = !isMBL ? Conts.Where(x => x.mblid == HBLDetail.mblid).Select(x => x.Seal).Distinct()
+                                : Conts.Select(x => x.Seal).Distinct(); // chỉ lấy của mbl
+            if (string.IsNullOrEmpty(text))
+            {
+                return items;
+            }
+            // MBL.Porname = mst_Consignee;
+            return items.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    private async Task<IEnumerable<string?>> SearchNVOCC_Status(string? text)
+    {
+        await Task.CompletedTask;
+        if (string.IsNullOrWhiteSpace(text))
+            // return Array.Empty<string>();
+            return NVOCC_Status;
+        return NVOCC_Status.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+    private async Task<IEnumerable<string?>> SearchTerminal(string? text)
+    {
+        await Task.CompletedTask;
+        if (string.IsNullOrWhiteSpace(text))
+            return Array.Empty<string>();
+        var filtered = Terminals
+            .Where(t => !string.IsNullOrEmpty(t.TermiNalName))
+            .Where(t =>
+                (t.TermiNalName?.Contains(text, StringComparison.OrdinalIgnoreCase) == true) ||
+                (t.Code?.Contains(text, StringComparison.OrdinalIgnoreCase) == true));
+        return filtered.Select(t => t.TermiNalName).Distinct();
+    }
+
+    private async Task<IEnumerable<string?>> SearchPorts(string? text)
+    {
+        await Task.CompletedTask;
+        if (Ports == null || Ports.Count == 0)
+            return Array.Empty<string?>();
+
+        if (string.IsNullOrWhiteSpace(text))
+            return Array.Empty<string?>();
+
+        var filtered = Ports
+            .Where(p => !string.IsNullOrWhiteSpace(p.PORT))
+            .Where(p =>
+                (p.PORT?.Contains(text, StringComparison.OrdinalIgnoreCase) == true) ||
+                (p.PORT_CODE?.Contains(text, StringComparison.OrdinalIgnoreCase) == true));
+
+        return filtered.Select(p => p.PORT).Distinct();
+    }
+    async Task UpdatebyCheckboxClick(M_Container item)
+    {
+        if (!await ssv.CheckPermission(usr, "Approve", "MBL"))
+        {
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        item.UPDATETIME = DateTime.Now;
+        item.USERID = usr;
+        var rs = await shipsv.UpdateContainerMBL_Approve(item);
+        if (!rs.Flag) CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+    async Task TryStartEditing(M_Container item)
+    {
+        if (item.APPROVE.HasValue && item.APPROVE.Value)
+        {
+            CallSnackBar("This Container is approved!", MudBlazor.Severity.Warning);
+            return;
+        }
+        
+        detail_cont = JsonSerializer.Deserialize<M_Container>(JsonSerializer.Serialize(item));
+        await mudTable.SetEditingItemAsync(item);
+    }
+}

@@ -1,0 +1,172 @@
+@using NVOAMASIS.Models
+@attribute [Authorize]
+@inject AttendanceService AttendanceService
+@inject AccountService AccountService
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+@inject SharedServices ssv
+@inject AccountService asv
+
+<PageTitle>@Localizer["Attendance Logs"]</PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">@Localizer["Attendance Logs"]</MudText>
+<MudStack Spacing="3" Class="pa-4">
+    <MudGrid GutterSize="2">
+        <MudItem xs="12" sm="6" md="3">
+            <MudDateRangePicker DateRange="_dateRange"
+                               DateRangeChanged="OnDateRangeChanged"
+                               Label="@_dateRangeLabel"
+                               DateFormat="dd/MM/yyyy"
+                               Clearable="true" />
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudAutocomplete T="AuthUser"
+                            @bind-Value="SelectedUser"
+                            Label="@Localizer["User"]"
+                            SearchFunc="SearchUser"
+                            ToStringFunc="@(u => u != null ? (u.Name ?? u.Usr ?? u.UsrId.ToString()) : "")"
+                            Clearable="true"
+                            ResetValueOnEmptyText="true" />
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudSelect T="string" @bind-Value="SelectedSession" Label="@Localizer["Session"]" Clearable="true">
+                <MudSelectItem Value="@((string?)null)">@Localizer["All"]</MudSelectItem>
+                <MudSelectItem Value="@("morning")">Morning</MudSelectItem>
+                <MudSelectItem Value="@("afternoon")">Afternoon</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2" Class="d-flex align-center">
+            <MudButton OnClick="LoadData"
+                      StartIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Filled"
+                      Color="Color.Primary">
+                @Localizer["Search"]
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    <MudDataGrid T="AttendanceLog"
+                 Items="@_items"
+                 Filterable="true"
+                 Class="pa-4"
+                 Bordered="true"
+                 Dense="true"
+                 Striped="true"
+                 Hover="true"
+                 Loading="_loading"
+                 FixedHeader="true">
+        <Columns>
+            <PropertyColumn Property="x => UserIdToName(x.UserId)" Title="@Localizer["User"]" CellClass="no-wrap-cell" />
+            <PropertyColumn Property="x => x.CheckInTime" Title="@Localizer["CheckInTime"]" Format="dd/MM/yyyy HH:mm" />
+            <PropertyColumn Property="x => x.LocalDate" Title="@Localizer["Date"]" Format="dd/MM/yyyy" />
+            <PropertyColumn Property="x => x.Session" Title="@Localizer["Session"]" />
+            <PropertyColumn Property="x => x.IPAddress" Title="IP" />
+            <TemplateColumn Title="@Localizer["Onsite"]">
+                <CellTemplate>
+                    <MudChip T="string" Size="Size.Small" Color="@(context.Item.IsOnsite ? Color.Success : Color.Default)">
+                        @(context.Item.IsOnsite ? Localizer["Yes"] : Localizer["No"])
+                    </MudChip>
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.SourceType" Title="@Localizer["Source"]" />
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="AttendanceLog" PageSizeOptions="new int[] { 10, 25, 50 }" />
+        </PagerContent>
+    </MudDataGrid>
+</MudStack>
+
+@code {
+    private List<AttendanceLog> _items = new();
+    private bool _loading;
+    private DateRange _dateRange;
+    private string _dateRangeLabel => $"{Localizer["From"]} - {Localizer["To"]}";
+    private List<AuthUser> _userList = new();
+    private AuthUser? _selectedUser;
+    private string? _selectedSession;
+    string usr;
+
+    string UserIdToName(Guid userId)
+    {
+        if (userId == Guid.Empty)
+            return string.Empty;
+        var u = _userList.FirstOrDefault(x => x.UsrId == userId);
+        return u != null ? (u.Name ?? u.Usr ?? string.Empty) : string.Empty;
+    }
+
+    private void OnDateRangeChanged(DateRange range)
+    {
+        if (range.Start != null && range.End != null)
+            _dateRange = new DateRange(range.Start.Value.Date, range.End.Value.Date);
+    }
+
+    private AuthUser? SelectedUser
+    {
+        get => _selectedUser;
+        set => _selectedUser = value;
+    }
+
+    private string? SelectedSession
+    {
+        get => _selectedSession;
+        set => _selectedSession = value;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _userList = await AccountService.GetListUser();
+        var today = DateTime.Today;
+        _dateRange = new DateRange(today.AddMonths(-1), today);
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+
+        // await LoadData();
+    }
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    private async Task LoadData()
+    {
+        try
+        {
+            if (!await ssv.CheckPermission(usr, "View", "AttendanceLogs"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            _loading = true;
+            StateHasChanged();
+
+            DateTime? from = _dateRange.Start?.Date;
+            DateTime? to = _dateRange.End?.Date;
+            Guid? userId = _selectedUser?.UsrId;
+            var list = await AttendanceService.GetAttendanceLogsAsync(from, to, userId, _selectedSession);
+            _items = list ?? new List<AttendanceLog>();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", MudBlazor.Severity.Error);
+            _items = new List<AttendanceLog>();
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private Task<IEnumerable<AuthUser>> SearchUser(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Task.FromResult<IEnumerable<AuthUser>>(_userList);
+
+        var filter = value.Trim();
+        var filtered = _userList.Where(u =>
+            (u.Name != null && u.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) ||
+            (u.Usr != null && u.Usr.Contains(filter, StringComparison.OrdinalIgnoreCase)));
+        return Task.FromResult<IEnumerable<AuthUser>>(filtered);
+    }
+}

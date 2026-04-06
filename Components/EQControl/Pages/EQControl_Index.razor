@@ -1,0 +1,980 @@
+@page "/EQControl"
+@inject NavigationManager navSvc
+@inject ILogger<EQControl_Index> Logger
+@inject IJSRuntime js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+@using System.Globalization;
+@using Microsoft.AspNetCore.Components.Forms;
+@using OfficeOpenXml;
+
+<PageTitle>@Localizer["EQControl"]</PageTitle>
+
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudStack Class="pa-2" Style="font-size:xx-large; font-weight: bolder">@Localizer["EQControl"]</MudStack>
+
+    <MudGrid Class="pa-4">
+        <MudItem xs="12" md="6">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudTextField @bind-Value="searchContainerNo" Label="@Localizer["ContainerNo"]"
+                    Variant="Variant.Outlined" Dense="true" Style="flex: 1;" Adornment="Adornment.End"
+                    AdornmentIcon="@Icons.Material.Filled.Search" OnAdornmentClick="@(() => SearchContainerNo())"
+                    OnKeyDown="@(async (KeyboardEventArgs e) => { if (e.Key == "Enter") await SearchContainerNo(); })" />
+                <MudSelect @bind-Value="selectedContainerNo" Label="@Localizer["ContainerNo"]"
+                    Variant="Variant.Outlined" Dense="true" Clearable="true" Style="min-width: 200px;">
+                    <MudSelectItem Value="@((string?)null)">All</MudSelectItem>
+                    @foreach (var containerNo in FilteredContainerNos)
+                    {
+                        <MudSelectItem Value="@containerNo">@containerNo</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudTextField @bind-Value="searchMbl" Label="MBL" Variant="Variant.Outlined" Dense="true"
+                    Style="flex: 1;" Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search"
+                    OnAdornmentClick="@(() => SearchMBL())"
+                    OnKeyDown="@(async (KeyboardEventArgs e) => { if (e.Key == "Enter") await SearchMBL(); })" />
+                <MudSelect T="Guid?" @bind-Value="selectedMblId" Label="MBL" Variant="Variant.Outlined" Dense="true"
+                    Clearable="true" Style="min-width: 200px;">
+                    <MudSelectItem T="Guid?" Value="@((Guid?)null)">All</MudSelectItem>
+                    @foreach (var mbl in FilteredMBL)
+                    {
+                        <MudSelectItem T="Guid?" Value="@mbl.MblID">@mbl.Mbl</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudTextField @bind-Value="searchHbl" Label="HBL" Variant="Variant.Outlined" Dense="true"
+                    Style="flex: 1;" Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search"
+                    OnAdornmentClick="@(() => SearchHBL())"
+                    OnKeyDown="@(async (KeyboardEventArgs e) => { if (e.Key == "Enter") await SearchHBL(); })" />
+                <MudSelect T="Guid?" @bind-Value="selectedHblId" Label="HBL" Variant="Variant.Outlined" Dense="true"
+                    Clearable="true" Style="min-width: 200px;">
+                    <MudSelectItem T="Guid?" Value="@((Guid?)null)">All</MudSelectItem>
+                    @foreach (var hbl in FilteredHBL)
+                    {
+                        <MudSelectItem T="Guid?" Value="@hbl.hblID">@hbl.hbl</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudTextField @bind-Value="searchJobNo" Label="Job No" Variant="Variant.Outlined" Dense="true"
+                    Style="flex: 1;" Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search"
+                    OnAdornmentClick="@(() => SearchJobNo())"
+                    OnKeyDown="@(async (KeyboardEventArgs e) => { if (e.Key == "Enter") await SearchJobNo(); })" />
+                <MudSelect T="Guid?" Value="selectedJobId"
+                    ValueChanged="@(async (Guid? val) => await OnJobChanged(val))" Label="Job No"
+                    Variant="Variant.Outlined" Dense="true" Clearable="true" Style="min-width: 200px;">
+                    <MudSelectItem T="Guid?" Value="@((Guid?)null)">All</MudSelectItem>
+                    @foreach (var job in FilteredJobs)
+                    {
+                        <MudSelectItem T="Guid?" Value="@job.JobID">@job.JobNo</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+        </MudItem>
+    </MudGrid>
+
+    <MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+        <MudButton HtmlTag="label" OnClick="HandleRefresh" Size="Size.Small" Color="Color.Primary"
+            Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Refresh">
+            @Localizer["reload"]
+        </MudButton>
+        <MudButton HtmlTag="label" @onclick="@(() => OpenDialogEdit())" Size="Size.Small" Color="Color.Info"
+            Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Edit" Disabled="@(ContainerDetail == null)">
+            @Localizer["edit"]
+        </MudButton>
+
+        <MudButton HtmlTag="label" Size="Size.Small" Color="Color.Secondary"
+                   Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.FileUpload"
+                   Disabled="@(ContainerDetail == null)">
+            Import (selected container)
+            <InputFile OnChange="ImportGateDataForSelectedContainer" style="display:none" />
+        </MudButton>
+        <MudButton HtmlTag="label" Size="Size.Small" Color="Color.Tertiary"
+                   Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.FileUpload">
+            Import All
+            <InputFile OnChange="ImportGateDataAll" style="display:none" />
+        </MudButton>
+    </MudStack>
+
+</MudContainer>
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="M_Container" Bordered="true" Items="@FilteredContainers.ToList()" Filterable="true"
+        QuickFilter="@FilterFunc1" FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+        RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" FixedHeader="true" FixedFooter="true"
+        HeaderClass="no-wrap" FooterClass="no-wrap" RowClassFunc="@SelectedRowClassFunc" @ref="mudTable"
+        ReadOnly="false" Loading="f_loading"
+        ColumnResizeMode="@(_resizeColumn? ResizeMode.Column: ResizeMode.Container)">
+        <Columns>
+            <PropertyColumn Required="false" Property="x => Containers.IndexOf(x) + 1" Title="@Localizer["no"]"
+                Filterable="false" Editable="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.CONTAINER_NO" Title="@Localizer["ContainerNo"]"
+                Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FilterTemplate> 
+                    <MudTextField @bind-Value="searchString1" />
+                 </FilterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.OwnerName" Title="@Localizer["OwnerName"]"
+                Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FilterTemplate>
+                    <MudTextField @bind-Value="searchStringOwner" />
+                </FilterTemplate>
+            </PropertyColumn>
+            <TemplateColumn Title="@Localizer["DateIn"]" Filterable="false" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <CellTemplate>
+                    @{
+                        LatestGateInByContainer.TryGetValue(context.Item.CTN_ID, out var dateIn);
+                    }
+                    @(dateIn.HasValue ? dateIn.Value.ToString("dd/MM/yyyy") : string.Empty)
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="@Localizer["DateOut"]" Filterable="false" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <CellTemplate>
+                    @{
+                        LatestGateOutByContainer.TryGetValue(context.Item.CTN_ID, out var dateOut);
+                    }
+                    @(dateOut.HasValue ? dateOut.Value.ToString("dd/MM/yyyy") : string.Empty)
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="@Localizer["Days In Depot"]" Filterable="false" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <CellTemplate>
+                    @GetDaysInDepot(context.Item.CTN_ID)
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Required="false" Property="x => x.CTN_SIZE_TYPE" Title="@Localizer["SizeType"]"
+                Editable="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.Seal" Title="@Localizer["SealNo"]" Editable="false"
+                CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.Status" Title="@Localizer["Status"]" Editable="false"
+                CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.Condition" Title="@Localizer["Condition"]"
+                Editable="false" CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.APPROVE" Title="@Localizer["Approve"]" Editable="false"
+                CellStyleFunc="_cellStyleFunc">
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.UPDATETIME" Title="@Localizer["Dateupdate"]"
+                Editable="false" CellStyleFunc="_cellStyleFunc" Format="dd/MM/yyyy HH:mm">
+            </PropertyColumn>
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="M_Container" PageSizeOptions=@(new int[] { 10, 20, 50, 100 }) />
+        </PagerContent>
+    </MudDataGrid>
+    <MudScrollToTop>
+        <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.ArrowCircleUp" />
+    </MudScrollToTop>
+</MudContainer>
+
+@code {
+    private int selectedRowNumber = -1;
+    private MudDataGrid<M_Container> mudTable;
+    private List<M_Container> Containers = new List<M_Container>();
+    private M_Container? ContainerDetail;
+    private bool _resizeColumn;
+    private string searchString1 = "";
+    private string searchStringOwner = "";
+    private bool FilterFunc1(M_Container sbd) => FilterFunc(sbd, searchString1, searchStringOwner);
+    AuthUser userdetail;
+    bool f_loading = false;
+    private Dictionary<Guid, DateTime?> LatestGateInByContainer = new();
+    private Dictionary<Guid, DateTime?> LatestGateOutByContainer = new();
+
+    private int? GetDaysInDepot(Guid containerId)
+    {
+        if (containerId == Guid.Empty) return null;
+
+        LatestGateInByContainer.TryGetValue(containerId, out var dateIn);
+        if (!dateIn.HasValue) return null;
+
+        LatestGateOutByContainer.TryGetValue(containerId, out var dateOut);
+        var end = (dateOut ?? DateTime.Today).Date;
+        var start = dateIn.Value.Date;
+
+        var days = (end - start).Days;
+        return days < 0 ? 0 : days;
+    }
+
+    // Filter dropdown variables
+    private string? selectedContainerNo;
+    private Guid? selectedMblId;
+    private Guid? selectedHblId;
+    private Guid? selectedJobId;
+
+    // Search text variables
+    private string searchContainerNo = "";
+    private string searchMbl = "";
+    private string searchHbl = "";
+    private string searchJobNo = "";
+
+    // Dropdown option lists (full lists)
+    private List<M_MBL> ListMBL = new List<M_MBL>();
+    private List<M_HBL> ListHBL = new List<M_HBL>();
+    private List<M_Job> ListJob = new List<M_Job>();
+
+    // Filtered dropdown option lists (based on search - queried from service)
+    private List<string> FilteredContainerNos = new List<string>();
+    private List<M_MBL> FilteredMBL = new List<M_MBL>();
+    private List<M_HBL> FilteredHBL = new List<M_HBL>();
+    private List<M_Job> FilteredJobs = new List<M_Job>();
+
+    // For Job filter - list of MBL IDs for selected job
+    private List<Guid>? _mblIdsForSelectedJob;
+
+    // Filtered containers based on dropdown selections
+    private IEnumerable<M_Container> FilteredContainers
+    {
+        get
+        {
+            var filtered = Containers.AsEnumerable();
+
+            // Filter by Container No
+            if (!string.IsNullOrEmpty(selectedContainerNo))
+            {
+                filtered = filtered.Where(c => c.CONTAINER_NO == selectedContainerNo);
+            }
+
+            // Filter by MBL
+            if (selectedMblId.HasValue)
+            {
+                filtered = filtered.Where(c => c.mblid == selectedMblId.Value);
+            }
+
+            // Filter by HBL
+            if (selectedHblId.HasValue)
+            {
+                filtered = filtered.Where(c => c.hblid == selectedHblId.Value);
+            }
+
+            // Filter by Job (containers belonging to MBLs of the selected job)
+            if (selectedJobId.HasValue && _mblIdsForSelectedJob != null && _mblIdsForSelectedJob.Any())
+            {
+                filtered = filtered.Where(c => c.mblid.HasValue && _mblIdsForSelectedJob.Contains(c.mblid.Value));
+            }
+
+            return filtered;
+        }
+    }
+
+    private static bool ContainsIgnoreCase(string? value, string search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+            return true;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+        return value.Contains(search, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool FilterFunc(M_Container sbd, string searchString, string ownerSearch)
+    {
+        var matchContainerOrSize =
+            string.IsNullOrWhiteSpace(searchString)
+            || ContainsIgnoreCase(sbd.CONTAINER_NO, searchString)
+            || ContainsIgnoreCase(sbd.CTN_SIZE_TYPE, searchString);
+
+        var matchOwner =
+            string.IsNullOrWhiteSpace(ownerSearch)
+            || ContainsIgnoreCase(sbd.OwnerName, ownerSearch);
+
+        return matchContainerOrSize && matchOwner;
+    }
+
+
+    async Task HandleRefresh()
+    {
+        try
+        {
+            f_loading = true;
+            Containers.Clear();
+            ContainerDetail = null;
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "EQ_Control"))
+            {
+                CallSnackBar(@Localizer["You have not access to view"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Load containers first
+            Containers = shipsv.GetListContainerAll();
+
+            // Preload latest GateIn/GateOut dates per container (1 query each, grouped)
+            var containerIds = Containers.Select(c => c.CTN_ID).Where(id => id != Guid.Empty).Distinct().ToList();
+            LatestGateInByContainer = shipsv.GetLatestGateInDates(containerIds);
+            LatestGateOutByContainer = shipsv.GetLatestGateOutDates(containerIds);
+
+            // Extract distinct IDs from containers (matching the SQL query: Container -> MBL -> HBL -> Job)
+            var containerMblIds = Containers.Where(c => c.mblid.HasValue).Select(c => c.mblid.Value).Distinct().ToList();
+            var containerHblIds = Containers.Where(c => c.hblid.HasValue).Select(c => c.hblid.Value).Distinct().ToList();
+
+            // Load all MBL and HBL, then filter to only those in containers
+            var allMBL = await shipsv.GetListMBLALL();
+            var allHBL = await shipsv.GetListHBLALL();
+
+            ListMBL = allMBL.Where(m => containerMblIds.Contains(m.MblID)).ToList();
+            ListHBL = allHBL.Where(h => containerHblIds.Contains(h.hblID)).ToList();
+
+            // Get distinct Job IDs from MBLs that are in containers
+            var containerJobIds = ListMBL.Where(m => m.Jobid.HasValue).Select(m => m.Jobid.Value).Distinct().ToList();
+
+            // Load all Jobs, then filter to only those linked to MBLs in containers
+            var allJobs = await shipsv.GetListJob();
+            ListJob = allJobs.Where(j => containerJobIds.Contains(j.JobID)).ToList();
+
+            // Initialize filtered lists with all data (no search text applied yet)
+            FilteredContainerNos = Containers.Select(c => c.CONTAINER_NO)
+            .Where(x => !string.IsNullOrEmpty(x))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+
+            FilteredMBL = ListMBL.OrderBy(m => m.Mbl).ToList();
+            FilteredHBL = ListHBL.OrderBy(h => h.hbl).ToList();
+            FilteredJobs = ListJob.OrderByDescending(j => j.Dateupdate).ToList();
+
+            // If a job is selected, reload MBL IDs for that job
+            if (selectedJobId.HasValue)
+            {
+                var mblsForJob = await shipsv.GetListMBL(selectedJobId.Value);
+                _mblIdsForSelectedJob = mblsForJob.Select(m => m.MblID).ToList();
+            }
+            else
+            {
+                _mblIdsForSelectedJob = null;
+            }
+
+            StateHasChanged();
+        }
+        finally
+        {
+            f_loading = false;
+        }
+    }
+
+    private async Task OpenDialogEdit()
+    {
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraLarge,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+        if (ContainerDetail == null)
+        {
+            CallSnackBar(@Localizer["PleaseSelectContainer"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(userdetail.Usr, "Edit", "Shipment"))
+        {
+            CallSnackBar(@Localizer["You have not access to Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var containerCopy = JsonSerializer.Deserialize<M_Container>(JsonSerializer.Serialize(ContainerDetail));
+        var parameters = new DialogParameters<Edit> { { x => x.container, containerCopy } };
+        var dialog = await DialogService.ShowAsync<Edit>($"{@Localizer["EQControlEdit"]} {containerCopy?.CONTAINER_NO}",
+        parameters,
+        optionsdialog);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await HandleRefresh();
+            if (containerCopy != null)
+                searchString1 = containerCopy.CONTAINER_NO ?? "";
+        }
+        StateHasChanged();
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    void RowClicked(DataGridRowClickEventArgs<M_Container> args)
+    {
+        ContainerDetail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_Container> args)
+    {
+        // Handle right click if needed
+    }
+
+    private string SelectedRowClassFunc(M_Container container, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(container))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    private Func<M_Container, string> _cellStyleFunc => x => "pa-2";
+
+    // Handle Job dropdown change - load MBL IDs for selected job
+    private async Task OnJobChanged(Guid? newJobId)
+    {
+        selectedJobId = newJobId;
+
+        if (selectedJobId.HasValue)
+        {
+            var mblsForJob = await shipsv.GetListMBL(selectedJobId.Value);
+            _mblIdsForSelectedJob = mblsForJob.Select(m => m.MblID).ToList();
+        }
+        else
+        {
+            _mblIdsForSelectedJob = null;
+        }
+
+        StateHasChanged();
+    }
+
+    // Search methods - query from service and filter by text
+    private async Task SearchContainerNo()
+    {
+        try
+        {
+            // Query containers from service
+            var allContainers = shipsv.GetListContainerAll();
+
+            // Extract container numbers and filter by search text
+            var allContainerNos = allContainers.Select(c => c.CONTAINER_NO)
+            .Where(x => !string.IsNullOrEmpty(x))
+            .Distinct()
+            .OrderBy(x => x);
+
+            if (string.IsNullOrWhiteSpace(searchContainerNo))
+            {
+                FilteredContainerNos = allContainerNos.ToList();
+            }
+            else
+            {
+                FilteredContainerNos = allContainerNos
+                .Where(x => x.Contains(searchContainerNo, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Error searching Container No: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task SearchMBL()
+    {
+        try
+        {
+            // Query containers from service
+            var allContainers = shipsv.GetListContainerAll();
+
+            // Query MBL from service
+            var allMBL = await shipsv.GetListMBLALL();
+
+            // Filter MBL that are in containers
+            var containerMblIds = allContainers.Where(c => c.mblid.HasValue)
+            .Select(c => c.mblid.Value)
+            .Distinct()
+            .ToList();
+
+            var mblInContainers = allMBL.Where(m => containerMblIds.Contains(m.MblID)).ToList();
+
+            // Filter by search text - query contains text
+            if (string.IsNullOrWhiteSpace(searchMbl))
+            {
+                FilteredMBL = mblInContainers.OrderBy(m => m.Mbl).ToList();
+            }
+            else
+            {
+                FilteredMBL = mblInContainers
+                .Where(m => m.Mbl != null && m.Mbl.Contains(searchMbl, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(m => m.Mbl)
+                .ToList();
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Error searching MBL: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task SearchHBL()
+    {
+        try
+        {
+            // Query containers from service
+            var allContainers = shipsv.GetListContainerAll();
+
+            // Query HBL from service
+            var allHBL = await shipsv.GetListHBLALL();
+
+            // Filter HBL that are in containers
+            var containerHblIds = allContainers.Where(c => c.hblid.HasValue)
+            .Select(c => c.hblid.Value)
+            .Distinct()
+            .ToList();
+
+            var hblInContainers = allHBL.Where(h => containerHblIds.Contains(h.hblID)).ToList();
+
+            // Filter by search text
+            if (string.IsNullOrWhiteSpace(searchHbl))
+            {
+                FilteredHBL = hblInContainers.OrderBy(h => h.hbl).ToList();
+            }
+            else
+            {
+                FilteredHBL = hblInContainers
+                .Where(h => h.hbl != null && h.hbl.Contains(searchHbl, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(h => h.hbl)
+                .ToList();
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Error searching HBL: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task SearchJobNo()
+    {
+        try
+        {
+            // Query containers from service
+            var allContainers = shipsv.GetListContainerAll();
+
+            // Query Job from service
+            var allJobs = await shipsv.GetListJob();
+
+            // Get Job IDs from MBLs that are in containers - query MBL from service
+            var containerMblIds = allContainers.Where(c => c.mblid.HasValue)
+            .Select(c => c.mblid.Value)
+            .Distinct()
+            .ToList();
+
+            var allMBL = await shipsv.GetListMBLALL();
+            var mblInContainers = allMBL.Where(m => containerMblIds.Contains(m.MblID)).ToList();
+
+            var containerJobIds = mblInContainers
+            .Where(m => m.Jobid.HasValue)
+            .Select(m => m.Jobid.Value)
+            .Distinct()
+            .ToList();
+
+            var jobsInContainers = allJobs.Where(j => containerJobIds.Contains(j.JobID)).ToList();
+
+            // Filter by search text - query contains text
+            if (string.IsNullOrWhiteSpace(searchJobNo))
+            {
+                FilteredJobs = jobsInContainers.OrderByDescending(j => j.Dateupdate).ToList();
+            }
+            else
+            {
+                FilteredJobs = jobsInContainers
+                .Where(j => j.JobNo != null && j.JobNo.Contains(searchJobNo, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(j => j.Dateupdate)
+                .ToList();
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Error searching Job No: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            userdetail = asv.GetUserDetail();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(@Localizer["ErrorLoadingContainers"] + " " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private double? GetNullableDouble(OfficeOpenXml.ExcelRangeBase cell)
+    {
+        if (cell == null)
+            return null;
+
+        var text = cell.Text;
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        if (double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var result))
+            return result;
+
+        if (double.TryParse(text, NumberStyles.Any, CultureInfo.CurrentCulture, out result))
+            return result;
+
+        return null;
+    }
+
+    private static readonly int ExcelColumnContainer = 5; // Column E = container number
+
+    private bool MatchContainerNo(string? excelContainerNo, string? targetContainerNo)
+    {
+        return string.Equals(excelContainerNo?.Trim(), targetContainerNo?.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private M_Container? FindContainerByNo(string? containerNo)
+    {
+        if (string.IsNullOrWhiteSpace(containerNo) || Containers == null) return null;
+        var key = containerNo.Trim();
+        return Containers.FirstOrDefault(c => string.Equals(c.CONTAINER_NO?.Trim(), key, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task ImportGateDataForSelectedContainer(InputFileChangeEventArgs e)
+    {
+        if (ContainerDetail == null)
+        {
+            CallSnackBar(@Localizer["PleaseSelectContainer"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var targetContainerNo = ContainerDetail.CONTAINER_NO;
+
+        try
+        {
+            using var stream = new MemoryStream();
+            await e.File.OpenReadStream(20 * 1024 * 1024).CopyToAsync(stream);
+            stream.Position = 0;
+
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage(stream);
+
+            int importedGateIn = 0;
+            int importedGateOut = 0;
+
+            var gateInSheet = package.Workbook.Worksheets["GateIn"];
+            if (gateInSheet != null)
+            {
+                var row = 16;
+                while (true)
+                {
+                    var seqValue = gateInSheet.Cells[row, 1].GetValue<int?>();
+                    if (!seqValue.HasValue)
+                        break;
+
+                    var rowContainerNo = gateInSheet.Cells[row, ExcelColumnContainer].GetValue<string>();
+                    if (!MatchContainerNo(rowContainerNo, targetContainerNo))
+                    {
+                        row++;
+                        continue;
+                    }
+
+                    var item = new M_GateIn
+                    {
+                        Containerid = ContainerDetail.CTN_ID,
+                        Seq = seqValue,
+                        EIR = gateInSheet.Cells[row, 2].GetValue<string>(),
+                        DateIn = gateInSheet.Cells[row, 3].GetValue<DateTime?>(),
+                        TimeIn = gateInSheet.Cells[row, 4].GetValue<DateTime?>()?.TimeOfDay,
+                        Container = gateInSheet.Cells[row, 5].GetValue<string>(),
+                        Type = gateInSheet.Cells[row, 6].GetValue<string>(),
+                        ISO_SZTP = gateInSheet.Cells[row, 7].GetValue<string>(),
+                        Opt = gateInSheet.Cells[row, 8].GetValue<string>(),
+                        FE = gateInSheet.Cells[row, 9].GetValue<string>(),
+                        Move = gateInSheet.Cells[row, 10].GetValue<string>(),
+                        Location = gateInSheet.Cells[row, 11].GetValue<string>(),
+                        BillOfLading = gateInSheet.Cells[row, 12].GetValue<string>(),
+                        Consignee = gateInSheet.Cells[row, 13].GetValue<string>(),
+                        Truck = gateInSheet.Cells[row, 14].GetValue<string>(),
+                        YOM = gateInSheet.Cells[row, 15].GetValue<string>(),
+                        SealNo = gateInSheet.Cells[row, 16].GetValue<string>(),
+                        SealNo1 = gateInSheet.Cells[row, 17].GetValue<string>(),
+                        SealNo2 = gateInSheet.Cells[row, 18].GetValue<string>(),
+                        VGM = GetNullableDouble(gateInSheet.Cells[row, 19]),
+                        Clean = gateInSheet.Cells[row, 20].GetValue<string>(),
+                        MaxGross = GetNullableDouble(gateInSheet.Cells[row, 21]),
+                        TareWeight = GetNullableDouble(gateInSheet.Cells[row, 22]),
+                        Remark = gateInSheet.Cells[row, 23].GetValue<string>(),
+                        Status = gateInSheet.Cells[row, 24].GetValue<string>(),
+                        Grade = gateInSheet.Cells[row, 25].GetValue<string>(),
+                        Note = gateInSheet.Cells[row, 26].GetValue<string>()
+                    };
+
+                    var rs = await shipsv.SaveOrUpdateGateIn(item);
+                    if (!rs.Flag)
+                        CallSnackBar($"Error saving Gate In Seq {item.Seq}: {rs.Message}", MudBlazor.Severity.Error);
+                    else
+                        importedGateIn++;
+
+                    row++;
+                }
+            }
+
+            var gateOutSheet = package.Workbook.Worksheets["GateOut"];
+            if (gateOutSheet != null)
+            {
+                var row = 16;
+                while (true)
+                {
+                    var seqValue = gateOutSheet.Cells[row, 1].GetValue<int?>();
+                    if (!seqValue.HasValue)
+                        break;
+
+                    var rowContainerNo = gateOutSheet.Cells[row, ExcelColumnContainer].GetValue<string>();
+                    if (!MatchContainerNo(rowContainerNo, targetContainerNo))
+                    {
+                        row++;
+                        continue;
+                    }
+
+                    var item = new M_GateOut
+                    {
+                        Containerid = ContainerDetail.CTN_ID,
+                        Seq = seqValue,
+                        EIR = gateOutSheet.Cells[row, 2].GetValue<string>(),
+                        DateIn = gateOutSheet.Cells[row, 3].GetValue<DateTime?>(),
+                        TimeIn = gateOutSheet.Cells[row, 4].GetValue<DateTime?>()?.TimeOfDay,
+                        Container = gateOutSheet.Cells[row, 5].GetValue<string>(),
+                        Type = gateOutSheet.Cells[row, 6].GetValue<string>(),
+                        ISO_SZTP = gateOutSheet.Cells[row, 7].GetValue<string>(),
+                        Opt = gateOutSheet.Cells[row, 8].GetValue<string>(),
+                        FE = gateOutSheet.Cells[row, 9].GetValue<string>(),
+                        Move = gateOutSheet.Cells[row, 10].GetValue<string>(),
+                        Location = gateOutSheet.Cells[row, 11].GetValue<string>(),
+                        Booking = gateOutSheet.Cells[row, 12].GetValue<string>(),
+                        Vessel = gateOutSheet.Cells[row, 13].GetValue<string>(),
+                        Voyage = gateOutSheet.Cells[row, 14].GetValue<string>(),
+                        POL = gateOutSheet.Cells[row, 15].GetValue<string>(),
+                        POD = gateOutSheet.Cells[row, 16].GetValue<string>(),
+                        Shipper = gateOutSheet.Cells[row, 17].GetValue<string>(),
+                        YOM = gateOutSheet.Cells[row, 18].GetValue<string>(),
+                        SealNo = gateOutSheet.Cells[row, 19].GetValue<string>(),
+                        Note1 = gateOutSheet.Cells[row, 20].GetValue<string>(),
+                        RequiredGrade = gateOutSheet.Cells[row, 21].GetValue<string>(),
+                        VGM = GetNullableDouble(gateOutSheet.Cells[row, 22]),
+                        TruckNo = gateOutSheet.Cells[row, 23].GetValue<string>(),
+                        TruckerPhone = gateOutSheet.Cells[row, 24].GetValue<string>(),
+                        Grade = gateOutSheet.Cells[row, 25].GetValue<string>(),
+                        DateOut = gateOutSheet.Cells[row, 26].GetValue<DateTime?>(),
+                        Days = gateOutSheet.Cells[row, 27].GetValue<int?>(),
+                        Remark = gateOutSheet.Cells[row, 28].GetValue<string>()
+                    };
+
+                    var rs = await shipsv.SaveOrUpdateGateOut(item);
+                    if (!rs.Flag)
+                        CallSnackBar($"Error saving Gate Out Seq {item.Seq}: {rs.Message}", MudBlazor.Severity.Error);
+                    else
+                        importedGateOut++;
+
+                    row++;
+                }
+            }
+
+            await HandleRefresh();
+
+            if (importedGateIn == 0 && importedGateOut == 0)
+                CallSnackBar("No rows for selected container in Excel (column E).", MudBlazor.Severity.Info);
+            else
+                CallSnackBar($"Imported Gate In: {importedGateIn}, Gate Out: {importedGateOut}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Error importing Gate In/Out from Excel: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task ImportGateDataAll(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            if (Containers == null || Containers.Count == 0)
+            {
+                CallSnackBar("Load containers first (Reload).", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            using var stream = new MemoryStream();
+            await e.File.OpenReadStream(20 * 1024 * 1024).CopyToAsync(stream);
+            stream.Position = 0;
+
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage(stream);
+
+            int importedGateIn = 0;
+            int importedGateOut = 0;
+            int skippedGateIn = 0;
+            int skippedGateOut = 0;
+
+            var gateInSheet = package.Workbook.Worksheets["GateIn"];
+            if (gateInSheet != null)
+            {
+                var row = 16;
+                while (true)
+                {
+                    var seqValue = gateInSheet.Cells[row, 1].GetValue<int?>();
+                    if (!seqValue.HasValue)
+                        break;
+
+                    var rowContainerNo = gateInSheet.Cells[row, ExcelColumnContainer].GetValue<string>();
+                    var container = FindContainerByNo(rowContainerNo);
+                    if (container == null)
+                    {
+                        skippedGateIn++;
+                        row++;
+                        continue;
+                    }
+
+                    var item = new M_GateIn
+                    {
+                        Containerid = container.CTN_ID,
+                        Seq = seqValue,
+                        EIR = gateInSheet.Cells[row, 2].GetValue<string>(),
+                        DateIn = gateInSheet.Cells[row, 3].GetValue<DateTime?>(),
+                        TimeIn = gateInSheet.Cells[row, 4].GetValue<DateTime?>()?.TimeOfDay,
+                        Container = gateInSheet.Cells[row, 5].GetValue<string>(),
+                        Type = gateInSheet.Cells[row, 6].GetValue<string>(),
+                        ISO_SZTP = gateInSheet.Cells[row, 7].GetValue<string>(),
+                        Opt = gateInSheet.Cells[row, 8].GetValue<string>(),
+                        FE = gateInSheet.Cells[row, 9].GetValue<string>(),
+                        Move = gateInSheet.Cells[row, 10].GetValue<string>(),
+                        Location = gateInSheet.Cells[row, 11].GetValue<string>(),
+                        BillOfLading = gateInSheet.Cells[row, 12].GetValue<string>(),
+                        Consignee = gateInSheet.Cells[row, 13].GetValue<string>(),
+                        Truck = gateInSheet.Cells[row, 14].GetValue<string>(),
+                        YOM = gateInSheet.Cells[row, 15].GetValue<string>(),
+                        SealNo = gateInSheet.Cells[row, 16].GetValue<string>(),
+                        SealNo1 = gateInSheet.Cells[row, 17].GetValue<string>(),
+                        SealNo2 = gateInSheet.Cells[row, 18].GetValue<string>(),
+                        VGM = GetNullableDouble(gateInSheet.Cells[row, 19]),
+                        Clean = gateInSheet.Cells[row, 20].GetValue<string>(),
+                        MaxGross = GetNullableDouble(gateInSheet.Cells[row, 21]),
+                        TareWeight = GetNullableDouble(gateInSheet.Cells[row, 22]),
+                        Remark = gateInSheet.Cells[row, 23].GetValue<string>(),
+                        Status = gateInSheet.Cells[row, 24].GetValue<string>(),
+                        Grade = gateInSheet.Cells[row, 25].GetValue<string>(),
+                        Note = gateInSheet.Cells[row, 26].GetValue<string>()
+                    };
+
+                    var rs = await shipsv.SaveOrUpdateGateIn(item);
+                    if (!rs.Flag)
+                        CallSnackBar($"Error saving Gate In Seq {item.Seq}: {rs.Message}", MudBlazor.Severity.Error);
+                    else
+                        importedGateIn++;
+
+                    row++;
+                }
+            }
+
+            var gateOutSheet = package.Workbook.Worksheets["GateOut"];
+            if (gateOutSheet != null)
+            {
+                var row = 16;
+                while (true)
+                {
+                    var seqValue = gateOutSheet.Cells[row, 1].GetValue<int?>();
+                    if (!seqValue.HasValue)
+                        break;
+
+                    var rowContainerNo = gateOutSheet.Cells[row, ExcelColumnContainer].GetValue<string>();
+                    var container = FindContainerByNo(rowContainerNo);
+                    if (container == null)
+                    {
+                        skippedGateOut++;
+                        row++;
+                        continue;
+                    }
+
+                    var item = new M_GateOut
+                    {
+                        Containerid = container.CTN_ID,
+                        Seq = seqValue,
+                        EIR = gateOutSheet.Cells[row, 2].GetValue<string>(),
+                        DateIn = gateOutSheet.Cells[row, 3].GetValue<DateTime?>(),
+                        TimeIn = gateOutSheet.Cells[row, 4].GetValue<DateTime?>()?.TimeOfDay,
+                        Container = gateOutSheet.Cells[row, 5].GetValue<string>(),
+                        Type = gateOutSheet.Cells[row, 6].GetValue<string>(),
+                        ISO_SZTP = gateOutSheet.Cells[row, 7].GetValue<string>(),
+                        Opt = gateOutSheet.Cells[row, 8].GetValue<string>(),
+                        FE = gateOutSheet.Cells[row, 9].GetValue<string>(),
+                        Move = gateOutSheet.Cells[row, 10].GetValue<string>(),
+                        Location = gateOutSheet.Cells[row, 11].GetValue<string>(),
+                        Booking = gateOutSheet.Cells[row, 12].GetValue<string>(),
+                        Vessel = gateOutSheet.Cells[row, 13].GetValue<string>(),
+                        Voyage = gateOutSheet.Cells[row, 14].GetValue<string>(),
+                        POL = gateOutSheet.Cells[row, 15].GetValue<string>(),
+                        POD = gateOutSheet.Cells[row, 16].GetValue<string>(),
+                        Shipper = gateOutSheet.Cells[row, 17].GetValue<string>(),
+                        YOM = gateOutSheet.Cells[row, 18].GetValue<string>(),
+                        SealNo = gateOutSheet.Cells[row, 19].GetValue<string>(),
+                        Note1 = gateOutSheet.Cells[row, 20].GetValue<string>(),
+                        RequiredGrade = gateOutSheet.Cells[row, 21].GetValue<string>(),
+                        VGM = GetNullableDouble(gateOutSheet.Cells[row, 22]),
+                        TruckNo = gateOutSheet.Cells[row, 23].GetValue<string>(),
+                        TruckerPhone = gateOutSheet.Cells[row, 24].GetValue<string>(),
+                        Grade = gateOutSheet.Cells[row, 25].GetValue<string>(),
+                        DateOut = gateOutSheet.Cells[row, 26].GetValue<DateTime?>(),
+                        Days = gateOutSheet.Cells[row, 27].GetValue<int?>(),
+                        Remark = gateOutSheet.Cells[row, 28].GetValue<string>()
+                    };
+
+                    var rs = await shipsv.SaveOrUpdateGateOut(item);
+                    if (!rs.Flag)
+                        CallSnackBar($"Error saving Gate Out Seq {item.Seq}: {rs.Message}", MudBlazor.Severity.Error);
+                    else
+                        importedGateOut++;
+
+                    row++;
+                }
+            }
+
+            await HandleRefresh();
+
+            var msg = $"Import All: Gate In {importedGateIn}, Gate Out {importedGateOut}.";
+            if (skippedGateIn > 0 || skippedGateOut > 0)
+                msg += $" Skipped (container not in list): Gate In {skippedGateIn}, Gate Out {skippedGateOut}.";
+            CallSnackBar(msg, (importedGateIn > 0 || importedGateOut > 0) ? MudBlazor.Severity.Success : MudBlazor.Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Error importing Gate In/Out from Excel: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+}

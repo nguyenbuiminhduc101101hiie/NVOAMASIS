@@ -1,0 +1,541 @@
+
+@using NVOAMASIS.Models
+@using NVOAMASIS.Interface
+@using System.ComponentModel.DataAnnotations
+@inject IWordDocumentService WordDocumentService
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+@inject IDialogService DialogService
+
+<style>
+    .file-input {
+        display: none;
+    }
+    
+    .file-upload-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+    }
+</style>
+
+<PageTitle>Quản lý tài liệu Word</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudText Typo="Typo.h4" Class="mb-4">
+        <MudIcon Icon="@Icons.Material.Rounded.Description" Class="mr-3" />
+        Quản lý tài liệu Word
+    </MudText>
+
+    <!-- Upload Section -->
+    <MudCard Class="mb-4">
+        <MudCardContent>
+            <MudText Typo="Typo.h6" Class="mb-3">Upload tài liệu mới</MudText>
+            <MudGrid>
+                <MudItem xs="12" md="6">
+                    <div class="file-upload-container">
+                        <InputFile OnChange="OnFilesChanged" 
+                                  accept=".docx" 
+                                  class="file-input" 
+                                  id="fileInput" />
+                        <MudButton HtmlTag="label" 
+                                 Variant="Variant.Filled" 
+                                 Color="Color.Primary" 
+                                 StartIcon="@Icons.Material.Rounded.Upload"
+                                 Disabled="@isUploading"
+                                 for="fileInput">
+                            @if (isUploading)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            }
+                            Chọn file Word (.docx)
+                        </MudButton>
+                    </div>
+                    <MudText Typo="Typo.caption" Class="mt-1">
+                        @if (selectedFile != null)
+                        {
+                            <span>File đã chọn: @selectedFile.Name (@(selectedFile.Size / 1024) KB)</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">Chưa chọn file nào</span>
+                        }
+                    </MudText>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="uploadModel.Description" 
+                                Label="Mô tả (tùy chọn)" 
+                                Variant="Variant.Outlined" 
+                                Lines="2" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudButton OnClick="UploadDocument" 
+                             Variant="Variant.Filled" 
+                             Color="Color.Primary" 
+                             StartIcon="@Icons.Material.Rounded.Upload"
+                             Disabled="@(selectedFile == null || isUploading)">
+                        @if (isUploading)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            <span>Đang upload...</span>
+                        }
+                        else
+                        {
+                            <span>Upload tài liệu</span>
+                        }
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudCardContent>
+    </MudCard>
+
+    <!-- Documents List -->
+    <MudCard>
+        <MudCardContent>
+            <MudText Typo="Typo.h6" Class="mb-3">Danh sách tài liệu</MudText>
+            
+            <!-- Search and Filter -->
+            <MudGrid Class="mb-3">
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="searchText" 
+                                Label="Tìm kiếm theo tên file hoặc mô tả" 
+                                Variant="Variant.Outlined" 
+                                Adornment="Adornment.Start" 
+                                AdornmentIcon="@Icons.Material.Rounded.Search"
+                                OnKeyUp="OnSearchChanged"
+                                DebounceInterval="300" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudSelect @bind-Value="SortBy" 
+                             Label="Sắp xếp theo" 
+                             Variant="Variant.Outlined"
+                             T="string">
+                        <MudSelectItem Value=@("name")>Tên file</MudSelectItem>
+                        <MudSelectItem Value=@("date")>Ngày upload</MudSelectItem>
+                        <MudSelectItem Value=@("size")>Kích thước</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudSelect @bind-Value="SortOrder" 
+                             Label="Thứ tự" 
+                             Variant="Variant.Outlined"
+                             T="string">
+                        <MudSelectItem Value=@("asc")>Tăng dần</MudSelectItem>
+                        <MudSelectItem Value=@("desc")>Giảm dần</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+            
+            <!-- Results count -->
+            @if (!isLoading && documents?.Any() == true)
+            {
+                <MudText Typo="Typo.body2" Class="mb-2 text-muted">
+                    Hiển thị @(filteredDocuments?.Count ?? 0) / @(documents?.Count ?? 0) tài liệu
+                    @if (!string.IsNullOrWhiteSpace(searchText))
+                    {
+                        <span>cho từ khóa "@searchText"</span>
+                    }
+                </MudText>
+            }
+            
+            @if (isLoading)
+            {
+                <MudProgressCircular Indeterminate="true" Class="mx-auto" />
+            }
+            else if (filteredDocuments?.Any() == true)
+            {
+                <MudTable Items="filteredDocuments" Hover="true" Dense="true" Striped="true">
+                    <HeaderContent>
+                        <MudTh>File name</MudTh>
+                        <MudTh>Mô tả</MudTh>
+                        <MudTh>Kích thước</MudTh>
+                        <MudTh>Ngày upload</MudTh>
+                        <MudTh>ID</MudTh>
+                        <MudTh>Thao tác</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="File name">
+                            <MudText Typo="Typo.body2" Class="font-weight-medium">
+                                @context.FileName
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Mô tả">
+                            <MudText Typo="Typo.body2">
+                                @(string.IsNullOrEmpty(context.Description) ? "Không có mô tả" : context.Description)
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Kích thước">
+                            <MudText Typo="Typo.body2">
+                                @FormatFileSize(GetFileSize(context.FilePath))
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Ngày upload">
+                            <MudText Typo="Typo.body2">
+                                @context.UploadedAt.ToString("dd/MM/yyyy HH:mm")
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="ID">
+                            <MudText Typo="Typo.caption" Class="text-muted">
+                                @context.Id.ToString().Substring(0, 8)...
+                            </MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Thao tác">
+                            <MudButtonGroup Variant="Variant.Text" Size="Size.Small">
+                                <MudButton StartIcon="@Icons.Material.Rounded.Visibility" 
+                                         Color="Color.Primary"
+                                         OnClick="@(() => ViewDocument(context))">
+                                    Xem
+                                </MudButton>
+                                <MudButton StartIcon="@Icons.Material.Rounded.Download" 
+                                         Color="Color.Secondary"
+                                         OnClick="@(() => DownloadDocument(context))">
+                                    Tải
+                                </MudButton>
+                                <MudButton StartIcon="@Icons.Material.Rounded.Delete" 
+                                         Color="Color.Error"
+                                         OnClick="@(() => DeleteDocument(context))">
+                                    Xóa
+                                </MudButton>
+                            </MudButtonGroup>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+            else
+            {
+                <MudText Typo="Typo.body1" Class="text-center text-muted">
+                    Chưa có tài liệu nào được upload
+                </MudText>
+            }
+        </MudCardContent>
+    </MudCard>
+</MudContainer>
+
+
+@code {
+    private List<WordDocument>? documents;
+    private List<WordDocument>? filteredDocuments;
+    private bool isLoading = true;
+    private bool isUploading = false;
+    private IBrowserFile? selectedFile;
+    private string searchText = string.Empty;
+    private string sortBy = "date";
+    private string sortOrder = "desc";
+
+    private string SortBy
+    {
+        get => sortBy;
+        set
+        {
+            if (sortBy != value)
+            {
+                sortBy = value;
+                ApplyFiltersAndSort();
+                StateHasChanged();
+            }
+        }
+    }
+
+    private string SortOrder
+    {
+        get => sortOrder;
+        set
+        {
+            if (sortOrder != value)
+            {
+                sortOrder = value;
+                ApplyFiltersAndSort();
+                StateHasChanged();
+            }
+        }
+    }
+
+    private UploadModel uploadModel = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDocuments();
+    }
+
+    private async Task LoadDocuments()
+    {
+        try
+        {
+            isLoading = true;
+            documents = (await WordDocumentService.GetAllActiveDocumentsAsync()).ToList();
+            ApplyFiltersAndSort();
+        }
+        catch (Exception ex)
+        {
+            ShowSnackbar($"Lỗi khi tải danh sách tài liệu: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ApplyFiltersAndSort()
+    {
+        if (documents == null)
+        {
+            filteredDocuments = new List<WordDocument>();
+            return;
+        }
+
+        // Apply search filter
+        var filtered = documents.AsEnumerable();
+        
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            var searchLower = searchText.ToLower();
+            filtered = filtered.Where(d => 
+                d.FileName.ToLower().Contains(searchLower) ||
+                (!string.IsNullOrEmpty(d.Description) && d.Description.ToLower().Contains(searchLower)));
+        }
+
+        // Apply sorting
+        filtered = sortBy switch
+        {
+            "name" => sortOrder == "asc" 
+                ? filtered.OrderBy(d => d.FileName)
+                : filtered.OrderByDescending(d => d.FileName),
+            "size" => sortOrder == "asc"
+                ? filtered.OrderBy(d => GetFileSize(d.FilePath))
+                : filtered.OrderByDescending(d => GetFileSize(d.FilePath)),
+            _ => sortOrder == "asc"
+                ? filtered.OrderBy(d => d.UploadedAt)
+                : filtered.OrderByDescending(d => d.UploadedAt)
+        };
+
+        filteredDocuments = filtered.ToList();
+    }
+
+    private void OnSearchChanged()
+    {
+        ApplyFiltersAndSort();
+        StateHasChanged();
+    }
+
+
+    private void OnFilesChanged(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        uploadModel.Description = string.Empty;
+    }
+
+    private async Task UploadDocument()
+    {
+        if (selectedFile == null) 
+        {
+            ShowSnackbar("Vui lòng chọn file Word để upload", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        // Validate description length
+        if (!string.IsNullOrEmpty(uploadModel.Description) && uploadModel.Description.Length > 1000)
+        {
+            ShowSnackbar("Mô tả không được vượt quá 1000 ký tự", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            isUploading = true;
+
+            // Validate file
+            if (!selectedFile.Name.EndsWith(".docx", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowSnackbar("Chỉ hỗ trợ file .docx", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (selectedFile.Size > 10 * 1024 * 1024) // 10MB
+            {
+                ShowSnackbar("File quá lớn. Kích thước tối đa 10MB.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            // Save file to disk
+            var formFile = await ConvertToIFormFileAsync(selectedFile);
+            var filePath = await WordDocumentService.SaveFileToDiskAsync(formFile);
+            
+            // Extract content
+            using var stream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            Console.WriteLine($"UploadDocument: File size: {selectedFile.Size} bytes");
+            Console.WriteLine($"UploadDocument: File name: {selectedFile.Name}");
+            
+            // Create a copy of the stream for text extraction
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            memoryStream.Position = 0;
+            
+            var content = await WordDocumentService.ExtractTextFromWordDocument(memoryStream);
+            Console.WriteLine($"UploadDocument: Extracted content length: {content?.Length ?? 0}");
+
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                ShowSnackbar("Không thể đọc nội dung file Word. Vui lòng kiểm tra file có đúng định dạng .docx không.", MudBlazor.Severity.Error);
+                return;
+            }
+
+            // Save to database
+            await WordDocumentService.SaveDocumentAsync(selectedFile.Name, content, filePath, uploadModel.Description);
+            
+            ShowSnackbar("Upload tài liệu thành công!", MudBlazor.Severity.Success);
+            
+            // Reset form
+            selectedFile = null;
+            uploadModel = new UploadModel();
+            
+            // Reload documents
+            await LoadDocuments();
+        }
+        catch (Exception ex)
+        {
+            ShowSnackbar($"Lỗi khi upload: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+    private async Task<IFormFile> ConvertToIFormFileAsync(IBrowserFile browserFile)
+    {
+        var memoryStream = new MemoryStream();
+        await browserFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).CopyToAsync(memoryStream);
+        memoryStream.Position = 0;
+
+        return new FormFile(memoryStream, 0, memoryStream.Length, browserFile.Name, browserFile.Name)
+        {
+            Headers = new HeaderDictionary(),
+            ContentType = browserFile.ContentType
+        };
+    }
+    private async Task ViewDocument(WordDocument document)
+    {
+        var parameters = new DialogParameters<ViewDocumentDialog>
+        {
+            { x => x.Document, document },
+            { x => x.FormatFileSize, FormatFileSize },
+            { x => x.GetFileSize, GetFileSize }
+        };
+
+        var options = new DialogOptions()
+        {
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+        var title = $"Xem tài liệu: {document.FileName} (ID: {document.Id.ToString().Substring(0, 8)}...)";
+        await DialogService.ShowAsync<ViewDocumentDialog>(title, parameters, options);
+    }
+
+    private async Task DownloadDocument(WordDocument document)
+    {
+        try
+        {
+            if (File.Exists(document.FilePath))
+            {
+                var fileBytes = await File.ReadAllBytesAsync(document.FilePath);
+                var fileName = document.FileName;
+                
+                await JSRuntime.InvokeVoidAsync("downloadFileFromStream", fileName, Convert.ToBase64String(fileBytes));
+                ShowSnackbar("Tải file thành công!", MudBlazor.Severity.Success);
+            }
+            else
+            {
+                ShowSnackbar("File không tồn tại trên server", MudBlazor.Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowSnackbar($"Lỗi khi tải file: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task DeleteDocument(WordDocument document)
+    {
+        var parameters = new DialogParameters<DeleteConfirmDialog>
+        {
+            { x => x.DocumentName, document.FileName },
+            { x => x.DocumentId, document.Id.ToString().Substring(0, 8) + "..." },
+            { x => x.UploadDate, document.UploadedAt.ToString("dd/MM/yyyy HH:mm") }
+        };
+
+        var options = new DialogOptions()
+        {
+            MaxWidth = MaxWidth.Small,
+            CloseOnEscapeKey = true
+        };
+
+        var title = $"Xác nhận xóa tài liệu";
+        var result = await DialogService.ShowAsync<DeleteConfirmDialog>(title, parameters, options);
+        var dialogResult = await result.Result;
+
+        if (dialogResult != null && !dialogResult.Canceled)
+        {
+            try
+            {
+                var success = await WordDocumentService.DeactivateDocumentAsync(document.Id);
+                if (success)
+                {
+                    ShowSnackbar($"Xóa tài liệu '{document.FileName}' thành công!", MudBlazor.Severity.Success);
+                    await LoadDocuments();
+                }
+                else
+                {
+                    ShowSnackbar("Không tìm thấy tài liệu để xóa", MudBlazor.Severity.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowSnackbar($"Lỗi khi xóa tài liệu: {ex.Message}", MudBlazor.Severity.Error);
+            }
+        }
+    }
+
+    private void ShowSnackbar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Add(message, severity);
+    }
+
+    private long GetFileSize(string filePath)
+    {
+        try
+        {
+            if (File.Exists(filePath))
+            {
+                return new FileInfo(filePath).Length;
+            }
+        }
+        catch
+        {
+            // Return 0 if file doesn't exist or can't be accessed
+        }
+        return 0;
+    }
+
+    private string FormatFileSize(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len = len / 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
+
+    public class UploadModel
+    {
+        [MaxLength(1000, ErrorMessage = "Mô tả không được vượt quá 1000 ký tự")]
+        public string? Description { get; set; }
+    }
+}

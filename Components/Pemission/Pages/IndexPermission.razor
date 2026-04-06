@@ -1,0 +1,226 @@
+﻿@page "/permission"
+@inject IDialogService Dialog
+@inject ISnackbar Snackbar
+@inject AccountService acsv
+@inject SharedServices ssv
+@attribute [Authorize(Roles = "ADMIN")]
+
+<PageTitle>Permission</PageTitle>
+
+<MudStack Row Class="d-flex flex-wrap mt-4">
+    <MudButton Color="Color.Primary" Size=Size.Small OnClick=LoadAsync StartIcon="@Icons.Material.Filled.Refresh">Reload</MudButton>
+    <div class="d-flex justify-start align-center">
+        <MudButton Color="Color.Primary" Size=Size.Small OnClick=AddItem StartIcon="@Icons.Material.Filled.Add">Add</MudButton>
+    </div>
+    <div class="d-flex justify-start align-center">
+        <MudButton Color="Color.Primary" Size=Size.Small OnClick=OpenTemplate StartIcon="@Icons.Material.Filled.MenuOpen">Template</MudButton>
+    </div>
+</MudStack>
+<MudDataGrid T="Permission_M" Items="@Permissions" ReadOnly=false EditMode="@(DataGridEditMode.Form)"
+             Bordered="true" Dense="true" EditTrigger="@(DataGridEditTrigger.Manual)" @ref="Muddata"
+             CanceledEditingItem="@CanceledEditingItem" CommittedItemChanges="@CommittedItemChanges" Loading=_load
+             Groupable="true" GroupExpanded="false" >
+    <Columns>
+        <PropertyColumn Property="x => x.MenuName" Title="Menu Name" Required>
+            <EditTemplate>
+                <MudSelect T="string" @bind-Value="context.Item.MenuName" Required Margin="@Margin.Dense" SelectedValuesChanged="() => context.Item.MenuId=GetMenufrommName(context.Item.MenuName)">
+                    @foreach(var item in Menus)
+                    {
+                        <MudSelectItem Value="item.MenuName">Localize@item.MenuName</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.UserName" Title="User" Grouping GroupBy="@_groupBy">
+            <EditTemplate>
+                <MudSelect T="string" @bind-Value="context.Item.UserName" Required Margin="@Margin.Dense">
+                    @foreach (var item in Users)
+                    {
+                        <MudSelectItem Value="item.Usr">@item.Usr</MudSelectItem>
+                    }
+                </MudSelect>
+            </EditTemplate>
+            <GroupTemplate>
+                <span style="font-weight:bold">User: @context.Grouping.Key</span>
+            </GroupTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.See" Title="Can View">
+            <CellTemplate>
+                <MudCheckBox @bind-Value="context.Item.See" ReadOnly/>
+            </CellTemplate>
+            <EditTemplate>
+                <MudCheckBox Label="Can View" @bind-Value="context.Item.See" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Add" Title="Can Add">
+            <CellTemplate>
+                <MudCheckBox @bind-Value="context.Item.Add" ReadOnly />
+            </CellTemplate>
+            <EditTemplate>
+                <MudCheckBox Label="Can Add" @bind-Value="context.Item.Add" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Edit" Title="Can Edit">
+            <CellTemplate>
+                <MudCheckBox @bind-Value="context.Item.Edit" ReadOnly />
+            </CellTemplate>
+            <EditTemplate>
+                <MudCheckBox Label="Can Edit" @bind-Value="context.Item.Edit" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Del" Title="Can Delete">
+            <CellTemplate>
+                <MudCheckBox @bind-Value="context.Item.Del" ReadOnly/>
+            </CellTemplate>
+            <EditTemplate>
+                <MudCheckBox Label="Can Delete" @bind-Value="context.Item.Del" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Approve" Title="Can Approve">
+            <CellTemplate>
+                <MudCheckBox @bind-Value="context.Item.Approve" ReadOnly />
+            </CellTemplate>
+            <EditTemplate>
+                <MudCheckBox Label="Can Approve" @bind-Value="context.Item.Approve" />
+            </EditTemplate>
+        </PropertyColumn>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@context.Actions.StartEditingItemAsync" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="Permission_M" PageSizeOptions=@(new int[] {15, 20, 25,40,50}) />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    MudDataGrid<Permission_M> Muddata;
+    List<Permission_M> Permissions = new List<Permission_M>();
+    List<FormMenu> Menus = new List<FormMenu>();
+    List<AuthUser> Users = new List<AuthUser>();
+    bool _load;
+    Permission_M detail;
+    async Task Loadcmb()
+    {
+        Users = await acsv.GetListUser();
+        Menus = await ssv.GetListFormMenu();
+    }
+    AuthUser user;
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        await Loadcmb();
+    }
+    async Task LoadAsync()
+    {
+        try
+        {
+            Permissions.Clear();
+            _load = true;
+            await Task.Delay(500);
+            Permissions = await ssv.GetListPerMission();
+
+        }
+        catch(Exception ex)
+        {
+
+        }
+        finally
+        {
+            _load = false;
+
+        }
+    }
+
+    void CanceledEditingItem(Permission_M item)
+    {
+
+    }
+
+    async Task CommittedItemChanges(Permission_M item)
+    {
+        var rs = await ssv.UpdateOrCreatePermission(item,detail);
+        CallSnackBar(rs.Message, rs.Flag ? "S" : "E");
+        await LoadAsync();
+    }
+
+    async Task DeleteItem(Permission_M item)
+    {
+        var resultMess = await Dialog.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await ssv.DeletePermission(item);
+            CallSnackBar(rs.Message, rs.Flag ? "S" : "E");
+
+            await LoadAsync();
+        }
+
+    }
+    async Task OpenTemplate()
+    {
+        try
+        {
+            var optionsdialog = new DialogOptions
+                {
+                    ClassBackground = "class-dialog-custom",
+                    FullWidth = true,
+                    MaxWidth = MaxWidth.Medium,
+                    CloseOnEscapeKey = false,
+                    DisableBackdropClick = true
+                };
+
+            var dialog = await Dialog.ShowAsync<PerTemplate>($"Templates Permission", optionsdialog);
+            var result = await dialog.Result;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Somethings went wrong!, error code: " + ex.Message, "E");
+        }
+    }
+    async Task AddItem()
+    {
+        Permissions.Add(
+            new Permission_M{
+                    PermissionId = null,
+                    MenuId = null,
+                    MenuName = "Choose Form",
+                    UserName = "Choose User",
+                See=false, Edit=false, Del=false, Approve=false, Add=false
+        });
+        await Muddata.SetEditingItemAsync(Permissions.LastOrDefault()!);
+    }
+    Guid GetMenufrommName(string? name)
+    {
+        var result = ssv.GetMenufrommName(name);
+        return result.MenuID;
+    }
+
+    void CallSnackBar(string message, string type)
+    {
+        MudBlazor.Severity severity = MudBlazor.Severity.Normal;
+        if (type == "E")
+            severity = MudBlazor.Severity.Error;
+        else if (type == "S")
+            severity = MudBlazor.Severity.Success;
+        else if (type == "W")
+            severity = MudBlazor.Severity.Warning;
+        else if (type == "I")
+            severity = MudBlazor.Severity.Info;
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    Func<Permission_M, object> _groupBy = x =>
+    {
+        return x.UserName;
+    };
+}

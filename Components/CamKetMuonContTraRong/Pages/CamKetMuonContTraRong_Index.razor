@@ -1,0 +1,378 @@
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+
+
+<PageTitle>Cam Ket Muon Cont Tra Rong</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.h6" Class="fw-700">Cam ket muon cont tra rong</MudText>
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Secondary"
+                       StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="OpenNewDialog"
+                       Disabled="_saving">
+                New
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Info"
+                       StartIcon="@Icons.Material.Filled.Edit"
+                       OnClick="OpenEditDialog"
+                       Disabled="_selectedCamKet is null || _saving">
+                Edit
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Download"
+                       OnClick="ExportSelected"
+                       Disabled="_selectedCamKet is null || _saving">
+                Export
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.Delete"
+                       OnClick="DeleteSelected"
+                       Disabled="_selectedCamKet is null || _saving">
+                Delete
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       OnClick="LoadCamKetList"
+                       Disabled="_saving">
+                Refresh
+            </MudButton>
+        </MudStack>
+    </MudStack>
+    <MudPaper Class="pa-3">
+        <MudDataGrid T="M_CamKetMuonCont_TraRong"
+                     Items="_camKetItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnCamKetRowClick"
+                     RowClassFunc="CamKetRowClassFunc"
+                     Height="320px"
+                     FixedHeader="true">
+            <Columns>
+                <TemplateColumn Title="HBL No">
+                    <CellTemplate>
+                        @GetHblNo(context.Item.hblid)
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.No" Title="So Cam Ket" />
+                <PropertyColumn Property="x => x.Khorieng" Title="Kho rieng" />
+                <PropertyColumn Property="x => x.Noitrarong" Title="Noi tra rong" />
+                <PropertyColumn Property="x => x.Note" Title="Note" />
+            </Columns>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private bool _saving;
+    private List<M_CamKetMuonCont_TraRong> _camKetItems = new();
+    private M_CamKetMuonCont_TraRong? _selectedCamKet;
+    private readonly Dictionary<Guid, string> _hblNoById = new();
+    private string usr = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadCamKetList();
+    }
+
+    private async Task LoadCamKetList()
+    {
+        if (!await ssv.CheckPermission(usr, "View", "CamKetMuonContTraRong"))
+        {
+            CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _camKetItems = await db.CamKetMuonContTraRong
+            .AsNoTracking()
+            .OrderByDescending(x => x.id)
+            .ToListAsync();
+
+        _hblNoById.Clear();
+        foreach (var hblId in _camKetItems
+                     .Where(x => x.hblid.HasValue && x.hblid.Value != Guid.Empty)
+                     .Select(x => x.hblid!.Value)
+                     .Distinct())
+        {
+            var hblNo = await db.HBL
+                .AsNoTracking()
+                .Where(x => x.hblID == hblId)
+                .Select(x => x.hbl)
+                .FirstOrDefaultAsync();
+
+            _hblNoById[hblId] = string.IsNullOrWhiteSpace(hblNo) ? hblId.ToString() : hblNo!;
+        }
+    }
+
+    private async Task OpenNewDialog()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "CamKetMuonContTraRong"))
+        {
+            CallSnackBar("You have not access to ADD", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<CamKetMuonContTraRong_EditDialog>(
+            "New Cam Ket",
+            new DialogParameters
+            {
+                ["Model"] = new M_CamKetMuonCont_TraRong { id = Guid.Empty },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not CamKetMuonContTraRong_EditDialog.CamKetDialogResult data)
+            return;
+
+        await SaveDialogResult(data);
+    }
+
+    private void OnCamKetRowClick(DataGridRowClickEventArgs<M_CamKetMuonCont_TraRong> args)
+    {
+        _selectedCamKet = new M_CamKetMuonCont_TraRong
+        {
+            id = args.Item.id,
+            hblid = args.Item.hblid,
+            Khorieng = args.Item.Khorieng,
+            Noitrarong = args.Item.Noitrarong,
+            Note = args.Item.Note,
+            No = args.Item.No
+        };
+    }
+
+    private string CamKetRowClassFunc(M_CamKetMuonCont_TraRong row, int _)
+    {
+        if (_selectedCamKet != null && row.id == _selectedCamKet.id)
+            return "camket-selected-row";
+        return string.Empty;
+    }
+
+    private async Task OpenEditDialog()
+    {
+        if (_selectedCamKet is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Edit", "CamKetMuonContTraRong"))
+        {
+            CallSnackBar("You have not access to EDIT", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<CamKetMuonContTraRong_EditDialog>(
+            "Edit Cam Ket",
+            new DialogParameters
+            {
+                ["Model"] = _selectedCamKet,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not CamKetMuonContTraRong_EditDialog.CamKetDialogResult data)
+            return;
+
+        await SaveDialogResult(data);
+    }
+
+    private async Task SaveDialogResult(CamKetMuonContTraRong_EditDialog.CamKetDialogResult data)
+    {
+        try
+        {
+            _saving = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (!data.IsEdit)
+            {
+                var newId = Guid.NewGuid();
+                var entity = new M_CamKetMuonCont_TraRong
+                {
+                    id = newId,
+                    hblid = data.HblId,
+                    No = data.No,
+                    Khorieng = data.Khorieng?.Trim(),
+                    Noitrarong = data.Noitrarong?.Trim(),
+                    Note = data.Note?.Trim()
+                };
+                db.CamKetMuonContTraRong.Add(entity);
+
+                var selectedContainers = new List<M_Container>();
+                foreach (var id in data.SelectedContainerIds.Distinct())
+                {
+                    var cont = await db.Container.FirstOrDefaultAsync(x => x.CTN_ID == id);
+                    if (cont != null)
+                        selectedContainers.Add(cont);
+                }
+
+                if (selectedContainers.Any(x => x.CamketmuonCont_id.HasValue))
+                {
+                    ShowMessage("Co container da duoc gan cam ket, khong duoc chon lai.", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                foreach (var cont in selectedContainers)
+                    cont.CamketmuonCont_id = newId;
+            }
+            else
+            {
+                var entity = await db.CamKetMuonContTraRong.FirstOrDefaultAsync(x => x.id == data.Id);
+                if (entity is null)
+                {
+                    ShowMessage("Khong tim thay du lieu can sua.", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.Khorieng = data.Khorieng?.Trim();
+                entity.Noitrarong = data.Noitrarong?.Trim();
+                entity.Note = data.Note?.Trim();
+
+                var linked = await db.Container
+                    .Where(x => x.CamketmuonCont_id == entity.id)
+                    .ToListAsync();
+
+                var selectedSet = data.SelectedContainerIds.Distinct().ToHashSet();
+
+                foreach (var c in linked.Where(x => !selectedSet.Contains(x.CTN_ID)))
+                    c.CamketmuonCont_id = null;
+
+                var selected = new List<M_Container>();
+                foreach (var id in selectedSet)
+                {
+                    var cont = await db.Container.FirstOrDefaultAsync(x => x.CTN_ID == id);
+                    if (cont != null)
+                        selected.Add(cont);
+                }
+
+                if (selected.Any(x => x.CamketmuonCont_id.HasValue && x.CamketmuonCont_id != entity.id))
+                {
+                    ShowMessage("Co container da duoc gan cam ket khac, khong duoc chon lai.", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                foreach (var c in selected)
+                    c.CamketmuonCont_id = entity.id;
+            }
+
+            await db.SaveChangesAsync();
+            _selectedCamKet = null;
+            await LoadCamKetList();
+            ShowMessage("Saved.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage("Khong the luu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ExportSelected()
+    {
+        if (_selectedCamKet is null)
+        {
+            ShowMessage("Vui long chon 1 dong de export.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!_selectedCamKet.hblid.HasValue || _selectedCamKet.hblid.Value == Guid.Empty)
+        {
+            ShowMessage("Khong co HBLID hop le de export.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var rs = await shipsv.ExportCamKetMuonCont_TraRong(_selectedCamKet.id, _selectedCamKet.hblid.Value);
+        ShowMessage(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+
+    private async Task DeleteSelected()
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "CamKetMuonContTraRong"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_selectedCamKet is null)
+            return;
+
+        try
+        {
+            _saving = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var dbItem = await db.CamKetMuonContTraRong.FirstOrDefaultAsync(x => x.id == _selectedCamKet.id);
+            if (dbItem is null)
+            {
+                ShowMessage("Khong tim thay du lieu can xoa.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var linkedContainers = await db.Container
+                .Where(x => x.CamketmuonCont_id == dbItem.id)
+                .ToListAsync();
+
+            foreach (var cont in linkedContainers)
+                cont.CamketmuonCont_id = null;
+
+            db.CamKetMuonContTraRong.Remove(dbItem);
+            await db.SaveChangesAsync();
+
+            _selectedCamKet = null;
+            ShowMessage("Xoa cam ket thanh cong.", MudBlazor.Severity.Success);
+            await LoadCamKetList();
+        }
+        catch (Exception ex)
+        {
+            ShowMessage("Khong the xoa: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void ShowMessage(string message, MudBlazor.Severity severity) => CallSnackBar(message, severity);
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private string GetHblNo(Guid? hblId)
+    {
+        if (!hblId.HasValue || hblId.Value == Guid.Empty)
+            return string.Empty;
+
+        return _hblNoById.TryGetValue(hblId.Value, out var hblNo) ? hblNo : hblId.Value.ToString();
+    }
+}
+
+<style>
+    .camket-selected-row {
+        background-color: #2196f3 !important;
+    }
+</style>

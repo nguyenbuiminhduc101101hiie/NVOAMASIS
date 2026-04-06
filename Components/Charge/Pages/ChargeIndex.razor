@@ -1,0 +1,486 @@
+﻿@page "/sys/Charge"
+@inject NavigationManager navSvc
+@inject ILogger<Index> Logger
+@inject IJSRuntime js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+@inject NavigationManager NavigationManager
+@inject IWebHostEnvironment _env
+@using OfficeOpenXml;
+<script>
+    window.triggerGridClick = () => {
+        const gridElement = document.querySelector(".mudTable");
+        if (gridElement) {
+            gridElement.click();
+        }
+    }
+</script>
+<PageTitle>@Localizer["List Charge"]</PageTitle>
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItem())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@(() => OpenDialogChargeTemplate())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.MenuOpen">
+        Charge Template
+    </MudButton>
+
+    <MudButton HtmlTag="label"
+               Size="Size.Small"
+               Color="Color.Secondary"
+               Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.UploadFile"
+               Disabled="_processingUpload">
+        @if (_processingUpload)
+        {
+            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+        }
+        else
+        {
+            <span>Import Excel</span>
+        }
+
+        <InputFile OnChange="HandleImportCharge"
+        accept=".xlsx,.xls"
+        style="display: none" />
+    </MudButton>
+
+    <MudButton Size="Size.Small"
+    Color="Color.Primary"
+    Variant="Variant.Filled"
+    StartIcon="@Icons.Material.Filled.Download"
+    Disabled="_processingExport"
+    OnClick="ExportToExcel">
+        @if (_processingExport)
+        {
+            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+        }
+        else
+        {
+            <span>Export Excel</span>
+        }
+    </MudButton>
+
+
+    @* <MudButton HtmlTag="label"
+               Size="Size.Small"
+               Color="Color.Secondary"
+               Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.UploadFile">
+        Import Excel
+        <InputFile OnChange="HandleImportCharge"
+                   accept=".xlsx,.xls"
+                   style="display: none" />
+    </MudButton> *@
+
+
+</MudStack>
+<MudDataGrid T="ChargeModel" Items="@Listdata" Filterable="true" @ref="mudTable" QuickFilter="@FilterFunc1"
+FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" Bordered="true"
+FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="SelectedRowClassFunc" RowClick="RowClicked"
+ColumnResizeMode="ResizeMode.Column" Loading="_loading" RowContextMenuClick="RowRightClicked">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => {
+
+                                 detail = JsonSerializer.Deserialize<ChargeModel>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+
+                       })" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x=>Listdata.IndexOf(x)+1" Title="No" Filterable="false" IsEditable="false" Required="false" />
+        <PropertyColumn Property="x => x.CHARGE" Title="Charge" />
+        <PropertyColumn Property="x => x.CHARGE_CODE" Title="Charge Code" >
+            <FilterTemplate>
+                <MudTextField @bind-Value="searchString1"/>
+            </FilterTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.DVT" Title="Charge (English)" />
+        <PropertyColumn Property="x => x.CHARGE" Title="Charge (Vietnam)" />
+        <PropertyColumn Property="x => x.unit" Title="VAT" Required="false" />
+        <PropertyColumn Property="x => x.loaidichvu_charge" Title="Loại dịch vụ" Required="false" />
+        <PropertyColumn Property="x => x.tiengtrung" Title="Service Group" Required="false" >
+            <EditTemplate>
+                <MudSelect @bind-Value="context.Item.tiengtrung" Label="Service Group">
+                    <MudSelectItem Value="@("Cho thuê kho")">Cho thuê kho</MudSelectItem>
+                    <MudSelectItem Value="@("Xếp dỡ trong kho")">Xếp dỡ trong kho</MudSelectItem>
+                    <MudSelectItem Value="@("Dịch vụ giá trị gia tăng khác")">ChoDịch vụ giá trị gia tăng khác</MudSelectItem>
+                    <MudSelectItem Value="@("Vận tải bộ")">Vận tải bộ</MudSelectItem>
+                    <MudSelectItem Value="@("Vận tải thủy nội địa/quốc tế")">Vận tải thủy nội địa/quốc tế</MudSelectItem>
+                    <MudSelectItem Value="@("Dịch vụ khai báo hải quan")">Dịch vụ khai báo hải quan</MudSelectItem>
+                </MudSelect>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.accselling" Title="Acc Selling" Required="false" >
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.accselling" Label="Acc Selling" SearchFunc="SearchTK"/>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.accbuying" Title="Acc Buying" Required="false">
+            <EditTemplate>
+                <MudAutocomplete @bind-Value="context.Item.accbuying" Label="Acc Buying" SearchFunc="SearchTK" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.tk1" Title="Mã Đ.V. HĐĐT" Required="false" />
+        <PropertyColumn Property="x => x.tk2" Title="TK C2" Required="false" />
+        <PropertyColumn Property="x => x.tk3" Title="(hạn tạm ứng)" Required="false" />
+    </Columns>
+    <PagerContent>
+        <MudDataGridPager T="ChargeModel" PageSizeOptions=@(new int[] {10, 15, 25}) />
+    </PagerContent>
+</MudDataGrid>
+@code {
+    ChargeModel detail;
+    private bool _processingUpload = false;
+    private bool _processingExport = false;
+    [Parameter] public M_Customer customer { get; set; } = default!;
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    List<string> DanhMucTaiKhoans = new List<string>();
+    string usr;
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            DanhMucTaiKhoans = await supsv.GetListDanhMucTaiKhoan();
+            usr = asv.GetAuth().Result.User.Identity.Name!;
+            // await Refresh();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    bool _loading = false;
+    List<ChargeModel> Listdata = new List<ChargeModel>();
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(usr, "View", "ListCharge"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await supsv.GetListCharge();
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    MudDataGrid<ChargeModel> mudTable;
+
+    async Task AddItem()
+    {
+        var item = new ChargeModel();
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task DeleteItem(ChargeModel item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "ListCharge"))
+        {
+            CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await supsv.DeleteChargeDetail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    private string searchString1 = "";
+    private bool FilterFunc1(ChargeModel sbd) => FilterFunc(sbd, searchString1);
+
+    private bool FilterFunc(ChargeModel sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.CHARGE_CODE!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.CHARGE_CODE} ".Contains(searchString))
+            return true;
+        return false;
+    }
+    async Task CommittedItem(ChargeModel item)
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "ListCharge"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+        item.USERID = usr;
+        item.UPDATETIME = DateTime.Now;
+        item.EDITABLE = item.APPROVE = item.CONTINUED = true;
+        var rs = item.CHARGE_ID != Guid.Empty ? await supsv.UpdateChargeDetail(item,detail) : await supsv.CreateChargeDetail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+        await TriggerGridClick();
+        searchString1 = item.CHARGE_CODE;
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(ChargeModel Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    private async Task TriggerGridClick()
+    {
+        await js.InvokeVoidAsync("triggerGridClick");
+    }
+    ChargeModel chargedetail;
+    void RowClicked(DataGridRowClickEventArgs<ChargeModel> args)
+    {
+        chargedetail = args.Item;
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<ChargeModel> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+    private async Task OpenDialogChargeTemplate()
+    {
+        var optionsdialog = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.Medium,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true
+            };
+        if (chargedetail == null)
+        {
+            CallSnackBar("Please select a Charge!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(usr, "Add", "ListCharge"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters<ChargeTemplatePage> { { x => x.ChargeDetail, chargedetail } };
+        var dialog = await DialogService.ShowAsync<ChargeTemplatePage>($"Charge Template {chargedetail.CHARGE}", parameters, optionsdialog);
+
+    }
+    private async Task<IEnumerable<string>> SearchTK(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return DanhMucTaiKhoans;
+            }
+            // MBL.Porname = mst_Consignee;
+            return DanhMucTaiKhoans.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+
+    private string ImportMessage;
+    public class ChargePreviewModel
+    {
+        public string CHARGE { get; set; }
+        public string CHARGE_CODE { get; set; }
+        public string DVT { get; set; }
+        public string Unit { get; set; }
+        public string LoaiDichVu_Charge { get; set; }
+        public string TiengTrung { get; set; }
+        public string AccSelling { get; set; }
+        public string AccBuying { get; set; }
+        public string TK1 { get; set; }
+        public string TK2 { get; set; }
+        public string TK3 { get; set; }
+    }
+    private async Task HandleImportCharge(InputFileChangeEventArgs e)
+    {
+
+        try
+        {
+            var file = e.File;
+
+            if (file != null)
+            {
+                _processingUpload = true;
+
+                using var streamCopy = new MemoryStream();
+                await file.OpenReadStream().CopyToAsync(streamCopy);
+                streamCopy.Position = 0;
+
+                // Preview data
+                var previewData = await supsv.PreviewChargesFromExcelAsync(streamCopy);
+                var parameters = new DialogParameters
+                        {
+                            { "PreviewData", previewData }
+                        };
+
+                var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true };
+                var dialog = DialogService.Show<PreviewDialog>("PreView Data", parameters, options);
+                var result = await dialog.Result;
+
+                if (!result.Cancelled)
+                {
+                    // Reset lại stream
+                    streamCopy.Position = 0;
+                    var rs = await supsv.ImportChargesFromExcelAsync(streamCopy);
+
+                    CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                }
+
+                _processingUpload = false;
+            }
+
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+
+            _processingUpload = false;
+        }
+    }
+    private async Task ExportToExcel()
+    {
+        try
+        {
+            _processingExport = true;
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            var package = new OfficeOpenXml.ExcelPackage();
+            var worksheet = package.Workbook.Worksheets.Add("Charge Data");
+
+            // Header
+            worksheet.Cells[1, 1].Value = "No";
+            worksheet.Cells[1, 2].Value = "Charge";
+            worksheet.Cells[1, 3].Value = "Charge Code";
+            worksheet.Cells[1, 4].Value = "Charge (English)";
+            worksheet.Cells[1, 5].Value = "Charge (Vietnam)";
+            worksheet.Cells[1, 6].Value = "VAT";
+            worksheet.Cells[1, 7].Value = "Loại dịch vụ";
+            worksheet.Cells[1, 8].Value = "Service Group";
+            worksheet.Cells[1, 9].Value = "Acc Selling";
+            worksheet.Cells[1, 10].Value = "Acc Buying";
+            worksheet.Cells[1, 11].Value = "Mã Đ.V. HĐĐT";
+            worksheet.Cells[1, 12].Value = "TK C2";
+            worksheet.Cells[1, 13].Value = "(hạn tạm ứng)";
+
+            // Nội dung
+            for (int i = 0; i < Listdata.Count; i++)
+            {
+                var item = Listdata[i];
+                worksheet.Cells[i + 2, 1].Value = i + 1;
+                worksheet.Cells[i + 2, 2].Value = item.CHARGE;
+                worksheet.Cells[i + 2, 3].Value = item.CHARGE_CODE;
+                worksheet.Cells[i + 2, 4].Value = item.DVT;
+                worksheet.Cells[i + 2, 5].Value = item.CHARGE;
+                worksheet.Cells[i + 2, 6].Value = item.unit;
+                worksheet.Cells[i + 2, 7].Value = item.loaidichvu_charge;
+                worksheet.Cells[i + 2, 8].Value = item.tiengtrung;
+                worksheet.Cells[i + 2, 9].Value = item.accselling;
+                worksheet.Cells[i + 2, 10].Value = item.accbuying;
+                worksheet.Cells[i + 2, 11].Value = item.tk1;
+                worksheet.Cells[i + 2, 12].Value = item.tk2;
+                worksheet.Cells[i + 2, 13].Value = item.tk3;
+            }
+
+            // AutoFit
+            worksheet.Cells.AutoFitColumns();
+
+            // Xuất file
+            var fileName = $"ChargeData_{DateTime.Now:yyyyMMddHHmmss}.xlsx";
+            var filePath = Path.Combine(_env.WebRootPath, "exports", fileName);
+
+            // Đảm bảo thư mục exports tồn tại
+            Directory.CreateDirectory(Path.GetDirectoryName(filePath));
+            await File.WriteAllBytesAsync(filePath, package.GetAsByteArray());
+
+            // Tải file
+            NavigationManager.NavigateTo($"exports/{fileName}", forceLoad: true);
+            _processingExport = false;
+
+        }catch (Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+
+            _processingExport = false;
+        }
+    }
+}

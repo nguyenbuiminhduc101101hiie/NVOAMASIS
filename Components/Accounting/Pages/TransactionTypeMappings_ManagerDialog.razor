@@ -1,0 +1,230 @@
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.subtitle1" Class="fw-700 mb-2">@($"Details - {TransactionName}")</MudText>
+
+        <MudStack Row="true" Spacing="1" Class="mb-2">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddAsync" Disabled="_busy">ADD Details</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditAsync" Disabled="_busy || _selected is null">Edit</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">Delete</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">Reload</MudButton>
+        </MudStack>
+
+        <MudDataGrid T="M_TransactionTypeMappings"
+                     Items="_items"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClass"
+                     Height="420px"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.LineType" Title="LineType" />
+                <TemplateColumn Title="DanhMucTaiKhoan">
+                    <CellTemplate>@GetDanhMucLabel(context.Item.DanhMucTaiKhoanID)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.SortOrder" Title="SortOrder" />
+                <PropertyColumn Property="x => x.IsActive" Title="IsActive" />
+            </Columns>
+        </MudDataGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public Guid TransactionId { get; set; }
+    [Parameter] public string TransactionName { get; set; } = string.Empty;
+    [Parameter] public string PermissionCode { get; set; } = "TransactionTypes";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private List<DanhMucTaiKhoan> _danhMucTaiKhoans = new();
+    private List<M_TransactionTypeMappings> _items = new();
+    private M_TransactionTypeMappings? _selected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadLookupsAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadLookupsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _danhMucTaiKhoans = await db.DanhMucTaiKhoan.AsNoTracking()
+            .Where(x => !string.IsNullOrWhiteSpace(x.Taikhoan))
+            .OrderBy(x => x.Taikhoan)
+     
+            .Distinct()
+            .ToListAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.TransactionTypeMappings.AsNoTracking()
+                .Where(x => x.TransactionID == TransactionId)
+                .OrderBy(x => x.SortOrder)
+                .ToListAsync();
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_TransactionTypeMappings> args) => _selected = args.Item;
+    private string RowClass(M_TransactionTypeMappings row, int _) => _selected?.Id == row.Id ? "selected-row-blue" : string.Empty;
+
+    private async Task OpenAddAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionCode))
+        {
+            Snackbar.Add("No permission Add", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var model = new M_TransactionTypeMappings
+        {
+            Id = Guid.Empty,
+            TransactionID = TransactionId,
+            LineType = "DEBIT",
+            DanhMucTaiKhoanID = _danhMucTaiKhoans.FirstOrDefault()?.Id ?? Guid.Empty,
+            SortOrder = _items.Count + 1,
+            IsActive = true
+        };
+
+        var dialog = DialogService.Show<TransactionTypeMapping_AddDetailDialog>(
+            "ADD Details",
+            new DialogParameters { ["Model"] = model, ["DanhMucTaiKhoans"] = _danhMucTaiKhoans },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dialog.Result;
+        if (rs.Canceled || rs.Data is not M_TransactionTypeMappings detail)
+            return;
+
+        await SaveDetailAsync(detail);
+    }
+
+    private async Task OpenEditAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionCode))
+        {
+            Snackbar.Add("No permission Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<TransactionTypeMapping_AddDetailDialog>(
+            "Edit Details",
+            new DialogParameters { ["Model"] = _selected, ["DanhMucTaiKhoans"] = _danhMucTaiKhoans },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dialog.Result;
+        if (rs.Canceled || rs.Data is not M_TransactionTypeMappings detail)
+            return;
+
+        await SaveDetailAsync(detail);
+    }
+
+    private async Task SaveDetailAsync(M_TransactionTypeMappings detail)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var isNew = detail.Id == Guid.Empty;
+            if (isNew)
+            {
+                detail.Id = Guid.NewGuid();
+                detail.TransactionID = TransactionId;
+                db.TransactionTypeMappings.Add(detail);
+            }
+            else
+            {
+                var entity = await db.TransactionTypeMappings.FirstOrDefaultAsync(x => x.Id == detail.Id);
+                if (entity is null) return;
+                entity.TransactionID = TransactionId;
+                entity.LineType = detail.LineType;
+                entity.DanhMucTaiKhoanID = detail.DanhMucTaiKhoanID;
+                entity.SortOrder = detail.SortOrder;
+                entity.IsActive = detail.IsActive;
+            }
+            await db.SaveChangesAsync();
+            Snackbar.Add("Saved", MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionCode))
+        {
+            Snackbar.Add("No permission Delete", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TransactionTypeMappings.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null) return;
+            db.TransactionTypeMappings.Remove(entity);
+            await db.SaveChangesAsync();
+            Snackbar.Add("Deleted", MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Close() => MudDialog.Close();
+
+    private string GetDanhMucLabel(Guid id)
+    {
+        var item = _danhMucTaiKhoans.FirstOrDefault(x => x.Id == id);
+        if (item is null)
+            return id.ToString();
+        return $"{item.Taikhoan ?? string.Empty}-{item.Tentaikhoan ?? string.Empty}";
+    }
+}
+
+<style>
+    .selected-row-blue { background-color: #2196f3 !important; }
+</style>
+

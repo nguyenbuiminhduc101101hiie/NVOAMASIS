@@ -1,0 +1,370 @@
+@using System.Linq
+@attribute [Authorize]
+
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject CustomerService csv
+@inject ShipmentService shipsv
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <DialogContent>
+        <PageTitle>@Localizer["Copy_Credit"]</PageTitle>
+
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.subtitle2">
+                Target:
+                @if (IsTargetMBL)
+                {
+                    <b>MBL</b> @TargetMBLText
+                }
+                else
+                {
+                    <b>HBL</b> @TargetHBLText
+                }
+            </MudText>
+
+            <MudTabs SliderColor="Color.Success" @bind-ActivePanelIndex="activePanelIndex">
+                <MudTabPanel Text="@Localizer["HBL"]">
+                    <MudAutocomplete T="Guid"
+                                     Label="Search HBL"
+                                     ValueChanged="OnSourceHBLChanged"
+                                     ToStringFunc="HBLIdToText"
+                                     SearchFunc="SearchHBLIds"
+                                     Clearable="true"
+                                     MaxItems="10" />
+                </MudTabPanel>
+                <MudTabPanel Text="@Localizer["MBL"]">
+                    <MudAutocomplete T="Guid"
+                                     Label="Search MBL"
+                                     ValueChanged="OnSourceMBLChanged"
+                                     ToStringFunc="MBLIdToText"
+                                     SearchFunc="SearchMBLIds"
+                                     Clearable="true"
+                                     MaxItems="10" />
+                </MudTabPanel>
+            </MudTabs>
+
+            <MudText Typo="Typo.subtitle2">
+                Source:
+                @if (IsSourceHBLMode && SourceHBLId != null && SourceHBLId != Guid.Empty)
+                {
+                    <b>HBL</b> @SourceHBLText
+                }
+                else if (!IsSourceHBLMode && SourceMBLId != null && SourceMBLId != Guid.Empty)
+                {
+                    <b>MBL</b> @SourceMBLText
+                }
+                else
+                {
+                    <span class="text-secondary">Chọn HBL/MBL để xem danh sách credit</span>
+                }
+            </MudText>
+
+            <MudDivider />
+
+            <MudDataGrid T="M_Credit"
+                         Items="SourceCredits"
+                         Filterable="true"
+                         MultiSelection="true"
+                         SelectedItemsChanged="SelectedSourceItemsChanged"
+                         FilterMode="@DataGridFilterMode.Simple"
+                         Dense="true"
+                         Virtualize="true"
+                         Height="520px;"
+                         ReadOnly="true"
+                         Bordered="true"
+                         ColumnResizeMode="ResizeMode.Column"
+                         Loading="_loadingSource">
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">
+                        @Localizer["Credits"]
+                        @if (_selectedSourceCredits.Count > 0)
+                        {
+                            <span class="ms-2">- Selected: @_selectedSourceCredits.Count</span>
+                        }
+                    </MudText>
+                    <MudSpacer />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="ReloadSourceCredits">
+                        @Localizer["reload"]
+                    </MudButton>
+                </ToolBarContent>
+
+                <Columns>
+                    <SelectColumn T="M_Credit" />
+                    <PropertyColumn Property="x => GetSourceHBL(x.hblid)" Title="HBL" />
+                    <PropertyColumn Property="x => GetSourceMBL(x.mblid)" Title="MBL" />
+                    <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => Charidtocharge(x.itemid)" Title="@Localizer["Item"]" CellClass="no-wrap-cell" />
+                    <PropertyColumn Property="x => x.dongia" Title="@Localizer["Unit Price"]" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["Total Price"]" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" />
+                    <PropertyColumn Property="x => x.thue" Title="@Localizer["VAT"]" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.approve" Title="@Localizer["Approve"]" />
+                </Columns>
+            </MudDataGrid>
+        </MudStack>
+    </DialogContent>
+
+    <DialogActions>
+        <MudButton Variant="Variant.Filled" Color="Color.Secondary" Disabled="@(_selectedSourceCredits.Count == 0 || _copying)" OnClick="CopySelectedCredits">
+            @Localizer["Copy_Credit"]
+        </MudButton>
+        <MudButton OnClick="Cancel">@Localizer["Cancel"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [Parameter] public M_MBL? MBLDetail { get; set; } = null;
+    [Parameter] public M_HBL? HBLDetail { get; set; } = null;
+    [Parameter] public bool isCommission { get; set; }
+
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+
+    private bool IsTargetMBL => MBLDetail != null && MBLDetail.MblID != Guid.Empty;
+    private Guid? TargetMblId => IsTargetMBL ? MBLDetail!.MblID : (HBLDetail?.mblid);
+
+    private string TargetMBLText => (MBLDetail?.Mbl ?? string.Empty)!;
+    private string TargetHBLText => (HBLDetail?.hbl ?? string.Empty)!;
+
+    private List<M_HBL> AllHBLs = new();
+    private List<M_MBL> AllMBLs = new();
+
+    private List<ChargeModel> charges = new();
+    private List<M_Customer> Customers = new();
+
+    private int activePanelIndex = 0;
+    private bool IsSourceHBLMode => activePanelIndex == 0;
+
+    private Guid? SourceHBLId { get; set; }
+    private Guid? SourceMBLId { get; set; }
+
+    private string SourceHBLText => AllHBLs.FirstOrDefault(x => x.hblID == SourceHBLId)?.hbl ?? string.Empty;
+    private string SourceMBLText => AllMBLs.FirstOrDefault(x => x.MblID == SourceMBLId)?.Mbl ?? string.Empty;
+
+    private List<M_Credit> SourceCredits { get; set; } = new();
+    private HashSet<M_Credit> _selectedSourceCredits = new();
+
+    private bool _loadingSource = false;
+    private bool _copying = false;
+    private string usr = string.Empty;
+
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            charges = await supsv.GetListCharge(isCommission);
+            Customers = await csv.GetList();
+            AllHBLs = await shipsv.GetListHBLALL();
+            AllMBLs = await shipsv.GetListMBLALL();
+            await LoadSourceCredits();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Somethings went wrong, {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private Task<IEnumerable<Guid>> SearchHBLIds(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return Task.FromResult(AllHBLs.Select(x => x.hblID));
+
+            return Task.FromResult(AllHBLs
+                .Where(x => !string.IsNullOrEmpty(x.hbl) && x.hbl!.Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.hblID));
+        }
+        catch
+        {
+            return Task.FromResult(Enumerable.Empty<Guid>());
+        }
+    }
+
+    private Task<IEnumerable<Guid>> SearchMBLIds(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return Task.FromResult(AllMBLs.Select(x => x.MblID));
+
+            return Task.FromResult(AllMBLs
+                .Where(x => !string.IsNullOrEmpty(x.Mbl) && x.Mbl!.Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.MblID));
+        }
+        catch
+        {
+            return Task.FromResult(Enumerable.Empty<Guid>());
+        }
+    }
+
+    private string HBLIdToText(Guid id)
+        => id == Guid.Empty ? string.Empty : (AllHBLs.FirstOrDefault(x => x.hblID == id)?.hbl ?? string.Empty);
+
+    private string MBLIdToText(Guid id)
+        => id == Guid.Empty ? string.Empty : (AllMBLs.FirstOrDefault(x => x.MblID == id)?.Mbl ?? string.Empty);
+
+    private async Task OnSourceHBLChanged(Guid sourceHblId)
+    {
+        SourceHBLId = sourceHblId;
+        SourceMBLId = null;
+        _selectedSourceCredits.Clear();
+        await LoadSourceCredits();
+    }
+
+    private async Task OnSourceMBLChanged(Guid sourceMblId)
+    {
+        SourceMBLId = sourceMblId;
+        SourceHBLId = null;
+        _selectedSourceCredits.Clear();
+        await LoadSourceCredits();
+    }
+
+    private void SelectedSourceItemsChanged(HashSet<M_Credit> items)
+    {
+        _selectedSourceCredits = items ?? new HashSet<M_Credit>();
+    }
+
+    private async Task ReloadSourceCredits()
+    {
+        await LoadSourceCredits();
+    }
+
+    private async Task LoadSourceCredits()
+    {
+        _loadingSource = true;
+        StateHasChanged();
+        try
+        {
+            Guid? sourceId = IsSourceHBLMode ? SourceHBLId : SourceMBLId;
+            if (sourceId == null || sourceId == Guid.Empty)
+            {
+                SourceCredits.Clear();
+                return;
+            }
+
+            if (IsSourceHBLMode)
+                SourceCredits = await shipsv.GetListCreditHBL(sourceId, isCommission);
+            else
+                SourceCredits = await shipsv.GetListCreditMBL(sourceId);
+        }
+        finally
+        {
+            _loadingSource = false;
+        }
+    }
+
+    private string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == Guid.Empty) return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.shortname + "_" + rs.COMPANY;
+    }
+
+    private string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty) return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}";
+    }
+
+    private string GetSourceHBL(Guid id)
+        => id == Guid.Empty ? string.Empty : (AllHBLs.FirstOrDefault(x => x.hblID == id)?.hbl ?? string.Empty);
+
+    private string GetSourceMBL(Guid id)
+        => id == Guid.Empty ? string.Empty : (AllMBLs.FirstOrDefault(x => x.MblID == id)?.Mbl ?? string.Empty);
+
+    private async Task CopySelectedCredits()
+    {
+        if (MudDialog == null)
+            return;
+
+        if (_selectedSourceCredits.Count == 0)
+        {
+            CallSnackBar("Nothing to copy!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (TargetMblId == null || TargetMblId == Guid.Empty)
+        {
+            CallSnackBar("Target MBL/HBL is invalid!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _copying = true;
+            StateHasChanged();
+
+            var targetMblId = TargetMblId.Value;
+            var targetHblId = IsTargetMBL ? Guid.Empty : (HBLDetail!.hblID);
+
+            foreach (var item in _selectedSourceCredits.ToList())
+            {
+                var newCredit = new M_Credit
+                    {
+                        creditid = Guid.Empty,
+                        quotationid = Guid.Empty,
+                        mblid = targetMblId,
+                        hblid = targetHblId,
+
+                        itemid = item.itemid,
+                        customerid = item.customerid,
+                        dongia = item.dongia,
+                        soluong = item.soluong,
+                        type = item.type,
+                        thanhtien = item.thanhtien,
+                        tiente = item.tiente,
+                        thue = item.thue,
+                        thanhtiensauthue = item.thanhtiensauthue,
+                        chiho = item.chiho,
+                        tigiacredit = item.tigiacredit,
+                        tigiahoadondauvao = item.tigiahoadondauvao,
+
+                        ghichu_credit = item.ghichu_credit,
+
+                        dateupdate = DateTime.Now.ToString("dd/MM/yyyy"),
+                        userupdate = usr,
+                        continued = true,
+                        editable = true,
+                        approve = false,
+
+                        DNTT = false,
+                        DNTU = false,
+                        Copied = false
+                    };
+
+                await shipsv.CreateCreditMBL(newCredit);
+            }
+
+            CallSnackBar("Copy Success", MudBlazor.Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Somethings went wrong, {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _copying = false;
+            StateHasChanged();
+        }
+    }
+
+    void Cancel() => MudDialog?.Cancel();
+}
+

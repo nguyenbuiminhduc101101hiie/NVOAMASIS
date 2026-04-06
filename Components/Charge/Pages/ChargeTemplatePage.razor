@@ -1,0 +1,231 @@
+﻿@inject NavigationManager navSvc
+@inject ILogger<Index> Logger
+@inject IJSRuntime js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+<script>
+    window.triggerGridClick = () => {
+    const gridElement = document.querySelector(".mudTable");
+    if (gridElement) {
+    gridElement.click();
+    }
+    }
+</script>
+<MudDialog>
+    <DialogContent>
+        <MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+            <MudButton HtmlTag="label"
+            OnClick="Refresh"
+            Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+            StartIcon="@Icons.Material.Filled.Refresh">
+                Reload
+            </MudButton>
+            <MudButton HtmlTag="label"
+            @onclick="@(() => AddItem())"
+            Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+            StartIcon="@Icons.Material.Filled.Add">
+                New
+            </MudButton>
+        </MudStack>
+        <MudDataGrid T="ChargeTemplete" Items="@Listdata" Filterable="true" @ref="mudTable"
+        FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+        FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+        ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="SelectedRowClassFunc"
+        ColumnResizeMode="ResizeMode.Column" Loading="_loading" RowContextMenuClick="RowRightClicked">
+            <Columns>
+                <TemplateColumn CellClass="d-flex justify-end">
+                    <CellTemplate>
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => {
+
+                                 detail = JsonSerializer.Deserialize<ChargeTemplete>(JsonSerializer.Serialize(context.Item));
+
+                               context.Actions.StartEditingItemAsync();
+
+                       })" />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x=>Listdata.IndexOf(x)+1" Title="No" Filterable="false" IsEditable="false" Required="false" />
+                <PropertyColumn Property="x => CodeCharge(x.CHARGEID)" Title="Charges" Required="false" IsEditable="false" />
+                <PropertyColumn Property="x => x.Ncc" Title="Suplier" Required="false" >
+                    <EditTemplate>
+                        <MudSelect @bind-Value="context.Item.Ncc" Label="Suplier">
+                            @foreach (var item in ShippingLines)
+                            {
+                                <MudSelectItem Value="@item.SHIPPINGLINE">@item.SHIPPINGLINE</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Cont20" Title="Cont 20" Required="false" />
+                <PropertyColumn Property="x => x.Cont40" Title="Cont 40" Required="false"/>
+                <PropertyColumn Property="x => x.Cur" Title="Cur" Required="false" >
+                    <EditTemplate>
+                        <MudSelect @bind-Value="context.Item.Cur" Label="Cur">
+                            <MudSelectItem Value="@("USD")">USD</MudSelectItem>
+                            <MudSelectItem Value="@("VND")">VND</MudSelectItem>
+                        </MudSelect>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Incvat" Title="Inc. VAT" Required="false" >
+                    <EditTemplate>
+                        <MudSelect @bind-Value="context.Item.Incvat" Label="Inc. VAT">
+                            <MudSelectItem Value="@(new double?(0.0))">0</MudSelectItem>
+                            <MudSelectItem Value="@(new double?(5.26))">5.26</MudSelectItem>
+                            <MudSelectItem Value="@(new double?(10))">10</MudSelectItem>
+                        </MudSelect>
+                    </EditTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Remarks" Title="Remarks" Required="false" >
+                    <EditTemplate>
+                        <MudTextField @bind-Value="context.Item.Remarks" Lines="3" AutoGrow Label="Remarks"/>
+                    </EditTemplate>
+                </PropertyColumn>
+
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="ChargeTemplete" PageSizeOptions=@(new int[] {10, 15, 25}) />
+            </PagerContent>
+        </MudDataGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+    </DialogActions>
+</MudDialog>
+@code {
+    ChargeTemplete detail;
+    void Cancel() => MudDialog!.Cancel();
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            Charges = await supsv.GetListCharge();
+            ShippingLines = await supsv.GetListShippingLine();
+            await Refresh();
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar(ex.Message,MudBlazor.Severity.Error);
+        }
+    }
+
+    bool _loading = false;
+    List<ChargeModel> Charges = new List<ChargeModel>();
+    List<ShippingLine> ShippingLines = new List<ShippingLine>();
+    List<ChargeTemplete> Listdata = new List<ChargeTemplete>();
+    [Parameter] public ChargeModel ChargeDetail { get; set; }
+    [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
+
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (ChargeDetail == null)
+                return;
+            Listdata = await supsv.GetListChargeTemplate(ChargeDetail.CHARGE_ID);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    MudDataGrid<ChargeTemplete> mudTable;
+
+    async Task AddItem()
+    {
+        var item = new ChargeTemplete();
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task DeleteItem(ChargeTemplete item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await supsv.DeleteChargeTempleteDetail(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    async Task CommittedItem(ChargeTemplete item)
+    {
+        item.CHARGEID = ChargeDetail.CHARGE_ID;
+        item.USERupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        item.Dateupdate = DateTime.Now;
+        item.EDITABLE = item.APPROVE = item.CONTINUED = true;
+        var rs = item.Id != Guid.Empty ? await supsv.UpdateChargeTempleteDetail(item,detail) : await supsv.CreateChargeTempleteDetail(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+        await TriggerGridClick();
+    }
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(ChargeTemplete Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    private async Task TriggerGridClick()
+    {
+        await js.InvokeVoidAsync("triggerGridClick");
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<ChargeTemplete> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+    string CodeCharge(Guid? ChargeID)
+    {
+        var rs = Charges.FirstOrDefault(x => x.CHARGE_ID == ChargeID);
+        return rs != null ? rs.CHARGE_CODE! : "";
+    }
+    double? incvat = 0;
+}

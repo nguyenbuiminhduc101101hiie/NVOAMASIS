@@ -1,0 +1,690 @@
+@page "/sys/Customer"
+@inject NavigationManager navSvc
+@inject ILogger<Index> Logger
+@inject IJSRuntime js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject SharedServices ssv
+@inject AccountService asv
+@inject CustomerService plsv
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@inject HistoryLogService HistoryLogService
+@using System.Text.Json;
+
+
+<PageTitle>@Localizer["Customer"]</PageTitle>
+
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudStack Class="pa-2" Style="font-size:xx-large; font-weight: bolder">@Localizer["Customer"]</MudStack>
+
+    <MudStack Row Justify="Justify.FlexStart" Class="pa-4">
+        <MudButton HtmlTag="label"
+                   OnClick="HandleRefresh"
+                   Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Refresh">
+            @Localizer["reload"]
+        </MudButton>
+        <MudButton HtmlTag="label"
+                   @onclick="@(() => OpenDialog())"
+                   Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+                   Disabled="@(userdept !="ADMIN")"
+                   StartIcon="@Icons.Material.Filled.Add">
+            @Localizer["new"]
+        </MudButton>
+        <MudButton HtmlTag="label"
+                   @onclick="@(() => OpenDialogEdit())"
+                   Size="Size.Small" Color="Color.Info" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Edit">
+            @Localizer["edit"]
+        </MudButton>
+
+        <MudButton HtmlTag="label"
+                   @onclick="@(() => OpenDialogDuplicate())"
+                   Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(userdept !="ADMIN")"
+                   StartIcon="@Icons.Material.Filled.CopyAll">
+
+            @Localizer["duplicate"]
+        </MudButton>
+
+        <MudButton HtmlTag="label"
+                   @onclick="@(() => MoveCustomertopublic())" Disabled="CusDetail == null || ListMoveCus == null || !ListMoveCus.Any(x => x.CustomerCode == CusDetail.Customer_Code)"
+                   Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Download">
+            @Localizer["Move Customer To Public"]
+        </MudButton>
+
+        @* <MudButton HtmlTag="label"
+                   @onclick="@(() => MoveCustomer())" Disabled="CusDetail == null ? false : (CusDetail.SaleName == userdetail.Usr ? true : false)"
+                   Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Download">
+            @Localizer["Move Customer"]
+        </MudButton> *@
+        <MudButton HtmlTag="label"
+                   OnClick="Delete"
+                   Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+                   Disabled="@(userdept !="ADMIN")"
+                   StartIcon="@Icons.Material.Filled.Delete">
+            @Localizer["delete"]
+        </MudButton>
+        <MudButton Size="Size.Small" Color="Color.Primary"
+                   Variant="Variant.Filled" HtmlTag="label"
+                   Disabled="@(userdept !="ADMIN")"
+                   StartIcon="@Icons.Material.Filled.ImportExport">
+            <MudFileUpload T="IBrowserFile" Accept=".xls,.xlsx" Disabled="_processingUpload" FilesChanged="importExcel"
+                           MaximumFileCount="100">
+
+                @if (_processingUpload)
+                {
+                    <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+
+                }
+
+
+            </MudFileUpload>
+            @Uploadtext
+        </MudButton>
+    </MudStack>
+</MudContainer>
+<MudContainer MaxWidth=MaxWidth.False>
+    <MudDataGrid T="M_Customer" Bordered="true" Items="@Cus.ToList()" Filterable="true" QuickFilter="@FilterFunc1" @ondblclick="() => OnRowDoubleClick()"
+                 FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+                 RowClick="@RowClicked" RowContextMenuClick="RowRightClicked"
+                 FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+                 RowClassFunc="@SelectedRowClassFunc" @ref="mudTable" ReadOnly="false" Loading="f_loading"
+                 ColumnResizeMode="@(_resizeColumn ? ResizeMode.Column : ResizeMode.Container)" CommittedItemChanges="@((t)=>CommittedItemChanges(t))">
+        <Columns>
+            <PropertyColumn Required="false" Property="x => Cus.IndexOf(x) + 1" Title="@Localizer["no"]" Filterable="false" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["no"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.SaleName" Title="@Localizer["SaleName"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["SaleName"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.Customer_Code" Title="@Localizer["Customer_Code"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FilterTemplate>
+                    <MudTextField @bind-Value="searchString1" />
+                </FilterTemplate>
+                <FooterTemplate>
+                    @Localizer["Customer_Code"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.MainCode" Title="@Localizer["MainCode"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["MainCode"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.status" Title="@Localizer["status"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["status"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.shortname" Title="@Localizer["shortname"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["shortname"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.COMPANY" Title="@Localizer["COMPANY"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["COMPANY"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.EnglishName" Title="@Localizer["EnglishName"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["EnglishName"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.TaxCode" Title="@Localizer["TaxCode"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["TaxCode"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.TenNoiMoToKhai_gs" Title="@Localizer["TenNoiMoToKhai_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["TenNoiMoToKhai_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.DonViDoiTac_gs" Title="@Localizer["DonViDoiTac_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["DonViDoiTac_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.MaHangKhaiBaoHSCode_gs" Title="@Localizer["MaHangKhaiBaoHSCode_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["MaHangKhaiBaoHSCode_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.TenHang_gs" Title="@Localizer["TenHang_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["TenHang_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.tenNuocXuatXu_gs" Title="@Localizer["tenNuocXuatXu_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["tenNuocXuatXu_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.PhuongTienVanChuyen_gs" Title="@Localizer["PhuongTienVanChuyen_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["PhuongTienVanChuyen_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.dieuKienGiaoHang_gs" Title="@Localizer["dieuKienGiaoHang_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["dieuKienGiaoHang_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.tendiadiemnhanhangcuoicung_gs" Title="@Localizer["tendiadiemnhanhangcuoicung_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["tendiadiemnhanhangcuoicung_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.tendiadiemxephang_gs" Title="@Localizer["tendiadiemxephang_gs"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["tendiadiemxephang_gs"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.Address" Title="@Localizer["Address"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Address"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.addresstiengviet" Title="@Localizer["addresstiengviet"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["addresstiengviet"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => GetMoveDate(x.Customer_Code)" Title="@Localizer["Move Date"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Move Date"]
+                </FooterTemplate>
+            </PropertyColumn>
+            <PropertyColumn Required="false" Property="x => x.thoihanmove" Title="@Localizer["Sales Expiry date"]" Editable="false" CellStyleFunc="_cellStyleFunc">
+                <FooterTemplate>
+                    @Localizer["Sales Expiry date"]
+                </FooterTemplate>
+            </PropertyColumn>
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="M_Customer" PageSizeOptions=@(new int[] { 8, 10, 20 }) />
+        </PagerContent>
+    </MudDataGrid>
+    <MudScrollToTop>
+        <MudFab Color="Color.Primary" StartIcon="@Icons.Material.Filled.ArrowCircleUp" />
+    </MudScrollToTop>
+
+</MudContainer>
+<script>
+    window.triggerGridClick = () => {
+    const gridElement = document.querySelector(".mudTable");
+    if (gridElement) {
+    gridElement.click();
+    }
+    }
+</script>
+@inject CustomerService csv
+@code {
+
+    private int selectedRowNumber = -1;
+    private MudDataGrid<M_Customer> mudTable;
+    private List<M_Customer> Cus = new List<M_Customer>();
+    private M_Customer CusDetail;
+    private bool _processingUpload = false;
+    private bool _resizeColumn;
+    private string searchString1 = "";
+    private bool FilterFunc1(M_Customer sbd) => FilterFunc(sbd, searchString1);
+    string? userdept = "";
+
+    private bool FilterFunc(M_Customer sbd, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (sbd.Customer_Code!.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if ($"{sbd.Customer_Code} ".Contains(searchString))
+            return true;
+        return false;
+    }
+    string Uploadtext = "Import Excel";
+    bool f_loading = false;
+    async Task HandleRefresh()
+    {
+        try
+        {
+            f_loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Cus.Clear();
+            CusDetail = null;
+
+            await Task.Delay(500);
+
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "System-Customer"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            ListMoveCus = await csv.GetMoveCustomer();
+
+            var checkmovecus = await csv.CheckAndRefundMoveCustomer();
+            if (checkmovecus.Item2 > 0) ListMoveCus = await csv.GetMoveCustomer();
+            if (!checkmovecus.Item1.Flag)
+                CallSnackBar(checkmovecus.Item1.Message, MudBlazor.Severity.Error);
+            Cus = await plsv.GetListBySale(userdetail);
+            StateHasChanged();
+        }
+        finally
+        {
+            f_loading = false;
+        }
+
+    }
+    private async Task MoveCustomertopublic()
+    {
+        if (CusDetail == null)
+        {
+            CallSnackBar("Please select a Customer!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(userdetail.Usr, "Edit", "System-Customer"))
+        {
+            CallSnackBar("You have not access to Move", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        CusDetail.SaleName = "NOMI";
+        CusDetail.Remarks_sale = "30";
+        var rs = await csv.UpdateCustomer(CusDetail);
+        await csv.Delete_cus_in_movecus(CusDetail.Customer_ID);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        ListMoveCus = await csv.GetMoveCustomer();
+        await TriggerGridClick();
+        await HandleRefresh();
+        StateHasChanged();
+
+    }
+
+    string GetMoveDate(string cuscode)
+    {
+        if (ListMoveCus == null || ListMoveCus.Count == 0)
+            return string.Empty;
+        var data = ListMoveCus.Where(x => x.CustomerCode == cuscode).OrderByDescending(x => x.MoveDate).FirstOrDefault();
+        if (data == null)
+            return string.Empty;
+        return data!.MoveDate.HasValue ? data.MoveDate.Value.ToString("dd/MMM/yyyy")! : string.Empty;
+    }
+    private async Task OpenDialogDuplicate()
+    {
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom class-dialog-customer-wide",
+            FullWidth = true,
+            MaxWidth = MaxWidth.False,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+        if (CusDetail == null)
+        {
+            CallSnackBar("Please select a Customer!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(userdetail.Usr, "Add", "System-Customer"))
+        {
+            CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        CusCoppy = CusDetail.DeepCopy();
+        var cusdata = CusDetail.DeepCopy();
+        cusdata.Customer_ID = Guid.Empty;
+        var parameters = new DialogParameters<Edit> { { x => x.customer, cusdata }, { x => x.EditOrNot, false } };
+        var dialog = await DialogService.ShowAsync<Edit>($"Customer - Duplicate {CusDetail.Customer_Code}", parameters, optionsdialog);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            var data = (M_Customer)result.Data;
+            var rs = await plsv.UpdateOrCreate(data, CusDetail, "Duplicate");
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await HandleRefresh();
+            searchString1 = data.Customer_Code;
+        }
+        await TriggerGridClick();
+        StateHasChanged();
+
+    }
+    M_Customer? CusCoppy;
+    private async Task OpenDialogEdit()
+    {
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom class-dialog-customer-wide",
+            FullWidth = true,
+            MaxWidth = MaxWidth.False,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+        if (CusDetail == null)
+        {
+            CallSnackBar("Please select a Customer!", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(userdetail.Usr, "Edit", "System-Customer"))
+        {
+            CallSnackBar("You have not access to Edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (userdetail.Department == "SALES" && CusDetail.SaleName == "NOMI")
+        {
+            CallSnackBar($"You Cannot Edit Sale Name 'NOMI', Move Customer and try again!", MudBlazor.Severity.Warning);
+            return;
+        }
+        CusCoppy = CusDetail.DeepCopy();
+        var parameters = new DialogParameters<Edit> { { x => x.customer, CusCoppy }, { x => x.EditOrNot, true } };
+        var dialog = await DialogService.ShowAsync<Edit>($"Customer - Edit {CusCoppy.Customer_Code}", parameters, optionsdialog);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            var data = (M_Customer)result.Data;
+            var rs = await plsv.UpdateOrCreate(data, CusDetail, "");
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await HandleRefresh();
+            searchString1 = data.Customer_Code;
+        }
+        await TriggerGridClick();
+        StateHasChanged();
+    }
+
+    private async Task OpenDialog()
+    {
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom class-dialog-customer-wide",
+            FullWidth = true,
+            MaxWidth = MaxWidth.False,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+
+        if (!await ssv.CheckPermission(userdetail.Usr, "Add", "System-Customer"))
+        {
+            CallSnackBar("You have not access to Create", MudBlazor.Severity.Warning);
+            return;
+        }
+        var cusnew = new M_Customer
+        {
+            // Customer_ID = Guid.NewGuid()
+        };
+        var cuscode = await csv.GetCustomerCode();
+        if (!cuscode.Item1.Flag)
+            CallSnackBar(cuscode.Item1.Message, MudBlazor.Severity.Error);
+        else
+            cusnew.Customer_Code = cuscode.Item2.CustomerCode_Ref;
+
+        var parameters = new DialogParameters<Edit> { { x => x.customer, cusnew }, { x => x.EditOrNot, false } };
+        var dialog = await DialogService.ShowAsync<Edit>("Customer - Create", parameters, optionsdialog);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            var data = (M_Customer)result.Data;
+            var rs = await plsv.UpdateOrCreate(data, CusDetail, "");
+
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await HandleRefresh();
+            searchString1 = data.Customer_Code;
+        }
+    }
+
+    MudForm form;
+
+    private async Task ResetForm()
+    {
+        await form.ResetAsync();
+
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+
+
+    void RowClicked(DataGridRowClickEventArgs<M_Customer> args)
+    {
+        CusDetail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_Customer> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private string SelectedRowClassFunc(M_Customer Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+    int[]? simsGoogs = null;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            StateHasChanged();
+        }
+    }
+
+    AuthUser userdetail;
+    List<MoveCustomer> ListMoveCus = new List<MoveCustomer>();
+    List<TrangThai> tts = new List<TrangThai>();
+    protected override async Task OnInitializedAsync()
+    {
+
+        tts = await supsv.GetListTrangThai();
+        ListMoveCus = await csv.GetMoveCustomer();
+        userdetail = asv.GetUserDetail();
+        userdept = userdetail.Department;
+        //await HandleRefresh();
+    }
+
+    private async Task Delete()
+    {
+        try
+        {
+
+            if (!await ssv.CheckPermission(userdetail.Usr, "Delete", "System-Customer"))
+            {
+                CallSnackBar("You have not access to Delete", MudBlazor.Severity.Warning);
+                return;
+            }
+            if (CusDetail == null)
+            {
+                CallSnackBar("Nothing to delete!", MudBlazor.Severity.Warning);
+                return;
+            }
+            var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+            if (resultMess.HasValue)
+            {
+                var result = await plsv.Delete(CusDetail);
+                string usr = asv.GetAuth().Result.User.Identity!.Name!;
+                await HistoryLogService.LogAsync(usr, "Delete", "System-Customer", CusDetail.Customer_ID, CusDetail.Customer_Code, new { OldData = CusDetail });
+                CallSnackBar(result.Message, result.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+                await HandleRefresh();
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Cannot delete with eror code: " + ex.Message, MudBlazor.Severity.Error);
+
+        }
+    }
+    async Task StartEdit(M_Customer item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("Please select an Customer!", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (mudTable != null)
+        {
+            await mudTable.SetEditingItemAsync(item);
+        }
+    }
+    async Task StartDuplicate(M_Customer item)
+    {
+        // if (item == null)
+        // {
+        //     CallSnackBar("Please select an PackingList!", MudBlazor.Severity.Warning);
+        //     return;
+        // }
+        // if (mudTable != null)
+        // {
+        //     item.SCQID = null;
+        //     await mudTable.SetEditingItemAsync(item);
+        // }
+    }
+    async Task CommittedItemChanges(M_Customer item)
+    {
+        // if(item.SCQID == null)
+        // {
+        //     var rs = await scqsv.InsertSCQ(item);
+        //     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        // }
+        // else
+        // {
+        //     var rs = await scqsv.UpdateSCQ(item);
+        //     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        // }
+
+    }
+    private async Task TriggerGridClick()
+    {
+        await js.InvokeVoidAsync("triggerGridClick");
+    }
+
+    public class CustomerPreviewModel
+    {
+        public string STT { get; set; }
+        public string MainCode { get; set; }
+        public string SaleName { get; set; }
+        public string ShortName { get; set; }
+        public string EnglishName { get; set; }
+        public string AddressTV { get; set; }
+        public string Tel { get; set; }
+        public string Fax { get; set; }
+        public string Company { get; set; }
+        public string Address { get; set; }
+        public string Taxcode { get; set; }
+        public string Email { get; set; }
+        public string Remark { get; set; }
+        public string HanCongNo { get; set; }
+        public string DonViDoiTac { get; set; }
+        public string TenNoiMoToKhai_gs { get; set; }
+        public string MaHangKhaiBaoHSCode_gs { get; set; }
+        public string TenHang_gs { get; set; }
+        public string tenNuocXuatXu_gs { get; set; }
+        public string dieuKienGiaoHang_gs { get; set; }
+        public string PhuongTienVanChuyen_gs { get; set; }
+
+    }
+
+    private async Task importExcel(IBrowserFile file)
+    {
+        try
+        {
+            _processingUpload = true;
+            Uploadtext = "Processing";
+
+            using var streamCopy = new MemoryStream();
+            await file.OpenReadStream().CopyToAsync(streamCopy);
+            streamCopy.Position = 0;
+
+            // Preview data
+            var previewData = await plsv.PreviewCustomerFromExcelAsync(streamCopy);
+
+
+            var parameters = new DialogParameters { ["PreviewData"] = previewData };
+            var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.ExtraLarge, FullWidth = true };
+            var dialog = DialogService.Show<PreviewDialog>("PreView Data", parameters, options);
+            var result = await dialog.Result;
+
+            // ✅ Bước 3: Nếu người dùng xác nhận
+            if (!result.Cancelled)
+            {
+                List<string> message = await csv.InsertCSV(file);
+
+                if (message[1] == "1")
+                {
+                    CallSnackBar(message[0], MudBlazor.Severity.Success);
+                    await HandleRefresh();
+                }
+                else
+                {
+                    CallSnackBar(message[0], MudBlazor.Severity.Error);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            Uploadtext = "Import Excel";
+            _processingUpload = false;
+        }
+    }
+
+    private Func<M_Customer, string> _cellStyleFunc => x =>
+    {
+        string style = "";
+
+        if (string.IsNullOrEmpty(x.status))
+            return "color: #000000";
+
+        var rs = tts
+            .Where(t => (t.Noidung).Contains(x.status, StringComparison.InvariantCultureIgnoreCase)
+                && t.Tieude.Equals("CUSTOMER", StringComparison.InvariantCultureIgnoreCase))
+            .Select(t => t.Mamau)
+            .FirstOrDefault();
+        return "color: " + rs;
+
+
+    };
+
+    private void OnRowDoubleClick()
+    {
+        OpenDialogEdit();
+    }
+}

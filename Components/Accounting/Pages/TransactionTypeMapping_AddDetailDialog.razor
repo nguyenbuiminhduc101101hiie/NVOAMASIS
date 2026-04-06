@@ -1,0 +1,119 @@
+@using MudBlazor
+@using NVOAMASIS.Models
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="4">
+                    <MudSelect T="string" @bind-Value="_model.LineType" Label="LineType" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelectItem Value="@("DEBIT")">DEBIT</MudSelectItem>
+                        <MudSelectItem Value="@("CREDIT")">CREDIT</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="8">
+                    <MudAutocomplete T="Guid"
+                                     Value="_model.DanhMucTaiKhoanID"
+                                     ValueChanged="OnDanhMucTaiKhoanChanged"
+                                     Label="Danh Muc Tai Khoan"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Dense="true"
+                                     SearchFunc="SearchDanhMucTaiKhoan"
+                                     ToStringFunc="DanhMucTaiKhoanIdToDisplay"
+                                     Clearable="false"
+                                     CoerceText="true"
+                                     CoerceValue="true"
+                                     MaxItems="20" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudNumericField T="int" @bind-Value="_model.SortOrder" Label="SortOrder" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="6" Class="d-flex align-center">
+                    <MudCheckBox T="bool" @bind-Value="_model.IsActive" Label="IsActive" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitAsync">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public M_TransactionTypeMappings Model { get; set; } = new();
+    [Parameter] public List<DanhMucTaiKhoan> DanhMucTaiKhoans { get; set; } = new();
+
+    private MudForm? _form;
+    private M_TransactionTypeMappings _model = new();
+    private List<DanhMucTaiKhoan> _sortedDanhMucTaiKhoans = new();
+
+    protected override void OnParametersSet()
+    {
+        _sortedDanhMucTaiKhoans = DanhMucTaiKhoans
+            .OrderBy(x => x.Taikhoan)
+            .ThenBy(x => x.Tentaikhoan)
+            .ToList();
+
+        _model = new M_TransactionTypeMappings
+        {
+            Id = Model.Id,
+            TransactionID = Model.TransactionID,
+            LineType = string.IsNullOrWhiteSpace(Model.LineType) ? "DEBIT" : Model.LineType,
+            DanhMucTaiKhoanID = Model.DanhMucTaiKhoanID,
+            SortOrder = Model.SortOrder,
+            IsActive = Model.IsActive
+        };
+
+        if (_model.DanhMucTaiKhoanID == Guid.Empty && _sortedDanhMucTaiKhoans.Count > 0)
+            _model.DanhMucTaiKhoanID = _sortedDanhMucTaiKhoans[0].Id;
+    }
+
+    private static string DisplayDanhMuc(DanhMucTaiKhoan item) =>
+        $"{item.Taikhoan ?? string.Empty}-{item.Tentaikhoan ?? string.Empty}";
+
+    private Task<IEnumerable<Guid>> SearchDanhMucTaiKhoan(string text)
+    {
+        IEnumerable<Guid> result = _sortedDanhMucTaiKhoans
+            .Where(x =>
+                string.IsNullOrWhiteSpace(text) ||
+                (x.Taikhoan?.Contains(text, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.Tentaikhoan?.Contains(text, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Select(x => x.Id);
+
+        return Task.FromResult(result);
+    }
+
+    private string DanhMucTaiKhoanIdToDisplay(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+
+        var item = _sortedDanhMucTaiKhoans.FirstOrDefault(x => x.Id == id);
+        return item is null ? string.Empty : DisplayDanhMuc(item);
+    }
+
+    private void OnDanhMucTaiKhoanChanged(Guid id)
+    {
+        _model.DanhMucTaiKhoanID = id;
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (_form is not null)
+            await _form.Validate();
+
+        if (_model.DanhMucTaiKhoanID == Guid.Empty)
+            return;
+        if (_model.LineType != "DEBIT" && _model.LineType != "CREDIT")
+            return;
+
+        _model.LineType = _model.LineType.Trim();
+        MudDialog.Close(DialogResult.Ok(_model));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}
+

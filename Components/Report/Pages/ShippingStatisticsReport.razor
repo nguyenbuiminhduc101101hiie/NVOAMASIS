@@ -1,0 +1,338 @@
+﻿
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject ReportServices rsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject IJSRuntime JS
+@attribute [Authorize]
+@using System.Globalization﻿
+
+<PageTitle>@Localizer["Shipping Statistics"]</PageTitle>
+<MudContainer MaxWidth=MaxWidth.False>
+    
+    @* <MudStack Row="true" Justify="Justify.FlexStart" Spacing="3">
+        <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary"/>
+        <MudIconButton HtmlTag="label"
+                    OnClick="@(()=>Refresh(frmtoDate))" Disabled="_loading"
+                    Size="Size.Small" Color="Color.Primary" Variant="Variant.Text"
+                    Icon="@Icons.Material.Filled.Search"/>
+
+        <MudRadioGroup @bind-Value="chkUSD">
+            <MudRadio Value="@true" Color="Color.Primary" Size="Size.Small">USD</MudRadio>
+            <MudRadio Value="@false" Color="Color.Primary" Size="Size.Small">VND</MudRadio>
+        </MudRadioGroup>
+        
+    </MudStack> *@
+    <MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-shipment-bg"
+                         FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="calc(100vh - 41vh);" 
+                         FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap" RowClassFunc="@SelectedRowClassFunc"
+                         RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true" RowClass="no-wrap-cell"
+                         ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+        <ToolBarContent>
+            <MudStack Row="true" Justify="Justify.FlexStart" Spacing="3">
+                <MudDateRangePicker @bind-DateRange="frmtoDate" Label="From - To Date" Color="Color.Primary" />
+                <MudIconButton HtmlTag="label"
+                               OnClick="@(()=>Refresh(frmtoDate))"
+                               Size="Size.Large" Color="Color.Primary" Variant="Variant.Text"
+                               Icon="@Icons.Material.Filled.Search" />
+                <MudButton Disabled="_processingUpload"
+                            OnClick="@ExportReport"
+                           Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Download">
+                    @if (_processingUpload)
+                    {
+                        <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                        <MudText Class="ms-2">Processing</MudText>
+                    }
+                    else
+                    {
+                        <MudText>@Localizer["Export"]</MudText>
+                    }
+                </MudButton>
+                <MudButton Disabled="_processingUpload"
+                            OnClick="@ExportCostReport"
+                           Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Download">
+                    @if (_processingUpload)
+                    {
+                        <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                        <MudText Class="ms-2">Processing</MudText>
+                    }
+                    else
+                    {
+                        <MudText>@Localizer["ExportCostReport"]</MudText>
+                    }
+                </MudButton>
+            </MudStack>
+            <MudSpacer />
+            <MudAutocomplete @bind-Value="_searchCus" Placeholder="Search Customers" Adornment="Adornment.Start" Immediate="true"
+                             AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0"
+                             Clearable ResetValueOnEmptyText SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" />
+        </ToolBarContent>
+        <Columns>
+            <PropertyColumn Property="x => (Listdata.IndexOf(x)+1)" Title='@Localizer["No."]' Required CellStyleFunc="_cellStyleFunc"/>
+            <PropertyColumn Property="x => x.ETA" Title='@Localizer["ETA"]' Required CellStyleFunc="_cellStyleFunc"/>
+            <!-- Replaced nested PropertyColumns with TemplateColumns to avoid NRE when LenhDieuXe is null -->
+          @*   <TemplateColumn Title='@Localizer["loaicont"]' CellStyleFunc="_cellStyleFunc">
+                <CellTemplate Context="context">@context.Item.LenhDieuXe?.Loaiphuongtien</CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title='@Localizer["Cont. No."]' CellStyleFunc="_cellStyleFunc">
+                <CellTemplate Context="context">@context.Item.LenhDieuXe?.Soxe</CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.hbl" Title='@Localizer["HBL No"]' Required CellStyleFunc="_cellStyleFunc"/>
+            <TemplateColumn Title='@Localizer["POL"]' CellStyleFunc="_cellStyleFunc">
+                <CellTemplate Context="context">@context.Item.LenhDieuXe?.Pol</CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title='@Localizer["noixephang"]' CellStyleFunc="_cellStyleFunc">
+                <CellTemplate Context="context">@context.Item.LenhDieuXe?.Nhaxe</CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title='@Localizer["POD"]' CellStyleFunc="_cellStyleFunc">
+                <CellTemplate Context="context">@context.Item.LenhDieuXe?.Pod</CellTemplate>
+            </TemplateColumn> *@
+            </Columns>
+    </MudDataGrid>
+</MudContainer>
+
+@code {
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    string usr;
+    AuthUser userdetail;
+    List<string> trangthais = new List<string>();
+    List<TrangThai> tts = new List<TrangThai>();
+    List<M_Customer> Customers = new List<M_Customer>();
+    List<ChargeModel> charges = new List<ChargeModel>();
+    CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+    protected async override Task OnInitializedAsync()
+    {
+        try
+        {
+            _loading = true;
+            userdetail = asv.GetUserDetail();
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
+
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    bool rendered = false;
+    protected async override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _loading = true;
+            tts = await supsv.GetListTrangThai();
+            Customers = await csv.GetList(userdetail);
+            trangthais = tts.Where(x => x.Tieude.ToLower() == "job").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
+            charges = await supsv.GetListCharge();
+            rendered = true;
+            _loading = false;
+        }
+    }
+
+    bool _loading = false;
+    List<M_HBL> Listdata = new List<M_HBL>();
+    M_HBL detail;
+    async Task Refresh(DateRange frmtoDate)
+    {
+        try
+        {
+            _loading = true;
+            Listdata.Clear();
+            detail = null;
+            await Task.Delay(500);
+            StateHasChanged();
+            if (!await ssv.CheckPermission(usr, "View", "Shipping_Statistics"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await shipsv.GetListHBLTruckDateRange(frmtoDate);
+            if (Listdata.Count == 0)
+            {
+                CallSnackBar("No Data", MudBlazor.Severity.Warning);
+                _loading = false;
+                return;
+            }
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+    MudDataGrid<M_HBL> mudTable;
+
+    private int selectedRowNumber = -1;
+    private string SelectedRowClassFunc(M_HBL Sis, int rowNumber)
+    {
+        if (selectedRowNumber == rowNumber)
+        {
+            selectedRowNumber = -1;
+            return string.Empty;
+        }
+        else if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(Sis))
+        {
+            selectedRowNumber = rowNumber;
+            return "selected";
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+    void RowClicked(DataGridRowClickEventArgs<M_HBL> args)
+    {
+        detail = args.Item;
+    }
+
+    void RowRightClicked(DataGridRowClickEventArgs<M_HBL> args)
+    {
+
+        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private Func<M_HBL, string> _cellStyleFunc => x =>
+    {
+        // var profitFreight = TProfit_Job(x.JobID, "FREIGHT");
+        // var profitLocal = TProfit_Job(x.JobID, "LOCAL");
+        // var profitAll = TProfit_Job(x.JobID, "");
+        // var profitNotCom = TProfit_Job(x.JobID, "notCOM");
+
+        // if (profitFreight < 0 || profitLocal < 0 || profitAll < 0 || profitNotCom < 0)
+        //     return "color: #FF5733";
+
+        return "color: #087210"; // XANH
+
+    };
+    string formatDate(DateTime? date)
+    {
+        if(date == null)
+            return string.Empty;
+        return date.Value.ToString("dd/MMM/yyyy");
+    }
+    bool chkPending = false, chkDeli = false, chkCancel = false, ChkOnTime = false, ChkLate = false, chkVAT = false, chkUSD = true;
+
+    private Guid _searchCus;
+
+    DateRange frmtoDate = new DateRange(new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1),
+                                        new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == null || cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+    string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}"!;
+    }
+    string CharidtoLoaidv(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.loaidichvu_charge}"!;
+    }
+    private bool _processingUpload = false;
+    async Task ExportReport()
+    {
+        try
+        {
+            _processingUpload = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if (Listdata.Count == 0)
+            {
+                CallSnackBar("No Data", MudBlazor.Severity.Warning);
+                return;
+            }
+            var rs = await rsv.BangKeSanLuongVanChuyenExcel(Listdata, frmtoDate);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+    private bool _processingUploadCost = false;
+    async Task ExportCostReport()
+    {
+        try
+        {
+            _processingUploadCost = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            if (Listdata.Count == 0)
+            {
+                CallSnackBar("No Data", MudBlazor.Severity.Warning);
+                return;
+            }
+            var rs = await rsv.BangKeChiPhiVanChuyenExcel(Listdata, frmtoDate);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch(Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUploadCost = false;
+        }
+    }
+    private async Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Customers.Select(x => x.Customer_ID);
+            }
+            // MBL.Porname = mst_Consignee;
+            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+        }
+        catch (Exception)
+        {
+            throw;
+        }
+    }
+    string AgentidtoName(Guid id)
+    {
+        if (id == null || id == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == id);
+        return rs == null ? string.Empty : rs.COMPANY!;
+    }
+}
