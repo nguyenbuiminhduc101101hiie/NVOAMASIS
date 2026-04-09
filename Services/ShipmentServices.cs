@@ -51,7 +51,8 @@ namespace NVOAMASIS.Services
             //set them roles cua user
             var rs = await _context.Job
                 .Where(x => x.Continued == true
-                            && user.Roles_Dept.Contains(x.Loai))
+                            && user.Roles_Dept.Contains(x.Loai)
+                            && (string.IsNullOrEmpty(user.CompanyCode) || x.CompanyCode == user.CompanyCode))
                 .OrderByDescending(x => x.Dateupdate)
                 .ToListAsync();
 
