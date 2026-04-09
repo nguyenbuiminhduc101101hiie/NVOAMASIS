@@ -68,6 +68,9 @@ namespace NVOAMASIS.Migrations
                     b.Property<string>("Branch")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("CompanyCode")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Department")
                         .HasColumnType("nvarchar(max)");
 
@@ -6692,6 +6695,9 @@ namespace NVOAMASIS.Migrations
 
                     b.Property<bool?>("Continued")
                         .HasColumnType("bit");
+
+                    b.Property<string>("CompanyCode")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime?>("Datecreate")
                         .HasColumnType("datetime2");

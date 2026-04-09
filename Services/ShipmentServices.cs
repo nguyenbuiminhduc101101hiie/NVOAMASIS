@@ -2064,14 +2064,24 @@ namespace NVOAMASIS.Services
         }
         /// <param name="showPreCarriage">true = show vessel-voy in "Pre-Carriage"; false = show in "Vessel & Voy No."</param>
         /// <param name="attach">true = export attached page template</param>
-        public async Task<BoolandMessReponse> ExportBillSea(Guid id, bool showPreCarriage = true, bool attach = false)
+        /// <param name="billType">Loại bill: PASL | VietStar | AMSS | HDS</param>
+        /// <param name="isOriginal">true = Original (không logo); false = Draft (có logo)</param>
+        public async Task<BoolandMessReponse> ExportBillSea(Guid id, bool showPreCarriage = true, bool attach = false, string billType = "PASL", bool isOriginal = false)
         {
             try
             {
                 //Create empty report object
                 var report = new StiReport();
-                //Load report template
-                var reportName = attach ? "BillSea_NVOCC_Att.mrt" : "BillSea_NVOCC.mrt";
+
+                // Chọn template theo loại bill:
+                // HDS dùng layout riêng (BillSea_HDS / BillSea_HDS_Att)
+                // PASL, VietStar, AMSS dùng chung layout (BillSea_NVOCC / BillSea_NVOCC_Att) + variable BillType để chọn logo
+                string reportName;
+                if (billType == "HDS")
+                    reportName = attach ? "BillSea_HDS_Att.mrt" : "BillSea_HDS.mrt";
+                else
+                    reportName = attach ? "BillSea_NVOCC_Att.mrt" : "BillSea_NVOCC.mrt";
+
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", reportName);
 
                 StiBlazorHelper.Initialize(JSRuntime);
@@ -2080,6 +2090,12 @@ namespace NVOAMASIS.Services
                 report.Load(rpt);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["chk_show_pre_Carr"].Value = showPreCarriage ? "true" : "false";
+                // Loại bill (PASL, VietStar, AMSS, HDS) – report template dùng để chọn logo / header
+                if (report.Dictionary.Variables["BillType"] != null)
+                    report.Dictionary.Variables["BillType"].Value = billType;
+                // Original = không logo, Draft = có logo
+                if (report.Dictionary.Variables["IsOriginal"] != null)
+                    report.Dictionary.Variables["IsOriginal"].Value = isOriginal ? "true" : "false";
                 report.Render();
                 using (var ms = new MemoryStream())
                 {
@@ -2124,7 +2140,7 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportArrivalAir(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportArrivalAir(M_HBL detail, string billType = "PASL")
         {
             try
             {
@@ -2134,6 +2150,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
 
                 var flightdate = detail.Air_FlightDate1!.Split('/').ToList();
                 var flightcode = flightdate.Count == 0 ? "" : flightdate.FirstOrDefault();
@@ -2170,7 +2187,7 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportArrival(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportArrival(M_HBL detail, string billType = "PASL")
         {
             try
             {
@@ -2180,6 +2197,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2297,7 +2315,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportArrival_NVOCC(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportArrival_NVOCC(M_HBL detail, string billType = "PASL")
         {
             try
             {
@@ -2307,6 +2325,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2339,7 +2358,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDO(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportDO(M_HBL detail, string billType = "PASL")
         {
             try
             {
@@ -2349,6 +2368,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2369,7 +2389,7 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportDO_NVOCC(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportDO_NVOCC(M_HBL detail, string billType = "PASL")
         {
             try
             {
@@ -2379,6 +2399,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2469,7 +2490,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDOAir(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportDOAir(M_HBL detail, string billType = "PASL")
         {
             try
             {
@@ -2479,6 +2500,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2563,7 +2585,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDebitSI(M_Debit detail, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitSI(M_Debit detail, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -2576,6 +2598,7 @@ namespace NVOAMASIS.Services
 
                 report.Load(rpt);
                 report.Culture = "en-US";
+                report.Dictionary.Variables["BillType"].Value = billType;
                 var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
                 var fcl = await GetFLCByMBLID(hblinfo.mblid); //
 
@@ -2661,7 +2684,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDebitTruck(M_Debit detail, string cur_type, bool isMBL)
+        public async Task<BoolandMessReponse> ExportDebitTruck(M_Debit detail, string cur_type, bool isMBL, string billType = "PASL")
         {
             try
             {
@@ -2671,6 +2694,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Culture = "en-US";
+                report.Dictionary.Variables["BillType"].Value = billType;
 
                 var list_debit = await GetListDebit_Debitno(detail.debitno);
 
@@ -2749,7 +2773,7 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportDebitSI(List<M_Debit> list_debit, List<M_HBL> hblinfo, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitSI(List<M_Debit> list_debit, List<M_HBL> hblinfo, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -2762,6 +2786,7 @@ namespace NVOAMASIS.Services
 
                 report.Load(rpt);
                 report.Culture = "en-US";
+                report.Dictionary.Variables["BillType"].Value = billType;
                 var fcl = await GetFLCByMBLID(hblinfo.First().mblid);
                 double? total_payment = 0;
                 double? total_amount_notvat = 0;
@@ -2853,7 +2878,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportCreditSI(List<M_Credit> list_debit, List<M_HBL> hblinfo, string cur_type)
+        public async Task<BoolandMessReponse> ExportCreditSI(List<M_Credit> list_debit, List<M_HBL> hblinfo, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -2866,6 +2891,7 @@ namespace NVOAMASIS.Services
 
                 report.Load(rpt);
                 report.Culture = "en-US";
+                report.Dictionary.Variables["BillType"].Value = billType;
                 var fcl = await GetFLCByMBLID(hblinfo.First().mblid);
                 double? total_payment = 0;
                 double? total_amount_notvat = 0;
@@ -2957,7 +2983,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDebitSI_mbl(M_Debit detail, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitSI_mbl(M_Debit detail, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -2967,6 +2993,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
+                report.Dictionary.Variables["BillType"].Value = billType;
 
                 var mblinfo = await GetMBL_byHBLid(detail.mblid);
                 var fcl = await GetFLCByMBLID(detail.mblid);
@@ -3053,7 +3080,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDebitSE(M_Debit detail, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitSE(M_Debit detail, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -3063,6 +3090,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
+                report.Dictionary.Variables["BillType"].Value = billType;
 
                 var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
                 var fcl = await GetFLCByMBLID(hblinfo.mblid); //
@@ -3148,7 +3176,7 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportDebitSE_mbl(M_Debit detail, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitSE_mbl(M_Debit detail, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -3158,6 +3186,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
+                report.Dictionary.Variables["BillType"].Value = billType;
 
                 var mblinfo = await GetMBL_byHBLid(detail.mblid);
                 var fcl = await GetFLCByMBLID(detail.mblid);
@@ -3244,7 +3273,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDebitAE(M_Debit detail, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitAE(M_Debit detail, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -3254,6 +3283,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
+                report.Dictionary.Variables["BillType"].Value = billType;
 
                 var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
                 var fcl = await GetFLCByMBLID(hblinfo.mblid); //
@@ -3340,7 +3370,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDebitAE_mbl(M_Debit detail, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitAE_mbl(M_Debit detail, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -3350,6 +3380,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
+                report.Dictionary.Variables["BillType"].Value = billType;
 
                 var mblinfo = await GetMBL_byHBLid(detail.mblid);
                 var fcl = await GetFLCByMBLID(detail.mblid);
@@ -3435,7 +3466,7 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportDebitAI(M_Debit detail, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitAI(M_Debit detail, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -3445,6 +3476,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
+                report.Dictionary.Variables["BillType"].Value = billType;
 
                 var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
                 var fcl = await GetFLCByMBLID(hblinfo.mblid); //
@@ -3530,7 +3562,7 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportDebitAI_mbl(M_Debit detail, string cur_type)
+        public async Task<BoolandMessReponse> ExportDebitAI_mbl(M_Debit detail, string cur_type, string billType = "PASL")
         {
             try
             {
@@ -3545,6 +3577,7 @@ namespace NVOAMASIS.Services
 
 
                 report.Load(rpt);
+                report.Dictionary.Variables["BillType"].Value = billType;
 
 
                 var mblinfo = await GetMBL_byHBLid(detail.mblid);

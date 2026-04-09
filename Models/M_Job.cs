@@ -21,6 +21,7 @@ namespace NVOAMASIS.Models
         public DateTime? Datecreate { get; set; }
         public string? Branch { get; set; }
         public string? Salecode { get; set; }
+        public string? CompanyCode { get; set; }
 
         [JsonIgnore]
         public List<M_MBL>? MBLs { get; set; }
