@@ -1,0 +1,150 @@
+@using System.Globalization
+@using System.Reflection
+@using MudBlazor
+
+<MudDialog>
+    <DialogContent>
+        <MudGrid Spacing="2">
+            @foreach (var prop in _editableProperties)
+            {
+                var p = prop;
+                <MudItem xs="12" sm="6" md="4">
+                    @if (GetCoreType(p.PropertyType) == typeof(DateTime))
+                    {
+                        <MudDatePicker Label="@p.Name"
+                                       Date="@GetDate(p)"
+                                       DateChanged="@(d => SetDate(p, d))"
+                                       Variant="Variant.Outlined"
+                                       Margin="Margin.Dense"
+                                       DateFormat="dd/MM/yyyy"
+                                       Clearable="true" />
+                    }
+                    else
+                    {
+                        <MudTextField T="string" Label="@p.Name"
+                                      Value="@GetText(p)"
+                                      ValueChanged="@(v => SetText(p, v))"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Immediate="true" />
+                    }
+                </MudItem>
+            }
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Hủy</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Lưu</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public object Model { get; set; } = default!;
+
+    private List<PropertyInfo> _editableProperties = new();
+
+    protected override void OnInitialized()
+    {
+        var modelType = Model.GetType();
+        _editableProperties = modelType
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanRead && p.CanWrite && p.Name != "Id")
+            .ToList();
+    }
+
+    private static Type GetCoreType(Type type) => Nullable.GetUnderlyingType(type) ?? type;
+
+    private DateTime? GetDate(PropertyInfo propertyInfo)
+    {
+        var value = propertyInfo.GetValue(Model);
+        return value as DateTime? ?? (value is DateTime dt ? dt : null);
+    }
+
+    private void SetDate(PropertyInfo propertyInfo, DateTime? value)
+    {
+        propertyInfo.SetValue(Model, value);
+    }
+
+    private string GetText(PropertyInfo propertyInfo)
+    {
+        var value = propertyInfo.GetValue(Model);
+        if (value == null)
+            return string.Empty;
+
+        return value switch
+        {
+            DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            DateTimeOffset dto => dto.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
+            _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty
+        };
+    }
+
+    private void SetText(PropertyInfo propertyInfo, string value)
+    {
+        if (TryConvert(propertyInfo.PropertyType, value, out var converted))
+            propertyInfo.SetValue(Model, converted);
+    }
+
+    private static bool TryConvert(Type targetType, string value, out object? converted)
+    {
+        var coreType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            converted = targetType.IsValueType && Nullable.GetUnderlyingType(targetType) == null
+                ? Activator.CreateInstance(targetType)
+                : null;
+            return true;
+        }
+
+        try
+        {
+            if (coreType == typeof(string))
+            {
+                converted = value;
+                return true;
+            }
+
+            if (coreType == typeof(Guid))
+            {
+                converted = Guid.Parse(value);
+                return true;
+            }
+
+            if (coreType == typeof(int))
+            {
+                converted = int.Parse(value, NumberStyles.Any, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            if (coreType == typeof(decimal))
+            {
+                converted = decimal.Parse(value, NumberStyles.Any, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            if (coreType == typeof(double))
+            {
+                converted = double.Parse(value, NumberStyles.Any, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            if (coreType == typeof(DateTime))
+            {
+                converted = DateTime.Parse(value, CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            converted = Convert.ChangeType(value, coreType, CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch
+        {
+            converted = null;
+            return false;
+        }
+    }
+
+    private void Save() => MudDialog.Close(DialogResult.Ok(Model));
+    private void Cancel() => MudDialog.Cancel();
+}

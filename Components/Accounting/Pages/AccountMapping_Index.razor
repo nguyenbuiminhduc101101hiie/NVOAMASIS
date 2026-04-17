@@ -1,0 +1,284 @@
+@page "/account-mapping"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["AccountMapping.Title"]</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudText Typo="Typo.h6" Class="fw-700">5.8.7 @Localizer["AccountMapping.Title"]</MudText>
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddDialogAsync" Disabled="_busy">@Localizer["new"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialogAsync" Disabled="_busy || _selected is null">@Localizer["edit"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">@Localizer["delete"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-3">
+        <MudTextField @bind-Value="_search" Label="@Localizer["AccountMapping.Search"]" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" />
+        <MudDataGrid T="M_AccountMapping"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClass"
+                     Height="calc(100vh - 300px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.AccountCode" Title="@Localizer["AccountMapping.AccountCode"]" />
+                <PropertyColumn Property="x => x.AccountName" Title="@Localizer["AccountMapping.AccountName"]" />
+                <PropertyColumn Property="x => x.StatementType" Title="@Localizer["AccountMapping.StatementType"]" />
+                <PropertyColumn Property="x => x.BsSection" Title="@Localizer["AccountMapping.BsSection"]" />
+                <PropertyColumn Property="x => x.BsGroup" Title="@Localizer["AccountMapping.BsGroup"]" />
+                <PropertyColumn Property="x => x.BsLineItem" Title="@Localizer["AccountMapping.BsLineItem"]" />
+                <PropertyColumn Property="x => x.NormalBalance" Title="@Localizer["AccountMapping.NormalBalance"]" />
+                <PropertyColumn Property="x => x.DisplayOrder" Title="@Localizer["AccountMapping.DisplayOrder"]" />
+                <PropertyColumn Property="x => x.IsContraAccount" Title="@Localizer["AccountMapping.IsContraAccount"]" />
+                <PropertyColumn Property="x => x.IsActive" Title="@Localizer["AccountMapping.IsActive"]" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_AccountMapping" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "account_mapping";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private string _search = string.Empty;
+    private List<M_AccountMapping> _items = new();
+    private M_AccountMapping? _selected;
+
+    private IEnumerable<M_AccountMapping> VisibleItems =>
+        string.IsNullOrWhiteSpace(_search)
+            ? _items
+            : _items.Where(x =>
+                (x.AccountCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.AccountName?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.StatementType?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.BsSection?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.BsGroup?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.BsLineItem?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountMapping.NoAccessView"], MudBlazor.Severity.Warning);
+            _items.Clear();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.AccountMappings.AsNoTracking().OrderBy(x => x.AccountCode).ToListAsync();
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_AccountMapping> args)
+    {
+        _selected = new M_AccountMapping
+        {
+            AccountCode = args.Item.AccountCode,
+            AccountName = args.Item.AccountName,
+            StatementType = args.Item.StatementType,
+            BsSection = args.Item.BsSection,
+            BsGroup = args.Item.BsGroup,
+            BsLineItem = args.Item.BsLineItem,
+            NormalBalance = args.Item.NormalBalance,
+            DisplayOrder = args.Item.DisplayOrder,
+            IsContraAccount = args.Item.IsContraAccount,
+            IsActive = args.Item.IsActive
+        };
+    }
+
+    private string RowClass(M_AccountMapping row, int _) => _selected?.AccountCode == row.AccountCode ? "selected-row-blue" : string.Empty;
+
+    private async Task OpenAddDialogAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountMapping.NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<AccountMapping_AddEditDialog>(
+            Localizer["AccountMapping.AddTitle"],
+            new DialogParameters
+            {
+                ["Model"] = new M_AccountMapping { IsActive = true, StatementType = "Balance Sheet" },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_AccountMapping data)
+            return;
+
+        await SaveAsync(data, false);
+    }
+
+    private async Task OpenEditDialogAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountMapping.NoAccessEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<AccountMapping_AddEditDialog>(
+            Localizer["AccountMapping.EditTitle"],
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_AccountMapping data)
+            return;
+
+        await SaveAsync(data, true);
+    }
+
+    private async Task SaveAsync(M_AccountMapping data, bool isEdit)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            if (!isEdit)
+            {
+                var existed = await db.AccountMappings.AsNoTracking().AnyAsync(x => x.AccountCode == data.AccountCode);
+                if (existed)
+                {
+                    CallSnack(Localizer["AccountMapping.AccountCodeExists"], MudBlazor.Severity.Warning);
+                    return;
+                }
+                db.AccountMappings.Add(data);
+            }
+            else
+            {
+                var entity = await db.AccountMappings.FirstOrDefaultAsync(x => x.AccountCode == data.AccountCode);
+                if (entity is null)
+                {
+                    CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+                entity.AccountName = data.AccountName;
+                entity.StatementType = data.StatementType;
+                entity.BsSection = data.BsSection;
+                entity.BsGroup = data.BsGroup;
+                entity.BsLineItem = data.BsLineItem;
+                entity.NormalBalance = data.NormalBalance;
+                entity.IsContraAccount = data.IsContraAccount;
+                entity.DisplayOrder = data.DisplayOrder;
+                entity.IsActive = data.IsActive;
+            }
+
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["Common.SavedSuccessfully"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountMapping.NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(Localizer["warning"], Localizer["askDelete"], yesText: Localizer["delete"], cancelText: Localizer["cancel"]);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.AccountMappings.FirstOrDefaultAsync(x => x.AccountCode == _selected.AccountCode);
+            if (entity is null)
+            {
+                CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.AccountMappings.Remove(entity);
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["Common.DeletedSuccessfully"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
+
+<style>
+    .selected-row-blue { background-color: #2196f3 !important; }
+</style>

@@ -1,0 +1,181 @@
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="6">
+                    <MudAutocomplete T="Guid"
+                                     Label="Account Code"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Value="_selectedDanhMucId"
+                                     ValueChanged="OnDanhMucChangedAsync"
+                                     SearchFunc="SearchDanhMucAsync"
+                                     ToStringFunc="DanhMucToString"
+                                     CoerceText="true"
+                                     CoerceValue="true"
+                                     ResetValueOnEmptyText="true"
+                                     Clearable="!IsEdit"
+                                     Required="true"
+                                     Disabled="IsEdit" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_model.AccountName"
+                                  Label="Account Name"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Required="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string" @bind-Value="_model.StatementType" Label="Statement Type" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true">
+                        <MudSelectItem Value="@("Balance Sheet")">Balance Sheet</MudSelectItem>
+                        <MudSelectItem Value="@("P&L")">P&L</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string" @bind-Value="_model.NormalBalance" Label="Normal Balance" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true">
+                        <MudSelectItem Value="@("Debit")">Debit</MudSelectItem>
+                        <MudSelectItem Value="@("Credit")">Credit</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_model.BsSection" Label="BS Section" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_model.BsGroup" Label="BS Group" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudTextField @bind-Value="_model.BsLineItem" Label="BS Line Item" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int?" @bind-Value="_model.DisplayOrder" Label="Display Order" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudCheckBox T="bool" @bind-Value="_model.IsContraAccount" Label="Is Contra Account" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudCheckBox T="bool" @bind-Value="_model.IsActive" Label="Is Active" />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SubmitAsync">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public M_AccountMapping Model { get; set; } = new();
+    [Parameter] public bool IsEdit { get; set; }
+
+    private MudForm? _form;
+    private M_AccountMapping _model = new();
+    private List<DanhMucTaiKhoan> _danhMucs = new();
+    private Guid _selectedDanhMucId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _danhMucs = await db.DanhMucTaiKhoan.AsNoTracking()
+            .Where(x => !string.IsNullOrWhiteSpace(x.Taikhoan))
+            .OrderBy(x => x.Taikhoan)
+            .ToListAsync();
+        SyncSelectedDanhMucFromModel();
+    }
+
+    protected override void OnParametersSet()
+    {
+        _model = new M_AccountMapping
+        {
+            AccountCode = Model.AccountCode ?? string.Empty,
+            AccountName = Model.AccountName ?? string.Empty,
+            StatementType = string.IsNullOrWhiteSpace(Model.StatementType) ? "Balance Sheet" : Model.StatementType,
+            BsSection = Model.BsSection,
+            BsGroup = Model.BsGroup,
+            BsLineItem = Model.BsLineItem,
+            NormalBalance = Model.NormalBalance,
+            IsContraAccount = Model.IsContraAccount,
+            DisplayOrder = Model.DisplayOrder,
+            IsActive = Model.IsActive
+        };
+
+        SyncSelectedDanhMucFromModel();
+    }
+
+    private void SyncSelectedDanhMucFromModel()
+    {
+        var selected = _danhMucs.FirstOrDefault(x =>
+            string.Equals((x.Taikhoan ?? string.Empty).Trim(), _model.AccountCode, StringComparison.OrdinalIgnoreCase));
+        _selectedDanhMucId = selected?.Id ?? Guid.Empty;
+    }
+
+    private Task OnDanhMucChangedAsync(Guid id)
+    {
+        _selectedDanhMucId = id;
+        var dm = _danhMucs.FirstOrDefault(x => x.Id == id);
+        if (dm is null)
+            return Task.CompletedTask;
+
+        _model.AccountCode = (dm.Taikhoan ?? string.Empty).Trim();
+        var accountName = !string.IsNullOrWhiteSpace(dm.Accountname) ? dm.Accountname : dm.Tentaikhoan;
+        _model.AccountName = (accountName ?? string.Empty).Trim();
+        return Task.CompletedTask;
+    }
+
+    private Task<IEnumerable<Guid>> SearchDanhMucAsync(string value)
+    {
+        IEnumerable<DanhMucTaiKhoan> query = _danhMucs;
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var keyword = value.Trim();
+            query = query.Where(x =>
+                (x.Taikhoan?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.Tentaikhoan?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.Accountname?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+
+        return Task.FromResult(query.Select(x => x.Id).Take(50));
+    }
+
+    private string DanhMucToString(Guid id)
+    {
+        var dm = _danhMucs.FirstOrDefault(x => x.Id == id);
+        if (dm is null)
+            return string.Empty;
+
+        var code = (dm.Taikhoan ?? string.Empty).Trim();
+        var name = (!string.IsNullOrWhiteSpace(dm.Accountname) ? dm.Accountname : dm.Tentaikhoan) ?? string.Empty;
+        name = name.Trim();
+        return string.IsNullOrWhiteSpace(name) ? code : $"{code} - {name}";
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (_form is not null)
+            await _form.Validate();
+
+        if (string.IsNullOrWhiteSpace(_model.AccountCode) ||
+            string.IsNullOrWhiteSpace(_model.AccountName) ||
+            string.IsNullOrWhiteSpace(_model.StatementType))
+            return;
+
+        _model.AccountCode = _model.AccountCode.Trim();
+        _model.AccountName = _model.AccountName.Trim();
+        _model.StatementType = _model.StatementType.Trim();
+        _model.BsSection = string.IsNullOrWhiteSpace(_model.BsSection) ? null : _model.BsSection.Trim();
+        _model.BsGroup = string.IsNullOrWhiteSpace(_model.BsGroup) ? null : _model.BsGroup.Trim();
+        _model.BsLineItem = string.IsNullOrWhiteSpace(_model.BsLineItem) ? null : _model.BsLineItem.Trim();
+        _model.NormalBalance = string.IsNullOrWhiteSpace(_model.NormalBalance) ? null : _model.NormalBalance.Trim();
+
+        MudDialog.Close(DialogResult.Ok(_model));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

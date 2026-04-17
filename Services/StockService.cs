@@ -14,12 +14,23 @@ public record StockListFilter(
     DateTime? DateInFrom,
     DateTime? DateInTo);
 
-public record StockImportResult(int Inserted, int SkippedDuplicate, int SkippedEmpty, string? ErrorMessage);
+public record StockImportResult(int Inserted, int SkippedDuplicate, int SkippedEmpty, int SkippedGateOut, string? ErrorMessage);
+
+public record StockContainerTrackingDto(
+    string Container,
+    string? Type,
+    string? Booking,
+    DateTime? DateIn,
+    DateTime? DateOut,
+    int? Days,
+    bool HasGateOut);
 
 public class StockService(AppDbContext context)
 {
     private const int StockDataStartRow = 20;
+    private const int GateOutDataStartRow = 16;
     private const string StockSheetName = "Stock";
+    private const string GateOutSheetName = "GATEOUT";
 
     public async Task<List<string>> GetDistinctLocationsAsync(CancellationToken cancellationToken = default)
     {
@@ -147,6 +158,41 @@ public class StockService(AppDbContext context)
         return await q.OrderByDescending(x => x.DateIn).ThenBy(x => x.Container).ToListAsync(cancellationToken);
     }
 
+    public async Task<StockContainerTrackingDto?> GetContainerTrackingAsync(string? containerNo, CancellationToken cancellationToken = default)
+    {
+        var normalizedContainer = NormalizeContainer(containerNo);
+        if (normalizedContainer == null)
+            return null;
+
+        var latestStock = await context.Stock.AsNoTracking()
+            .Where(x => x.Container != null && x.Container.ToUpper() == normalizedContainer)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.DateIn)
+            .ThenByDescending(x => x.TimeIn)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var gateOut = await context.StockGateOut.AsNoTracking()
+            .Where(x => x.Container != null && x.Container.ToUpper() == normalizedContainer)
+            .OrderByDescending(x => x.DateImport)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (latestStock == null && gateOut == null)
+            return null;
+
+        var dateIn = CombineDateAndTime(latestStock?.DateIn, latestStock?.TimeIn);
+        var dateOut = gateOut?.DateOut;
+        var days = gateOut?.TotalDays ?? latestStock?.Days;
+
+        return new StockContainerTrackingDto(
+            Container: latestStock?.Container ?? gateOut?.Container ?? normalizedContainer,
+            Type: latestStock?.Type,
+            Booking: gateOut?.Booking,
+            DateIn: dateIn,
+            DateOut: dateOut,
+            Days: days,
+            HasGateOut: gateOut != null);
+    }
+
     public async Task<StockImportResult> ImportFromExcelAsync(Stream excelStream, string? userImport = null, CancellationToken cancellationToken = default)
     {
         try
@@ -158,7 +204,72 @@ public class StockService(AppDbContext context)
                             string.Equals(w.Name, StockSheetName, StringComparison.OrdinalIgnoreCase));
 
             if (sheet == null)
-                return new StockImportResult(0, 0, 0, $"Không tìm thấy sheet \"{StockSheetName}\".");
+                return new StockImportResult(0, 0, 0, 0, $"Không tìm thấy sheet \"{StockSheetName}\".");
+            
+            var gateOutSheet = package.Workbook.Worksheets[GateOutSheetName]
+                           ?? package.Workbook.Worksheets.FirstOrDefault(w =>
+                               string.Equals(w.Name, GateOutSheetName, StringComparison.OrdinalIgnoreCase));
+
+            var now = DateTime.Now;
+            var normalizedImportUser = string.IsNullOrWhiteSpace(userImport) ? null : userImport.Trim();
+            var gateOutContainerSet = new HashSet<string>(StringComparer.Ordinal);
+            var gateOutRows = await context.StockGateOut.ToListAsync(cancellationToken);
+            foreach (var row in gateOutRows)
+            {
+                var key = NormalizeContainer(row.Container);
+                if (key != null)
+                    gateOutContainerSet.Add(key);
+            }
+
+            if (gateOutSheet != null)
+            {
+                var gateOutByContainer = gateOutRows
+                    .Where(x => NormalizeContainer(x.Container) != null)
+                    .GroupBy(x => NormalizeContainer(x.Container)!, StringComparer.Ordinal)
+                    .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.DateImport).First(), StringComparer.Ordinal);
+
+                var maxGateOutRow = gateOutSheet.Dimension?.End.Row ?? 0;
+                for (var row = GateOutDataStartRow; row <= maxGateOutRow; row++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var container = TrimToNull(gateOutSheet.Cells[row, 5].Text);
+                    var normalizedContainer = NormalizeContainer(container);
+                    if (normalizedContainer == null)
+                        continue;
+
+                    var booking = TrimToNull(gateOutSheet.Cells[row, 12].Text);
+                    var dateOut = ReadDate(gateOutSheet.Cells[row, 26]);
+                    var totalDays = ReadInt(gateOutSheet.Cells[row, 27]);
+
+                    if (gateOutByContainer.TryGetValue(normalizedContainer, out var existing))
+                    {
+                        existing.Booking = booking;
+                        existing.DateOut = dateOut;
+                        existing.TotalDays = totalDays;
+                        existing.DateImport = now;
+                        existing.UserImport = normalizedImportUser;
+                    }
+                    else
+                    {
+                        var newGateOut = new M_StockGateOut
+                        {
+                            StockGateOutID = Guid.NewGuid(),
+                            Container = container,
+                            Booking = booking,
+                            DateOut = dateOut,
+                            TotalDays = totalDays,
+                            DateImport = now,
+                            UserImport = normalizedImportUser
+                        };
+
+                        await context.StockGateOut.AddAsync(newGateOut, cancellationToken);
+                        gateOutByContainer[normalizedContainer] = newGateOut;
+                    }
+
+                    gateOutContainerSet.Add(normalizedContainer);
+                }
+            }
 
             var existingRows = await context.Stock.AsNoTracking().ToListAsync(cancellationToken);
             var fingerprintSet = existingRows.Select(BuildFingerprint).ToHashSet(StringComparer.Ordinal);
@@ -166,10 +277,11 @@ public class StockService(AppDbContext context)
             var toAdd = new List<M_Stock>();
             var skippedDup = 0;
             var skippedEmpty = 0;
+            var skippedGateOut = 0;
 
             var maxRow = sheet.Dimension?.End.Row ?? 0;
             if (maxRow < StockDataStartRow)
-                return new StockImportResult(0, 0, 0, "Sheet không có dòng dữ liệu (từ dòng 20).");
+                return new StockImportResult(0, 0, 0, 0, "Sheet không có dòng dữ liệu (từ dòng 20).");
 
             var lastDataRow = StockDataStartRow - 1;
             for (var r = StockDataStartRow; r <= maxRow; r++)
@@ -179,7 +291,7 @@ public class StockService(AppDbContext context)
             }
 
             if (lastDataRow < StockDataStartRow)
-                return new StockImportResult(0, 0, 0, "Không có dòng nào có số container (cột B) từ dòng 20.");
+                return new StockImportResult(0, 0, 0, 0, "Không có dòng nào có số container (cột B) từ dòng 20.");
 
             for (var row = StockDataStartRow; row <= lastDataRow; row++)
             {
@@ -189,6 +301,12 @@ public class StockService(AppDbContext context)
                 if (string.IsNullOrEmpty(container))
                 {
                     skippedEmpty++;
+                    continue;
+                }
+                var normalizedContainer = NormalizeContainer(container);
+                if (normalizedContainer != null && gateOutContainerSet.Contains(normalizedContainer))
+                {
+                    skippedGateOut++;
                     continue;
                 }
 
@@ -202,23 +320,23 @@ public class StockService(AppDbContext context)
                 }
 
                 entity.StockID = Guid.NewGuid();
-                entity.DateImport = DateTime.Now;
-                entity.UserImport = string.IsNullOrWhiteSpace(userImport) ? null : userImport.Trim();
+                entity.DateImport = now;
+                entity.UserImport = normalizedImportUser;
                 toAdd.Add(entity);
                 fingerprintSet.Add(fp);
             }
 
-            if (toAdd.Count > 0)
+            if (toAdd.Count > 0 || context.ChangeTracker.HasChanges())
             {
                 await context.Stock.AddRangeAsync(toAdd, cancellationToken);
                 await context.SaveChangesAsync(cancellationToken);
             }
 
-            return new StockImportResult(toAdd.Count, skippedDup, skippedEmpty, null);
+            return new StockImportResult(toAdd.Count, skippedDup, skippedEmpty, skippedGateOut, null);
         }
         catch (Exception ex)
         {
-            return new StockImportResult(0, 0, 0, ex.Message);
+            return new StockImportResult(0, 0, 0, 0, ex.Message);
         }
     }
 
@@ -393,5 +511,18 @@ public class StockService(AppDbContext context)
             return result;
 
         return null;
+    }
+    private static string? NormalizeContainer(string? container)
+    {
+        var trimmed = TrimToNull(container);
+        return trimmed?.ToUpperInvariant();
+    }
+
+    private static DateTime? CombineDateAndTime(DateTime? dateIn, TimeSpan? timeIn)
+    {
+        if (!dateIn.HasValue)
+            return null;
+
+        return dateIn.Value.Date + (timeIn ?? TimeSpan.Zero);
     }
 }

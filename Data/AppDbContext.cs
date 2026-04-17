@@ -129,6 +129,11 @@ namespace NVOAMASIS.Data
         public DbSet<M_GateIn> GateIn { get; set; }
         public DbSet<M_GateOut> GateOut { get; set; }
         public DbSet<M_Stock> Stock { get; set; }
+        public DbSet<M_StockGateOut> StockGateOut { get; set; }
+        public DbSet<M_StockGateOut_HDS_08042026> StockGateOut_HDS_08042026 { get; set; }
+        public DbSet<M_YardReport_AG_2026040307> YardReport_AG_2026040307 { get; set; }
+        public DbSet<M_YardMovement_VSS_26040808> YardMovement_VSS_26040808 { get; set; }
+        public DbSet<M_YardMovement_AMS_26040816> YardMovement_AMS_26040816 { get; set; }
         public DbSet<M_ChargeType> ChargeType { get; set; }
         public DbSet<M_TariffHeader> TariffHeader { get; set; }
         public DbSet<M_TariffTier> TariffTier { get; set; }
@@ -141,7 +146,8 @@ namespace NVOAMASIS.Data
         public DbSet<M_AccountingVouchers> AccountingVouchers { get; set; }
         public DbSet<M_AccountingVoucherLines> AccountingVoucherLines { get; set; }
         public DbSet<M_GeneralLedgerEntries> GeneralLedgerEntries { get; set; }
-
+        public DbSet<M_AccountMapping> AccountMappings { get; set; }
+        public DbSet<M_AccountingPeriod> AccountingPeriods { get; set; }
         public DbSet<LocalizationResource> LocalizationResources { get; set; }
 
         public DbSet<UserThemePreference> UserThemePreferences { get; set; }
@@ -181,6 +187,18 @@ namespace NVOAMASIS.Data
                 .IsUnique();
 
             modelBuilder.Entity<M_Stock>().ToTable("Stock");
+            modelBuilder.Entity<M_StockGateOut>().ToTable("StockGateOut");
+            modelBuilder.Entity<M_StockGateOut>()
+                .HasIndex(x => x.Container)
+                .IsUnique();
+            modelBuilder.Entity<M_StockGateOut_HDS_08042026>().ToTable("StockGateOut_HDS_08042026");
+            modelBuilder.Entity<M_StockGateOut_HDS_08042026>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_YardReport_AG_2026040307>().ToTable("YardReport_AG_2026040307");
+            modelBuilder.Entity<M_YardReport_AG_2026040307>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_YardMovement_VSS_26040808>().ToTable("YardMovement_VSS_26040808");
+            modelBuilder.Entity<M_YardMovement_VSS_26040808>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_YardMovement_AMS_26040816>().ToTable("YardMovement_AMS_26040816");
+            modelBuilder.Entity<M_YardMovement_AMS_26040816>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_ShipmentChargeContext>().ToTable("ShipmentChargeContext");
 
             modelBuilder.Entity<M_SI_Attachment>().ToTable("SI_Attachment");
@@ -195,6 +213,10 @@ namespace NVOAMASIS.Data
                 .WithMany()
                 .HasForeignKey(x => x.TransactionID)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<M_AccountingPeriod>()
+                .Property(x => x.PeriodCode)
+                .UseIdentityColumn();
 
             modelBuilder.Entity<M_AccountingVoucherLines>()
                 .HasOne<M_AccountingVouchers>()

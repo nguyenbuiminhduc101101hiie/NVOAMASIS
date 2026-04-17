@@ -46,6 +46,7 @@ namespace NVOAMASIS.Models
         public DateTime? CancelledDate { get; set; }
         public bool? Ghiso { get; set; } = false; // 0: Không, 1: Có
         public bool? Approve { get; set; } = false;
+        public bool? Both { get; set; } = false;
     }
 }
 

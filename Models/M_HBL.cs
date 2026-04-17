@@ -281,6 +281,9 @@ namespace NVOAMASIS.Models
         public bool? freight { get; set; } = false;
         public string? remarks { get; set; }
         public double? ex_rate { get; set; }
+        public double? Dem { get; set; } = 0;
+        public double? Det { get; set; } = 0;
+        public double? Combine { get; set; } = 0;
         public string? IssueAt { get; set; }
 
         public M_HBL DeepCopy()

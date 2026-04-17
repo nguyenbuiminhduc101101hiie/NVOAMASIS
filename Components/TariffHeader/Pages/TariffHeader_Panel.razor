@@ -1,0 +1,516 @@
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudStack Spacing="2">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.h6" Class="fw-700">8.5 @Localizer["TariffHeader"]</MudText>
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenNewDialog" Disabled="_busy">@Localizer["new"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialog" Disabled="_selected is null || _busy">@Localizer["edit"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteSelectedAsync" Disabled="_selected is null || _busy">@Localizer["delete"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadListAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
+        </MudStack>
+    </MudStack>
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2">
+            <MudTextField @bind-Value="_searchText"
+                          Label="@Localizer["TariffHeader_SearchHint"]"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true"
+                          Immediate="true"
+                          Style="max-width: 420px;" />
+        </MudStack>
+        <div style="overflow-x: auto;">
+            <MudDataGrid T="M_TariffHeader"
+                         Items="VisibleTariffHeaders"
+                         Class="auto-fit-grid"
+                         Dense="true"
+                         Striped="true"
+                         Bordered="true"
+                         Hover="true"
+                         RowClick="OnRowClick"
+                         RowClassFunc="RowClassFunc"
+                         Height="calc(100vh - 220px)"
+                         FixedHeader="true"
+                         Loading="_busy">
+                <Columns>
+                    <PropertyColumn Property="x => x.TariffCode" Title="@Localizer["TariffHeader_Col_TariffCode"]" />
+                    <PropertyColumn Property="x => x.TariffName" Title="@Localizer["TariffHeader_Col_TariffName"]" />
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_ChargeType"]">
+                        <CellTemplate>@LabelChargeType(context.Item.ChargeTypeId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_Customer"]">
+                        <CellTemplate>@LabelCustomer(context.Item.CustomerId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_ShippingLine"]">
+                        <CellTemplate>@LabelCustomer(context.Item.ShippingLineId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_Depot"]">
+                        <CellTemplate>@LabelPort(context.Item.DepotId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_Terminal"]">
+                        <CellTemplate>@LabelTerminal(context.Item.PortId)</CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.ContainerTypeId" Title="@Localizer["TariffHeader_Col_ContType"]" />
+                    <PropertyColumn Property="x => x.CargoTypeId" Title="@Localizer["TariffHeader_Col_CargoType"]" />
+                    <PropertyColumn Property="x => x.Direction" Title="@Localizer["TariffHeader_Col_Direction"]" />
+                    <PropertyColumn Property="x => x.CurrencyCode" Title="@Localizer["TariffHeader_Col_Currency"]" />
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_EffectiveFrom"]">
+                        <CellTemplate>@context.Item.EffectiveFrom.ToString("dd/MM/yyyy")</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_EffectiveTo"]">
+                        <CellTemplate>@(context.Item.EffectiveTo?.ToString("dd/MM/yyyy") ?? "")</CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.Status" Title="@Localizer["TariffHeader_Col_Status"]" />
+                </Columns>
+                <PagerContent>
+                    <MudDataGridPager T="M_TariffHeader" PageSizeOptions="new int[] { 10, 25, 50 }" />
+                </PagerContent>
+            </MudDataGrid>
+        </div>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "TariffHeader";
+
+    private bool _busy;
+    private List<M_TariffHeader> _items = new();
+    private M_TariffHeader? _selected;
+    private string usr = string.Empty;
+    private int _dialogKey;
+
+    private Dictionary<Guid, string> _chargeTypeById = new();
+    private Dictionary<Guid, string> _customerById = new();
+    private Dictionary<Guid, string> _portById = new();
+    private Dictionary<Guid, string> _terminalById = new();
+    private string _searchText = string.Empty;
+
+    private IEnumerable<M_TariffHeader> VisibleTariffHeaders
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+                return _items;
+            var t = _searchText.Trim();
+            return _items.Where(x =>
+                ContainsIc(x.TariffCode, t) ||
+                ContainsIc(x.TariffName, t) ||
+                ContainsIc(x.ContainerTypeId, t) ||
+                ContainsIc(x.CargoTypeId, t) ||
+                ContainsIc(x.Direction, t) ||
+                ContainsIc(x.CurrencyCode, t) ||
+                ContainsIc(x.Status, t) ||
+                ContainsIc(x.Notes, t) ||
+                x.EffectiveFrom.ToString("dd/MM/yyyy").Contains(t, StringComparison.OrdinalIgnoreCase) ||
+                (x.EffectiveTo?.ToString("dd/MM/yyyy").Contains(t, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                ContainsIc(LabelChargeType(x.ChargeTypeId), t) ||
+                ContainsIc(LabelCustomer(x.CustomerId), t) ||
+                ContainsIc(LabelCustomer(x.ShippingLineId), t) ||
+                ContainsIc(LabelPort(x.DepotId), t) ||
+                ContainsIc(LabelTerminal(x.PortId), t) ||
+                x.Id.ToString().Contains(t, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private static bool ContainsIc(string? s, string needle) =>
+        !string.IsNullOrEmpty(s) && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadListAsync();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "View", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["TariffHeader_NoAccessView"], MudBlazor.Severity.Warning);
+            _items = new List<M_TariffHeader>();
+            _selected = null;
+            ClearLookups();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.TariffHeader.AsNoTracking().OrderByDescending(x => x.EffectiveFrom).ThenBy(x => x.TariffCode).ToListAsync();
+            _selected = null;
+            await BuildLookupsAsync(_items);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["TariffHeader_CannotLoad", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ClearLookups()
+    {
+        _chargeTypeById.Clear();
+        _customerById.Clear();
+        _portById.Clear();
+        _terminalById.Clear();
+    }
+
+    private async Task BuildLookupsAsync(List<M_TariffHeader> rows)
+    {
+        ClearLookups();
+        if (rows.Count == 0)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var ctIds = rows.Select(x => x.ChargeTypeId).Where(x => x != Guid.Empty).Distinct().ToList();
+        foreach (var id in ctIds)
+        {
+            var x = await db.ChargeType.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id);
+            if (x != null)
+                _chargeTypeById[x.Id] = $"{x.Code ?? ""} - {x.Name ?? ""}";
+        }
+
+        var custIds = rows.SelectMany(x => new[] { x.CustomerId, x.ShippingLineId }).Where(x => x != Guid.Empty).Distinct().ToList();
+        foreach (var id in custIds)
+        {
+            var c = await db.Customer.AsNoTracking().FirstOrDefaultAsync(e => e.Customer_ID == id);
+            if (c != null)
+                _customerById[c.Customer_ID] = CustomerLabel(c);
+        }
+
+        var portIds = rows.Select(x => x.DepotId).Where(x => x != Guid.Empty).Distinct().ToList();
+        foreach (var id in portIds)
+        {
+            var p = await db.Port.AsNoTracking().FirstOrDefaultAsync(e => e.PORT_ID == id);
+            if (p != null)
+                _portById[p.PORT_ID] = PortLabel(p);
+        }
+
+        var termIds = rows.Select(x => x.PortId).Where(x => x != Guid.Empty).Distinct().ToList();
+        foreach (var id in termIds)
+        {
+            var t = await db.Terminal.AsNoTracking().FirstOrDefaultAsync(e => e.TerminalID == id);
+            if (t != null)
+                _terminalById[t.TerminalID] = TerminalLabel(t);
+        }
+    }
+
+    private static string CustomerLabel(M_Customer c)
+    {
+        if (!string.IsNullOrWhiteSpace(c.COMPANY))
+            return c.COMPANY!.Trim();
+        var en = !string.IsNullOrWhiteSpace(c.EnglishName) ? c.EnglishName!.Trim() : "";
+        if (!string.IsNullOrEmpty(en))
+            return en;
+        var code = !string.IsNullOrWhiteSpace(c.Customer_Code)
+            ? c.Customer_Code!.Trim()
+            : (!string.IsNullOrWhiteSpace(c.MainCode) ? c.MainCode!.Trim() : "");
+        if (!string.IsNullOrEmpty(code))
+            return code;
+        if (!string.IsNullOrWhiteSpace(c.COMPANY))
+            return c.COMPANY!.Trim();
+        return c.Customer_ID.ToString();
+    }
+
+    private static string PortLabel(PortModel p)
+    {
+        if (!string.IsNullOrWhiteSpace(p.PORT) && !string.IsNullOrWhiteSpace(p.PORT_CODE))
+            return $"{p.PORT} ({p.PORT_CODE})";
+        return p.PORT ?? p.PORT_CODE ?? p.PORT_ID.ToString();
+    }
+
+    private static string TerminalLabel(Terminal_ t)
+    {
+        if (!string.IsNullOrWhiteSpace(t.TermiNalName))
+            return t.TermiNalName!;
+        if (!string.IsNullOrWhiteSpace(t.Code))
+            return t.Code!;
+        return t.TerminalID.ToString();
+    }
+
+    private string LabelChargeType(Guid id) => _chargeTypeById.GetValueOrDefault(id, id.ToString());
+    private string LabelCustomer(Guid id) => _customerById.GetValueOrDefault(id, id.ToString());
+    private string LabelPort(Guid id) => _portById.GetValueOrDefault(id, id.ToString());
+    private string LabelTerminal(Guid id) => _terminalById.GetValueOrDefault(id, id.ToString());
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_TariffHeader> args)
+    {
+        _selected = CloneRow(args.Item);
+    }
+
+    private static M_TariffHeader CloneRow(M_TariffHeader row) => new()
+    {
+        Id = row.Id,
+        TariffCode = row.TariffCode ?? string.Empty,
+        TariffName = row.TariffName ?? string.Empty,
+        ChargeTypeId = row.ChargeTypeId,
+        CustomerId = row.CustomerId,
+        ShippingLineId = row.ShippingLineId,
+        DepotId = row.DepotId,
+        PortId = row.PortId,
+        ContainerTypeId = row.ContainerTypeId ?? string.Empty,
+        CargoTypeId = row.CargoTypeId ?? string.Empty,
+        Direction = row.Direction,
+        CurrencyCode = row.CurrencyCode ?? string.Empty,
+        EffectiveFrom = row.EffectiveFrom,
+        EffectiveTo = row.EffectiveTo,
+        Status = row.Status ?? string.Empty,
+        Notes = row.Notes,
+        CreatedAt = row.CreatedAt,
+        CreatedBy = row.CreatedBy,
+        UpdatedAt = row.UpdatedAt,
+        UpdatedBy = row.UpdatedBy
+    };
+
+    private string RowClassFunc(M_TariffHeader row, int _)
+    {
+        if (_selected != null && _selected.Id == row.Id)
+            return "tariffheader-selected-row";
+        return string.Empty;
+    }
+
+    private async Task OpenNewDialog()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["TariffHeader_NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _dialogKey++;
+        var model = new M_TariffHeader
+        {
+            Id = Guid.Empty,
+            TariffCode = string.Empty,
+            TariffName = string.Empty,
+            EffectiveFrom = DateTime.Today,
+            CurrencyCode = "USD",
+            Status = "Active",
+            ContainerTypeId = "20DC",
+            CargoTypeId = "FCL"
+        };
+
+        var dlg = DialogService.Show<TariffHeader_EditDialog>(
+            Localizer["TariffHeader"],
+            new DialogParameters
+            {
+                ["Model"] = model,
+                ["IsEdit"] = false,
+                ["DialogKey"] = _dialogKey
+            },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not TariffHeader_EditDialog.TariffHeaderDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task OpenEditDialog()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["TariffHeader_NoAccessEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _dialogKey++;
+        var dlg = DialogService.Show<TariffHeader_EditDialog>(
+            Localizer["TariffHeader"],
+            new DialogParameters
+            {
+                ["Model"] = CloneRow(_selected),
+                ["IsEdit"] = true,
+                ["DialogKey"] = _dialogKey
+            },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not TariffHeader_EditDialog.TariffHeaderDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(TariffHeader_EditDialog.TariffHeaderDialogResult data)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var e = data.Entity;
+            var tiers = data.Tiers ?? new List<M_TariffTier>();
+
+            if (!data.IsEdit)
+            {
+                e.Id = Guid.NewGuid();
+                e.CreatedAt = DateTime.UtcNow;
+                e.CreatedBy = usr;
+                e.UpdatedAt = null;
+                e.UpdatedBy = null;
+                db.TariffHeader.Add(e);
+            }
+            else
+            {
+                var entity = await db.TariffHeader.FirstOrDefaultAsync(x => x.Id == e.Id);
+                if (entity is null)
+                {
+                    CallSnackBar(Localizer["TariffHeader_RecordNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.TariffCode = e.TariffCode;
+                entity.TariffName = e.TariffName;
+                entity.ChargeTypeId = e.ChargeTypeId;
+                entity.CustomerId = e.CustomerId;
+                entity.ShippingLineId = e.ShippingLineId;
+                entity.DepotId = e.DepotId;
+                entity.PortId = e.PortId;
+                entity.ContainerTypeId = e.ContainerTypeId;
+                entity.CargoTypeId = e.CargoTypeId;
+                entity.Direction = e.Direction;
+                entity.CurrencyCode = e.CurrencyCode;
+                entity.EffectiveFrom = e.EffectiveFrom;
+                entity.EffectiveTo = e.EffectiveTo;
+                entity.Status = e.Status;
+                entity.Notes = e.Notes;
+                entity.UpdatedAt = DateTime.UtcNow;
+                entity.UpdatedBy = usr;
+            }
+
+            var existedTiers = await db.TariffTier.Where(x => x.TariffHeaderId == e.Id).ToListAsync();
+            if (existedTiers.Count > 0)
+                db.TariffTier.RemoveRange(existedTiers);
+
+            var newTiers = tiers.Select(x => new M_TariffTier
+            {
+                Id = x.Id == Guid.Empty ? Guid.NewGuid() : x.Id,
+                TariffHeaderId = e.Id,
+                FromDay = x.FromDay,
+                ToDay = x.ToDay,
+                Rate = x.Rate,
+                RateBasis = x.RateBasis,
+                Unit = x.Unit,
+                MinCharge = x.MinCharge,
+                SequenceNo = x.SequenceNo,
+                Notes = x.Notes
+            }).ToList();
+
+            if (newTiers.Count > 0)
+                db.TariffTier.AddRange(newTiers);
+
+            await db.SaveChangesAsync();
+            _selected = null;
+            await LoadListAsync();
+            CallSnackBar(Localizer["TariffHeader_Saved"], MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["TariffHeader_CannotSave", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["TariffHeader_NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_selected is null)
+            return;
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["TariffHeader_Warning"],
+            Localizer["TariffHeader_DeleteConfirmBody"],
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TariffHeader.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnackBar(Localizer["TariffHeader_RecordNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var tiers = await db.TariffTier.Where(x => x.TariffHeaderId == entity.Id).ToListAsync();
+            db.TariffTier.RemoveRange(tiers);
+            db.TariffHeader.Remove(entity);
+            await db.SaveChangesAsync();
+
+            _selected = null;
+            CallSnackBar(Localizer["TariffHeader_Deleted"], MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["TariffHeader_CannotDelete", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
+
+<style>
+    .tariffheader-selected-row {
+        background-color: #2196f3 !important;
+    }
+
+    .auto-fit-grid .mud-table-container {
+        overflow-x: auto;
+    }
+
+    .auto-fit-grid .mud-table-root .mud-table {
+        width: max-content !important;
+        min-width: 100%;
+    }
+
+    .auto-fit-grid .mud-table-cell {
+        white-space: nowrap;
+    }
+</style>

@@ -1,0 +1,304 @@
+@page "/accounting-period"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["AccountingPeriod.Title"]</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudText Typo="Typo.h6" Class="fw-700">5.8.8 @Localizer["AccountingPeriod.Title"]</MudText>
+    <MudPaper Class="pa-3">
+        <MudStack Row="true" Spacing="1">
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddDialogAsync" Disabled="_busy">@Localizer["new"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialogAsync" Disabled="_busy || _selected is null">@Localizer["edit"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">@Localizer["delete"]</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-3">
+        <MudTextField @bind-Value="_search" Label="@Localizer["AccountingPeriod.Search"]" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" />
+        <MudDataGrid T="M_AccountingPeriod"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClass"
+                     Height="calc(100vh - 300px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.PeriodCode" Title="@Localizer["AccountingPeriod.PeriodCode"]" />
+                <PropertyColumn Property="x => x.FiscalYear" Title="@Localizer["AccountingPeriod.FiscalYear"]" />
+                <PropertyColumn Property="x => x.PeriodMonth" Title="@Localizer["AccountingPeriod.PeriodMonth"]" />
+                <PropertyColumn Property="x => x.StartDate" Title="@Localizer["AccountingPeriod.StartDate"]" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.EndDate" Title="@Localizer["AccountingPeriod.EndDate"]" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.Status" Title="@Localizer["AccountingPeriod.Status"]" />
+                <PropertyColumn Property="x => x.IsClosed" Title="@Localizer["AccountingPeriod.IsClosed"]" />
+                <PropertyColumn Property="x => x.UpdatedAt" Title="@Localizer["AccountingPeriod.UpdatedAt"]" Format="dd/MM/yyyy HH:mm" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_AccountingPeriod" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "accounting_period";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private string _search = string.Empty;
+    private List<M_AccountingPeriod> _items = new();
+    private M_AccountingPeriod? _selected;
+
+    private IEnumerable<M_AccountingPeriod> VisibleItems =>
+        string.IsNullOrWhiteSpace(_search)
+            ? _items
+            : _items.Where(x =>
+                x.PeriodCode.ToString().Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                x.FiscalYear.ToString().Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                x.PeriodMonth.ToString().Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                (x.Status?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountingPeriod.NoAccessView"], MudBlazor.Severity.Warning);
+            _items.Clear();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.AccountingPeriods.AsNoTracking()
+                .OrderByDescending(x => x.FiscalYear)
+                .ThenByDescending(x => x.PeriodMonth)
+                .ToListAsync();
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_AccountingPeriod> args)
+    {
+        _selected = new M_AccountingPeriod
+        {
+            PeriodId = args.Item.PeriodId,
+            FiscalYear = args.Item.FiscalYear,
+            PeriodMonth = args.Item.PeriodMonth,
+            PeriodCode = args.Item.PeriodCode,
+            StartDate = args.Item.StartDate,
+            EndDate = args.Item.EndDate,
+            Status = args.Item.Status,
+            IsClosed = args.Item.IsClosed,
+            CreatedAt = args.Item.CreatedAt,
+            UpdatedAt = args.Item.UpdatedAt
+        };
+    }
+
+    private string RowClass(M_AccountingPeriod row, int _) => _selected?.PeriodId == row.PeriodId ? "selected-row-blue" : string.Empty;
+
+    private async Task OpenAddDialogAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountingPeriod.NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var now = DateTime.Now;
+        var dialog = DialogService.Show<AccountingPeriod_AddEditDialog>(
+            Localizer["AccountingPeriod.AddTitle"],
+            new DialogParameters
+            {
+                ["Model"] = new M_AccountingPeriod
+                {
+                    FiscalYear = now.Year,
+                    PeriodMonth = now.Month,
+                    StartDate = new DateTime(now.Year, now.Month, 1),
+                    EndDate = new DateTime(now.Year, now.Month, DateTime.DaysInMonth(now.Year, now.Month)),
+                    Status = "OPEN",
+                    IsClosed = false
+                },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_AccountingPeriod data)
+            return;
+
+        await SaveAsync(data, false);
+    }
+
+    private async Task OpenEditDialogAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountingPeriod.NoAccessEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<AccountingPeriod_AddEditDialog>(
+            Localizer["AccountingPeriod.EditTitle"],
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_AccountingPeriod data)
+            return;
+
+        await SaveAsync(data, true);
+    }
+
+    private async Task SaveAsync(M_AccountingPeriod data, bool isEdit)
+    {
+        if (data.StartDate.Date > data.EndDate.Date)
+        {
+            CallSnack(Localizer["AccountingPeriod.StartDateGreaterThanEndDate"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var duplicatedPeriod = await db.AccountingPeriods.AsNoTracking()
+                .AnyAsync(x => x.FiscalYear == data.FiscalYear &&
+                               x.PeriodMonth == data.PeriodMonth &&
+                               x.PeriodId != data.PeriodId);
+            if (duplicatedPeriod)
+            {
+                CallSnack(Localizer["AccountingPeriod.FiscalYearMonthExists"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (!isEdit)
+            {
+                data.PeriodId = Guid.NewGuid();
+                data.CreatedAt = DateTime.UtcNow;
+                data.UpdatedAt = DateTime.UtcNow;
+                db.AccountingPeriods.Add(data);
+            }
+            else
+            {
+                var entity = await db.AccountingPeriods.FirstOrDefaultAsync(x => x.PeriodId == data.PeriodId);
+                if (entity is null)
+                {
+                    CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.FiscalYear = data.FiscalYear;
+                entity.PeriodMonth = data.PeriodMonth;
+                entity.StartDate = data.StartDate;
+                entity.EndDate = data.EndDate;
+                entity.Status = data.Status;
+                entity.IsClosed = data.IsClosed;
+                entity.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["Common.SavedSuccessfully"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountingPeriod.NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(Localizer["warning"], Localizer["askDelete"], yesText: Localizer["delete"], cancelText: Localizer["cancel"]);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.AccountingPeriods.FirstOrDefaultAsync(x => x.PeriodId == _selected.PeriodId);
+            if (entity is null)
+            {
+                CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.AccountingPeriods.Remove(entity);
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["Common.DeletedSuccessfully"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
+
+<style>
+    .selected-row-blue { background-color: #2196f3 !important; }
+</style>

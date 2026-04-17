@@ -40,6 +40,7 @@
         <div style="overflow-x: auto;">
             <MudDataGrid T="M_ShipmentChargeContext"
                          Items="VisibleRows"
+                         Class="auto-fit-grid"
                          Dense="true"
                          Striped="true"
                          Bordered="true"
@@ -55,6 +56,9 @@
                     </TemplateColumn>
                     <TemplateColumn Title="@Localizer["Scc_Col_Container"]">
                         <CellTemplate>@LabelContainer(context.Item.ContainerId)</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_TariffCode"]">
+                        <CellTemplate>@LabelTariffCode(context.Item.tariffcode_id)</CellTemplate>
                     </TemplateColumn>
                     <TemplateColumn Title="@Localizer["Scc_Col_ChargeType"]">
                         <CellTemplate>@LabelChargeType(context.Item.ChargeTypeId)</CellTemplate>
@@ -105,6 +109,7 @@
     private Dictionary<Guid, string> _customerById = new();
     private Dictionary<string, string> _depotLabelByKey = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> _terminalLabelByKey = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<Guid, string> _tariffCodeByHeaderId = new();
 
     private IEnumerable<M_ShipmentChargeContext> VisibleRows
     {
@@ -116,6 +121,7 @@
             return _items.Where(x =>
                 ContainsIc(LabelHbl(x.ShipmentId), t) ||
                 ContainsIc(LabelContainer(x.ContainerId), t) ||
+                ContainsIc(LabelTariffCode(x.tariffcode_id), t) ||
                 ContainsIc(LabelChargeType(x.ChargeTypeId), t) ||
                 ContainsIc(LabelCustomer(x.CustomerId), t) ||
                 ContainsIc(LabelCustomer(x.ShippingLineId), t) ||
@@ -189,6 +195,7 @@
         _customerById.Clear();
         _depotLabelByKey.Clear();
         _terminalLabelByKey.Clear();
+        _tariffCodeByHeaderId.Clear();
     }
 
     private async Task BuildLookupsAsync()
@@ -220,6 +227,7 @@
                 _chargeTypeById[id] = ChargeTypeLabel(ct);
         }
 
+        // Avoid Contains(list) on SqlServer: EF can emit a WITH/OPENJSON batch that triggers error 156 on some servers.
         foreach (var id in _items.SelectMany(x => new[] { x.CustomerId, x.ShippingLineId }).Where(x => x != Guid.Empty).Distinct())
         {
             var c = await db.Customer.AsNoTracking().FirstOrDefaultAsync(x => x.Customer_ID == id);
@@ -244,14 +252,29 @@
             if (t != null)
                 _terminalLabelByKey[key!] = TerminalLabel(t);
         }
+
+        foreach (var id in _items
+                     .Select(x => x.tariffcode_id)
+                     .Where(x => x.HasValue && x.Value != Guid.Empty)
+                     .Select(x => x!.Value)
+                     .Distinct())
+        {
+            var th = await db.TariffHeader.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+            if (th is null)
+                continue;
+            var code = th.TariffCode?.Trim();
+            _tariffCodeByHeaderId[id] = !string.IsNullOrEmpty(code) ? code : id.ToString();
+        }
     }
 
     private static string HblLabel(M_HBL h)
     {
-        if (!string.IsNullOrWhiteSpace(h.hbl))
-            return h.hbl.Trim();
-        if (!string.IsNullOrWhiteSpace(h.bkno))
-            return h.bkno.Trim();
+        var no = h.hbl?.Trim();
+        if (!string.IsNullOrEmpty(no))
+            return no;
+        var bk = h.bkno?.Trim();
+        if (!string.IsNullOrEmpty(bk))
+            return bk;
         return h.hblID.ToString();
     }
 
@@ -273,18 +296,22 @@
 
     private static string CustomerLabel(M_Customer c)
     {
-        var code = !string.IsNullOrWhiteSpace(c.Customer_Code)
-            ? c.Customer_Code!.Trim()
-            : (!string.IsNullOrWhiteSpace(c.MainCode) ? c.MainCode!.Trim() : "");
-        var en = !string.IsNullOrWhiteSpace(c.EnglishName) ? c.EnglishName!.Trim() : "";
-        if (!string.IsNullOrEmpty(code) && !string.IsNullOrEmpty(en))
-            return $"{code}_{en}";
-        if (!string.IsNullOrEmpty(en))
-            return en;
+        static string? TrimOrNull(string? s) =>
+            string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+        var name = TrimOrNull(c.EnglishName)
+                   ?? TrimOrNull(c.shortname)
+                   ?? TrimOrNull(c.BIZName)
+                   ?? TrimOrNull(c.COMPANY);
+        var code = TrimOrNull(c.Customer_Code)
+                   ?? TrimOrNull(c.MainCode)
+                   ?? TrimOrNull(c.MaDT);
+        if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(code))
+            return $"{code} – {name}";
+        if (!string.IsNullOrEmpty(name))
+            return name;
         if (!string.IsNullOrEmpty(code))
             return code;
-        if (!string.IsNullOrWhiteSpace(c.COMPANY))
-            return c.COMPANY!.Trim();
         return c.Customer_ID.ToString();
     }
 
@@ -310,6 +337,13 @@
     private string LabelCustomer(Guid id) => _customerById.GetValueOrDefault(id, id.ToString());
     private string LabelDepot(string? key) => string.IsNullOrWhiteSpace(key) ? "" : _depotLabelByKey.GetValueOrDefault(key, key);
     private string LabelTerminal(string? key) => string.IsNullOrWhiteSpace(key) ? "" : _terminalLabelByKey.GetValueOrDefault(key, key);
+
+    private string LabelTariffCode(Guid? id)
+    {
+        if (id is null || id == Guid.Empty)
+            return string.Empty;
+        return _tariffCodeByHeaderId.GetValueOrDefault(id.Value, id.Value.ToString());
+    }
 
     private void OnRowClick(DataGridRowClickEventArgs<M_ShipmentChargeContext> args)
     {
@@ -337,9 +371,11 @@
         FreeDays = row.FreeDays,
         BillableDays = row.BillableDays,
         CurrencyCode = row.CurrencyCode,
+        Amount = row.Amount,
         Remarks = row.Remarks,
         CreatedAt = row.CreatedAt,
-        UpdatedAt = row.UpdatedAt
+        UpdatedAt = row.UpdatedAt,
+        tariffcode_id = row.tariffcode_id
     };
 
     private string RowClassFunc(M_ShipmentChargeContext row, int _)
@@ -458,7 +494,9 @@
                 entity.FreeDays = e.FreeDays;
                 entity.BillableDays = e.BillableDays;
                 entity.CurrencyCode = e.CurrencyCode;
+                entity.Amount = e.Amount;
                 entity.Remarks = e.Remarks;
+                entity.tariffcode_id = e.tariffcode_id;
                 entity.UpdatedAt = DateTime.UtcNow;
             }
 
@@ -529,5 +567,18 @@
 <style>
     .scc-selected-row {
         background-color: #2196f3 !important;
+    }
+
+    .auto-fit-grid .mud-table-container {
+        overflow-x: auto;
+    }
+
+    .auto-fit-grid .mud-table-root .mud-table {
+        width: max-content !important;
+        min-width: 100%;
+    }
+
+    .auto-fit-grid .mud-table-cell {
+        white-space: nowrap;
     }
 </style>

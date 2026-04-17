@@ -46,6 +46,42 @@
                 <PropertyColumn Property="x => x.Description" Title="@Localizer["TransactionTypes_Description"]" />
                 <PropertyColumn Property="x => x.IsActive" Title="@Localizer["TransactionTypes_IsActive"]" />
             </Columns>
+            <ChildRowContent>
+                @if (_expandedRowIds.Contains(context.Item.Id))
+                {
+                    var details = GetDetailsByTransactionId(context.Item.Id);
+                    <MudPaper Class="pa-3 ma-2" Elevation="0" Outlined="true">
+                        <MudText Typo="Typo.subtitle2" Class="mb-2">
+                            Details: @context.Item.Name (@context.Item.Code)
+                        </MudText>
+                        @if (details.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                                No details found.
+                            </MudText>
+                        }
+                        else
+                        {
+                            <MudTable Items="details" Dense="true" Hover="true" Striped="true" Bordered="true">
+                                <HeaderContent>
+                                    <MudTh>Line Type</MudTh>
+                                    <MudTh>Account Code</MudTh>
+                                    <MudTh>Account Name</MudTh>
+                                    <MudTh>Sort Order</MudTh>
+                                    <MudTh>Is Active</MudTh>
+                                </HeaderContent>
+                                <RowTemplate Context="detail">
+                                    <MudTd DataLabel="Line Type">@detail.LineType</MudTd>
+                                    <MudTd DataLabel="Account Code">@GetDanhMucCode(detail.DanhMucTaiKhoanID)</MudTd>
+                                    <MudTd DataLabel="Account Name">@GetDanhMucName(detail.DanhMucTaiKhoanID)</MudTd>
+                                    <MudTd DataLabel="Sort Order">@detail.SortOrder</MudTd>
+                                    <MudTd DataLabel="Is Active">@detail.IsActive</MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                        }
+                    </MudPaper>
+                }
+            </ChildRowContent>
             <PagerContent>
                 <MudDataGridPager T="M_TransactionTypes" PageSizeOptions="new int[] { 10, 25, 50 }" />
             </PagerContent>
@@ -59,6 +95,9 @@
     private string _usr = string.Empty;
     private string _search = string.Empty;
     private List<M_TransactionTypes> _items = new();
+    private List<M_TransactionTypeMappings> _mappingItems = new();
+    private Dictionary<Guid, DanhMucTaiKhoan> _danhMucById = new();
+    private readonly HashSet<Guid> _expandedRowIds = new();
     private M_TransactionTypes? _selected;
     private M_TransactionTypes _edit = new() { IsActive = true };
 
@@ -92,7 +131,14 @@
             _busy = true;
             await using var db = await DbFactory.CreateDbContextAsync();
             _items = await db.TransactionTypes.AsNoTracking().OrderBy(x => x.Code).ToListAsync();
+            _mappingItems = await db.TransactionTypeMappings.AsNoTracking()
+                .OrderBy(x => x.TransactionID)
+                .ThenBy(x => x.SortOrder)
+                .ToListAsync();
+            var danhMucs = await db.DanhMucTaiKhoan.AsNoTracking().ToListAsync();
+            _danhMucById = danhMucs.ToDictionary(x => x.Id, x => x);
             _selected = null;
+            _expandedRowIds.Clear();
             _edit = new M_TransactionTypes { IsActive = true };
         }
         catch (Exception ex)
@@ -108,6 +154,11 @@
     private void OnRowClick(DataGridRowClickEventArgs<M_TransactionTypes> args)
     {
         _selected = args.Item;
+        if (_expandedRowIds.Contains(args.Item.Id))
+            _expandedRowIds.Remove(args.Item.Id);
+        else
+            _expandedRowIds.Add(args.Item.Id);
+
         _edit = new M_TransactionTypes
         {
             Id = args.Item.Id,
@@ -119,6 +170,16 @@
     }
 
     private string RowClass(M_TransactionTypes row, int _) => _selected?.Id == row.Id ? "selected-row-blue" : string.Empty;
+    private List<M_TransactionTypeMappings> GetSelectedDetails() =>
+        _selected is null
+            ? new List<M_TransactionTypeMappings>()
+            : _mappingItems.Where(x => x.TransactionID == _selected.Id).OrderBy(x => x.SortOrder).ToList();
+    private List<M_TransactionTypeMappings> GetDetailsByTransactionId(Guid transactionId) =>
+        _mappingItems.Where(x => x.TransactionID == transactionId).OrderBy(x => x.SortOrder).ToList();
+    private string GetDanhMucCode(Guid id) =>
+        _danhMucById.TryGetValue(id, out var dm) ? (dm.Taikhoan ?? string.Empty) : string.Empty;
+    private string GetDanhMucName(Guid id) =>
+        _danhMucById.TryGetValue(id, out var dm) ? (!string.IsNullOrWhiteSpace(dm.Accountname) ? dm.Accountname! : (dm.Tentaikhoan ?? string.Empty)) : string.Empty;
 
     private async Task SaveAsync()
     {
@@ -306,6 +367,14 @@
 }
 
 <style>
-    .selected-row-blue { background-color: #2196f3 !important; }
+    .selected-row-blue {
+        background-color: rgba(33, 150, 243, 0.18) !important;
+    }
+
+    /* Ensure the background applies to all cells */
+    .selected-row-blue > td,
+    .selected-row-blue > th {
+        background-color: rgba(33, 150, 243, 0.18) !important;
+    }
 </style>
 
