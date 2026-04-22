@@ -2,16 +2,21 @@ using System.ComponentModel.DataAnnotations;
 
 namespace NVOAMASIS.Models;
 
-public class M_YardMovement_AMS_26040816 : IExcelImportEntity
+public class M_8_3_VSS_IN_OUT_YARD_Exp : IExcelImportEntity
 {
     [Key]
     public Guid Id { get; set; }
     public string? METHOD { get; set; }
+    public string? OPERATION_METHOD { get; set; }
     public DateTime? EXEC_TS { get; set; }
     public string? LINE { get; set; }
+    public string? AGENT { get; set; }
+    public string? KHACHHANG { get; set; }
     public string? ITEM_KEY { get; set; }
     public string? SOCONT { get; set; }
     public string? KICHCO { get; set; }
+    public string? PORT_GRADE { get; set; }
+    public string? LINE_GRADE { get; set; }
     public string? TRANGTHAI { get; set; }
     public decimal? TRONGLUONG { get; set; }
     public decimal? TRONGLUONG_VGM { get; set; }
@@ -33,5 +38,8 @@ public class M_YardMovement_AMS_26040816 : IExcelImportEntity
     public string? ENTRY_TRUCK_ID { get; set; }
     public string? EXIT_TRUCK_ID { get; set; }
     public string? SOSEAL { get; set; }
+    public int? STORAGEDAY { get; set; }
+    public DateTime DateImport { get; set; }
+    public string? UserImport { get; set; }
     public DateTime CreatedAt { get; set; }
 }

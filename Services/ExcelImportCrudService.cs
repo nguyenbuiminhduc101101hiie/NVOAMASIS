@@ -1,10 +1,11 @@
-using System.Data;
-using System.Globalization;
-using System.Text;
 using ExcelDataReader;
 using Microsoft.EntityFrameworkCore;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
+using System.Data;
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace NVOAMASIS.Services;
 
@@ -20,6 +21,17 @@ public record ExcelImportCrudResult(int Inserted, string? ErrorMessage);
 
 public class ExcelImportCrudService(AppDbContext context)
 {
+    private static readonly HashSet<string> AllowedVssSheetNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "IN-OUT_YARD__Imp",
+        "IN-OUT_YARD__Exp"
+    };
+    private static readonly HashSet<string> AllowedAmsSheetNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "IN-OUT_YARD_1",
+        "Current_In_Yard2"
+    };
+
     static ExcelImportCrudService()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
@@ -28,14 +40,29 @@ public class ExcelImportCrudService(AppDbContext context)
     public Task<List<M_StockGateOut_HDS_08042026>> GetHdsAsync(CancellationToken ct = default) =>
         context.StockGateOut_HDS_08042026.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
-    public Task<List<M_YardReport_AG_2026040307>> GetAgAsync(CancellationToken ct = default) =>
-        context.YardReport_AG_2026040307.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+    public Task<List<M_8_3_Arrived>> GetAgArrivedAsync(CancellationToken ct = default) =>
+        context.AG_8_3_Arrived.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
-    public Task<List<M_YardMovement_VSS_26040808>> GetVssAsync(CancellationToken ct = default) =>
-        context.YardMovement_VSS_26040808.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+    public Task<List<M_8_3_Exited>> GetAgExitedAsync(CancellationToken ct = default) =>
+        context.AG_8_3_Exited.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
-    public Task<List<M_YardMovement_AMS_26040816>> GetAmsAsync(CancellationToken ct = default) =>
-        context.YardMovement_AMS_26040816.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+    public Task<List<M_8_3_Unstuffed>> GetAgUnstuffedAsync(CancellationToken ct = default) =>
+        context.AG_8_3_Unstuffed.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+
+    public Task<List<M_8_3_Stuffed>> GetAgStuffedAsync(CancellationToken ct = default) =>
+        context.AG_8_3_Stuffed.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+
+    public Task<List<M_8_3_VSS_IN_OUT_YARD_Imp>> GetVssImpAsync(CancellationToken ct = default) =>
+        context.YardMovement_VSS_26040808_Imp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+
+    public Task<List<M_8_3_VSS_IN_OUT_YARD_Exp>> GetVssExpAsync(CancellationToken ct = default) =>
+        context.YardMovement_VSS_26040808_Exp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+
+    public Task<List<M_8_3_IN_OUT_YARD_1>> GetAmsImpAsync(CancellationToken ct = default) =>
+        context.YardMovement_AMS_26040816_Imp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+
+    public Task<List<M_8_3_Current_In_Yard2>> GetAmsExpAsync(CancellationToken ct = default) =>
+        context.YardMovement_AMS_26040816_Exp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
     public async Task<(bool Ok, string? Error)> UpsertAsync<T>(T entity, CancellationToken ct = default)
         where T : class, IExcelImportEntity
@@ -81,22 +108,32 @@ public class ExcelImportCrudService(AppDbContext context)
         }
     }
 
-    public async Task<ExcelImportCrudResult> ImportAsync(ExcelCrudTab tab, Stream stream, CancellationToken ct = default)
+    public async Task<ExcelImportCrudResult> ImportAsync(ExcelCrudTab tab, Stream stream, string? importUser = null, CancellationToken ct = default)
     {
         try
         {
-            using var reader = ExcelReaderFactory.CreateReader(stream);
-            var ds = reader.AsDataSet(new ExcelDataSetConfiguration
+            DataSet ds;
+            try
             {
-                ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = false }
-            });
+                using var reader = ExcelReaderFactory.CreateReader(stream);
+                ds = reader.AsDataSet(new ExcelDataSetConfiguration
+                {
+                    ConfigureDataTable = _ => new ExcelDataTableConfiguration { UseHeaderRow = false }
+                });
+            }
+            catch (Exception) when (tab == ExcelCrudTab.AMS)
+            {
+                if (stream.CanSeek)
+                    stream.Position = 0;
+                return await ImportAmsXmlSpreadsheetFallbackAsync(stream, importUser, ct);
+            }
 
             return tab switch
             {
-                ExcelCrudTab.HDS => await ImportHdsAsync(ds, ct),
-                ExcelCrudTab.AG => await ImportAgAsync(ds, ct),
-                ExcelCrudTab.VSS => await ImportVssAsync(ds, ct),
-                ExcelCrudTab.AMS => await ImportAmsAsync(ds, ct),
+                ExcelCrudTab.HDS => await ImportHdsAsync(ds, importUser, ct),
+                ExcelCrudTab.AG => await ImportAgAsync(ds, importUser, ct),
+                ExcelCrudTab.VSS => await ImportVssAsync(ds, importUser, ct),
+                ExcelCrudTab.AMS => await ImportAmsAsync(ds, importUser, ct),
                 _ => new ExcelImportCrudResult(0, "Tab không hợp lệ.")
             };
         }
@@ -106,7 +143,235 @@ public class ExcelImportCrudService(AppDbContext context)
         }
     }
 
-    private async Task<ExcelImportCrudResult> ImportHdsAsync(DataSet ds, CancellationToken ct)
+    private async Task<ExcelImportCrudResult> ImportAmsXmlSpreadsheetFallbackAsync(Stream stream, string? importUser, CancellationToken ct)
+    {
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+        var content = await reader.ReadToEndAsync();
+        ct.ThrowIfCancellationRequested();
+
+        var incomingImp = new List<M_8_3_IN_OUT_YARD_1>();
+        var incomingExp = new List<M_8_3_Current_In_Yard2>();
+        var importedAt = DateTime.UtcNow;
+
+        var worksheetRegex = new Regex("<Worksheet\\b[^>]*ss:Name=\"(?<name>[^\"]+)\"[^>]*>(?<body>.*?)</Worksheet\\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var rowRegex = new Regex("<Row\\b[^>]*>(?<row>.*?)</Row\\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var cellRegex = new Regex("<Cell(?<attrs>[^>]*)>(?<cell>.*?)</Cell\\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var dataRegex = new Regex("<Data\\b[^>]*>(?<data>.*?)</Data>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var indexRegex = new Regex("ss:Index\\s*=\\s*\"(?<idx>\\d+)\"", RegexOptions.IgnoreCase);
+
+        foreach (Match wsMatch in worksheetRegex.Matches(content))
+        {
+            ct.ThrowIfCancellationRequested();
+            var sheetName = NormalizeAmsSheetName(wsMatch.Groups["name"].Value);
+            if (!IsAllowedAmsSheetName(sheetName))
+                continue;
+
+            var body = wsMatch.Groups["body"].Value;
+            var rowMatches = rowRegex.Matches(body);
+            if (rowMatches.Count <= 1)
+                continue;
+
+            var headers = ParseXmlSpreadsheetRow(rowMatches[0].Groups["row"].Value, cellRegex, dataRegex, indexRegex)
+                .Select(x => NormalizeHeader(x))
+                .ToList();
+
+            for (var i = 1; i < rowMatches.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var values = ParseXmlSpreadsheetRow(rowMatches[i].Groups["row"].Value, cellRegex, dataRegex, indexRegex);
+
+                string? GetValue(params string[] aliases)
+                {
+                    foreach (var key in aliases)
+                    {
+                        var idx = headers.FindIndex(h => string.Equals(h, NormalizeHeader(key), StringComparison.OrdinalIgnoreCase));
+                        if (idx < 0 || idx >= values.Count)
+                            continue;
+                        var raw = values[idx]?.Trim();
+                        if (!string.IsNullOrWhiteSpace(raw))
+                            return raw;
+                    }
+                    return null;
+                }
+
+                // Imp/Exp sheets may have different column layouts.
+                var soCont = IsAmsImpSheet(sheetName)
+                    ? GetValue("SOCONT")
+                    : GetValue("SOCONT", "ITEM_NO", "CONTAINER", "CNTRNO");
+                if (string.IsNullOrWhiteSpace(soCont))
+                    continue;
+
+                if (IsAmsImpSheet(sheetName))
+                {
+                    incomingImp.Add(new M_8_3_IN_OUT_YARD_1
+                    {
+                        Id = Guid.NewGuid(),
+                        METHOD = GetValue("METHOD"),
+                        EXEC_TS = ParseDateValue(GetValue("EXEC_TS")),
+                        LINE = GetValue("LINE"),
+                        ITEM_KEY = GetValue("ITEM_KEY"),
+                        SOCONT = soCont,
+                        KICHCO = GetValue("KICHCO"),
+                        TRANGTHAI = GetValue("TRANGTHAI"),
+                        TRONGLUONG = ParseDecimalValue(GetValue("TRONGLUONG")),
+                        TRONGLUONG_VGM = ParseDecimalValue(GetValue("TRONGLUONG_VGM")),
+                        BL_NO = GetValue("BL_NO"),
+                        BOOK_NO = GetValue("BOOK_NO"),
+                        RELEASE_NO = GetValue("RELEASE_NO"),
+                        HUONG = GetValue("HUONG"),
+                        HUONG1 = GetValue("HUONG1"),
+                        CANGCT = GetValue("CANGCT"),
+                        CANGDEN = GetValue("CANGDEN"),
+                        GIAO = GetValue("GIAO"),
+                        NHAN = GetValue("NHAN"),
+                        DGS_CLASS = GetValue("DGS_CLASS"),
+                        GHICHU = GetValue("GHICHU"),
+                        ENTRY_VOY_NO = GetValue("ENTRY_VOY_NO"),
+                        ENTRY_VES_NAME = GetValue("ENTRY_VES_NAME"),
+                        EXIT_VOY_NO = GetValue("EXIT_VOY_NO"),
+                        EXIT_VES_NAME = GetValue("EXIT_VES_NAME"),
+                        ENTRY_TRUCK_ID = GetValue("ENTRY_TRUCK_ID"),
+                        EXIT_TRUCK_ID = GetValue("EXIT_TRUCK_ID"),
+                        SOSEAL = GetValue("SOSEAL"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
+                else
+                {
+                    incomingExp.Add(new M_8_3_Current_In_Yard2
+                    {
+                        Id = Guid.NewGuid(),
+                        METHOD = GetValue("METHOD", "CUR_METHOD", "ORG_METHOD", "FUTURE_METHOD"),
+                        EXEC_TS = ParseDateValue(GetValue("EXEC_TS", "ARR_TS", "DEP_TS")),
+                        LINE = GetValue("LINE"),
+                        ITEM_KEY = GetValue("ITEM_KEY"),
+                        SOCONT = soCont,
+                        KICHCO = GetValue("KICHCO", "ISO", "SZ"),
+                        TRANGTHAI = GetValue("TRANGTHAI", "FEL", "STATUS"),
+                        TRONGLUONG = ParseDecimalValue(GetValue("TRONGLUONG", "WEIGHT")),
+                        TRONGLUONG_VGM = ParseDecimalValue(GetValue("TRONGLUONG_VGM", "VGM_WEIGHT")),
+                        BL_NO = GetValue("BL_NO", "BILL_OF_LADING"),
+                        BOOK_NO = GetValue("BOOK_NO"),
+                        RELEASE_NO = GetValue("RELEASE_NO"),
+                        HUONG = GetValue("HUONG", "ARR_BY"),
+                        HUONG1 = GetValue("HUONG1", "DEP_BY"),
+                        CANGCT = GetValue("CANGCT", "DISCH_PORT"),
+                        CANGDEN = GetValue("CANGDEN", "FINAL_DISCH_PORT", "PLACE_OF_DELIVERY"),
+                        GIAO = GetValue("GIAO", "ARR_CAR"),
+                        NHAN = GetValue("NHAN", "DEP_CAR"),
+                        DGS_CLASS = GetValue("DGS_CLASS"),
+                        GHICHU = GetValue("GHICHU"),
+                        ENTRY_VOY_NO = GetValue("ENTRY_VOY_NO"),
+                        ENTRY_VES_NAME = GetValue("ENTRY_VES_NAME", "ARR_VES_NAME"),
+                        EXIT_VOY_NO = GetValue("EXIT_VOY_NO"),
+                        EXIT_VES_NAME = GetValue("EXIT_VES_NAME", "DEP_VES_NAME"),
+                        ENTRY_TRUCK_ID = GetValue("ENTRY_TRUCK_ID"),
+                        EXIT_TRUCK_ID = GetValue("EXIT_TRUCK_ID"),
+                        SOSEAL = GetValue("SOSEAL"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
+            }
+        }
+
+        if (incomingImp.Count == 0 && incomingExp.Count == 0)
+            return new ExcelImportCrudResult(0, "Không đọc được dữ liệu AMS từ file XML Spreadsheet.");
+
+        var existingImpSignatures = new HashSet<string>(
+            (await context.YardMovement_AMS_26040816_Imp.ToListAsync(ct)).Select(BuildAmsImpSignature),
+            StringComparer.OrdinalIgnoreCase);
+        var existingExpSignatures = new HashSet<string>(
+            (await context.YardMovement_AMS_26040816_Exp.ToListAsync(ct)).Select(BuildAmsExpSignature),
+            StringComparer.OrdinalIgnoreCase);
+        var inserted = 0;
+
+        foreach (var inc in incomingImp)
+        {
+            var signature = BuildAmsImpSignature(inc);
+            if (existingImpSignatures.Contains(signature))
+                continue;
+            await context.YardMovement_AMS_26040816_Imp.AddAsync(inc, ct);
+            existingImpSignatures.Add(signature);
+            inserted++;
+        }
+
+        foreach (var inc in incomingExp)
+        {
+            var signature = BuildAmsExpSignature(inc);
+            if (existingExpSignatures.Contains(signature))
+                continue;
+            await context.YardMovement_AMS_26040816_Exp.AddAsync(inc, ct);
+            existingExpSignatures.Add(signature);
+            inserted++;
+        }
+
+        await context.SaveChangesAsync(ct);
+        return new ExcelImportCrudResult(inserted, null);
+    }
+
+    private static List<string?> ParseXmlSpreadsheetRow(string rowXml, Regex cellRegex, Regex dataRegex, Regex indexRegex)
+    {
+        var values = new List<string?>();
+        var currentCol = 1;
+        foreach (Match cell in cellRegex.Matches(rowXml))
+        {
+            var attrs = cell.Groups["attrs"].Value;
+            var idxMatch = indexRegex.Match(attrs);
+            if (idxMatch.Success && int.TryParse(idxMatch.Groups["idx"].Value, out var indexedCol) && indexedCol > 0)
+            {
+                while (currentCol < indexedCol)
+                {
+                    values.Add(null);
+                    currentCol++;
+                }
+            }
+
+            var data = dataRegex.Match(cell.Groups["cell"].Value);
+            values.Add(RemoveXmlTags(data.Success ? data.Groups["data"].Value : string.Empty));
+            currentCol++;
+        }
+        return values;
+    }
+
+    private static string RemoveXmlTags(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            return string.Empty;
+        var noTags = Regex.Replace(input, "<.*?>", string.Empty);
+        return System.Net.WebUtility.HtmlDecode(noTags).Trim();
+    }
+
+    private static DateTime? ParseDateValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        if (double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var oa))
+        {
+            try { return DateTime.FromOADate(oa); } catch { }
+        }
+        if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
+            return dt;
+        if (DateTime.TryParse(value, CultureInfo.CurrentCulture, DateTimeStyles.None, out var dtCur))
+            return dtCur;
+        return null;
+    }
+
+    private static decimal? ParseDecimalValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var inv))
+            return inv;
+        if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.CurrentCulture, out var cur))
+            return cur;
+        return null;
+    }
+
+    private async Task<ExcelImportCrudResult> ImportHdsAsync(DataSet ds, string? importUser, CancellationToken ct)
     {
         var table = ds.Tables.Cast<DataTable>().FirstOrDefault();
         if (table == null || table.Rows.Count == 0)
@@ -170,6 +435,8 @@ public class ExcelImportCrudService(AppDbContext context)
                 TinhTrangVo = ReadString(row, map, "Tình trạng vỏ"),
                 ContQuaCan = ReadString(row, map, "Cont qua cân"),
                 SoLenh = ReadString(row, map, "Số lệnh"),
+                DateImport = DateTime.UtcNow,
+                UserImport = importUser,
                 CreatedAt = DateTime.UtcNow
             });
         }
@@ -195,6 +462,8 @@ public class ExcelImportCrudService(AppDbContext context)
             {
                 // insert new
                 inc.Id = Guid.NewGuid();
+                inc.DateImport = DateTime.UtcNow;
+                inc.UserImport = importUser;
                 inc.CreatedAt = DateTime.UtcNow;
                 await context.StockGateOut_HDS_08042026.AddAsync(inc, ct);
                 byKey[key] = inc;
@@ -214,11 +483,21 @@ public class ExcelImportCrudService(AppDbContext context)
         return new ExcelImportCrudResult(inserted + updated, null);
     }
 
-    private async Task<ExcelImportCrudResult> ImportAgAsync(DataSet ds, CancellationToken ct)
+    private async Task<ExcelImportCrudResult> ImportAgAsync(DataSet ds, string? importUser, CancellationToken ct)
     {
-        var incoming = new List<M_YardReport_AG_2026040307>();
-        foreach (DataTable table in ds.Tables)
+        var firstFourSheets = ds.Tables.Cast<DataTable>().Take(4).ToList();
+        if (firstFourSheets.Count == 0)
+            return new ExcelImportCrudResult(0, "File không có sheet dữ liệu.");
+
+        var incomingArrived = new List<M_8_3_Arrived>();
+        var incomingExited = new List<M_8_3_Exited>();
+        var incomingUnstuffed = new List<M_8_3_Unstuffed>();
+        var incomingStuffed = new List<M_8_3_Stuffed>();
+        var importedAt = DateTime.UtcNow;
+
+        foreach (var table in firstFourSheets)
         {
+            var normalizedSheet = NormalizeAgSheetName(table.TableName);
             var headerRowIndex = FindHeaderRow(table, new[] { "SQ", "CNTRNO." });
             if (headerRowIndex < 0)
                 continue;
@@ -234,103 +513,397 @@ public class ExcelImportCrudService(AppDbContext context)
                 if (string.IsNullOrWhiteSpace(container))
                     continue;
 
-                incoming.Add(new M_YardReport_AG_2026040307
+                if (string.Equals(normalizedSheet, "Arrived", StringComparison.OrdinalIgnoreCase))
                 {
-                    Id = Guid.NewGuid(),
-                    SourceSheet = table.TableName,
-                    SQ = ReadInt(row, map, "SQ"),
-                    CNTRNO = container,
-                    SZ = ReadString(row, map, "SZ", "LEN"),
-                    TP = ReadString(row, map, "TP", "Type"),
-                    ST = ReadString(row, map, "ST"),
-                    SealNo = ReadString(row, map, "SealNo"),
-                    WD = ReadDecimal(row, map, "WD"),
-                    WN = ReadDecimal(row, map, "WN"),
-                    CC = ReadString(row, map, "CC", "CO"),
-                    Location = ReadString(row, map, "Location"),
-                    DoBkNo = ReadString(row, map, "Do/Bk No", "BKDO", "POL/Bno."),
-                    POD_FDest = ReadString(row, map, "POD-FDest", "POD.FDest", "POD/FD/BNo.", "POD"),
-                    Days = ReadInt(row, map, "Days", "DayStorage"),
-                    Customer = ReadString(row, map, "CUSTOMER", "Customers", "ShipCons"),
-                    Payment = ReadString(row, map, "Payment"),
-                    TruckNo = ReadString(row, map, "Truck No"),
-                    VslVoy = ReadString(row, map, "Vsl/Voy", "Vsl/Voy  -  POD.FDest", "LoadVV"),
-                    DT = ReadDate(row, map, "D/T", "DisArrDate"),
-                    PlugIn = ReadString(row, map, "Plug In"),
-                    Cargo = ReadString(row, map, "Cargo"),
-                    Remarks = ReadString(row, map, "Remarks", "Remark"),
-                    LEN = ReadString(row, map, "LEN"),
-                    TY = ReadString(row, map, "TY"),
-                    Cond = ReadString(row, map, "Cond"),
-                    ShipCons = ReadString(row, map, "ShipCons"),
-                    BKDO = ReadString(row, map, "BKDO"),
-                    DISC_VV = ReadString(row, map, "DISC V/V", "DischVV"),
-                    LOAD_VV = ReadString(row, map, "LOADV/V", "LoadVV"),
-                    UNSDT = ReadDate(row, map, "UNSDT"),
-                    CCDT = ReadDate(row, map, "CCDT"),
-                    STUDT = ReadDate(row, map, "STUDT"),
-                    JOB = ReadString(row, map, "JOB"),
-                    SrvCode = ReadString(row, map, "SrvCode"),
-                    MODE = ReadString(row, map, "MODE"),
-                    STV = ReadString(row, map, "STV"),
-                    Type = ReadString(row, map, "Type"),
-                    Condition = ReadString(row, map, "Condition"),
-                    POL = ReadString(row, map, "POL"),
-                    LoadVV = ReadString(row, map, "LoadVV"),
-                    POD = ReadString(row, map, "POD"),
-                    DischVV = ReadString(row, map, "DischVV"),
-                    DayStatus = ReadString(row, map, "DayStatus"),
-                    DayStorage = ReadInt(row, map, "DayStorage"),
-                    DisArrDate = ReadDate(row, map, "DisArrDate"),
-                    CreatedAt = DateTime.UtcNow
-                });
+                    incomingArrived.Add(new M_8_3_Arrived
+                    {
+                        Id = Guid.NewGuid(),
+                        SQ = ReadInt(row, map, "SQ"),
+                        CNTRNO = container,
+                        SZ = ReadString(row, map, "SZ"),
+                        TP = ReadString(row, map, "TP"),
+                        ST = ReadString(row, map, "ST"),
+                        SealNo = ReadString(row, map, "SealNo"),
+                        WD = ReadDecimal(row, map, "WD"),
+                        WN = ReadDecimal(row, map, "WN"),
+                        CC = ReadString(row, map, "CC"),
+                        Location = ReadString(row, map, "Location"),
+                        DoBkNo = ReadString(row, map, "Do/Bk No"),
+                        POD_FDest = ReadString(row, map, "POD-FDest"),
+                        Customer = ReadString(row, map, "CUSTOMER"),
+                        Payment = ReadString(row, map, "Payment"),
+                        TruckNo = ReadString(row, map, "Truck No"),
+                        VslVoy = ReadString(row, map, "Vsl/Voy"),
+                        DT = ReadDate(row, map, "D/T"),
+                        Cargo = ReadString(row, map, "Cargo"),
+                        Remarks = ReadString(row, map, "Remarks"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
+                else if (string.Equals(normalizedSheet, "Exited", StringComparison.OrdinalIgnoreCase))
+                {
+                    incomingExited.Add(new M_8_3_Exited
+                    {
+                        Id = Guid.NewGuid(),
+                        SQ = ReadInt(row, map, "SQ"),
+                        CNTRNO = container,
+                        SZ = ReadString(row, map, "SZ"),
+                        TP = ReadString(row, map, "TP"),
+                        ST = ReadString(row, map, "ST"),
+                        SealNo = ReadString(row, map, "SealNo"),
+                        WD = ReadDecimal(row, map, "WD"),
+                        WN = ReadDecimal(row, map, "WN"),
+                        CC = ReadString(row, map, "CC"),
+                        Location = ReadString(row, map, "Location"),
+                        DoBkNo = ReadString(row, map, "Do/Bk No"),
+                        Days = ReadInt(row, map, "Days"),
+                        Customer = ReadString(row, map, "CUSTOMER"),
+                        Payment = ReadString(row, map, "Payment"),
+                        TruckNo = ReadString(row, map, "Truck No"),
+                        VslVoy = ReadString(row, map, "Vsl/Voy  -  POD.FDest"),
+                        DT = ReadDate(row, map, "D/T"),
+                        PlugIn = ReadString(row, map, "Plug In"),
+                        Remarks = ReadString(row, map, "Remark"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
+                else if (string.Equals(normalizedSheet, "Unstuffed", StringComparison.OrdinalIgnoreCase))
+                {
+                    incomingUnstuffed.Add(new M_8_3_Unstuffed
+                    {
+                        Id = Guid.NewGuid(),
+                        SQ = ReadInt(row, map, "SQ"),
+                        CNTRNO = container,
+                        SealNo = ReadString(row, map, "SealNo"),
+                        CO = ReadString(row, map, "CO"),
+                        LEN = ReadString(row, map, "LEN"),
+                        TY = ReadString(row, map, "TY"),
+                        Cond = ReadString(row, map, "Cond"),
+                        ShipCons = ReadString(row, map, "ShipCons"),
+                        BKDO = ReadString(row, map, "BKDO"),
+                        DISC_VV = ReadString(row, map, "DISC V/V"),
+                        UNSDT = ReadDate(row, map, "UNSDT"),
+                        CCDT = ReadDate(row, map, "CCDT"),
+                        JOB = ReadString(row, map, "JOB"),
+                        Payment = ReadString(row, map, "Payment"),
+                        SrvCode = ReadString(row, map, "SrvCode"),
+                        MODE = ReadString(row, map, "MODE"),
+                        STV = ReadString(row, map, "STV"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
+                else if (string.Equals(normalizedSheet, "Stuffed", StringComparison.OrdinalIgnoreCase))
+                {
+                    incomingStuffed.Add(new M_8_3_Stuffed
+                    {
+                        Id = Guid.NewGuid(),
+                        SQ = ReadInt(row, map, "SQ"),
+                        CNTRNO = container,
+                        SealNo = ReadString(row, map, "SealNo"),
+                        CO = ReadString(row, map, "CO"),
+                        LEN = ReadString(row, map, "LEN"),
+                        TY = ReadString(row, map, "TY"),
+                        WD = ReadDecimal(row, map, "WD"),
+                        WN = ReadDecimal(row, map, "WN"),
+                        Cond = ReadString(row, map, "Cond"),
+                        ShipCons = ReadString(row, map, "ShipCons"),
+                        BKDO = ReadString(row, map, "BKDO"),
+                        LOAD_VV = ReadString(row, map, "LOADV/V"),
+                        POD_PDest = ReadString(row, map, "POD-PDest"),
+                        STUDT = ReadDate(row, map, "STUDT"),
+                        PlugIn = ReadString(row, map, "Plug In"),
+                        JOB = ReadString(row, map, "JOB"),
+                        Payment = ReadString(row, map, "Payment"),
+                        SrvCode = ReadString(row, map, "SrvCode"),
+                        MODE = ReadString(row, map, "MODE"),
+                        Cargo = ReadString(row, map, "Cargo"),
+                        WeightRemarks = ReadString(row, map, "Weight-Remarks"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
             }
         }
 
-        var existing = await context.YardReport_AG_2026040307.ToListAsync(ct);
-        var byKey = existing
-            .Where(x => !string.IsNullOrWhiteSpace(x.CNTRNO))
-            .GroupBy(x => MakeAgKey(x.SourceSheet, x.CNTRNO, x.DoBkNo))
-            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedAt).First(), StringComparer.OrdinalIgnoreCase);
-
         var inserted = 0;
-        var updated = 0;
 
-        foreach (var inc in incoming)
+        var arrivedSignatures = new HashSet<string>((await context.AG_8_3_Arrived.ToListAsync(ct)).Select(BuildAgArrivedSignature), StringComparer.OrdinalIgnoreCase);
+        foreach (var item in incomingArrived)
         {
-            ct.ThrowIfCancellationRequested();
-            var key = MakeAgKey(inc.SourceSheet, inc.CNTRNO, inc.DoBkNo);
-            if (string.IsNullOrWhiteSpace(key))
+            var signature = BuildAgArrivedSignature(item);
+            if (arrivedSignatures.Contains(signature))
                 continue;
+            await context.AG_8_3_Arrived.AddAsync(item, ct);
+            arrivedSignatures.Add(signature);
+            inserted++;
+        }
 
-            if (!byKey.TryGetValue(key, out var cur))
-            {
-                inc.Id = Guid.NewGuid();
-                inc.CreatedAt = DateTime.UtcNow;
-                await context.YardReport_AG_2026040307.AddAsync(inc, ct);
-                byKey[key] = inc;
-                inserted++;
+        var exitedSignatures = new HashSet<string>((await context.AG_8_3_Exited.ToListAsync(ct)).Select(BuildAgExitedSignature), StringComparer.OrdinalIgnoreCase);
+        foreach (var item in incomingExited)
+        {
+            var signature = BuildAgExitedSignature(item);
+            if (exitedSignatures.Contains(signature))
                 continue;
-            }
+            await context.AG_8_3_Exited.AddAsync(item, ct);
+            exitedSignatures.Add(signature);
+            inserted++;
+        }
 
-            if (!AgEqualsIgnoringImportMeta(cur, inc))
-            {
-                CopyAgFields(cur, inc);
-                updated++;
-            }
+        var unstuffedSignatures = new HashSet<string>((await context.AG_8_3_Unstuffed.ToListAsync(ct)).Select(BuildAgUnstuffedSignature), StringComparer.OrdinalIgnoreCase);
+        foreach (var item in incomingUnstuffed)
+        {
+            var signature = BuildAgUnstuffedSignature(item);
+            if (unstuffedSignatures.Contains(signature))
+                continue;
+            await context.AG_8_3_Unstuffed.AddAsync(item, ct);
+            unstuffedSignatures.Add(signature);
+            inserted++;
+        }
+
+        var stuffedSignatures = new HashSet<string>((await context.AG_8_3_Stuffed.ToListAsync(ct)).Select(BuildAgStuffedSignature), StringComparer.OrdinalIgnoreCase);
+        foreach (var item in incomingStuffed)
+        {
+            var signature = BuildAgStuffedSignature(item);
+            if (stuffedSignatures.Contains(signature))
+                continue;
+            await context.AG_8_3_Stuffed.AddAsync(item, ct);
+            stuffedSignatures.Add(signature);
+            inserted++;
         }
 
         await context.SaveChangesAsync(ct);
-        return new ExcelImportCrudResult(inserted + updated, null);
+        return new ExcelImportCrudResult(inserted, null);
     }
 
-    private async Task<ExcelImportCrudResult> ImportVssAsync(DataSet ds, CancellationToken ct)
+    private async Task<ExcelImportCrudResult> ImportVssAsync(DataSet ds, string? importUser, CancellationToken ct)
     {
-        var incoming = new List<M_YardMovement_VSS_26040808>();
+        var incomingImp = new List<M_8_3_VSS_IN_OUT_YARD_Imp>();
+        var incomingExp = new List<M_8_3_VSS_IN_OUT_YARD_Exp>();
+        var matchedSheets = new List<string>();
+        var importedAt = DateTime.UtcNow;
         foreach (DataTable table in ds.Tables)
         {
-            if (!table.TableName.StartsWith("IN-OUT_YARD", StringComparison.OrdinalIgnoreCase))
+            if (!IsAllowedVssSheetName(table.TableName))
                 continue;
+            var normalizedSheet = NormalizeVssSheetName(table.TableName);
+            matchedSheets.Add(normalizedSheet);
+            if (table.Rows.Count <= 1)
+                continue;
+
+            // Header is expected at row 1; data starts from row 2.
+            var headers = table.Rows[0].ItemArray.Select(x => NormalizeHeader(x?.ToString())).ToList();
+            var map = BuildHeaderMap(headers);
+
+            for (var i = 1; i < table.Rows.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var row = table.Rows[i];
+                if (string.IsNullOrWhiteSpace(ReadString(row, map, "SOCONT")))
+                    continue;
+
+                if (IsAmsImpSheet(normalizedSheet))
+                {
+                    incomingImp.Add(new M_8_3_VSS_IN_OUT_YARD_Imp
+                    {
+                        Id = Guid.NewGuid(),
+                        METHOD = ReadString(row, map, "METHOD"),
+                        OPERATION_METHOD = ReadString(row, map, "OPERATION_METHOD"),
+                        EXEC_TS = ReadDate(row, map, "EXEC_TS"),
+                        LINE = ReadString(row, map, "LINE"),
+                        AGENT = ReadString(row, map, "AGENT"),
+                        KHACHHANG = ReadString(row, map, "KHACHHANG"),
+                        ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
+                        SOCONT = ReadString(row, map, "SOCONT"),
+                        KICHCO = ReadString(row, map, "KICHCO"),
+                        PORT_GRADE = ReadString(row, map, "PORT_GRADE"),
+                        LINE_GRADE = ReadString(row, map, "LINE_GRADE"),
+                        TRANGTHAI = ReadString(row, map, "TRANGTHAI"),
+                        TRONGLUONG = ReadDecimal(row, map, "TRONGLUONG"),
+                        TRONGLUONG_VGM = ReadDecimal(row, map, "TRONGLUONG_VGM"),
+                        BL_NO = ReadString(row, map, "BL_NO"),
+                        BOOK_NO = ReadString(row, map, "BOOK_NO"),
+                        RELEASE_NO = ReadString(row, map, "RELEASE_NO"),
+                        HUONG = ReadString(row, map, "HUONG"),
+                        HUONG1 = ReadString(row, map, "HUONG1"),
+                        CANGCT = ReadString(row, map, "CANGCT"),
+                        CANGDEN = ReadString(row, map, "CANGDEN"),
+                        GIAO = ReadString(row, map, "GIAO"),
+                        NHAN = ReadString(row, map, "NHAN"),
+                        DGS_CLASS = ReadString(row, map, "DGS_CLASS"),
+                        GHICHU = ReadString(row, map, "GHICHU"),
+                        ENTRY_VOY_NO = ReadString(row, map, "ENTRY_VOY_NO"),
+                        ENTRY_VES_NAME = ReadString(row, map, "ENTRY_VES_NAME"),
+                        EXIT_VOY_NO = ReadString(row, map, "EXIT_VOY_NO"),
+                        EXIT_VES_NAME = ReadString(row, map, "EXIT_VES_NAME"),
+                        ENTRY_TRUCK_ID = ReadString(row, map, "ENTRY_TRUCK_ID"),
+                        EXIT_TRUCK_ID = ReadString(row, map, "EXIT_TRUCK_ID"),
+                        SOSEAL = ReadString(row, map, "SOSEAL"),
+                        STORAGEDAY = ReadInt(row, map, "STORAGEDAY"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
+                else
+                {
+                    incomingExp.Add(new M_8_3_VSS_IN_OUT_YARD_Exp
+                    {
+                        Id = Guid.NewGuid(),
+                        METHOD = ReadString(row, map, "METHOD"),
+                        OPERATION_METHOD = ReadString(row, map, "OPERATION_METHOD"),
+                        EXEC_TS = ReadDate(row, map, "EXEC_TS"),
+                        LINE = ReadString(row, map, "LINE"),
+                        AGENT = ReadString(row, map, "AGENT"),
+                        KHACHHANG = ReadString(row, map, "KHACHHANG"),
+                        ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
+                        SOCONT = ReadString(row, map, "SOCONT"),
+                        KICHCO = ReadString(row, map, "KICHCO"),
+                        PORT_GRADE = ReadString(row, map, "PORT_GRADE"),
+                        LINE_GRADE = ReadString(row, map, "LINE_GRADE"),
+                        TRANGTHAI = ReadString(row, map, "TRANGTHAI"),
+                        TRONGLUONG = ReadDecimal(row, map, "TRONGLUONG"),
+                        TRONGLUONG_VGM = ReadDecimal(row, map, "TRONGLUONG_VGM"),
+                        BL_NO = ReadString(row, map, "BL_NO"),
+                        BOOK_NO = ReadString(row, map, "BOOK_NO"),
+                        RELEASE_NO = ReadString(row, map, "RELEASE_NO"),
+                        HUONG = ReadString(row, map, "HUONG"),
+                        HUONG1 = ReadString(row, map, "HUONG1"),
+                        CANGCT = ReadString(row, map, "CANGCT"),
+                        CANGDEN = ReadString(row, map, "CANGDEN"),
+                        GIAO = ReadString(row, map, "GIAO"),
+                        NHAN = ReadString(row, map, "NHAN"),
+                        DGS_CLASS = ReadString(row, map, "DGS_CLASS"),
+                        GHICHU = ReadString(row, map, "GHICHU"),
+                        ENTRY_VOY_NO = ReadString(row, map, "ENTRY_VOY_NO"),
+                        ENTRY_VES_NAME = ReadString(row, map, "ENTRY_VES_NAME"),
+                        EXIT_VOY_NO = ReadString(row, map, "EXIT_VOY_NO"),
+                        EXIT_VES_NAME = ReadString(row, map, "EXIT_VES_NAME"),
+                        ENTRY_TRUCK_ID = ReadString(row, map, "ENTRY_TRUCK_ID"),
+                        EXIT_TRUCK_ID = ReadString(row, map, "EXIT_TRUCK_ID"),
+                        SOSEAL = ReadString(row, map, "SOSEAL"),
+                        STORAGEDAY = ReadInt(row, map, "STORAGEDAY"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
+            }
+        }
+
+        if (matchedSheets.Count == 0)
+            return new ExcelImportCrudResult(0, "Không tìm thấy sheet VSS hợp lệ (chỉ nhận IN-OUT_YARD__Imp và IN-OUT_YARD__Exp).");
+
+        var existingImpSignatures = new HashSet<string>(
+            (await context.YardMovement_VSS_26040808_Imp.ToListAsync(ct)).Select(BuildVssImpSignature),
+            StringComparer.OrdinalIgnoreCase);
+        var existingExpSignatures = new HashSet<string>(
+            (await context.YardMovement_VSS_26040808_Exp.ToListAsync(ct)).Select(BuildVssExpSignature),
+            StringComparer.OrdinalIgnoreCase);
+        var inserted = 0;
+
+        foreach (var inc in incomingImp)
+        {
+            ct.ThrowIfCancellationRequested();
+            var signature = BuildVssImpSignature(inc);
+            if (existingImpSignatures.Contains(signature))
+                continue;
+
+            inc.Id = Guid.NewGuid();
+            inc.DateImport = importedAt;
+            inc.UserImport = importUser;
+            inc.CreatedAt = importedAt;
+            await context.YardMovement_VSS_26040808_Imp.AddAsync(inc, ct);
+            existingImpSignatures.Add(signature);
+            inserted++;
+        }
+
+        foreach (var inc in incomingExp)
+        {
+            ct.ThrowIfCancellationRequested();
+            var signature = BuildVssExpSignature(inc);
+            if (existingExpSignatures.Contains(signature))
+                continue;
+
+            inc.Id = Guid.NewGuid();
+            inc.DateImport = importedAt;
+            inc.UserImport = importUser;
+            inc.CreatedAt = importedAt;
+            await context.YardMovement_VSS_26040808_Exp.AddAsync(inc, ct);
+            existingExpSignatures.Add(signature);
+            inserted++;
+        }
+
+        await context.SaveChangesAsync(ct);
+        return new ExcelImportCrudResult(inserted, null);
+    }
+
+    private static bool IsAllowedVssSheetName(string? rawSheetName)
+    {
+        if (string.IsNullOrWhiteSpace(rawSheetName))
+            return false;
+
+        return AllowedVssSheetNames.Contains(NormalizeVssSheetName(rawSheetName));
+    }
+
+    private static string NormalizeVssSheetName(string? rawSheetName)
+    {
+        var normalized = (rawSheetName ?? string.Empty).Trim();
+        if (normalized.EndsWith("$", StringComparison.Ordinal))
+            normalized = normalized[..^1].Trim();
+        return normalized;
+    }
+
+    private static bool IsAllowedAmsSheetName(string? rawSheetName)
+    {
+        if (string.IsNullOrWhiteSpace(rawSheetName))
+            return false;
+        return AllowedAmsSheetNames.Contains(NormalizeAmsSheetName(rawSheetName));
+    }
+
+    private static string NormalizeAmsSheetName(string? rawSheetName)
+    {
+        var normalized = (rawSheetName ?? string.Empty).Trim();
+        if (normalized.EndsWith("$", StringComparison.Ordinal))
+            normalized = normalized[..^1].Trim();
+        return normalized;
+    }
+
+    private static bool IsAmsImpSheet(string normalizedSheetName)
+    {
+        return string.Equals(normalizedSheetName, "IN-OUT_YARD__Imp", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalizedSheetName, "IN-OUT_YARD_1", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeAgSheetName(string? rawSheetName)
+    {
+        var normalized = (rawSheetName ?? string.Empty).Trim();
+        if (normalized.EndsWith("$", StringComparison.Ordinal))
+            normalized = normalized[..^1].Trim();
+        return normalized;
+    }
+
+    private async Task<ExcelImportCrudResult> ImportAmsAsync(DataSet ds, string? importUser, CancellationToken ct)
+    {
+        var incomingImp = new List<M_8_3_IN_OUT_YARD_1>();
+        var incomingExp = new List<M_8_3_Current_In_Yard2>();
+        var matchedSheets = new List<string>();
+        var importedAt = DateTime.UtcNow;
+
+        foreach (DataTable table in ds.Tables)
+        {
+            if (!IsAllowedAmsSheetName(table.TableName))
+                continue;
+
+            var normalizedSheet = NormalizeAmsSheetName(table.TableName);
+            matchedSheets.Add(normalizedSheet);
+
             if (table.Rows.Count <= 1)
                 continue;
 
@@ -344,175 +917,214 @@ public class ExcelImportCrudService(AppDbContext context)
                 if (string.IsNullOrWhiteSpace(ReadString(row, map, "SOCONT")))
                     continue;
 
-                incoming.Add(new M_YardMovement_VSS_26040808
+                if (string.Equals(normalizedSheet, "IN-OUT_YARD__Imp", StringComparison.OrdinalIgnoreCase))
                 {
-                    Id = Guid.NewGuid(),
-                    SourceSheet = table.TableName,
-                    METHOD = ReadString(row, map, "METHOD"),
-                    OPERATION_METHOD = ReadString(row, map, "OPERATION_METHOD"),
-                    EXEC_TS = ReadDate(row, map, "EXEC_TS"),
-                    LINE = ReadString(row, map, "LINE"),
-                    AGENT = ReadString(row, map, "AGENT"),
-                    KHACHHANG = ReadString(row, map, "KHACHHANG"),
-                    ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
-                    SOCONT = ReadString(row, map, "SOCONT"),
-                    KICHCO = ReadString(row, map, "KICHCO"),
-                    PORT_GRADE = ReadString(row, map, "PORT_GRADE"),
-                    LINE_GRADE = ReadString(row, map, "LINE_GRADE"),
-                    TRANGTHAI = ReadString(row, map, "TRANGTHAI"),
-                    TRONGLUONG = ReadDecimal(row, map, "TRONGLUONG"),
-                    TRONGLUONG_VGM = ReadDecimal(row, map, "TRONGLUONG_VGM"),
-                    BL_NO = ReadString(row, map, "BL_NO"),
-                    BOOK_NO = ReadString(row, map, "BOOK_NO"),
-                    RELEASE_NO = ReadString(row, map, "RELEASE_NO"),
-                    HUONG = ReadString(row, map, "HUONG"),
-                    HUONG1 = ReadString(row, map, "HUONG1"),
-                    CANGCT = ReadString(row, map, "CANGCT"),
-                    CANGDEN = ReadString(row, map, "CANGDEN"),
-                    GIAO = ReadString(row, map, "GIAO"),
-                    NHAN = ReadString(row, map, "NHAN"),
-                    DGS_CLASS = ReadString(row, map, "DGS_CLASS"),
-                    GHICHU = ReadString(row, map, "GHICHU"),
-                    ENTRY_VOY_NO = ReadString(row, map, "ENTRY_VOY_NO"),
-                    ENTRY_VES_NAME = ReadString(row, map, "ENTRY_VES_NAME"),
-                    EXIT_VOY_NO = ReadString(row, map, "EXIT_VOY_NO"),
-                    EXIT_VES_NAME = ReadString(row, map, "EXIT_VES_NAME"),
-                    ENTRY_TRUCK_ID = ReadString(row, map, "ENTRY_TRUCK_ID"),
-                    EXIT_TRUCK_ID = ReadString(row, map, "EXIT_TRUCK_ID"),
-                    SOSEAL = ReadString(row, map, "SOSEAL"),
-                    STORAGEDAY = ReadInt(row, map, "STORAGEDAY"),
-                    CreatedAt = DateTime.UtcNow
-                });
+                    incomingImp.Add(new M_8_3_IN_OUT_YARD_1
+                    {
+                        Id = Guid.NewGuid(),
+                        METHOD = ReadString(row, map, "METHOD"),
+                        EXEC_TS = ReadDate(row, map, "EXEC_TS"),
+                        LINE = ReadString(row, map, "LINE"),
+                        ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
+                        SOCONT = ReadString(row, map, "SOCONT"),
+                        KICHCO = ReadString(row, map, "KICHCO"),
+                        TRANGTHAI = ReadString(row, map, "TRANGTHAI"),
+                        TRONGLUONG = ReadDecimal(row, map, "TRONGLUONG"),
+                        TRONGLUONG_VGM = ReadDecimal(row, map, "TRONGLUONG_VGM"),
+                        BL_NO = ReadString(row, map, "BL_NO"),
+                        BOOK_NO = ReadString(row, map, "BOOK_NO"),
+                        RELEASE_NO = ReadString(row, map, "RELEASE_NO"),
+                        HUONG = ReadString(row, map, "HUONG"),
+                        HUONG1 = ReadString(row, map, "HUONG1"),
+                        CANGCT = ReadString(row, map, "CANGCT"),
+                        CANGDEN = ReadString(row, map, "CANGDEN"),
+                        GIAO = ReadString(row, map, "GIAO"),
+                        NHAN = ReadString(row, map, "NHAN"),
+                        DGS_CLASS = ReadString(row, map, "DGS_CLASS"),
+                        GHICHU = ReadString(row, map, "GHICHU"),
+                        ENTRY_VOY_NO = ReadString(row, map, "ENTRY_VOY_NO"),
+                        ENTRY_VES_NAME = ReadString(row, map, "ENTRY_VES_NAME"),
+                        EXIT_VOY_NO = ReadString(row, map, "EXIT_VOY_NO"),
+                        EXIT_VES_NAME = ReadString(row, map, "EXIT_VES_NAME"),
+                        ENTRY_TRUCK_ID = ReadString(row, map, "ENTRY_TRUCK_ID"),
+                        EXIT_TRUCK_ID = ReadString(row, map, "EXIT_TRUCK_ID"),
+                        SOSEAL = ReadString(row, map, "SOSEAL"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
+                else
+                {
+                    incomingExp.Add(new M_8_3_Current_In_Yard2
+                    {
+                        Id = Guid.NewGuid(),
+                        METHOD = ReadString(row, map, "METHOD"),
+                        EXEC_TS = ReadDate(row, map, "EXEC_TS"),
+                        LINE = ReadString(row, map, "LINE"),
+                        ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
+                        SOCONT = ReadString(row, map, "SOCONT"),
+                        KICHCO = ReadString(row, map, "KICHCO"),
+                        TRANGTHAI = ReadString(row, map, "TRANGTHAI"),
+                        TRONGLUONG = ReadDecimal(row, map, "TRONGLUONG"),
+                        TRONGLUONG_VGM = ReadDecimal(row, map, "TRONGLUONG_VGM"),
+                        BL_NO = ReadString(row, map, "BL_NO"),
+                        BOOK_NO = ReadString(row, map, "BOOK_NO"),
+                        RELEASE_NO = ReadString(row, map, "RELEASE_NO"),
+                        HUONG = ReadString(row, map, "HUONG"),
+                        HUONG1 = ReadString(row, map, "HUONG1"),
+                        CANGCT = ReadString(row, map, "CANGCT"),
+                        CANGDEN = ReadString(row, map, "CANGDEN"),
+                        GIAO = ReadString(row, map, "GIAO"),
+                        NHAN = ReadString(row, map, "NHAN"),
+                        DGS_CLASS = ReadString(row, map, "DGS_CLASS"),
+                        GHICHU = ReadString(row, map, "GHICHU"),
+                        ENTRY_VOY_NO = ReadString(row, map, "ENTRY_VOY_NO"),
+                        ENTRY_VES_NAME = ReadString(row, map, "ENTRY_VES_NAME"),
+                        EXIT_VOY_NO = ReadString(row, map, "EXIT_VOY_NO"),
+                        EXIT_VES_NAME = ReadString(row, map, "EXIT_VES_NAME"),
+                        ENTRY_TRUCK_ID = ReadString(row, map, "ENTRY_TRUCK_ID"),
+                        EXIT_TRUCK_ID = ReadString(row, map, "EXIT_TRUCK_ID"),
+                        SOSEAL = ReadString(row, map, "SOSEAL"),
+                        DateImport = importedAt,
+                        UserImport = importUser,
+                        CreatedAt = importedAt
+                    });
+                }
             }
         }
 
-        var existing = await context.YardMovement_VSS_26040808.ToListAsync(ct);
-        var byKey = existing
-            .Where(x => !string.IsNullOrWhiteSpace(x.ITEM_KEY) || !string.IsNullOrWhiteSpace(x.SOCONT))
-            .GroupBy(x => MakeVssKey(x.SourceSheet, x.ITEM_KEY, x.SOCONT, x.EXEC_TS, x.METHOD))
-            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedAt).First(), StringComparer.OrdinalIgnoreCase);
+        if (matchedSheets.Count == 0)
+            return new ExcelImportCrudResult(0, "Không tìm thấy sheet AMS hợp lệ (nhận: IN-OUT_YARD_1, Current_In_Yard2, IN-OUT_YARD__Imp, IN-OUT_YARD__Exp).");
 
+        var existingImpSignatures = new HashSet<string>(
+            (await context.YardMovement_AMS_26040816_Imp.ToListAsync(ct)).Select(BuildAmsImpSignature),
+            StringComparer.OrdinalIgnoreCase);
+        var existingExpSignatures = new HashSet<string>(
+            (await context.YardMovement_AMS_26040816_Exp.ToListAsync(ct)).Select(BuildAmsExpSignature),
+            StringComparer.OrdinalIgnoreCase);
         var inserted = 0;
-        var updated = 0;
 
-        foreach (var inc in incoming)
+        foreach (var inc in incomingImp)
         {
             ct.ThrowIfCancellationRequested();
-            var key = MakeVssKey(inc.SourceSheet, inc.ITEM_KEY, inc.SOCONT, inc.EXEC_TS, inc.METHOD);
-            if (string.IsNullOrWhiteSpace(key))
+            var signature = BuildAmsImpSignature(inc);
+            if (existingImpSignatures.Contains(signature))
                 continue;
+            await context.YardMovement_AMS_26040816_Imp.AddAsync(inc, ct);
+            existingImpSignatures.Add(signature);
+            inserted++;
+        }
 
-            if (!byKey.TryGetValue(key, out var cur))
-            {
-                inc.Id = Guid.NewGuid();
-                inc.CreatedAt = DateTime.UtcNow;
-                await context.YardMovement_VSS_26040808.AddAsync(inc, ct);
-                byKey[key] = inc;
-                inserted++;
+        foreach (var inc in incomingExp)
+        {
+            ct.ThrowIfCancellationRequested();
+            var signature = BuildAmsExpSignature(inc);
+            if (existingExpSignatures.Contains(signature))
                 continue;
-            }
-
-            if (!VssEqualsIgnoringImportMeta(cur, inc))
-            {
-                CopyVssFields(cur, inc);
-                updated++;
-            }
+            await context.YardMovement_AMS_26040816_Exp.AddAsync(inc, ct);
+            existingExpSignatures.Add(signature);
+            inserted++;
         }
 
         await context.SaveChangesAsync(ct);
-        return new ExcelImportCrudResult(inserted + updated, null);
-    }
-
-    private async Task<ExcelImportCrudResult> ImportAmsAsync(DataSet ds, CancellationToken ct)
-    {
-        var table = ds.Tables.Cast<DataTable>().FirstOrDefault();
-        if (table == null || table.Rows.Count <= 1)
-            return new ExcelImportCrudResult(0, "File AMS không có dữ liệu.");
-
-        var headers = table.Rows[0].ItemArray.Select(x => NormalizeHeader(x?.ToString())).ToList();
-        var map = BuildHeaderMap(headers);
-        var incoming = new List<M_YardMovement_AMS_26040816>();
-
-        for (var i = 1; i < table.Rows.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var row = table.Rows[i];
-            if (string.IsNullOrWhiteSpace(ReadString(row, map, "SOCONT")))
-                continue;
-
-            incoming.Add(new M_YardMovement_AMS_26040816
-            {
-                Id = Guid.NewGuid(),
-                METHOD = ReadString(row, map, "METHOD"),
-                EXEC_TS = ReadDate(row, map, "EXEC_TS"),
-                LINE = ReadString(row, map, "LINE"),
-                ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
-                SOCONT = ReadString(row, map, "SOCONT"),
-                KICHCO = ReadString(row, map, "KICHCO"),
-                TRANGTHAI = ReadString(row, map, "TRANGTHAI"),
-                TRONGLUONG = ReadDecimal(row, map, "TRONGLUONG"),
-                TRONGLUONG_VGM = ReadDecimal(row, map, "TRONGLUONG_VGM"),
-                BL_NO = ReadString(row, map, "BL_NO"),
-                BOOK_NO = ReadString(row, map, "BOOK_NO"),
-                RELEASE_NO = ReadString(row, map, "RELEASE_NO"),
-                HUONG = ReadString(row, map, "HUONG"),
-                HUONG1 = ReadString(row, map, "HUONG1"),
-                CANGCT = ReadString(row, map, "CANGCT"),
-                CANGDEN = ReadString(row, map, "CANGDEN"),
-                GIAO = ReadString(row, map, "GIAO"),
-                NHAN = ReadString(row, map, "NHAN"),
-                DGS_CLASS = ReadString(row, map, "DGS_CLASS"),
-                GHICHU = ReadString(row, map, "GHICHU"),
-                ENTRY_VOY_NO = ReadString(row, map, "ENTRY_VOY_NO"),
-                ENTRY_VES_NAME = ReadString(row, map, "ENTRY_VES_NAME"),
-                EXIT_VOY_NO = ReadString(row, map, "EXIT_VOY_NO"),
-                EXIT_VES_NAME = ReadString(row, map, "EXIT_VES_NAME"),
-                ENTRY_TRUCK_ID = ReadString(row, map, "ENTRY_TRUCK_ID"),
-                EXIT_TRUCK_ID = ReadString(row, map, "EXIT_TRUCK_ID"),
-                SOSEAL = ReadString(row, map, "SOSEAL"),
-                CreatedAt = DateTime.UtcNow
-            });
-        }
-
-        var existing = await context.YardMovement_AMS_26040816.ToListAsync(ct);
-        var byKey = existing
-            .Where(x => !string.IsNullOrWhiteSpace(x.ITEM_KEY) || !string.IsNullOrWhiteSpace(x.SOCONT))
-            .GroupBy(x => MakeAmsKey(x.ITEM_KEY, x.SOCONT, x.EXEC_TS, x.METHOD))
-            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedAt).First(), StringComparer.OrdinalIgnoreCase);
-
-        var inserted = 0;
-        var updated = 0;
-
-        foreach (var inc in incoming)
-        {
-            ct.ThrowIfCancellationRequested();
-            var key = MakeAmsKey(inc.ITEM_KEY, inc.SOCONT, inc.EXEC_TS, inc.METHOD);
-            if (string.IsNullOrWhiteSpace(key))
-                continue;
-
-            if (!byKey.TryGetValue(key, out var cur))
-            {
-                inc.Id = Guid.NewGuid();
-                inc.CreatedAt = DateTime.UtcNow;
-                await context.YardMovement_AMS_26040816.AddAsync(inc, ct);
-                byKey[key] = inc;
-                inserted++;
-                continue;
-            }
-
-            if (!AmsEqualsIgnoringImportMeta(cur, inc))
-            {
-                CopyAmsFields(cur, inc);
-                updated++;
-            }
-        }
-
-        await context.SaveChangesAsync(ct);
-        return new ExcelImportCrudResult(inserted + updated, null);
+        return new ExcelImportCrudResult(inserted, null);
     }
 
     private static string NormalizeKey(string? value)
         => (value ?? string.Empty).Trim().ToUpperInvariant();
+
+    private static string NormalizeDecimalKey(decimal? value)
+        => value.HasValue ? value.Value.ToString("G29", CultureInfo.InvariantCulture) : string.Empty;
+
+
+    private static string BuildAgArrivedSignature(M_8_3_Arrived x)
+        => string.Join("|",
+            x.SQ?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.CNTRNO),
+            NormalizeKey(x.SZ),
+            NormalizeKey(x.TP),
+            NormalizeKey(x.ST),
+            NormalizeKey(x.SealNo),
+            NormalizeDecimalKey(x.WD),
+            NormalizeDecimalKey(x.WN),
+            NormalizeKey(x.CC),
+            NormalizeKey(x.Location),
+            NormalizeKey(x.DoBkNo),
+            NormalizeKey(x.POD_FDest),
+            NormalizeKey(x.Customer),
+            NormalizeKey(x.Payment),
+            NormalizeKey(x.TruckNo),
+            NormalizeKey(x.VslVoy),
+            x.DT?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.Cargo),
+            NormalizeKey(x.Remarks));
+
+    private static string BuildAgExitedSignature(M_8_3_Exited x)
+        => string.Join("|",
+            x.SQ?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.CNTRNO),
+            NormalizeKey(x.SZ),
+            NormalizeKey(x.TP),
+            NormalizeKey(x.ST),
+            NormalizeKey(x.SealNo),
+            NormalizeDecimalKey(x.WD),
+            NormalizeDecimalKey(x.WN),
+            NormalizeKey(x.CC),
+            NormalizeKey(x.Location),
+            NormalizeKey(x.DoBkNo),
+            x.Days?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.Customer),
+            NormalizeKey(x.Payment),
+            NormalizeKey(x.TruckNo),
+            NormalizeKey(x.VslVoy),
+            x.DT?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.PlugIn),
+            NormalizeKey(x.Remarks));
+
+    private static string BuildAgUnstuffedSignature(M_8_3_Unstuffed x)
+        => string.Join("|",
+            x.SQ?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.CNTRNO),
+            NormalizeKey(x.SealNo),
+            NormalizeKey(x.CO),
+            NormalizeKey(x.LEN),
+            NormalizeKey(x.TY),
+            NormalizeKey(x.Cond),
+            NormalizeKey(x.ShipCons),
+            NormalizeKey(x.BKDO),
+            NormalizeKey(x.DISC_VV),
+            x.UNSDT?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            x.CCDT?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.JOB),
+            NormalizeKey(x.Payment),
+            NormalizeKey(x.SrvCode),
+            NormalizeKey(x.MODE),
+            NormalizeKey(x.STV));
+
+    private static string BuildAgStuffedSignature(M_8_3_Stuffed x)
+        => string.Join("|",
+            x.SQ?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.CNTRNO),
+            NormalizeKey(x.SealNo),
+            NormalizeKey(x.CO),
+            NormalizeKey(x.LEN),
+            NormalizeKey(x.TY),
+            NormalizeDecimalKey(x.WD),
+            NormalizeDecimalKey(x.WN),
+            NormalizeKey(x.Cond),
+            NormalizeKey(x.ShipCons),
+            NormalizeKey(x.BKDO),
+            NormalizeKey(x.LOAD_VV),
+            NormalizeKey(x.POD_PDest),
+            x.STUDT?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.PlugIn),
+            NormalizeKey(x.JOB),
+            NormalizeKey(x.Payment),
+            NormalizeKey(x.SrvCode),
+            NormalizeKey(x.MODE),
+            NormalizeKey(x.Cargo),
+            NormalizeKey(x.WeightRemarks));
 
     private static string MakeAgKey(string? sourceSheet, string? cntrNo, string? doBkNo)
         => $"{NormalizeKey(sourceSheet)}|{NormalizeKey(cntrNo)}|{NormalizeKey(doBkNo)}";
@@ -521,12 +1133,123 @@ public class ExcelImportCrudService(AppDbContext context)
     {
         var ik = NormalizeKey(itemKey);
         if (!string.IsNullOrWhiteSpace(ik))
-            return $"IK|{ik}";
+            return $"IK|{NormalizeKey(sourceSheet)}|{ik}";
         var cont = NormalizeKey(soCont);
         if (string.IsNullOrWhiteSpace(cont))
             return string.Empty;
         var ts = execTs?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty;
         return $"FALLBACK|{NormalizeKey(sourceSheet)}|{cont}|{ts}|{NormalizeKey(method)}";
+    }
+
+    private static string BuildVssImpSignature(M_8_3_VSS_IN_OUT_YARD_Imp x)
+    {
+        return BuildVssSignatureCore(
+            x.METHOD, x.OPERATION_METHOD, x.EXEC_TS, x.LINE, x.AGENT, x.KHACHHANG, x.ITEM_KEY, x.SOCONT, x.KICHCO,
+            x.PORT_GRADE, x.LINE_GRADE, x.TRANGTHAI, x.TRONGLUONG, x.TRONGLUONG_VGM, x.BL_NO, x.BOOK_NO, x.RELEASE_NO,
+            x.HUONG, x.HUONG1, x.CANGCT, x.CANGDEN, x.GIAO, x.NHAN, x.DGS_CLASS, x.GHICHU, x.ENTRY_VOY_NO, x.ENTRY_VES_NAME,
+            x.EXIT_VOY_NO, x.EXIT_VES_NAME, x.ENTRY_TRUCK_ID, x.EXIT_TRUCK_ID, x.SOSEAL, x.STORAGEDAY);
+    }
+
+    private static string BuildVssExpSignature(M_8_3_VSS_IN_OUT_YARD_Exp x)
+    {
+        return BuildVssSignatureCore(
+            x.METHOD, x.OPERATION_METHOD, x.EXEC_TS, x.LINE, x.AGENT, x.KHACHHANG, x.ITEM_KEY, x.SOCONT, x.KICHCO,
+            x.PORT_GRADE, x.LINE_GRADE, x.TRANGTHAI, x.TRONGLUONG, x.TRONGLUONG_VGM, x.BL_NO, x.BOOK_NO, x.RELEASE_NO,
+            x.HUONG, x.HUONG1, x.CANGCT, x.CANGDEN, x.GIAO, x.NHAN, x.DGS_CLASS, x.GHICHU, x.ENTRY_VOY_NO, x.ENTRY_VES_NAME,
+            x.EXIT_VOY_NO, x.EXIT_VES_NAME, x.ENTRY_TRUCK_ID, x.EXIT_TRUCK_ID, x.SOSEAL, x.STORAGEDAY);
+    }
+
+    private static string BuildVssSignatureCore(
+        string? method, string? operationMethod, DateTime? execTs, string? line, string? agent, string? khachHang, string? itemKey,
+        string? soCont, string? kichCo, string? portGrade, string? lineGrade, string? trangThai, decimal? trongLuong, decimal? trongLuongVgm,
+        string? blNo, string? bookNo, string? releaseNo, string? huong, string? huong1, string? cangCt, string? cangDen, string? giao,
+        string? nhan, string? dgsClass, string? ghiChu, string? entryVoyNo, string? entryVesName, string? exitVoyNo, string? exitVesName,
+        string? entryTruckId, string? exitTruckId, string? soSeal, int? storageDay)
+    {
+        var execTsValue = execTs?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty;
+        return string.Join("|",
+            NormalizeKey(method),
+            NormalizeKey(operationMethod),
+            execTsValue,
+            NormalizeKey(line),
+            NormalizeKey(agent),
+            NormalizeKey(khachHang),
+            NormalizeKey(itemKey),
+            NormalizeKey(soCont),
+            NormalizeKey(kichCo),
+            NormalizeKey(portGrade),
+            NormalizeKey(lineGrade),
+            NormalizeKey(trangThai),
+            NormalizeDecimalKey(trongLuong),
+            NormalizeDecimalKey(trongLuongVgm),
+            NormalizeKey(blNo),
+            NormalizeKey(bookNo),
+            NormalizeKey(releaseNo),
+            NormalizeKey(huong),
+            NormalizeKey(huong1),
+            NormalizeKey(cangCt),
+            NormalizeKey(cangDen),
+            NormalizeKey(giao),
+            NormalizeKey(nhan),
+            NormalizeKey(dgsClass),
+            NormalizeKey(ghiChu),
+            NormalizeKey(entryVoyNo),
+            NormalizeKey(entryVesName),
+            NormalizeKey(exitVoyNo),
+            NormalizeKey(exitVesName),
+            NormalizeKey(entryTruckId),
+            NormalizeKey(exitTruckId),
+            NormalizeKey(soSeal),
+            storageDay?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
+    }
+
+    private static string BuildAmsImpSignature(M_8_3_IN_OUT_YARD_1 x)
+        => BuildAmsSignatureCore(
+            x.METHOD, x.EXEC_TS, x.LINE, x.ITEM_KEY, x.SOCONT, x.KICHCO, x.TRANGTHAI, x.TRONGLUONG, x.TRONGLUONG_VGM,
+            x.BL_NO, x.BOOK_NO, x.RELEASE_NO, x.HUONG, x.HUONG1, x.CANGCT, x.CANGDEN, x.GIAO, x.NHAN, x.DGS_CLASS,
+            x.GHICHU, x.ENTRY_VOY_NO, x.ENTRY_VES_NAME, x.EXIT_VOY_NO, x.EXIT_VES_NAME, x.ENTRY_TRUCK_ID, x.EXIT_TRUCK_ID, x.SOSEAL);
+
+    private static string BuildAmsExpSignature(M_8_3_Current_In_Yard2 x)
+        => BuildAmsSignatureCore(
+            x.METHOD, x.EXEC_TS, x.LINE, x.ITEM_KEY, x.SOCONT, x.KICHCO, x.TRANGTHAI, x.TRONGLUONG, x.TRONGLUONG_VGM,
+            x.BL_NO, x.BOOK_NO, x.RELEASE_NO, x.HUONG, x.HUONG1, x.CANGCT, x.CANGDEN, x.GIAO, x.NHAN, x.DGS_CLASS,
+            x.GHICHU, x.ENTRY_VOY_NO, x.ENTRY_VES_NAME, x.EXIT_VOY_NO, x.EXIT_VES_NAME, x.ENTRY_TRUCK_ID, x.EXIT_TRUCK_ID, x.SOSEAL);
+
+    private static string BuildAmsSignatureCore(
+        string? method, DateTime? execTs, string? line, string? itemKey, string? soCont, string? kichCo, string? trangThai, decimal? trongLuong,
+        decimal? trongLuongVgm, string? blNo, string? bookNo, string? releaseNo, string? huong, string? huong1, string? cangCt, string? cangDen,
+        string? giao, string? nhan, string? dgsClass, string? ghiChu, string? entryVoyNo, string? entryVesName, string? exitVoyNo,
+        string? exitVesName, string? entryTruckId, string? exitTruckId, string? soSeal)
+    {
+        var execTsValue = execTs?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty;
+        return string.Join("|",
+            NormalizeKey(method),
+            execTsValue,
+            NormalizeKey(line),
+            NormalizeKey(itemKey),
+            NormalizeKey(soCont),
+            NormalizeKey(kichCo),
+            NormalizeKey(trangThai),
+            NormalizeDecimalKey(trongLuong),
+            NormalizeDecimalKey(trongLuongVgm),
+            NormalizeKey(blNo),
+            NormalizeKey(bookNo),
+            NormalizeKey(releaseNo),
+            NormalizeKey(huong),
+            NormalizeKey(huong1),
+            NormalizeKey(cangCt),
+            NormalizeKey(cangDen),
+            NormalizeKey(giao),
+            NormalizeKey(nhan),
+            NormalizeKey(dgsClass),
+            NormalizeKey(ghiChu),
+            NormalizeKey(entryVoyNo),
+            NormalizeKey(entryVesName),
+            NormalizeKey(exitVoyNo),
+            NormalizeKey(exitVesName),
+            NormalizeKey(entryTruckId),
+            NormalizeKey(exitTruckId),
+            NormalizeKey(soSeal));
     }
 
     private static string MakeAmsKey(string? itemKey, string? soCont, DateTime? execTs, string? method)
@@ -631,237 +1354,10 @@ public class ExcelImportCrudService(AppDbContext context)
         target.TinhTrangVo = src.TinhTrangVo;
         target.ContQuaCan = src.ContQuaCan;
         target.SoLenh = src.SoLenh;
+        target.DateImport = src.DateImport;
+        target.UserImport = src.UserImport;
     }
 
-    private static bool AgEqualsIgnoringImportMeta(M_YardReport_AG_2026040307 a, M_YardReport_AG_2026040307 b) =>
-        string.Equals(a.SourceSheet, b.SourceSheet, StringComparison.Ordinal) &&
-        a.SQ == b.SQ &&
-        string.Equals(a.CNTRNO, b.CNTRNO, StringComparison.Ordinal) &&
-        string.Equals(a.SZ, b.SZ, StringComparison.Ordinal) &&
-        string.Equals(a.TP, b.TP, StringComparison.Ordinal) &&
-        string.Equals(a.ST, b.ST, StringComparison.Ordinal) &&
-        string.Equals(a.SealNo, b.SealNo, StringComparison.Ordinal) &&
-        a.WD == b.WD &&
-        a.WN == b.WN &&
-        string.Equals(a.CC, b.CC, StringComparison.Ordinal) &&
-        string.Equals(a.Location, b.Location, StringComparison.Ordinal) &&
-        string.Equals(a.DoBkNo, b.DoBkNo, StringComparison.Ordinal) &&
-        string.Equals(a.POD_FDest, b.POD_FDest, StringComparison.Ordinal) &&
-        a.Days == b.Days &&
-        string.Equals(a.Customer, b.Customer, StringComparison.Ordinal) &&
-        string.Equals(a.Payment, b.Payment, StringComparison.Ordinal) &&
-        string.Equals(a.TruckNo, b.TruckNo, StringComparison.Ordinal) &&
-        string.Equals(a.VslVoy, b.VslVoy, StringComparison.Ordinal) &&
-        a.DT == b.DT &&
-        string.Equals(a.PlugIn, b.PlugIn, StringComparison.Ordinal) &&
-        string.Equals(a.Cargo, b.Cargo, StringComparison.Ordinal) &&
-        string.Equals(a.Remarks, b.Remarks, StringComparison.Ordinal) &&
-        string.Equals(a.LEN, b.LEN, StringComparison.Ordinal) &&
-        string.Equals(a.TY, b.TY, StringComparison.Ordinal) &&
-        string.Equals(a.Cond, b.Cond, StringComparison.Ordinal) &&
-        string.Equals(a.ShipCons, b.ShipCons, StringComparison.Ordinal) &&
-        string.Equals(a.BKDO, b.BKDO, StringComparison.Ordinal) &&
-        string.Equals(a.DISC_VV, b.DISC_VV, StringComparison.Ordinal) &&
-        string.Equals(a.LOAD_VV, b.LOAD_VV, StringComparison.Ordinal) &&
-        a.UNSDT == b.UNSDT &&
-        a.CCDT == b.CCDT &&
-        a.STUDT == b.STUDT &&
-        string.Equals(a.JOB, b.JOB, StringComparison.Ordinal) &&
-        string.Equals(a.SrvCode, b.SrvCode, StringComparison.Ordinal) &&
-        string.Equals(a.MODE, b.MODE, StringComparison.Ordinal) &&
-        string.Equals(a.STV, b.STV, StringComparison.Ordinal) &&
-        string.Equals(a.Type, b.Type, StringComparison.Ordinal) &&
-        string.Equals(a.Condition, b.Condition, StringComparison.Ordinal) &&
-        string.Equals(a.POL, b.POL, StringComparison.Ordinal) &&
-        string.Equals(a.LoadVV, b.LoadVV, StringComparison.Ordinal) &&
-        string.Equals(a.POD, b.POD, StringComparison.Ordinal) &&
-        string.Equals(a.DischVV, b.DischVV, StringComparison.Ordinal) &&
-        string.Equals(a.DayStatus, b.DayStatus, StringComparison.Ordinal) &&
-        a.DayStorage == b.DayStorage &&
-        a.DisArrDate == b.DisArrDate;
-
-    private static void CopyAgFields(M_YardReport_AG_2026040307 target, M_YardReport_AG_2026040307 src)
-    {
-        target.SourceSheet = src.SourceSheet;
-        target.SQ = src.SQ;
-        target.CNTRNO = src.CNTRNO;
-        target.SZ = src.SZ;
-        target.TP = src.TP;
-        target.ST = src.ST;
-        target.SealNo = src.SealNo;
-        target.WD = src.WD;
-        target.WN = src.WN;
-        target.CC = src.CC;
-        target.Location = src.Location;
-        target.DoBkNo = src.DoBkNo;
-        target.POD_FDest = src.POD_FDest;
-        target.Days = src.Days;
-        target.Customer = src.Customer;
-        target.Payment = src.Payment;
-        target.TruckNo = src.TruckNo;
-        target.VslVoy = src.VslVoy;
-        target.DT = src.DT;
-        target.PlugIn = src.PlugIn;
-        target.Cargo = src.Cargo;
-        target.Remarks = src.Remarks;
-        target.LEN = src.LEN;
-        target.TY = src.TY;
-        target.Cond = src.Cond;
-        target.ShipCons = src.ShipCons;
-        target.BKDO = src.BKDO;
-        target.DISC_VV = src.DISC_VV;
-        target.LOAD_VV = src.LOAD_VV;
-        target.UNSDT = src.UNSDT;
-        target.CCDT = src.CCDT;
-        target.STUDT = src.STUDT;
-        target.JOB = src.JOB;
-        target.SrvCode = src.SrvCode;
-        target.MODE = src.MODE;
-        target.STV = src.STV;
-        target.Type = src.Type;
-        target.Condition = src.Condition;
-        target.POL = src.POL;
-        target.LoadVV = src.LoadVV;
-        target.POD = src.POD;
-        target.DischVV = src.DischVV;
-        target.DayStatus = src.DayStatus;
-        target.DayStorage = src.DayStorage;
-        target.DisArrDate = src.DisArrDate;
-    }
-
-    private static bool VssEqualsIgnoringImportMeta(M_YardMovement_VSS_26040808 a, M_YardMovement_VSS_26040808 b) =>
-        string.Equals(a.SourceSheet, b.SourceSheet, StringComparison.Ordinal) &&
-        string.Equals(a.METHOD, b.METHOD, StringComparison.Ordinal) &&
-        string.Equals(a.OPERATION_METHOD, b.OPERATION_METHOD, StringComparison.Ordinal) &&
-        a.EXEC_TS == b.EXEC_TS &&
-        string.Equals(a.LINE, b.LINE, StringComparison.Ordinal) &&
-        string.Equals(a.AGENT, b.AGENT, StringComparison.Ordinal) &&
-        string.Equals(a.KHACHHANG, b.KHACHHANG, StringComparison.Ordinal) &&
-        string.Equals(a.ITEM_KEY, b.ITEM_KEY, StringComparison.Ordinal) &&
-        string.Equals(a.SOCONT, b.SOCONT, StringComparison.Ordinal) &&
-        string.Equals(a.KICHCO, b.KICHCO, StringComparison.Ordinal) &&
-        string.Equals(a.PORT_GRADE, b.PORT_GRADE, StringComparison.Ordinal) &&
-        string.Equals(a.LINE_GRADE, b.LINE_GRADE, StringComparison.Ordinal) &&
-        string.Equals(a.TRANGTHAI, b.TRANGTHAI, StringComparison.Ordinal) &&
-        a.TRONGLUONG == b.TRONGLUONG &&
-        a.TRONGLUONG_VGM == b.TRONGLUONG_VGM &&
-        string.Equals(a.BL_NO, b.BL_NO, StringComparison.Ordinal) &&
-        string.Equals(a.BOOK_NO, b.BOOK_NO, StringComparison.Ordinal) &&
-        string.Equals(a.RELEASE_NO, b.RELEASE_NO, StringComparison.Ordinal) &&
-        string.Equals(a.HUONG, b.HUONG, StringComparison.Ordinal) &&
-        string.Equals(a.HUONG1, b.HUONG1, StringComparison.Ordinal) &&
-        string.Equals(a.CANGCT, b.CANGCT, StringComparison.Ordinal) &&
-        string.Equals(a.CANGDEN, b.CANGDEN, StringComparison.Ordinal) &&
-        string.Equals(a.GIAO, b.GIAO, StringComparison.Ordinal) &&
-        string.Equals(a.NHAN, b.NHAN, StringComparison.Ordinal) &&
-        string.Equals(a.DGS_CLASS, b.DGS_CLASS, StringComparison.Ordinal) &&
-        string.Equals(a.GHICHU, b.GHICHU, StringComparison.Ordinal) &&
-        string.Equals(a.ENTRY_VOY_NO, b.ENTRY_VOY_NO, StringComparison.Ordinal) &&
-        string.Equals(a.ENTRY_VES_NAME, b.ENTRY_VES_NAME, StringComparison.Ordinal) &&
-        string.Equals(a.EXIT_VOY_NO, b.EXIT_VOY_NO, StringComparison.Ordinal) &&
-        string.Equals(a.EXIT_VES_NAME, b.EXIT_VES_NAME, StringComparison.Ordinal) &&
-        string.Equals(a.ENTRY_TRUCK_ID, b.ENTRY_TRUCK_ID, StringComparison.Ordinal) &&
-        string.Equals(a.EXIT_TRUCK_ID, b.EXIT_TRUCK_ID, StringComparison.Ordinal) &&
-        string.Equals(a.SOSEAL, b.SOSEAL, StringComparison.Ordinal) &&
-        a.STORAGEDAY == b.STORAGEDAY;
-
-    private static void CopyVssFields(M_YardMovement_VSS_26040808 target, M_YardMovement_VSS_26040808 src)
-    {
-        target.SourceSheet = src.SourceSheet;
-        target.METHOD = src.METHOD;
-        target.OPERATION_METHOD = src.OPERATION_METHOD;
-        target.EXEC_TS = src.EXEC_TS;
-        target.LINE = src.LINE;
-        target.AGENT = src.AGENT;
-        target.KHACHHANG = src.KHACHHANG;
-        target.ITEM_KEY = src.ITEM_KEY;
-        target.SOCONT = src.SOCONT;
-        target.KICHCO = src.KICHCO;
-        target.PORT_GRADE = src.PORT_GRADE;
-        target.LINE_GRADE = src.LINE_GRADE;
-        target.TRANGTHAI = src.TRANGTHAI;
-        target.TRONGLUONG = src.TRONGLUONG;
-        target.TRONGLUONG_VGM = src.TRONGLUONG_VGM;
-        target.BL_NO = src.BL_NO;
-        target.BOOK_NO = src.BOOK_NO;
-        target.RELEASE_NO = src.RELEASE_NO;
-        target.HUONG = src.HUONG;
-        target.HUONG1 = src.HUONG1;
-        target.CANGCT = src.CANGCT;
-        target.CANGDEN = src.CANGDEN;
-        target.GIAO = src.GIAO;
-        target.NHAN = src.NHAN;
-        target.DGS_CLASS = src.DGS_CLASS;
-        target.GHICHU = src.GHICHU;
-        target.ENTRY_VOY_NO = src.ENTRY_VOY_NO;
-        target.ENTRY_VES_NAME = src.ENTRY_VES_NAME;
-        target.EXIT_VOY_NO = src.EXIT_VOY_NO;
-        target.EXIT_VES_NAME = src.EXIT_VES_NAME;
-        target.ENTRY_TRUCK_ID = src.ENTRY_TRUCK_ID;
-        target.EXIT_TRUCK_ID = src.EXIT_TRUCK_ID;
-        target.SOSEAL = src.SOSEAL;
-        target.STORAGEDAY = src.STORAGEDAY;
-    }
-
-    private static bool AmsEqualsIgnoringImportMeta(M_YardMovement_AMS_26040816 a, M_YardMovement_AMS_26040816 b) =>
-        string.Equals(a.METHOD, b.METHOD, StringComparison.Ordinal) &&
-        a.EXEC_TS == b.EXEC_TS &&
-        string.Equals(a.LINE, b.LINE, StringComparison.Ordinal) &&
-        string.Equals(a.ITEM_KEY, b.ITEM_KEY, StringComparison.Ordinal) &&
-        string.Equals(a.SOCONT, b.SOCONT, StringComparison.Ordinal) &&
-        string.Equals(a.KICHCO, b.KICHCO, StringComparison.Ordinal) &&
-        string.Equals(a.TRANGTHAI, b.TRANGTHAI, StringComparison.Ordinal) &&
-        a.TRONGLUONG == b.TRONGLUONG &&
-        a.TRONGLUONG_VGM == b.TRONGLUONG_VGM &&
-        string.Equals(a.BL_NO, b.BL_NO, StringComparison.Ordinal) &&
-        string.Equals(a.BOOK_NO, b.BOOK_NO, StringComparison.Ordinal) &&
-        string.Equals(a.RELEASE_NO, b.RELEASE_NO, StringComparison.Ordinal) &&
-        string.Equals(a.HUONG, b.HUONG, StringComparison.Ordinal) &&
-        string.Equals(a.HUONG1, b.HUONG1, StringComparison.Ordinal) &&
-        string.Equals(a.CANGCT, b.CANGCT, StringComparison.Ordinal) &&
-        string.Equals(a.CANGDEN, b.CANGDEN, StringComparison.Ordinal) &&
-        string.Equals(a.GIAO, b.GIAO, StringComparison.Ordinal) &&
-        string.Equals(a.NHAN, b.NHAN, StringComparison.Ordinal) &&
-        string.Equals(a.DGS_CLASS, b.DGS_CLASS, StringComparison.Ordinal) &&
-        string.Equals(a.GHICHU, b.GHICHU, StringComparison.Ordinal) &&
-        string.Equals(a.ENTRY_VOY_NO, b.ENTRY_VOY_NO, StringComparison.Ordinal) &&
-        string.Equals(a.ENTRY_VES_NAME, b.ENTRY_VES_NAME, StringComparison.Ordinal) &&
-        string.Equals(a.EXIT_VOY_NO, b.EXIT_VOY_NO, StringComparison.Ordinal) &&
-        string.Equals(a.EXIT_VES_NAME, b.EXIT_VES_NAME, StringComparison.Ordinal) &&
-        string.Equals(a.ENTRY_TRUCK_ID, b.ENTRY_TRUCK_ID, StringComparison.Ordinal) &&
-        string.Equals(a.EXIT_TRUCK_ID, b.EXIT_TRUCK_ID, StringComparison.Ordinal) &&
-        string.Equals(a.SOSEAL, b.SOSEAL, StringComparison.Ordinal);
-
-    private static void CopyAmsFields(M_YardMovement_AMS_26040816 target, M_YardMovement_AMS_26040816 src)
-    {
-        target.METHOD = src.METHOD;
-        target.EXEC_TS = src.EXEC_TS;
-        target.LINE = src.LINE;
-        target.ITEM_KEY = src.ITEM_KEY;
-        target.SOCONT = src.SOCONT;
-        target.KICHCO = src.KICHCO;
-        target.TRANGTHAI = src.TRANGTHAI;
-        target.TRONGLUONG = src.TRONGLUONG;
-        target.TRONGLUONG_VGM = src.TRONGLUONG_VGM;
-        target.BL_NO = src.BL_NO;
-        target.BOOK_NO = src.BOOK_NO;
-        target.RELEASE_NO = src.RELEASE_NO;
-        target.HUONG = src.HUONG;
-        target.HUONG1 = src.HUONG1;
-        target.CANGCT = src.CANGCT;
-        target.CANGDEN = src.CANGDEN;
-        target.GIAO = src.GIAO;
-        target.NHAN = src.NHAN;
-        target.DGS_CLASS = src.DGS_CLASS;
-        target.GHICHU = src.GHICHU;
-        target.ENTRY_VOY_NO = src.ENTRY_VOY_NO;
-        target.ENTRY_VES_NAME = src.ENTRY_VES_NAME;
-        target.EXIT_VOY_NO = src.EXIT_VOY_NO;
-        target.EXIT_VES_NAME = src.EXIT_VES_NAME;
-        target.ENTRY_TRUCK_ID = src.ENTRY_TRUCK_ID;
-        target.EXIT_TRUCK_ID = src.EXIT_TRUCK_ID;
-        target.SOSEAL = src.SOSEAL;
-    }
 
     private static int FindHeaderRow(DataTable table, IReadOnlyCollection<string> expectedTokens)
     {
