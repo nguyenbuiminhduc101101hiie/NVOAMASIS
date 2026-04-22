@@ -49,5 +49,7 @@ public class M_StockGateOut_HDS_08042026 : IExcelImportEntity
     public string? TinhTrangVo { get; set; }
     public string? ContQuaCan { get; set; }
     public string? SoLenh { get; set; }
+    public DateTime DateImport { get; set; }
+    public string? UserImport { get; set; }
     public DateTime CreatedAt { get; set; }
 }
