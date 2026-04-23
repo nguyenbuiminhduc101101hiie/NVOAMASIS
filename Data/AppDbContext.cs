@@ -138,7 +138,8 @@ namespace NVOAMASIS.Data
         public DbSet<M_8_3_VSS_IN_OUT_YARD_Imp> YardMovement_VSS_26040808_Imp { get; set; }
         public DbSet<M_8_3_VSS_IN_OUT_YARD_Exp> YardMovement_VSS_26040808_Exp { get; set; }
         public DbSet<M_8_3_IN_OUT_YARD_1> YardMovement_AMS_26040816_Imp { get; set; }
-        public DbSet<M_8_3_Current_In_Yard2> YardMovement_AMS_26040816_Exp { get; set; }
+        public DbSet<M_YardMovement_AMS_26040816_Current_In_Yard2> YardMovement_AMS_26040816_Current_In_Yard2 { get; set; }
+
         public DbSet<M_ChargeType> ChargeType { get; set; }
         public DbSet<M_TariffHeader> TariffHeader { get; set; }
         public DbSet<M_TariffTier> TariffTier { get; set; }
@@ -220,9 +221,9 @@ namespace NVOAMASIS.Data
             modelBuilder.Entity<M_8_3_IN_OUT_YARD_1>().ToTable("YardMovement_AMS_26040816_Imp");
             modelBuilder.Entity<M_8_3_IN_OUT_YARD_1>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_8_3_IN_OUT_YARD_1>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
-            modelBuilder.Entity<M_8_3_Current_In_Yard2>().ToTable("YardMovement_AMS_26040816_Exp");
-            modelBuilder.Entity<M_8_3_Current_In_Yard2>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-            modelBuilder.Entity<M_8_3_Current_In_Yard2>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().ToTable("YardMovement_AMS_26040816_Current_In_Yard2");
+            modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_ShipmentChargeContext>().ToTable("ShipmentChargeContext");
 
 

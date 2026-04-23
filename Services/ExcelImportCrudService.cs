@@ -61,8 +61,8 @@ public class ExcelImportCrudService(AppDbContext context)
     public Task<List<M_8_3_IN_OUT_YARD_1>> GetAmsImpAsync(CancellationToken ct = default) =>
         context.YardMovement_AMS_26040816_Imp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
-    public Task<List<M_8_3_Current_In_Yard2>> GetAmsExpAsync(CancellationToken ct = default) =>
-        context.YardMovement_AMS_26040816_Exp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+    public Task<List<M_YardMovement_AMS_26040816_Current_In_Yard2>> GetAmsExpAsync(CancellationToken ct = default) =>
+        context.YardMovement_AMS_26040816_Current_In_Yard2.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
     public async Task<(bool Ok, string? Error)> UpsertAsync<T>(T entity, CancellationToken ct = default)
         where T : class, IExcelImportEntity
@@ -150,7 +150,7 @@ public class ExcelImportCrudService(AppDbContext context)
         ct.ThrowIfCancellationRequested();
 
         var incomingImp = new List<M_8_3_IN_OUT_YARD_1>();
-        var incomingExp = new List<M_8_3_Current_In_Yard2>();
+        var incomingExp = new List<M_YardMovement_AMS_26040816_Current_In_Yard2>();
         var importedAt = DateTime.UtcNow;
 
         var worksheetRegex = new Regex("<Worksheet\\b[^>]*ss:Name=\"(?<name>[^\"]+)\"[^>]*>(?<body>.*?)</Worksheet\\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -197,7 +197,7 @@ public class ExcelImportCrudService(AppDbContext context)
                 // Imp/Exp sheets may have different column layouts.
                 var soCont = IsAmsImpSheet(sheetName)
                     ? GetValue("SOCONT")
-                    : GetValue("SOCONT", "ITEM_NO", "CONTAINER", "CNTRNO");
+                    : GetValue("ITEM_NO", "SOCONT", "CONTAINER", "CNTRNO");
                 if (string.IsNullOrWhiteSpace(soCont))
                     continue;
 
@@ -240,35 +240,40 @@ public class ExcelImportCrudService(AppDbContext context)
                 }
                 else
                 {
-                    incomingExp.Add(new M_8_3_Current_In_Yard2
+                    incomingExp.Add(new M_YardMovement_AMS_26040816_Current_In_Yard2
                     {
                         Id = Guid.NewGuid(),
-                        METHOD = GetValue("METHOD", "CUR_METHOD", "ORG_METHOD", "FUTURE_METHOD"),
-                        EXEC_TS = ParseDateValue(GetValue("EXEC_TS", "ARR_TS", "DEP_TS")),
+                        AGENT = GetValue("AGENT"),
                         LINE = GetValue("LINE"),
                         ITEM_KEY = GetValue("ITEM_KEY"),
-                        SOCONT = soCont,
-                        KICHCO = GetValue("KICHCO", "ISO", "SZ"),
-                        TRANGTHAI = GetValue("TRANGTHAI", "FEL", "STATUS"),
-                        TRONGLUONG = ParseDecimalValue(GetValue("TRONGLUONG", "WEIGHT")),
-                        TRONGLUONG_VGM = ParseDecimalValue(GetValue("TRONGLUONG_VGM", "VGM_WEIGHT")),
-                        BL_NO = GetValue("BL_NO", "BILL_OF_LADING"),
+                        ITEM_NO = soCont,
+                        ISO = GetValue("ISO"),
+                        FEL = GetValue("FEL"),
+                        TEMP = ParseDecimalValue(GetValue("TEMP")),
+                        WEIGHT = ParseDecimalValue(GetValue("WEIGHT")),
+                        VGM_WEIGHT = ParseDecimalValue(GetValue("VGM_WEIGHT")),
                         BOOK_NO = GetValue("BOOK_NO"),
-                        RELEASE_NO = GetValue("RELEASE_NO"),
-                        HUONG = GetValue("HUONG", "ARR_BY"),
-                        HUONG1 = GetValue("HUONG1", "DEP_BY"),
-                        CANGCT = GetValue("CANGCT", "DISCH_PORT"),
-                        CANGDEN = GetValue("CANGDEN", "FINAL_DISCH_PORT", "PLACE_OF_DELIVERY"),
-                        GIAO = GetValue("GIAO", "ARR_CAR"),
-                        NHAN = GetValue("NHAN", "DEP_CAR"),
+                        BILL_OF_LADING = GetValue("BILL_OF_LADING", "BL_NO"),
+                        LOCATION = GetValue("LOCATION"),
+                        CATEGORY = GetValue("CATEGORY"),
+                        ARR_BY = GetValue("ARR_BY"),
+                        ARR_CAR = GetValue("ARR_CAR"),
+                        ARR_VES_NAME = GetValue("ARR_VES_NAME"),
+                        ARR_TS = ParseDateValue(GetValue("ARR_TS")),
+                        DEP_BY = GetValue("DEP_BY"),
+                        DEP_CAR = GetValue("DEP_CAR"),
+                        DEP_VES_NAME = GetValue("DEP_VES_NAME"),
+                        DEP_TS = ParseDateValue(GetValue("DEP_TS")),
+                        DISCH_PORT = GetValue("DISCH_PORT", "CANGCT"),
+                        FINAL_DISCH_PORT = GetValue("FINAL_DISCH_PORT"),
+                        PLACE_OF_RECEIPT = GetValue("PLACE_OF_RECEIPT"),
+                        PLACE_OF_DELIVERY = GetValue("PLACE_OF_DELIVERY", "CANGDEN"),
+                        CUSTOM_CLEARANCE = GetValue("CUSTOM_CLEARANCE"),
+                        CC_TS = ParseDateValue(GetValue("CC_TS")),
                         DGS_CLASS = GetValue("DGS_CLASS"),
+                        UN_NO = GetValue("UN_NO"),
+                        DAM = GetValue("DAM"),
                         GHICHU = GetValue("GHICHU"),
-                        ENTRY_VOY_NO = GetValue("ENTRY_VOY_NO"),
-                        ENTRY_VES_NAME = GetValue("ENTRY_VES_NAME", "ARR_VES_NAME"),
-                        EXIT_VOY_NO = GetValue("EXIT_VOY_NO"),
-                        EXIT_VES_NAME = GetValue("EXIT_VES_NAME", "DEP_VES_NAME"),
-                        ENTRY_TRUCK_ID = GetValue("ENTRY_TRUCK_ID"),
-                        EXIT_TRUCK_ID = GetValue("EXIT_TRUCK_ID"),
                         SOSEAL = GetValue("SOSEAL"),
                         DateImport = importedAt,
                         UserImport = importUser,
@@ -285,7 +290,7 @@ public class ExcelImportCrudService(AppDbContext context)
             (await context.YardMovement_AMS_26040816_Imp.ToListAsync(ct)).Select(BuildAmsImpSignature),
             StringComparer.OrdinalIgnoreCase);
         var existingExpSignatures = new HashSet<string>(
-            (await context.YardMovement_AMS_26040816_Exp.ToListAsync(ct)).Select(BuildAmsExpSignature),
+            (await context.YardMovement_AMS_26040816_Current_In_Yard2.ToListAsync(ct)).Select(BuildAmsExpSignature),
             StringComparer.OrdinalIgnoreCase);
         var inserted = 0;
 
@@ -304,7 +309,7 @@ public class ExcelImportCrudService(AppDbContext context)
             var signature = BuildAmsExpSignature(inc);
             if (existingExpSignatures.Contains(signature))
                 continue;
-            await context.YardMovement_AMS_26040816_Exp.AddAsync(inc, ct);
+            await context.YardMovement_AMS_26040816_Current_In_Yard2.AddAsync(inc, ct);
             existingExpSignatures.Add(signature);
             inserted++;
         }
@@ -892,7 +897,7 @@ public class ExcelImportCrudService(AppDbContext context)
     private async Task<ExcelImportCrudResult> ImportAmsAsync(DataSet ds, string? importUser, CancellationToken ct)
     {
         var incomingImp = new List<M_8_3_IN_OUT_YARD_1>();
-        var incomingExp = new List<M_8_3_Current_In_Yard2>();
+        var incomingExp = new List<M_YardMovement_AMS_26040816_Current_In_Yard2>();
         var matchedSheets = new List<string>();
         var importedAt = DateTime.UtcNow;
 
@@ -914,10 +919,13 @@ public class ExcelImportCrudService(AppDbContext context)
             {
                 ct.ThrowIfCancellationRequested();
                 var row = table.Rows[i];
-                if (string.IsNullOrWhiteSpace(ReadString(row, map, "SOCONT")))
+                var containerNo = IsAmsImpSheet(normalizedSheet)
+                    ? ReadString(row, map, "SOCONT")
+                    : ReadString(row, map, "ITEM_NO", "SOCONT", "CONTAINER", "CNTRNO");
+                if (string.IsNullOrWhiteSpace(containerNo))
                     continue;
 
-                if (string.Equals(normalizedSheet, "IN-OUT_YARD__Imp", StringComparison.OrdinalIgnoreCase))
+                if (IsAmsImpSheet(normalizedSheet))
                 {
                     incomingImp.Add(new M_8_3_IN_OUT_YARD_1
                     {
@@ -926,7 +934,7 @@ public class ExcelImportCrudService(AppDbContext context)
                         EXEC_TS = ReadDate(row, map, "EXEC_TS"),
                         LINE = ReadString(row, map, "LINE"),
                         ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
-                        SOCONT = ReadString(row, map, "SOCONT"),
+                        SOCONT = containerNo,
                         KICHCO = ReadString(row, map, "KICHCO"),
                         TRANGTHAI = ReadString(row, map, "TRANGTHAI"),
                         TRONGLUONG = ReadDecimal(row, map, "TRONGLUONG"),
@@ -956,35 +964,40 @@ public class ExcelImportCrudService(AppDbContext context)
                 }
                 else
                 {
-                    incomingExp.Add(new M_8_3_Current_In_Yard2
+                    incomingExp.Add(new M_YardMovement_AMS_26040816_Current_In_Yard2
                     {
                         Id = Guid.NewGuid(),
-                        METHOD = ReadString(row, map, "METHOD"),
-                        EXEC_TS = ReadDate(row, map, "EXEC_TS"),
+                        AGENT = ReadString(row, map, "AGENT"),
                         LINE = ReadString(row, map, "LINE"),
                         ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
-                        SOCONT = ReadString(row, map, "SOCONT"),
-                        KICHCO = ReadString(row, map, "KICHCO"),
-                        TRANGTHAI = ReadString(row, map, "TRANGTHAI"),
-                        TRONGLUONG = ReadDecimal(row, map, "TRONGLUONG"),
-                        TRONGLUONG_VGM = ReadDecimal(row, map, "TRONGLUONG_VGM"),
-                        BL_NO = ReadString(row, map, "BL_NO"),
+                        ITEM_NO = containerNo,
+                        ISO = ReadString(row, map, "ISO"),
+                        FEL = ReadString(row, map, "FEL"),
+                        TEMP = ReadDecimal(row, map, "TEMP"),
+                        WEIGHT = ReadDecimal(row, map, "WEIGHT"),
+                        VGM_WEIGHT = ReadDecimal(row, map, "VGM_WEIGHT"),
                         BOOK_NO = ReadString(row, map, "BOOK_NO"),
-                        RELEASE_NO = ReadString(row, map, "RELEASE_NO"),
-                        HUONG = ReadString(row, map, "HUONG"),
-                        HUONG1 = ReadString(row, map, "HUONG1"),
-                        CANGCT = ReadString(row, map, "CANGCT"),
-                        CANGDEN = ReadString(row, map, "CANGDEN"),
-                        GIAO = ReadString(row, map, "GIAO"),
-                        NHAN = ReadString(row, map, "NHAN"),
+                        BILL_OF_LADING = ReadString(row, map, "BILL_OF_LADING"),
+                        LOCATION = ReadString(row, map, "LOCATION"),
+                        CATEGORY = ReadString(row, map, "CATEGORY"),
+                        ARR_BY = ReadString(row, map, "ARR_BY"),
+                        ARR_CAR = ReadString(row, map, "ARR_CAR"),
+                        ARR_VES_NAME = ReadString(row, map, "ARR_VES_NAME"),
+                        ARR_TS = ReadDate(row, map, "ARR_TS"),
+                        DEP_BY = ReadString(row, map, "DEP_BY"),
+                        DEP_CAR = ReadString(row, map, "DEP_CAR"),
+                        DEP_VES_NAME = ReadString(row, map, "DEP_VES_NAME"),
+                        DEP_TS = ReadDate(row, map, "DEP_TS"),
+                        DISCH_PORT = ReadString(row, map, "DISCH_PORT"),
+                        FINAL_DISCH_PORT = ReadString(row, map, "FINAL_DISCH_PORT"),
+                        PLACE_OF_RECEIPT = ReadString(row, map, "PLACE_OF_RECEIPT"),
+                        PLACE_OF_DELIVERY = ReadString(row, map, "PLACE_OF_DELIVERY"),
+                        CUSTOM_CLEARANCE = ReadString(row, map, "CUSTOM_CLEARANCE"),
+                        CC_TS = ReadDate(row, map, "CC_TS"),
                         DGS_CLASS = ReadString(row, map, "DGS_CLASS"),
+                        UN_NO = ReadString(row, map, "UN_NO"),
+                        DAM = ReadString(row, map, "DAM"),
                         GHICHU = ReadString(row, map, "GHICHU"),
-                        ENTRY_VOY_NO = ReadString(row, map, "ENTRY_VOY_NO"),
-                        ENTRY_VES_NAME = ReadString(row, map, "ENTRY_VES_NAME"),
-                        EXIT_VOY_NO = ReadString(row, map, "EXIT_VOY_NO"),
-                        EXIT_VES_NAME = ReadString(row, map, "EXIT_VES_NAME"),
-                        ENTRY_TRUCK_ID = ReadString(row, map, "ENTRY_TRUCK_ID"),
-                        EXIT_TRUCK_ID = ReadString(row, map, "EXIT_TRUCK_ID"),
                         SOSEAL = ReadString(row, map, "SOSEAL"),
                         DateImport = importedAt,
                         UserImport = importUser,
@@ -1001,7 +1014,7 @@ public class ExcelImportCrudService(AppDbContext context)
             (await context.YardMovement_AMS_26040816_Imp.ToListAsync(ct)).Select(BuildAmsImpSignature),
             StringComparer.OrdinalIgnoreCase);
         var existingExpSignatures = new HashSet<string>(
-            (await context.YardMovement_AMS_26040816_Exp.ToListAsync(ct)).Select(BuildAmsExpSignature),
+            (await context.YardMovement_AMS_26040816_Current_In_Yard2.ToListAsync(ct)).Select(BuildAmsExpSignature),
             StringComparer.OrdinalIgnoreCase);
         var inserted = 0;
 
@@ -1022,7 +1035,7 @@ public class ExcelImportCrudService(AppDbContext context)
             var signature = BuildAmsExpSignature(inc);
             if (existingExpSignatures.Contains(signature))
                 continue;
-            await context.YardMovement_AMS_26040816_Exp.AddAsync(inc, ct);
+            await context.YardMovement_AMS_26040816_Current_In_Yard2.AddAsync(inc, ct);
             existingExpSignatures.Add(signature);
             inserted++;
         }
@@ -1209,11 +1222,40 @@ public class ExcelImportCrudService(AppDbContext context)
             x.BL_NO, x.BOOK_NO, x.RELEASE_NO, x.HUONG, x.HUONG1, x.CANGCT, x.CANGDEN, x.GIAO, x.NHAN, x.DGS_CLASS,
             x.GHICHU, x.ENTRY_VOY_NO, x.ENTRY_VES_NAME, x.EXIT_VOY_NO, x.EXIT_VES_NAME, x.ENTRY_TRUCK_ID, x.EXIT_TRUCK_ID, x.SOSEAL);
 
-    private static string BuildAmsExpSignature(M_8_3_Current_In_Yard2 x)
-        => BuildAmsSignatureCore(
-            x.METHOD, x.EXEC_TS, x.LINE, x.ITEM_KEY, x.SOCONT, x.KICHCO, x.TRANGTHAI, x.TRONGLUONG, x.TRONGLUONG_VGM,
-            x.BL_NO, x.BOOK_NO, x.RELEASE_NO, x.HUONG, x.HUONG1, x.CANGCT, x.CANGDEN, x.GIAO, x.NHAN, x.DGS_CLASS,
-            x.GHICHU, x.ENTRY_VOY_NO, x.ENTRY_VES_NAME, x.EXIT_VOY_NO, x.EXIT_VES_NAME, x.ENTRY_TRUCK_ID, x.EXIT_TRUCK_ID, x.SOSEAL);
+    private static string BuildAmsExpSignature(M_YardMovement_AMS_26040816_Current_In_Yard2 x)
+        => string.Join("|",
+            NormalizeKey(x.AGENT),
+            NormalizeKey(x.LINE),
+            NormalizeKey(x.ITEM_KEY),
+            NormalizeKey(x.ITEM_NO),
+            NormalizeKey(x.ISO),
+            NormalizeKey(x.FEL),
+            NormalizeDecimalKey(x.TEMP),
+            NormalizeDecimalKey(x.WEIGHT),
+            NormalizeDecimalKey(x.VGM_WEIGHT),
+            NormalizeKey(x.BOOK_NO),
+            NormalizeKey(x.BILL_OF_LADING),
+            NormalizeKey(x.LOCATION),
+            NormalizeKey(x.CATEGORY),
+            NormalizeKey(x.ARR_BY),
+            NormalizeKey(x.ARR_CAR),
+            NormalizeKey(x.ARR_VES_NAME),
+            x.ARR_TS?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.DEP_BY),
+            NormalizeKey(x.DEP_CAR),
+            NormalizeKey(x.DEP_VES_NAME),
+            x.DEP_TS?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.DISCH_PORT),
+            NormalizeKey(x.FINAL_DISCH_PORT),
+            NormalizeKey(x.PLACE_OF_RECEIPT),
+            NormalizeKey(x.PLACE_OF_DELIVERY),
+            NormalizeKey(x.CUSTOM_CLEARANCE),
+            x.CC_TS?.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture) ?? string.Empty,
+            NormalizeKey(x.DGS_CLASS),
+            NormalizeKey(x.UN_NO),
+            NormalizeKey(x.DAM),
+            NormalizeKey(x.GHICHU),
+            NormalizeKey(x.SOSEAL));
 
     private static string BuildAmsSignatureCore(
         string? method, DateTime? execTs, string? line, string? itemKey, string? soCont, string? kichCo, string? trangThai, decimal? trongLuong,
