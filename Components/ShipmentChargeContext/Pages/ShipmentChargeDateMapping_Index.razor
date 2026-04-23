@@ -1,0 +1,264 @@
+@page "/ShipmentChargeDateMapping"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@using System.Reflection
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>8.8 Mapping ngày tính cước</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+        <MudText Typo="Typo.h6" Class="fw-700">8.8 Mapping ngày theo số cont</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="SaveAsync" Disabled="_busy">
+            Lưu cấu hình
+        </MudButton>
+    </MudStack>
+
+    <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Variant="Variant.Outlined">
+        Chọn nguồn ngày cho từng trường ngày ở màn hình 8.7. Khi bấm "Tính Tiền", hệ thống sẽ tự lấy ngày theo số cont từ nguồn đã cấu hình.
+    </MudAlert>
+
+    <MudPaper Class="pa-3">
+        <MudDataGrid T="DateMappingRow" Items="_rows" Dense="true" Bordered="true" Striped="true" Hover="true">
+            <Columns>
+                <PropertyColumn Property="x => x.TargetLabel" Title="Ngày đích (8.7)" />
+                <TemplateColumn Title="Nguồn dữ liệu">
+                    <CellTemplate>
+                        <MudSelect T="string" Value="context.Item.SelectedSourceKey" ValueChanged="@(v => OnSourceChanged(context.Item, v))" Dense="true" Variant="Variant.Outlined">
+                            @foreach (var option in _sourceOptions)
+                            {
+                                <MudSelectItem T="string" Value="@option.Key">@option.Label</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Bật">
+                    <CellTemplate>
+                        <MudSwitch T="bool" Color="Color.Success" Value="context.Item.IsActive" ValueChanged="@(v => context.Item.IsActive = v)" />
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "ShipmentChargeContext";
+    private bool _busy;
+    private string _username = string.Empty;
+
+    private readonly List<DateMappingRow> _rows =
+    [
+        new() { TargetField = "EmptyPickupDate", TargetLabel = "Empty Pickup Date" },
+        new() { TargetField = "FullDischargeDate", TargetLabel = "Full Discharge Date" },
+        new() { TargetField = "FullDeliveryDate", TargetLabel = "Full Delivery Date" },
+        new() { TargetField = "EmptyReturnDate", TargetLabel = "Empty Return Date" },
+        new() { TargetField = "StorageInDate", TargetLabel = "Storage In Date" },
+        new() { TargetField = "StorageOutDate", TargetLabel = "Storage Out Date" }
+    ];
+
+    private readonly List<SourceOption> _sourceOptions = BuildSourceOptions();
+    private static readonly List<SourceModelDefinition> SourceModels =
+    [
+        new("M_Stock", "8.3.2_stock", typeof(M_Stock)),
+        new("M_StockGateOut_HDS_08042026", "8.3.1_HDS", typeof(M_StockGateOut_HDS_08042026)),
+        new("M_8_3_Exited", "8.3.1_AG_Exited", typeof(M_8_3_Exited)),
+        new("M_8_3_Stuffed", "8.3.1_AG_Stuffed", typeof(M_8_3_Stuffed)),
+        new("M_8_3_Arrived", "8.3.1_AG_Arrived", typeof(M_8_3_Arrived)),
+        new("M_8_3_Unstuffed", "8.3.1_AG_Unstuffed", typeof(M_8_3_Unstuffed)),
+        new("M_YardMovement_VSS_26040808_Exp", "8.3.1_VSS_VSS Exp", typeof(M_8_3_VSS_IN_OUT_YARD_Exp)),
+        new("M_YardMovement_VSS_26040808_Imp", "8.3.1_VSS_VSS Imp", typeof(M_8_3_VSS_IN_OUT_YARD_Imp)),
+        new("M_YardMovement_AMS_26040816_Current_In_Yard2", "8.3.1_AMS_Current_In_Yard2", typeof(M_YardMovement_AMS_26040816_Current_In_Yard2)),
+        new("M_YardMovement_AMS_26040816_Imp", "8.3.1_AMS_IN-OUT_YARD_1", typeof(M_8_3_IN_OUT_YARD_1))
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _username = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_username, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem cấu hình map ngày.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await EnsureDefaultMappingsAsync(db);
+            var mappings = await db.ShipmentChargeDateMappings.AsNoTracking().ToListAsync();
+            foreach (var row in _rows)
+            {
+                var map = mappings.FirstOrDefault(x => x.TargetField == row.TargetField);
+                if (map is null)
+                {
+                    row.SelectedSourceKey = string.Empty;
+                    row.IsActive = false;
+                    continue;
+                }
+
+                var sourceModel = NormalizeSourceModelKey(map.SourceModel);
+                row.SelectedSourceKey = $"{sourceModel}|{map.SourceProperty}";
+                if (!_sourceOptions.Any(x => x.Key == row.SelectedSourceKey))
+                    row.SelectedSourceKey = string.Empty;
+                row.IsActive = map.IsActive;
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Không tải được cấu hình: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnSourceChanged(DateMappingRow row, string? sourceKey)
+    {
+        row.SelectedSourceKey = sourceKey ?? string.Empty;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!await ssv.CheckPermission(_username, "Edit", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền cập nhật cấu hình map ngày.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var existing = await db.ShipmentChargeDateMappings.ToListAsync();
+
+            foreach (var row in _rows)
+            {
+                var option = _sourceOptions.FirstOrDefault(x => x.Key == row.SelectedSourceKey);
+                var entity = existing.FirstOrDefault(x => x.TargetField == row.TargetField);
+
+                if (option is null || string.IsNullOrWhiteSpace(option.Model) || string.IsNullOrWhiteSpace(option.Property))
+                {
+                    if (entity is not null)
+                        db.ShipmentChargeDateMappings.Remove(entity);
+                    continue;
+                }
+
+                if (entity is null)
+                {
+                    db.ShipmentChargeDateMappings.Add(new M_ShipmentChargeDateMapping
+                    {
+                        Id = Guid.NewGuid(),
+                        TargetField = row.TargetField,
+                        SourceModel = option.Model,
+                        SourceProperty = option.Property,
+                        IsActive = row.IsActive,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                    continue;
+                }
+
+                entity.SourceModel = option.Model;
+                entity.SourceProperty = option.Property;
+                entity.IsActive = row.IsActive;
+                entity.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync();
+            Snackbar.Add("Đã lưu cấu hình map ngày.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Lưu cấu hình thất bại: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string NormalizeSourceModelKey(string? sourceModel)
+    {
+        return sourceModel switch
+        {
+            "M_8_3_VSS_IN_OUT_YARD_Exp" => "M_YardMovement_VSS_26040808_Exp",
+            "M_8_3_VSS_IN_OUT_YARD_Imp" => "M_YardMovement_VSS_26040808_Imp",
+            "M_8_3_IN_OUT_YARD_1" => "M_YardMovement_AMS_26040816_Imp",
+            _ => sourceModel ?? string.Empty
+        };
+    }
+
+    private static List<SourceOption> BuildSourceOptions()
+    {
+        var options = new List<SourceOption> { new("", "-- Không chọn --", "", "") };
+        foreach (var source in SourceModels)
+        {
+            var dateProps = source.ModelType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(IsDateProperty)
+                .OrderBy(x => x.Name)
+                .ToList();
+
+            foreach (var prop in dateProps)
+            {
+                var key = $"{source.ModelKey}|{prop.Name}";
+                var label = $"{source.DisplayName}.{prop.Name}";
+                options.Add(new SourceOption(key, label, source.ModelKey, prop.Name));
+            }
+        }
+
+        return options;
+    }
+
+    private static bool IsDateProperty(PropertyInfo propertyInfo)
+    {
+        var type = Nullable.GetUnderlyingType(propertyInfo.PropertyType) ?? propertyInfo.PropertyType;
+        return type == typeof(DateTime);
+    }
+
+    private async Task EnsureDefaultMappingsAsync(AppDbContext db)
+    {
+        var hasAny = await db.ShipmentChargeDateMappings.AsNoTracking().AnyAsync();
+        if (hasAny)
+            return;
+
+        var defaults = new[]
+        {
+            new M_ShipmentChargeDateMapping { Id = Guid.NewGuid(), TargetField = "EmptyPickupDate", SourceModel = "M_StockGateOut_HDS_08042026", SourceProperty = "ContRaBai", IsActive = true, CreatedAt = DateTime.UtcNow },
+            new M_ShipmentChargeDateMapping { Id = Guid.NewGuid(), TargetField = "FullDischargeDate", SourceModel = "M_8_3_Arrived", SourceProperty = "DT", IsActive = true, CreatedAt = DateTime.UtcNow },
+            new M_ShipmentChargeDateMapping { Id = Guid.NewGuid(), TargetField = "FullDeliveryDate", SourceModel = "M_8_3_Exited", SourceProperty = "DT", IsActive = true, CreatedAt = DateTime.UtcNow },
+            new M_ShipmentChargeDateMapping { Id = Guid.NewGuid(), TargetField = "EmptyReturnDate", SourceModel = "M_8_3_Unstuffed", SourceProperty = "CCDT", IsActive = true, CreatedAt = DateTime.UtcNow },
+            new M_ShipmentChargeDateMapping { Id = Guid.NewGuid(), TargetField = "StorageInDate", SourceModel = "M_StockGateOut_HDS_08042026", SourceProperty = "ContVaoBai", IsActive = true, CreatedAt = DateTime.UtcNow },
+            new M_ShipmentChargeDateMapping { Id = Guid.NewGuid(), TargetField = "StorageOutDate", SourceModel = "M_StockGateOut_HDS_08042026", SourceProperty = "ContRaBai", IsActive = true, CreatedAt = DateTime.UtcNow }
+        };
+
+        db.ShipmentChargeDateMappings.AddRange(defaults);
+        await db.SaveChangesAsync();
+    }
+
+    private sealed class DateMappingRow
+    {
+        public string TargetField { get; set; } = string.Empty;
+        public string TargetLabel { get; set; } = string.Empty;
+        public string SelectedSourceKey { get; set; } = string.Empty;
+        public bool IsActive { get; set; }
+    }
+
+    private sealed record SourceOption(string Key, string Label, string Model, string Property);
+    private sealed record SourceModelDefinition(string ModelKey, string DisplayName, Type ModelType);
+}

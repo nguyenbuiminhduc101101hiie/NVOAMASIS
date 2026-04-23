@@ -23,11 +23,11 @@ namespace NVOAMASIS.Models
         public DateTime? StorageOutDate { get; set; }
         public int FreeDays { get; set; }
         public int? BillableDays { get; set; }
-        public decimal Amount { get; set; }
-        public Guid? tariffcode_id { get; set; }
         public string? CurrencyCode { get; set; }
         public string? Remarks { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime? UpdatedAt { get; set; }
+        public Guid? tariffcode_id { get; set; }
+        public double? Amount { get; set; }
     }
 }
