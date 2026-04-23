@@ -34,12 +34,12 @@
                 </MudItem>
                 <MudItem xs="12" md="6">
                     <MudAutocomplete T="LookupItem"
-                                     @bind-Value="_containerItem"
+                                     Value="_containerItem"
+                                     ValueChanged="OnContainerItemChangedAsync"
                                      Label="@Localizer["Scc_Lbl_Container"]"
                                      Variant="Variant.Outlined"
                                      Margin="Margin.Dense"
                                      Required="true"
-                                     Disabled="@(_hblItem is null || _hblItem.Id == Guid.Empty)"
                                      ToStringFunc="@(x => x?.Display ?? string.Empty)"
                                      EqualsFunc="@LookupEquals"
                                      SearchFunc="SearchContainersAsync"
@@ -193,7 +193,7 @@
                     <MudTextField @bind-Value="_currencyCode" Label="@Localizer["Scc_Lbl_Currency"]" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="16" />
                 </MudItem>
                 <MudItem xs="12" md="4">
-                    <MudNumericField T="decimal?"
+                    <MudNumericField T="double?"
                                      @bind-Value="_amount"
                                      Label="Amount"
                                      Variant="Variant.Outlined"
@@ -297,7 +297,16 @@
     private DateTime? _storageInDate;
     private DateTime? _storageOutDate;
     private string? _remarks;
-    private decimal? _amount;
+    private double? _amount;
+    private static readonly Dictionary<string, Action<ShipmentChargeContext_EditDialog, DateTime?>> TargetDateAssigners = new(StringComparer.Ordinal)
+    {
+        ["EmptyPickupDate"] = (dialog, value) => dialog._emptyPickupDate = value,
+        ["FullDischargeDate"] = (dialog, value) => dialog._fullDischargeDate = value,
+        ["FullDeliveryDate"] = (dialog, value) => dialog._fullDeliveryDate = value,
+        ["EmptyReturnDate"] = (dialog, value) => dialog._emptyReturnDate = value,
+        ["StorageInDate"] = (dialog, value) => dialog._storageInDate = value,
+        ["StorageOutDate"] = (dialog, value) => dialog._storageOutDate = value
+    };
 
     protected override async Task OnParametersSetAsync()
     {
@@ -410,6 +419,15 @@
         if (!string.IsNullOrWhiteSpace(c.CONTAINER_NO))
             return c.CONTAINER_NO.Trim();
         return c.CTN_ID.ToString();
+    }
+
+    private static string ContainerLookupDisplay(M_Container c, M_HBL? h, bool showHblHint)
+    {
+        var line = ContainerDisplay(c);
+        if (!showHblHint || h is null)
+            return line;
+        var hb = HblDisplay(h);
+        return string.IsNullOrEmpty(hb) ? line : $"{line} · {hb}";
     }
 
     private static string ChargeTypeDisplay(M_ChargeType x)
@@ -539,6 +557,29 @@
             _containerItem = null;
     }
 
+    private async Task OnContainerItemChangedAsync(LookupItem? value)
+    {
+        _containerItem = value;
+        if (value is null || value.Id == Guid.Empty)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var c = await db.Container.AsNoTracking().FirstOrDefaultAsync(x => x.CTN_ID == value.Id);
+        if (c?.hblid is null || c.hblid == Guid.Empty)
+            return;
+
+        var hblGuid = c.hblid.Value;
+        if (_hblItem?.Id == hblGuid)
+            return;
+
+        var h = await db.HBL.AsNoTracking().FirstOrDefaultAsync(x => x.hblID == hblGuid);
+        if (h is null)
+            return;
+
+        _hblItem = new LookupItem { Id = h.hblID, Display = HblDisplay(h) };
+        _freeDays = ComputeFreeDaysFromHbl(h);
+    }
+
     private static int ComputeFreeDaysFromHbl(M_HBL hbl)
     {
         var total = (hbl.Det ?? 0d) + (hbl.Dem ?? 0d) + (hbl.Combine ?? 0d);
@@ -558,6 +599,8 @@
         }
 
         await using var dbCtx = await DbFactory.CreateDbContextAsync();
+        await ApplyDateMappingsFromContainerAsync(dbCtx);
+
         var chargeTypeId = _chargeTypeItem?.Id;
         if (chargeTypeId is null || chargeTypeId == Guid.Empty)
         {
@@ -595,7 +638,135 @@
             return;
         }
 
-        _amount = (decimal?)amount.Value;
+        _amount = amount.Value;
+    }
+
+    private async Task ApplyDateMappingsFromContainerAsync(AppDbContext dbCtx)
+    {
+        if (_containerItem is null || _containerItem.Id == Guid.Empty)
+            return;
+
+        var container = await dbCtx.Container.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.CTN_ID == _containerItem.Id);
+        var containerNo = container?.CONTAINER_NO?.Trim();
+        if (string.IsNullOrWhiteSpace(containerNo))
+            return;
+
+        var mappings = await dbCtx.ShipmentChargeDateMappings
+            .AsNoTracking()
+            .Where(x => x.IsActive)
+            .ToListAsync();
+        if (mappings.Count == 0)
+            return;
+
+        var sourceRows = await LoadSourceRowsByContainerAsync(dbCtx, containerNo);
+        foreach (var mapping in mappings)
+        {
+            if (!TargetDateAssigners.TryGetValue(mapping.TargetField, out var assign))
+                continue;
+            if (!sourceRows.TryGetValue(mapping.SourceModel, out var sourceRow) || sourceRow is null)
+                continue;
+
+            var value = GetDateFromSource(sourceRow, mapping.SourceProperty);
+            if (value.HasValue)
+                assign(this, value);
+        }
+    }
+
+    private static DateTime? GetDateFromSource(object sourceRow, string propertyName)
+    {
+        var prop = sourceRow.GetType().GetProperty(propertyName);
+        if (prop is null)
+            return null;
+
+        var value = prop.GetValue(sourceRow);
+        if (value is DateTime dateTime)
+            return dateTime;
+        return null;
+    }
+
+    private static void AddSourceRow(Dictionary<string, object> rows, object sourceRow, string primaryKey, params string[] aliases)
+    {
+        rows[primaryKey] = sourceRow;
+        foreach (var alias in aliases)
+            rows[alias] = sourceRow;
+    }
+
+    private static async Task<Dictionary<string, object>> LoadSourceRowsByContainerAsync(AppDbContext dbCtx, string containerNo)
+    {
+        var normalized = containerNo.Trim();
+        var rows = new Dictionary<string, object>(StringComparer.Ordinal);
+
+        var stock = await dbCtx.Stock.AsNoTracking()
+            .Where(x => x.Container == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .FirstOrDefaultAsync();
+        if (stock is not null) AddSourceRow(rows, stock, "M_Stock");
+
+        var hds = await dbCtx.StockGateOut_HDS_08042026.AsNoTracking()
+            .Where(x => x.SoCont == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (hds is not null) AddSourceRow(rows, hds, "M_StockGateOut_HDS_08042026");
+
+        var agArrived = await dbCtx.AG_8_3_Arrived.AsNoTracking()
+            .Where(x => x.CNTRNO == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (agArrived is not null) AddSourceRow(rows, agArrived, "M_8_3_Arrived");
+
+        var agExited = await dbCtx.AG_8_3_Exited.AsNoTracking()
+            .Where(x => x.CNTRNO == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (agExited is not null) AddSourceRow(rows, agExited, "M_8_3_Exited");
+
+        var agUnstuffed = await dbCtx.AG_8_3_Unstuffed.AsNoTracking()
+            .Where(x => x.CNTRNO == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (agUnstuffed is not null) AddSourceRow(rows, agUnstuffed, "M_8_3_Unstuffed");
+
+        var agStuffed = await dbCtx.AG_8_3_Stuffed.AsNoTracking()
+            .Where(x => x.CNTRNO == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (agStuffed is not null) AddSourceRow(rows, agStuffed, "M_8_3_Stuffed");
+
+        var vssImp = await dbCtx.YardMovement_VSS_26040808_Imp.AsNoTracking()
+            .Where(x => x.SOCONT == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (vssImp is not null) AddSourceRow(rows, vssImp, "M_YardMovement_VSS_26040808_Imp", "M_8_3_VSS_IN_OUT_YARD_Imp");
+
+        var vssExp = await dbCtx.YardMovement_VSS_26040808_Exp.AsNoTracking()
+            .Where(x => x.SOCONT == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (vssExp is not null) AddSourceRow(rows, vssExp, "M_YardMovement_VSS_26040808_Exp", "M_8_3_VSS_IN_OUT_YARD_Exp");
+
+        var amsImp = await dbCtx.YardMovement_AMS_26040816_Imp.AsNoTracking()
+            .Where(x => x.SOCONT == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (amsImp is not null) AddSourceRow(rows, amsImp, "M_YardMovement_AMS_26040816_Imp", "M_8_3_IN_OUT_YARD_1");
+
+        var amsExp = await dbCtx.YardMovement_AMS_26040816_Current_In_Yard2.AsNoTracking()
+            .Where(x => x.ITEM_NO == normalized)
+            .OrderByDescending(x => x.DateImport)
+            .ThenByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (amsExp is not null) AddSourceRow(rows, amsExp, "M_YardMovement_AMS_26040816_Current_In_Yard2");
+
+        return rows;
     }
 
     private enum DemDetStoKind { Dem, Det, Sto }
@@ -733,7 +904,7 @@
         entity.StorageInDate = _storageInDate;
         entity.StorageOutDate = _storageOutDate;
         entity.Remarks = string.IsNullOrWhiteSpace(_remarks) ? null : _remarks.Trim();
-        entity.Amount = _amount ?? 0m;
+        entity.Amount = _amount;
         entity.tariffcode_id = _tariffHeaderItem is not null && _tariffHeaderItem.Id != Guid.Empty
             ? _tariffHeaderItem.Id
             : null;
@@ -762,26 +933,60 @@
 
     private async Task<IEnumerable<LookupItem>> SearchContainersAsync(string value)
     {
-        if (_hblItem is null || _hblItem.Id == Guid.Empty)
-            return Array.Empty<LookupItem>();
-
-        var hblId = _hblItem.Id;
         await using var db = await DbFactory.CreateDbContextAsync();
-        var q = db.Container.AsNoTracking().Where(x => x.hblid == hblId);
-        if (!string.IsNullOrWhiteSpace(value))
+        var v = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+        var baseQuery =
+            from c in db.Container.AsNoTracking()
+            join h in db.HBL.AsNoTracking() on c.hblid equals h.hblID into hg
+            from h in hg.DefaultIfEmpty()
+            where c.hblid != null && c.hblid != Guid.Empty
+            select new { c, h };
+
+        var showHblInList = _hblItem is null || _hblItem.Id == Guid.Empty;
+
+        if (_hblItem is not null && _hblItem.Id != Guid.Empty)
         {
-            var v = value.Trim();
-            q = q.Where(x => x.CONTAINER_NO != null && x.CONTAINER_NO.Contains(v));
+            var hblId = _hblItem.Id;
+            baseQuery = baseQuery.Where(x => x.c.hblid == hblId);
+            if (v is not null)
+                baseQuery = baseQuery.Where(x => x.c.CONTAINER_NO != null && x.c.CONTAINER_NO.Contains(v));
+        }
+        else if (v is not null)
+        {
+            baseQuery = baseQuery.Where(x =>
+                (x.c.CONTAINER_NO != null && x.c.CONTAINER_NO.Contains(v)) ||
+                (x.h != null && x.h.hbl != null && x.h.hbl.Contains(v)) ||
+                (x.h != null && x.h.bkno != null && x.h.bkno.Contains(v)));
         }
 
-        var list = await q.OrderBy(x => x.CONTAINER_NO).Take(ComboResultLimit).ToListAsync();
-        var result = list.Select(x => new LookupItem { Id = x.CTN_ID, Display = ContainerDisplay(x) }).ToList();
+        var rows = await baseQuery.OrderBy(x => x.c.CONTAINER_NO).Take(ComboResultLimit).ToListAsync();
+        var result = rows
+            .Select(x => new LookupItem
+            {
+                Id = x.c.CTN_ID,
+                Display = ContainerLookupDisplay(x.c, x.h, showHblInList)
+            })
+            .ToList();
+
         if (_containerItem is not null && _containerItem.Id != Guid.Empty && !result.Exists(x => x.Id == _containerItem.Id))
         {
-            var keep = await db.Container.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.CTN_ID == _containerItem.Id && x.hblid == hblId);
-            if (keep != null)
-                result.Insert(0, new LookupItem { Id = keep.CTN_ID, Display = ContainerDisplay(keep) });
+            var keep = await (
+                from c in db.Container.AsNoTracking()
+                join h in db.HBL.AsNoTracking() on c.hblid equals h.hblID into hg
+                from h in hg.DefaultIfEmpty()
+                where c.CTN_ID == _containerItem.Id
+                select new { c, h }).FirstOrDefaultAsync();
+
+            if (keep is not null
+                && (_hblItem is null || _hblItem.Id == Guid.Empty || keep.c.hblid == _hblItem.Id))
+            {
+                result.Insert(0, new LookupItem
+                {
+                    Id = keep.c.CTN_ID,
+                    Display = ContainerLookupDisplay(keep.c, keep.h, showHblInList)
+                });
+            }
         }
 
         return result;

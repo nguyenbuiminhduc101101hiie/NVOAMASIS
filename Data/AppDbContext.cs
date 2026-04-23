@@ -144,6 +144,8 @@ namespace NVOAMASIS.Data
         public DbSet<M_TariffHeader> TariffHeader { get; set; }
         public DbSet<M_TariffTier> TariffTier { get; set; }
         public DbSet<M_ShipmentChargeContext> ShipmentChargeContext { get; set; }
+        public DbSet<M_ShipmentChargeDateMapping> ShipmentChargeDateMappings { get; set; }
+
         public DbSet<M_SI> SI { get; set; }
         public DbSet<M_SI_Attachment> SI_Attachment { get; set; }
 
@@ -225,7 +227,9 @@ namespace NVOAMASIS.Data
             modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_ShipmentChargeContext>().ToTable("ShipmentChargeContext");
-
+            modelBuilder.Entity<M_ShipmentChargeDateMapping>().ToTable("ShipmentChargeDateMapping");
+            modelBuilder.Entity<M_ShipmentChargeDateMapping>().HasIndex(x => x.TargetField).IsUnique();
+            modelBuilder.Entity<M_ShipmentChargeDateMapping>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
             modelBuilder.Entity<M_SI_Attachment>().ToTable("SI_Attachment");
             modelBuilder.Entity<M_SI_Attachment>()
