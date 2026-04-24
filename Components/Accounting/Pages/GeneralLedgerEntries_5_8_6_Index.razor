@@ -28,17 +28,35 @@
 
     <MudPaper Class="pa-2">
         <MudDataGrid T="M_GeneralLedgerEntries" Items="_rows" Dense="true" Striped="true" Hover="true" Bordered="true"
+                     ColumnResizeMode="ResizeMode.Column" Class="auto-fit-grid"
                      RowClassFunc="RowClass" SelectedItem="_selected" SelectedItemChanged="OnSelectedChanged">
             <Columns>
                 <PropertyColumn Property="x => x.VoucherNo" Title="@Localizer["GeneralLedgerEntries.VoucherNo"]" />
                 <PropertyColumn Property="x => x.PostingDate" Title="@Localizer["GeneralLedgerEntries.PostingDate"]" />
                 <PropertyColumn Property="x => x.VoucherDate" Title="@Localizer["GeneralLedgerEntries.VoucherDate"]" />
+                <TemplateColumn Title="@Localizer["GeneralLedgerEntries.CompanyShortName"]">
+                    <CellTemplate>
+                        @GetCompanyShortName(context.Item.CompanyId)
+                    </CellTemplate>
+                </TemplateColumn>
                 <PropertyColumn Property="x => x.AccountCode" Title="@Localizer["GeneralLedgerEntries.AccountCode"]" />
                 <PropertyColumn Property="x => x.Description" Title="@Localizer["GeneralLedgerEntries.Description"]" />
-                <PropertyColumn Property="x => x.Debit" Title="@Localizer["GeneralLedgerEntries.Debit"]" />
-                <PropertyColumn Property="x => x.Credit" Title="@Localizer["GeneralLedgerEntries.Credit"]" />
+                <TemplateColumn Title="@Localizer["GeneralLedgerEntries.Debit"]">
+                    <CellTemplate>
+                        <div style="text-align: right;">@(((decimal?)context.Item.Debit)?.ToString("N0") ?? "0")</div>
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="@Localizer["GeneralLedgerEntries.Credit"]">
+                    <CellTemplate>
+                        <div style="text-align: right;">@(((decimal?)context.Item.Credit)?.ToString("N0") ?? "0")</div>
+                    </CellTemplate>
+                </TemplateColumn>
                 <PropertyColumn Property="x => x.CurrencyCode" Title="@Localizer["GeneralLedgerEntries.CurrencyCode"]" />
-                <PropertyColumn Property="x => x.ExchangeRate" Title="@Localizer["GeneralLedgerEntries.ExchangeRate"]" />
+                <TemplateColumn Title="@Localizer["GeneralLedgerEntries.ExchangeRate"]">
+                    <CellTemplate>
+                        <div style="text-align: right;">@(((decimal?)context.Item.ExchangeRate)?.ToString("N0") ?? "0")</div>
+                    </CellTemplate>
+                </TemplateColumn>
                 <PropertyColumn Property="x => x.SourceModule" Title="@Localizer["GeneralLedgerEntries.SourceModule"]" />
                 <PropertyColumn Property="x => x.IsTaxBook" Title="@Localizer["GeneralLedgerEntries.IsTaxBook"]" />
                 <PropertyColumn Property="x => x.IsManagementBook" Title="@Localizer["GeneralLedgerEntries.IsManagementBook"]" />
@@ -55,6 +73,7 @@
     private bool _busy;
     private string _usr = string.Empty;
     private List<M_GeneralLedgerEntries> _rows = new();
+    private Dictionary<Guid, string> _companyShortById = new();
     private M_GeneralLedgerEntries? _selected;
 
     protected override async Task OnInitializedAsync()
@@ -70,6 +89,7 @@
         {
             Snackbar.Add(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
             _rows.Clear();
+            _companyShortById.Clear();
             _selected = null;
             return;
         }
@@ -83,6 +103,28 @@
                 .OrderByDescending(x => x.PostingDate)
                 .ThenByDescending(x => x.CreatedAt)
                 .ToListAsync();
+
+            var companyIds = _rows.Select(x => x.CompanyId).Distinct().ToHashSet();
+            if (companyIds.Count == 0)
+            {
+                _companyShortById = new Dictionary<Guid, string>();
+            }
+            else
+            {
+                var companyShortNames = await db.Customer.AsNoTracking()
+                    .Where(c => !string.IsNullOrWhiteSpace(c.shortname))
+                    .Select(c => new
+                    {
+                        CompanyId = c.Customer_ID,
+                        ShortName = c.shortname
+                    })
+                    .ToListAsync();
+
+                _companyShortById = companyShortNames
+                    .Where(x => companyIds.Contains(x.CompanyId))
+                    .GroupBy(x => x.CompanyId)
+                    .ToDictionary(g => g.Key, g => g.First().ShortName!);
+            }
         }
         catch (Exception ex)
         {
@@ -93,6 +135,13 @@
             _busy = false;
             StateHasChanged();
         }
+    }
+
+    private string GetCompanyShortName(Guid companyId)
+    {
+        return _companyShortById.TryGetValue(companyId, out var shortName)
+            ? shortName
+            : string.Empty;
     }
 
     private void OnSelectedChanged(M_GeneralLedgerEntries? item) => _selected = item;
@@ -162,6 +211,19 @@
     .selected-row-blue {
         background-color: #2196f3 !important;
         color: #fff !important;
+    }
+
+    .auto-fit-grid .mud-table-container {
+        overflow-x: auto;
+    }
+
+    .auto-fit-grid .mud-table-root .mud-table {
+        width: max-content !important;
+        min-width: 100%;
+    }
+
+    .auto-fit-grid .mud-table-cell {
+        white-space: nowrap;
     }
 </style>
 
