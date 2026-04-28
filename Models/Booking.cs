@@ -184,5 +184,6 @@ namespace NVOAMASIS.Models
         public bool chktrucking { get; set; }
         public string? SettingTemperature { get; set; }
         public string? VentOpen { get; set; }
+        public string? PIC { get; set; }
     }
 }

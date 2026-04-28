@@ -170,6 +170,70 @@ namespace NVOAMASIS.Services
             }
         }
 
+        // Company Other CRUD
+        public async Task<List<M_Info_Company_other>> GetCompanyOtherList()
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var rs = await _context.Information_Comapny_Other
+                    .OrderBy(x => x.Code)
+                    .ThenBy(x => x.AccountName)
+                    .ToListAsync();
+                return rs;
+            }
+            catch
+            {
+                return new List<M_Info_Company_other>();
+            }
+        }
+
+        public async Task<BoolandMessReponse> AddCompanyOther(M_Info_Company_other item)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                item.id = Guid.NewGuid();
+                _context.Information_Comapny_Other.Add(item);
+                await _context.SaveChangesAsync();
+                return new BoolandMessReponse(true, "Thêm thành công");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Lỗi: " + ex.Message);
+            }
+        }
+
+        public async Task<BoolandMessReponse> UpdateCompanyOther(M_Info_Company_other item)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                _context.Information_Comapny_Other.Update(item);
+                await _context.SaveChangesAsync();
+                return new BoolandMessReponse(true, "Cập nhật thành công");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Lỗi: " + ex.Message);
+            }
+        }
+
+        public async Task<BoolandMessReponse> DeleteCompanyOther(M_Info_Company_other item)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                _context.Information_Comapny_Other.Remove(item);
+                await _context.SaveChangesAsync();
+                return new BoolandMessReponse(true, "Xóa thành công");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Lỗi: " + ex.Message);
+            }
+        }
+
         public async Task<List<Terminal_>> GetList_Terminal_add()
         {
             try
