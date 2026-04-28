@@ -111,9 +111,9 @@ namespace NVOAMASIS.Data
         public DbSet<M_Currency> Currency { get; set; }
         public DbSet<M_Test_getapi> Test_getapi { get; set; }
         public DbSet<M_CompanyInfo> CompanyInfomation { get; set; }
+        public DbSet<M_Info_Company_other> Information_Comapny_Other { get; set; }
 
         public DbSet<M_CuocCont> CuocCont { get; set; }
-
 
         public DbSet<DebitCreditTemplate> DebitCreditTemplate { get; set; }
 

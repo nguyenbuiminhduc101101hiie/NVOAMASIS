@@ -4515,7 +4515,7 @@ namespace NVOAMASIS.Services
         //    }
         //}
 
-        public async Task<BoolandMessReponse> ExportBooking(Guid id)
+        public async Task<BoolandMessReponse> ExportBooking(Guid id,string billType)
         {
             try
             {
@@ -4527,7 +4527,9 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
 
+                
                 try
                 {
                     report.Render();
