@@ -155,6 +155,8 @@ namespace NVOAMASIS.Data
         public DbSet<M_AccountingVoucherLines> AccountingVoucherLines { get; set; }
         public DbSet<M_GeneralLedgerEntries> GeneralLedgerEntries { get; set; }
         public DbSet<M_AccountMapping> AccountMappings { get; set; }
+        public DbSet<M_account_balance> AccountBalances { get; set; }
+        public DbSet<M_account_balance_gl_line> AccountBalanceGlLines { get; set; }
         public DbSet<M_AccountingPeriod> AccountingPeriods { get; set; }
         public DbSet<LocalizationResource> LocalizationResources { get; set; }
 
@@ -252,6 +254,19 @@ namespace NVOAMASIS.Data
                 .HasOne<M_AccountingVouchers>()
                 .WithMany()
                 .HasForeignKey(x => x.VoucherId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<M_account_balance_gl_line>()
+          .ToTable("account_balance_gl_line");
+            modelBuilder.Entity<M_account_balance_gl_line>()
+                .HasIndex(x => x.AccountBalanceId);
+            modelBuilder.Entity<M_account_balance_gl_line>()
+                .HasIndex(x => new { x.AccountBalanceId, x.GeneralLedgerEntryId })
+                .IsUnique();
+            modelBuilder.Entity<M_account_balance_gl_line>()
+                .HasOne(x => x.AccountBalance)
+                .WithMany(x => x.GlSnapshotLines)
+                .HasForeignKey(x => x.AccountBalanceId)
                 .OnDelete(DeleteBehavior.Cascade);
         }
 

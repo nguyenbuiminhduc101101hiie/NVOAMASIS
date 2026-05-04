@@ -1,0 +1,328 @@
+@page "/account-balance"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["AccountBalance.Title"]</PageTitle>
+
+<MudStack Class="px-4 mt-2" Spacing="2">
+    <MudText Typo="Typo.h6" Class="fw-700">5.8.9 @Localizer["AccountBalance.Title"]</MudText>
+
+    <MudPaper Class="pa-3">
+        <MudGrid>
+            <MudItem xs="12" sm="3">
+                <MudNumericField T="int" @bind-Value="_fiscalYear" Label="@Localizer["AccountBalance.FiscalYear"]" Min="2000" Max="2100" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudNumericField T="int" @bind-Value="_periodMonth" Label="@Localizer["AccountBalance.PeriodMonth"]" Min="1" Max="12" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="6" Class="d-flex align-center ga-2">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Calculate"
+                           Disabled="_busy"
+                           OnClick="CalculateAndUpsertAsync">
+                    @Localizer["AccountBalance.CalculateUpsert"]
+                </MudButton>
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Info"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           Disabled="_busy"
+                           OnClick="LoadAsync">
+                    @Localizer["reload"]
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Class="pa-3">
+        <MudTextField @bind-Value="_search"
+                      Label="@Localizer["AccountBalance.Search"]"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Immediate="true"
+                      Clearable="true" />
+
+        <MudDataGrid T="M_account_balance"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     Height="calc(100vh - 360px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <HierarchyColumn T="M_account_balance" />
+                <PropertyColumn Property="x => x.AccountCode" Title="@Localizer["AccountBalance.AccountCode"]" />
+                <PropertyColumn Property="x => x.AccountType" Title="@Localizer["AccountBalance.Section"]" />
+                <PropertyColumn Property="x => x.PeriodYear" Title="@Localizer["AccountBalance.Year"]" />
+                <PropertyColumn Property="x => x.PeriodMonth" Title="@Localizer["AccountBalance.Month"]" />
+                <PropertyColumn Property="x => x.OpeningBalance" Title="@Localizer["AccountBalance.Opening"]" Format="#,##0.00" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.DebitTotal" Title="@Localizer["AccountBalance.Debit"]" Format="#,##0.00" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.CreditTotal" Title="@Localizer["AccountBalance.Credit"]" Format="#,##0.00" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.ClosingBalance" Title="@Localizer["AccountBalance.Closing"]" Format="#,##0.00" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.CalculatedFrom" Title="@Localizer["AccountBalance.FromGlDate"]" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.CalculatedTo" Title="@Localizer["AccountBalance.ToGlDate"]" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.LastCalculatedAt" Title="@Localizer["AccountBalance.LastCalculated"]" Format="dd/MM/yyyy HH:mm" />
+            </Columns>
+            <ChildRowContent>
+                <MudPaper Class="pa-3 ma-2" Elevation="0" Outlined="true">
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">@Localizer["AccountBalance.GlSnapshotDetails"] — @context.Item.AccountCode</MudText>
+                    @{
+                        var lines = OrderedGlLines(context.Item);
+                    }
+                    @if (lines.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">@Localizer["AccountBalance.NoGlLinesSaved"]</MudText>
+                    }
+                    else
+                    {
+                        <MudTable Items="lines" Dense="true" Hover="true" Striped="true" Bordered="true">
+                            <HeaderContent>
+                                <MudTh>@Localizer["GeneralLedgerEntries.VoucherNo"]</MudTh>
+                                <MudTh>@Localizer["GeneralLedgerEntries.PostingDate"]</MudTh>
+                                <MudTh>@Localizer["GeneralLedgerEntries.Description"]</MudTh>
+                                <MudTh Class="text-end">@Localizer["GeneralLedgerEntries.Debit"]</MudTh>
+                                <MudTh Class="text-end">@Localizer["GeneralLedgerEntries.Credit"]</MudTh>
+                            </HeaderContent>
+                            <RowTemplate Context="line">
+                                <MudTd DataLabel="@Localizer["GeneralLedgerEntries.VoucherNo"]">@line.VoucherNo</MudTd>
+                                <MudTd DataLabel="@Localizer["GeneralLedgerEntries.PostingDate"]">@line.PostingDate.ToString("dd/MM/yyyy HH:mm")</MudTd>
+                                <MudTd DataLabel="@Localizer["GeneralLedgerEntries.Description"]">@line.Description</MudTd>
+                                <MudTd DataLabel="@Localizer["GeneralLedgerEntries.Debit"]" Class="text-end">@line.Debit.ToString("N2")</MudTd>
+                                <MudTd DataLabel="@Localizer["GeneralLedgerEntries.Credit"]" Class="text-end">@line.Credit.ToString("N2")</MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+                </MudPaper>
+            </ChildRowContent>
+            <PagerContent>
+                <MudDataGridPager T="M_account_balance" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</MudStack>
+
+@code {
+    private const string PermissionMenuName = "account_balance";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private string _search = string.Empty;
+    private int _fiscalYear = DateTime.UtcNow.Year;
+    private int _periodMonth = DateTime.UtcNow.Month;
+    private List<M_account_balance> _items = new();
+
+    private IEnumerable<M_account_balance> VisibleItems =>
+        string.IsNullOrWhiteSpace(_search)
+            ? _items
+            : _items.Where(x =>
+                (x.AccountCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.AccountType?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountBalance.NoAccessView"], MudBlazor.Severity.Warning);
+            _items.Clear();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.AccountBalances.AsNoTracking()
+                .Include(x => x.GlSnapshotLines)
+                .Where(x => x.PeriodYear == _fiscalYear && x.PeriodMonth == _periodMonth)
+                .OrderBy(x => x.AccountCode)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CalculateAndUpsertAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["AccountBalance.NoAccessCalculate"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_periodMonth < 1 || _periodMonth > 12)
+        {
+            CallSnack(Localizer["AccountBalance.InvalidPeriodMonth"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var glRows = await (
+                from gl in db.GeneralLedgerEntries.AsNoTracking()
+                join map in db.AccountMappings.AsNoTracking() on gl.AccountCode equals map.AccountCode
+                where gl.FiscalYear == _fiscalYear
+                      && gl.FiscalPeriod == _periodMonth
+                      && map.StatementType == "Balance Sheet"
+                      && map.IsActive
+                select new { gl, map })
+                .ToListAsync();
+
+            var groups = glRows
+                .GroupBy(x => new
+                {
+                    x.gl.AccountCode,
+                    x.map.BsSection,
+                    NormalBalance = x.map.NormalBalance ?? "Debit"
+                })
+                .ToList();
+
+            var accountCodesInGl = groups.Select(g => g.Key.AccountCode).Distinct().ToList();
+            if (accountCodesInGl.Count > 0)
+            {
+                // Không dùng .Contains(list) trong LINQ-to-SQL: EF có thể sinh OPENJSON(...) WITH (...)
+                // và SQL Server báo "Incorrect syntax near the keyword 'WITH'".
+                var codeSet = accountCodesInGl.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var snapshotRowsInPeriod = await (
+                        from line in db.AccountBalanceGlLines
+                        join bal in db.AccountBalances on line.AccountBalanceId equals bal.Id
+                        where bal.PeriodYear == _fiscalYear && bal.PeriodMonth == _periodMonth
+                        select new { line, bal.AccountCode })
+                    .ToListAsync();
+                var linesToClear = snapshotRowsInPeriod
+                    .Where(x => codeSet.Contains(x.AccountCode))
+                    .Select(x => x.line)
+                    .ToList();
+                if (linesToClear.Count > 0)
+                    db.AccountBalanceGlLines.RemoveRange(linesToClear);
+            }
+
+            var nowUtc = DateTime.UtcNow;
+            foreach (var g in groups)
+            {
+                var key = g.Key;
+                var lines = g.Select(x => x.gl).DistinctBy(x => x.Id).ToList();
+                var debitTotal = lines.Sum(x => x.Debit);
+                var creditTotal = lines.Sum(x => x.Credit);
+                var calculatedFrom = lines.Count > 0 ? lines.Min(x => x.PostingDate) : (DateTime?)null;
+                var calculatedTo = lines.Count > 0 ? lines.Max(x => x.PostingDate) : (DateTime?)null;
+
+                var existed = await db.AccountBalances.FirstOrDefaultAsync(x =>
+                    x.AccountCode == key.AccountCode
+                    && x.PeriodYear == _fiscalYear
+                    && x.PeriodMonth == _periodMonth);
+
+                var isDebitNatural = string.Equals(key.NormalBalance, "Debit", StringComparison.OrdinalIgnoreCase);
+                var openingForRow = existed?.OpeningBalance ?? 0m;
+                var closingBalance = isDebitNatural
+                    ? openingForRow + debitTotal - creditTotal
+                    : openingForRow + creditTotal - debitTotal;
+
+                M_account_balance balanceRow;
+                if (existed is null)
+                {
+                    balanceRow = new M_account_balance
+                    {
+                        Id = Guid.NewGuid(),
+                        AccountCode = key.AccountCode,
+                        CompanyId = null,
+                        PeriodYear = _fiscalYear,
+                        PeriodMonth = _periodMonth,
+                        OpeningBalance = 0m,
+                        DebitTotal = debitTotal,
+                        CreditTotal = creditTotal,
+                        ClosingBalance = closingBalance,
+                        AccountType = key.BsSection,
+                        CalculatedFrom = calculatedFrom,
+                        CalculatedTo = calculatedTo,
+                        LastCalculatedAt = nowUtc,
+                        CreatedAt = nowUtc,
+                        UpdatedAt = nowUtc
+                    };
+                    db.AccountBalances.Add(balanceRow);
+                }
+                else
+                {
+                    balanceRow = existed;
+                    balanceRow.DebitTotal = debitTotal;
+                    balanceRow.CreditTotal = creditTotal;
+                    balanceRow.AccountType = key.BsSection;
+                    balanceRow.CalculatedFrom = calculatedFrom;
+                    balanceRow.CalculatedTo = calculatedTo;
+                    balanceRow.LastCalculatedAt = nowUtc;
+                    balanceRow.ClosingBalance = closingBalance;
+                    balanceRow.UpdatedAt = nowUtc;
+                }
+
+                foreach (var gl in lines.OrderBy(x => x.PostingDate).ThenBy(x => x.VoucherNo))
+                {
+                    db.AccountBalanceGlLines.Add(new M_account_balance_gl_line
+                    {
+                        Id = Guid.NewGuid(),
+                        AccountBalanceId = balanceRow.Id,
+                        GeneralLedgerEntryId = gl.Id,
+                        VoucherNo = gl.VoucherNo ?? string.Empty,
+                        PostingDate = gl.PostingDate,
+                        Debit = gl.Debit,
+                        Credit = gl.Credit,
+                        Description = gl.Description
+                    });
+                }
+            }
+
+            await db.SaveChangesAsync();
+            CallSnack(string.Format(Localizer["AccountBalance.CalculatedCount"], groups.Count), MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static List<M_account_balance_gl_line> OrderedGlLines(M_account_balance row) =>
+        (row.GlSnapshotLines ?? Enumerable.Empty<M_account_balance_gl_line>())
+            .OrderBy(l => l.PostingDate)
+            .ThenBy(l => l.VoucherNo)
+            .ToList();
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
