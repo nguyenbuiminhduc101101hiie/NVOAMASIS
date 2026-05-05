@@ -2613,11 +2613,12 @@ namespace NVOAMASIS.Services
                 {
                      rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaImport_USD.mrt");
                 }
-                else
+                else 
                 {
                     rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaImport_VND.mrt");
 
                 }
+        
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
 
@@ -2907,12 +2908,12 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportCreditSI(List<M_Credit> list_debit, List<M_HBL> hblinfo, string cur_type, string billType = "PASL")
+        public async Task<BoolandMessReponse> ExportCreditSI(List<M_Credit> list_debit, List<M_HBL> hblinfo, string cur_type, string billType = "PASL", string branches = "")
         {
             try
             {
                 var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportListCreditNote_SeaImport.mrt");
+                var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportCreditNote_SeaImport.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
 
@@ -2921,6 +2922,7 @@ namespace NVOAMASIS.Services
                 report.Load(rpt);
                 report.Culture = "en-US";
                 report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyCompanyBranchVariable(report, branches);
                 var fcl = await GetFLCByMBLID(hblinfo.First().mblid);
                 double? total_payment = 0;
                 double? total_amount_notvat = 0;
@@ -2984,8 +2986,8 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["HBLID"].Value = hblinfo.First().hblID.ToString();
 
                 var hbls = string.Join(";", hblinfo.Select(x => x.hbl));
-                report.Dictionary.Variables["HBLs"].Value = hbls;
-                report.Dictionary.Variables["MBLs"].Value = "";
+                //report.Dictionary.Variables["HBLs"].Value = hbls;
+                //report.Dictionary.Variables["MBLs"].Value = "";
 
                 var querydebit = "WHERE creditId IN (";
                 foreach (var item in list_debit)
