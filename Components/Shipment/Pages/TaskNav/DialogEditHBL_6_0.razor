@@ -361,6 +361,37 @@
                                      Clearable="true" />
                 </MudItem>
                 <!-- Fourth column (pack 4-per-row) -->
+                <MudItem xs="3">
+                    <MudDatePicker @bind-Date="Item.HanNhanCont"
+                                   Label="@Localizer["HanNhanCont"]"
+                                   DateFormat="dd/MM/yyyy" />
+                </MudItem>
+
+                <MudItem xs="3">
+                    <MudDatePicker @bind-Date="Item.HanTraCont"
+                                   Label="@Localizer["HanTraCont"]"
+                                   DateFormat="dd/MM/yyyy" />
+                </MudItem>
+
+                <MudItem xs="3">
+                    <MudAutocomplete T="Guid?"
+                                     Value="Item.Depo_id"
+                                     ValueChanged="@(async v => await OnTerminalChanged(v))"
+                                     ValueExpression="() => Item.Depo_id"
+                                     Label="@Localizer["NoiTraContRong"]"
+                                     Required
+                                     SearchFunc="SearchTerminal"
+                                     ToStringFunc="CusidtoTerminalCode" />
+                </MudItem>
+
+
+                <MudItem xs="3">
+                    <MudTextField @bind-Value="Item.Add_NoiTraContRong"
+                                  Label="@Localizer["NoiTraContRong"]"
+                                  Lines="3"
+                                  Required />
+                </MudItem>
+
            
             </MudGrid>
         </MudContainer>
@@ -385,7 +416,7 @@
 
     [Parameter] public List<M_Debit> ListDebit { get; set; } = new();
     [Parameter] public List<M_Credit> ListCredit { get; set; } = new();
-
+    public List<Terminal_> Terminals { get; set; } = new();
     [Parameter] public string CurrentUserRole { get; set; } = "";
 
     [Parameter] public Func<M_HBL, Task> SetActualdeldateAsync { get; set; } = default!;
@@ -415,6 +446,8 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
         BookingNoList = (await bksv.GetListSBooking() ?? new List<Models.Booking>())
             .Select(x => x.BookingNo)
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -422,8 +455,43 @@
             .Distinct()
             .OrderByDescending(x => x)
             .ToList();
+        Terminals = await db.Terminal.AsNoTracking().ToListAsync();
+
     }
 
+    string CusidtoTerminalCode(Guid? terminal_id)
+    {
+        if (terminal_id == Guid.Empty) return string.Empty;
+        var rs = Terminals.FirstOrDefault(x => x.TerminalID == terminal_id);
+        return rs == null ? string.Empty : rs.Code + "_" + rs.TermiNalName ?? string.Empty;
+    }
+    private async Task OnTerminalChanged(Guid? id)
+    {
+        Item.Depo_id = id;
+
+        if (!id.HasValue)
+        {
+            Item.Add_NoiTraContRong = null;
+            return;
+        }
+
+        var terminal = Terminals.FirstOrDefault(x => x.TerminalID == id.Value);
+
+        Item.Add_NoiTraContRong = terminal?.Address;
+    }
+
+    private async Task<IEnumerable<Guid?>> SearchTerminal(string text)
+    {
+        await Task.Delay(1);
+
+        if (string.IsNullOrWhiteSpace(text))
+            return Terminals.Select(x => (Guid?)x.TerminalID);
+
+        return Terminals
+            .Where(x => (x.Code + "_" + x.TermiNalName)
+                .Contains(text, StringComparison.OrdinalIgnoreCase))
+            .Select(x => (Guid?)x.TerminalID);
+    }
     protected override void OnParametersSet()
     {
         if (Customers == null || Customers.Count == 0) return;

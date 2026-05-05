@@ -285,7 +285,10 @@ namespace NVOAMASIS.Models
         public double? Det { get; set; } = 0;
         public double? Combine { get; set; } = 0;
         public string? IssueAt { get; set; }
-
+        public DateTime? HanNhanCont { get; set; }
+        public DateTime? HanTraCont { get; set; }
+        public Guid? Depo_id { get; set; }
+        public string? Add_NoiTraContRong { get; set; }
         public M_HBL DeepCopy()
         {
             string json = JsonSerializer.Serialize(this);
