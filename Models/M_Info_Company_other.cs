@@ -23,5 +23,7 @@ namespace NVOAMASIS.Models
         public string? BankAddress { get; set; }
         public string? SWIFT_CODE { get; set; }
         public string? IBAN_CODE { get; set; }
+        public string? Branches { get; set; }
+
     }
 }
