@@ -6,6 +6,7 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ShipmentService shipsv
+@inject GlobalServices gsv
 @inject IStringLocalizer<SharedResource> Localizer
 @using System.Globalization﻿
 @inject HistoryLogService HistoryLogService
@@ -653,15 +654,17 @@
             var dialogResult = await dialogRef.Result;
             if (dialogResult.Canceled) return;
             var billType = (string)dialogResult.Data!;
+            var branches = await ResolveBranchByCompanyAsync(billType);
+            if (branches is null) return;
 
             if (type == "SI" || type == "SE")
             {
-                var rs = await shipsv.ExportArrival(hbldetail, billType);
+                var rs = await shipsv.ExportArrival(hbldetail, billType, branches);
                 CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
             }
             else if (type == "AI" || type == "AE")
             {
-                var rs = await shipsv.ExportArrivalAir(hbldetail, billType);
+                var rs = await shipsv.ExportArrivalAir(hbldetail, billType, branches);
                 CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
             }
             else 
@@ -699,6 +702,47 @@
         await DialogService.ShowAsync<Shipment.Pages.DialogArrivalNoticeQr>(Localizer["Arrival Notice"] + " QR Code", parameters, options);
     }
 
+    private async Task<string?> ResolveBranchByCompanyAsync(string billType)
+    {
+        var companyOptions = await gsv.GetCompanyOtherList();
+        var branchesByCompany = companyOptions
+            .Where(x => string.Equals(x.Code?.Trim(), billType.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Branches?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!branchesByCompany.Any())
+        {
+            return string.Empty;
+        }
+
+        if (branchesByCompany.Count == 1)
+        {
+            return branchesByCompany[0]!;
+        }
+
+        var branchDialogOptions = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true
+        };
+        var branchParameters = new DialogParameters<Shipment.Pages.DialogBranchOption>
+        {
+            { x => x.BranchOptions, branchesByCompany! }
+        };
+        var branchDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogBranchOption>("Arrival Notice - Chon Branch", branchParameters, branchDialogOptions);
+        var branchResult = await branchDialogRef.Result;
+        if (branchResult.Canceled)
+        {
+            return null;
+        }
+        return branchResult.Data?.ToString() ?? string.Empty;
+    }
+
     private bool _processingDO = false;
     private async Task ExportDO()
     {
@@ -726,15 +770,17 @@
             var dialogResult = await dialogRef.Result;
             if (dialogResult.Canceled) return;
             var billType = (string)dialogResult.Data!;
+            var branches = await ResolveBranchByCompanyAsync(billType);
+            if (branches is null) return;
 
             if (type == "SI" || type == "SE")
             {
-                var rs = await shipsv.ExportDO_NVOCC(hbldetail, billType);
+                var rs = await shipsv.ExportDO_NVOCC(hbldetail, billType, branches);
                 CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
             }
             else if (type == "AI" || type == "AE")
             {
-                var rs = await shipsv.ExportDOAir(hbldetail, billType);
+                var rs = await shipsv.ExportDOAir(hbldetail, billType, branches);
                 CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
             }
             else

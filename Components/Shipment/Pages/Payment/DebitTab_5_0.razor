@@ -6,6 +6,7 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ShipmentService shipsv
+@inject GlobalServices gsv
 @inject IStringLocalizer<SharedResource> Localizer
 @inject HistoryLogService HistoryLogService
 @using System.Text.Json;
@@ -609,6 +610,8 @@
             var companyResult = await companyDialogRef.Result;
             if (companyResult.Canceled) return;
             var billType = (string)companyResult.Data!;
+            var branches = await ResolveBranchByCompanyAsync(billType);
+            if (branches is null) return;
 
             var optionsdialog = new DialogOptions
             {
@@ -654,10 +657,10 @@
             if (type == "SI")
             {
                 if (isMBL){
-                    var rs = await shipsv.ExportDebitSI_mbl(debitdetail, cur_type, billType);
+                    var rs = await shipsv.ExportDebitSI_mbl(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }else{
-                    var rs = await shipsv.ExportDebitSI(debitdetail, cur_type, billType);
+                    var rs = await shipsv.ExportDebitSI(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
 
@@ -665,10 +668,10 @@
             else if (type == "SE")
             {
                 if (isMBL){
-                    var rs = await shipsv.ExportDebitSE_mbl(debitdetail, cur_type, billType);
+                    var rs = await shipsv.ExportDebitSE_mbl(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }else{
-                    var rs = await shipsv.ExportDebitSE(debitdetail, cur_type, billType);
+                    var rs = await shipsv.ExportDebitSE(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
 
@@ -676,27 +679,27 @@
             else if (type == "AI")
             {
                 if (isMBL){
-                    var rs = await shipsv.ExportDebitAI_mbl(debitdetail, cur_type, billType);
+                    var rs = await shipsv.ExportDebitAI_mbl(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }else{
-                    var rs = await shipsv.ExportDebitAI(debitdetail, cur_type, billType);
+                    var rs = await shipsv.ExportDebitAI(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
             }
             else if (type == "AE")
             {
                 if (isMBL){
-                    var rs = await shipsv.ExportDebitAE_mbl(debitdetail, cur_type, billType);
+                    var rs = await shipsv.ExportDebitAE_mbl(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }else{
-                    var rs = await shipsv.ExportDebitAE(debitdetail, cur_type, billType);
+                    var rs = await shipsv.ExportDebitAE(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
 
             }
             else if(type == "Truck")
             {
-                var rs = await shipsv.ExportDebitTruck(debitdetail, cur_type, isMBL, billType);
+                var rs = await shipsv.ExportDebitTruck(debitdetail, cur_type, isMBL, billType, branches);
                 CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
             }
             else
@@ -726,6 +729,47 @@
         var cn = rs.Branch;
         var flc = await shipsv.GetFLCByMBLID(isMBL ? MBLDetail!.MblID : HBLDetail!.mblid);
         item.debitno = cn + tiepdaungu + type + flc + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D4") : "RefNoError!");
+    }
+
+    private async Task<string?> ResolveBranchByCompanyAsync(string billType)
+    {
+        var companyOptions = await gsv.GetCompanyOtherList();
+        var branchesByCompany = companyOptions
+            .Where(x => string.Equals(x.Code?.Trim(), billType.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Branches?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!branchesByCompany.Any())
+        {
+            return string.Empty;
+        }
+
+        if (branchesByCompany.Count == 1)
+        {
+            return branchesByCompany[0]!;
+        }
+
+        var branchDialogOptions = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true
+        };
+        var branchParameters = new DialogParameters<Shipment.Pages.DialogBranchOption>
+        {
+            { x => x.BranchOptions, branchesByCompany! }
+        };
+        var branchDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogBranchOption>("Debit - Chon Branch", branchParameters, branchDialogOptions);
+        var branchResult = await branchDialogRef.Result;
+        if (branchResult.Canceled)
+        {
+            return null;
+        }
+        return branchResult.Data?.ToString() ?? string.Empty;
     }
 
     private void CalculateTotal(M_Debit item)
