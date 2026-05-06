@@ -2236,7 +2236,7 @@ namespace NVOAMASIS.Services
         /// <summary>
         /// Generates Arrival Notice PDF bytes for Sea (SI/SE). Used for QR code public link - no JSRuntime.
         /// </summary>
-        public async Task<byte[]?> GetArrivalNoticePdfBytesAsync(M_HBL detail)
+        public async Task<byte[]?> GetArrivalNoticePdfBytesAsync(M_HBL detail, string billType = "PASL", string branches = "")
         {
             try
             {
@@ -2245,6 +2245,8 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2276,7 +2278,7 @@ namespace NVOAMASIS.Services
         /// <summary>
         /// Generates Arrival Notice PDF bytes for Air (AI/AE). Used for QR code public link - no JSRuntime.
         /// </summary>
-        public async Task<byte[]?> GetArrivalNoticeAirPdfBytesAsync(M_HBL detail)
+        public async Task<byte[]?> GetArrivalNoticeAirPdfBytesAsync(M_HBL detail, string billType = "PASL", string branches = "")
         {
             try
             {
@@ -2285,6 +2287,8 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyCompanyBranchVariable(report, branches);
 
                 var flightdate = (detail.Air_FlightDate1 ?? "").Split('/').ToList();
                 var flightcode = flightdate.Count == 0 ? "" : flightdate.FirstOrDefault();
@@ -2534,7 +2538,7 @@ namespace NVOAMASIS.Services
         /// <summary>
         /// Generates DO (Delivery Order) PDF bytes for Sea (SI/SE). Used for QR code public link - no JSRuntime.
         /// </summary>
-        public async Task<byte[]?> GetDOPdfBytesAsync(M_HBL detail)
+        public async Task<byte[]?> GetDOPdfBytesAsync(M_HBL detail, string billType = "PASL", string branches = "")
         {
             try
             {
@@ -2543,6 +2547,8 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
@@ -2562,7 +2568,7 @@ namespace NVOAMASIS.Services
         /// <summary>
         /// Generates DO (Delivery Order) PDF bytes for Air (AI/AE). Used for QR code public link - no JSRuntime.
         /// </summary>
-        public async Task<byte[]?> GetDOAirPdfBytesAsync(M_HBL detail)
+        public async Task<byte[]?> GetDOAirPdfBytesAsync(M_HBL detail, string billType = "PASL", string branches = "")
         {
             try
             {
@@ -2571,6 +2577,8 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
+                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
                 var flightdate = (detail.Air_FlightDate1 ?? "").Split('/').ToList();

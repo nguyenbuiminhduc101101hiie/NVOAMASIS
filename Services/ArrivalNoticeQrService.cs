@@ -8,7 +8,8 @@ using QRCoder;
 namespace NVOAMASIS.Services
 {
     /// <summary>
-    /// Một HBL + loại (SI/SE/AI/AE) chỉ có một token QR cho Arrival Notice. Xuất lại thì dùng cùng QR.
+    /// QR Arrival Notice theo (HblId, loại SI/SE/AI/AE, company BillType, chi nhánh Branches).
+    /// Cùng lựa chọn thì tái dùng token còn hạn; đổi company/branch tạo bản ghi/token khác.
     /// </summary>
     public class ArrivalNoticeQrService
     {
@@ -23,11 +24,18 @@ namespace NVOAMASIS.Services
             _db = db;
         }
 
-        public async Task<DoQrResult?> GetExistingQrAsync(Guid hblId, string type)
+        private static string NormalizeBillType(string? billType) =>
+            string.IsNullOrWhiteSpace(billType) ? "PASL" : billType.Trim();
+
+        private static string NormalizeBranches(string? branches) => branches?.Trim() ?? "";
+
+        public async Task<DoQrResult?> GetExistingQrAsync(Guid hblId, string type, string billType, string branches)
         {
+            var bt = NormalizeBillType(billType);
+            var br = NormalizeBranches(branches);
             var now = DateTimeOffset.UtcNow;
             var record = await _db.ArrivalNoticeQrTokens
-                .Where(x => x.HblId == hblId && x.Type == type && x.ExpiresAt > now)
+                .Where(x => x.HblId == hblId && x.Type == type && x.BillType == bt && x.Branches == br && x.ExpiresAt > now)
                 .OrderByDescending(x => x.ExpiresAt)
                 .FirstOrDefaultAsync();
 
@@ -50,8 +58,10 @@ namespace NVOAMASIS.Services
             };
         }
 
-        public async Task<DoQrResult> CreateQrAsync(Guid hblId, string type, DateTimeOffset expiresAt)
+        public async Task<DoQrResult> CreateQrAsync(Guid hblId, string type, DateTimeOffset expiresAt, string billType, string branches)
         {
+            var bt = NormalizeBillType(billType);
+            var br = NormalizeBranches(branches);
             var now = DateTimeOffset.UtcNow;
             if (expiresAt <= now)
                 expiresAt = now.AddHours(24);
@@ -59,7 +69,7 @@ namespace NVOAMASIS.Services
             var token = Guid.NewGuid().ToString("N");
 
             var existing = await _db.ArrivalNoticeQrTokens
-                .Where(x => x.HblId == hblId && x.Type == type)
+                .Where(x => x.HblId == hblId && x.Type == type && x.BillType == bt && x.Branches == br)
                 .FirstOrDefaultAsync();
 
             if (existing != null)
@@ -70,13 +80,14 @@ namespace NVOAMASIS.Services
                 Token = token,
                 HblId = hblId,
                 Type = type,
+                BillType = bt,
+                Branches = br,
                 ExpiresAt = expiresAt
             });
             await _db.SaveChangesAsync();
 
-            // cache: token -> payload
             var cacheKey = ArrivalNoticeQrCacheKeys.Prefix + token;
-            var payload = new DoTokenPayload { HblId = hblId, Type = type };
+            var payload = new ArrivalNoticeTokenPayload { HblId = hblId, Type = type, BillType = bt, Branches = br };
             var bytes = JsonSerializer.SerializeToUtf8Bytes(payload);
             var options = new DistributedCacheEntryOptions { AbsoluteExpiration = expiresAt };
             await _cache.SetAsync(cacheKey, bytes, options);
@@ -97,7 +108,7 @@ namespace NVOAMASIS.Services
             };
         }
 
-        public async Task<(DoTokenPayload? payload, DateTimeOffset? expiresAt)> GetPayloadAndExpiryByTokenAsync(string token)
+        public async Task<(ArrivalNoticeTokenPayload? payload, DateTimeOffset? expiresAt)> GetPayloadAndExpiryByTokenAsync(string token)
         {
             var record = await _db.ArrivalNoticeQrTokens
                 .Where(x => x.Token == token && x.ExpiresAt > DateTimeOffset.UtcNow)
@@ -106,11 +117,17 @@ namespace NVOAMASIS.Services
             if (record == null)
                 return (null, null);
 
-            var payload = new DoTokenPayload { HblId = record.HblId, Type = record.Type };
+            var payload = new ArrivalNoticeTokenPayload
+            {
+                HblId = record.HblId,
+                Type = record.Type,
+                BillType = NormalizeBillType(record.BillType),
+                Branches = NormalizeBranches(record.Branches)
+            };
             return (payload, record.ExpiresAt);
         }
 
-        public async Task RepopulateCacheAsync(string token, DoTokenPayload payload, DateTimeOffset expiresAt)
+        public async Task RepopulateCacheAsync(string token, ArrivalNoticeTokenPayload payload, DateTimeOffset expiresAt)
         {
             var cacheKey = ArrivalNoticeQrCacheKeys.Prefix + token;
             var bytes = JsonSerializer.SerializeToUtf8Bytes(payload);
@@ -142,4 +159,3 @@ namespace NVOAMASIS.Services
         }
     }
 }
-

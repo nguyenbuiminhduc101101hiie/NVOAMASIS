@@ -178,22 +178,22 @@ namespace NVOAMASIS.Data
                 .HasIndex(e => e.UsrId)
                 .IsUnique();
 
-            // Một HBL + Type chỉ có một token QR D/O (bảng DoQrToken, script CreateDoQrTokenTable.sql)
+            // D/O QR: unique (HblId, Type, BillType, Branches) — script AlterDoQrToken_AddCompanyBranch.sql
             modelBuilder.Entity<DoQrTokenRecord>()
                 .ToTable("DoQrToken");
             modelBuilder.Entity<DoQrTokenRecord>()
                 .HasKey(e => e.Token);
             modelBuilder.Entity<DoQrTokenRecord>()
-                .HasIndex(e => new { e.HblId, e.Type })
+                .HasIndex(e => new { e.HblId, e.Type, e.BillType, e.Branches })
                 .IsUnique();
 
-            // Một HBL + Type chỉ có một token QR Arrival Notice (bảng ArrivalNoticeQrToken)
+            // Arrival Notice QR: unique (HblId, Type, BillType, Branches) — script AlterArrivalNoticeQrToken_AddCompanyBranch.sql
             modelBuilder.Entity<ArrivalNoticeQrTokenRecord>()
                 .ToTable("ArrivalNoticeQrToken");
             modelBuilder.Entity<ArrivalNoticeQrTokenRecord>()
                 .HasKey(e => e.Token);
             modelBuilder.Entity<ArrivalNoticeQrTokenRecord>()
-                .HasIndex(e => new { e.HblId, e.Type })
+                .HasIndex(e => new { e.HblId, e.Type, e.BillType, e.Branches })
                 .IsUnique();
 
             modelBuilder.Entity<M_Stock>().ToTable("Stock");

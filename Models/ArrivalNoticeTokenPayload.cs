@@ -1,16 +1,11 @@
 namespace NVOAMASIS.Models
 {
-    public class DoTokenPayload
+    /// <summary>Payload cached theo token QR Arrival Notice (public link).</summary>
+    public class ArrivalNoticeTokenPayload
     {
         public Guid HblId { get; set; }
         public string Type { get; set; } = "";
         public string BillType { get; set; } = "PASL";
         public string Branches { get; set; } = "";
-    }
-
-    public static class DoQrCacheKeys
-    {
-        public const string Prefix = "DO_QR_";
-        public static TimeSpan TokenExpiry => TimeSpan.FromHours(24);
     }
 }

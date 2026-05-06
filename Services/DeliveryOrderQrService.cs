@@ -8,7 +8,7 @@ using QRCoder;
 namespace NVOAMASIS.Services
 {
     /// <summary>
-    /// Một HBL + loại DO chỉ có một token QR. Xuất lại thì dùng cùng QR. Cho phép chọn thời gian hết hạn khi tạo mới.
+    /// QR D/O theo (HblId, loại, BillType, Branches). Cùng lựa chọn thì tái dùng token còn hạn.
     /// </summary>
     public class DeliveryOrderQrService
     {
@@ -26,14 +26,21 @@ namespace NVOAMASIS.Services
             _db = db;
         }
 
+        private static string NormalizeBillType(string? billType) =>
+            string.IsNullOrWhiteSpace(billType) ? "PASL" : billType.Trim();
+
+        private static string NormalizeBranches(string? branches) => branches?.Trim() ?? "";
+
         /// <summary>
-        /// Nếu HBL đã có token còn hạn thì trả về QR đó (cùng link). Null nếu chưa có hoặc đã hết hạn.
+        /// Nếu đã có token còn hạn cho cùng company/branch thì trả về QR đó. Null nếu chưa có hoặc hết hạn.
         /// </summary>
-        public async Task<DoQrResult?> GetExistingQrAsync(Guid hblId, string type)
+        public async Task<DoQrResult?> GetExistingQrAsync(Guid hblId, string type, string billType, string branches)
         {
+            var bt = NormalizeBillType(billType);
+            var br = NormalizeBranches(branches);
             var now = DateTimeOffset.UtcNow;
             var record = await _db.DoQrTokens
-                .Where(x => x.HblId == hblId && x.Type == type && x.ExpiresAt > now)
+                .Where(x => x.HblId == hblId && x.Type == type && x.BillType == bt && x.Branches == br && x.ExpiresAt > now)
                 .OrderByDescending(x => x.ExpiresAt)
                 .FirstOrDefaultAsync();
 
@@ -57,10 +64,12 @@ namespace NVOAMASIS.Services
         }
 
         /// <summary>
-        /// Tạo token mới (hoặc ghi đè token cũ đã hết hạn) với ngày hết hạn do user chọn. Đồng bộ cache.
+        /// Tạo token mới cho cặp company/branch; ghi đè bản ghi cũ cùng (HblId, Type, BillType, Branches).
         /// </summary>
-        public async Task<DoQrResult> CreateQrAsync(Guid hblId, string type, DateTimeOffset expiresAt)
+        public async Task<DoQrResult> CreateQrAsync(Guid hblId, string type, DateTimeOffset expiresAt, string billType, string branches)
         {
+            var bt = NormalizeBillType(billType);
+            var br = NormalizeBranches(branches);
             var now = DateTimeOffset.UtcNow;
             if (expiresAt <= now)
                 expiresAt = now.AddHours(24);
@@ -68,7 +77,7 @@ namespace NVOAMASIS.Services
             var token = Guid.NewGuid().ToString("N");
 
             var existing = await _db.DoQrTokens
-                .Where(x => x.HblId == hblId && x.Type == type)
+                .Where(x => x.HblId == hblId && x.Type == type && x.BillType == bt && x.Branches == br)
                 .FirstOrDefaultAsync();
 
             if (existing != null)
@@ -79,12 +88,14 @@ namespace NVOAMASIS.Services
                 Token = token,
                 HblId = hblId,
                 Type = type,
+                BillType = bt,
+                Branches = br,
                 ExpiresAt = expiresAt
             });
             await _db.SaveChangesAsync();
 
             var cacheKey = DoQrCacheKeys.Prefix + token;
-            var payload = new DoTokenPayload { HblId = hblId, Type = type };
+            var payload = new DoTokenPayload { HblId = hblId, Type = type, BillType = bt, Branches = br };
             var bytes = JsonSerializer.SerializeToUtf8Bytes(payload);
             var options = new DistributedCacheEntryOptions
             {
@@ -108,9 +119,6 @@ namespace NVOAMASIS.Services
             };
         }
 
-        /// <summary>
-        /// Lấy payload và thời hạn từ DB theo token (dùng khi cache miss, ví dụ sau restart).
-        /// </summary>
         public async Task<(DoTokenPayload? payload, DateTimeOffset? expiresAt)> GetPayloadAndExpiryByTokenAsync(string token)
         {
             var record = await _db.DoQrTokens
@@ -120,13 +128,16 @@ namespace NVOAMASIS.Services
             if (record == null)
                 return (null, null);
 
-            var payload = new DoTokenPayload { HblId = record.HblId, Type = record.Type };
+            var payload = new DoTokenPayload
+            {
+                HblId = record.HblId,
+                Type = record.Type,
+                BillType = NormalizeBillType(record.BillType),
+                Branches = NormalizeBranches(record.Branches)
+            };
             return (payload, record.ExpiresAt);
         }
 
-        /// <summary>
-        /// Repopulate cache for a token (sau khi lấy từ DB).
-        /// </summary>
         public async Task RepopulateCacheAsync(string token, DoTokenPayload payload, DateTimeOffset expiresAt)
         {
             var cacheKey = DoQrCacheKeys.Prefix + token;
