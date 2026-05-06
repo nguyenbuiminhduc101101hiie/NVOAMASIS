@@ -52,7 +52,14 @@ namespace NVOAMASIS.Controllers
                 catch { /* fallback to DB */ }
             }
 
-            if (payload == null)
+            if (payload != null)
+            {
+                if (string.IsNullOrWhiteSpace(payload.BillType))
+                    payload.BillType = "PASL";
+                payload.Branches ??= "";
+            }
+
+            if (payload == null || payload.HblId == default)
             {
                 var (payloadFromDb, expiresAt) = await _doQrService.GetPayloadAndExpiryByTokenAsync(token);
                 if (payloadFromDb == null || !expiresAt.HasValue)
@@ -65,13 +72,16 @@ namespace NVOAMASIS.Controllers
             if (hbl == null)
                 return NotFound("HBL not found.");
 
+            var billType = string.IsNullOrWhiteSpace(payload.BillType) ? "PASL" : payload.BillType.Trim();
+            var branches = payload.Branches?.Trim() ?? "";
+
             byte[]? pdfBytes;
             string fileName = $"DO_{hbl.hbl ?? "document"}.pdf";
 
             if (payload.Type == "SI" || payload.Type == "SE")
-                pdfBytes = await _shipmentService.GetDOPdfBytesAsync(hbl);
+                pdfBytes = await _shipmentService.GetDOPdfBytesAsync(hbl, billType, branches);
             else if (payload.Type == "AI" || payload.Type == "AE")
-                pdfBytes = await _shipmentService.GetDOAirPdfBytesAsync(hbl);
+                pdfBytes = await _shipmentService.GetDOAirPdfBytesAsync(hbl, billType, branches);
             else
                 return BadRequest("Invalid DO type.");
 

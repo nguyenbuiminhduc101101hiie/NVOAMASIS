@@ -36,18 +36,42 @@ namespace NVOAMASIS.Controllers
 
             var cacheKey = ArrivalNoticeQrCacheKeys.Prefix + token;
             var bytes = await _cache.GetAsync(cacheKey);
-            DoTokenPayload? payload = null;
+            ArrivalNoticeTokenPayload? payload = null;
 
             if (bytes != null && bytes.Length > 0)
             {
                 try
                 {
-                    payload = JsonSerializer.Deserialize<DoTokenPayload>(bytes, JsonOptions);
+                    payload = JsonSerializer.Deserialize<ArrivalNoticeTokenPayload>(bytes, JsonOptions);
                 }
-                catch { /* fallback to DB */ }
+                catch
+                {
+                    try
+                    {
+                        var legacy = JsonSerializer.Deserialize<DoTokenPayload>(bytes, JsonOptions);
+                        if (legacy != null)
+                        {
+                            payload = new ArrivalNoticeTokenPayload
+                            {
+                                HblId = legacy.HblId,
+                                Type = legacy.Type ?? "",
+                                BillType = "PASL",
+                                Branches = ""
+                            };
+                        }
+                    }
+                    catch { /* use DB */ }
+                }
+
+                if (payload != null)
+                {
+                    if (string.IsNullOrWhiteSpace(payload.BillType))
+                        payload.BillType = "PASL";
+                    payload.Branches ??= "";
+                }
             }
 
-            if (payload == null)
+            if (payload == null || payload.HblId == default)
             {
                 var (payloadFromDb, expiresAt) = await _qrService.GetPayloadAndExpiryByTokenAsync(token);
                 if (payloadFromDb == null || !expiresAt.HasValue)
@@ -60,13 +84,16 @@ namespace NVOAMASIS.Controllers
             if (hbl == null)
                 return NotFound("HBL not found.");
 
+            var billType = string.IsNullOrWhiteSpace(payload.BillType) ? "PASL" : payload.BillType.Trim();
+            var branches = payload.Branches?.Trim() ?? "";
+
             byte[]? pdfBytes;
             string fileName = $"AN_{hbl.hbl ?? "document"}.pdf";
 
             if (payload.Type == "SI" || payload.Type == "SE")
-                pdfBytes = await _shipmentService.GetArrivalNoticePdfBytesAsync(hbl);
+                pdfBytes = await _shipmentService.GetArrivalNoticePdfBytesAsync(hbl, billType, branches);
             else if (payload.Type == "AI" || payload.Type == "AE")
-                pdfBytes = await _shipmentService.GetArrivalNoticeAirPdfBytesAsync(hbl);
+                pdfBytes = await _shipmentService.GetArrivalNoticeAirPdfBytesAsync(hbl, billType, branches);
             else
                 return BadRequest("Invalid type.");
 
@@ -77,4 +104,3 @@ namespace NVOAMASIS.Controllers
         }
     }
 }
-

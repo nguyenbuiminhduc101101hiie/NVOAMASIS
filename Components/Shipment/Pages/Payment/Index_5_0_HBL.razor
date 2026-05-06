@@ -6,6 +6,7 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ShipmentService shipsv
+@inject GlobalServices gsv
 @inject IStringLocalizer<SharedResource> Localizer
 @using System.Globalization﻿
 @inject HistoryLogService HistoryLogService
@@ -748,14 +749,73 @@
             CallSnackBar($"Chưa có mẫu Arrival Notice cho loại '{type}'.", MudBlazor.Severity.Warning);
             return;
         }
+
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true,
+        };
+        var companyRef = await DialogService.ShowAsync<Shipment.Pages.DialogCompanyOption>("Arrival Notice QR - Chọn Company", optionsdialog);
+        var companyResult = await companyRef.Result;
+        if (companyResult.Canceled) return;
+        var billType = (string)companyResult.Data!;
+        var branches = await ResolveBranchByCompanyAsync(billType);
+        if (branches is null) return;
+
         var parameters = new DialogParameters
         {
             [nameof(Shipment.Pages.DialogArrivalNoticeQr.HblId)] = hbldetail.hblID,
             [nameof(Shipment.Pages.DialogArrivalNoticeQr.Type)] = type,
-            [nameof(Shipment.Pages.DialogArrivalNoticeQr.HblNo)] = hbldetail.hbl
+            [nameof(Shipment.Pages.DialogArrivalNoticeQr.HblNo)] = hbldetail.hbl,
+            ["BillType"] = billType,
+            ["Branches"] = branches
         };
         var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small };
         await DialogService.ShowAsync<Shipment.Pages.DialogArrivalNoticeQr>(Localizer["Arrival Notice"] + " QR Code", parameters, options);
+    }
+
+    private async Task<string?> ResolveBranchByCompanyAsync(string billType, string branchDialogTitle = "Arrival Notice QR - Chọn Branch")
+    {
+        var companyOptions = await gsv.GetCompanyOtherList();
+        var branchesByCompany = companyOptions
+            .Where(x => string.Equals(x.Code?.Trim(), billType.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Branches?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!branchesByCompany.Any())
+        {
+            return string.Empty;
+        }
+
+        if (branchesByCompany.Count == 1)
+        {
+            return branchesByCompany[0]!;
+        }
+
+        var branchDialogOptions = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true
+        };
+        var branchParameters = new DialogParameters<Shipment.Pages.DialogBranchOption>
+        {
+            { x => x.BranchOptions, branchesByCompany! }
+        };
+        var branchDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogBranchOption>(branchDialogTitle, branchParameters, branchDialogOptions);
+        var branchResult = await branchDialogRef.Result;
+        if (branchResult.Canceled)
+        {
+            return null;
+        }
+        return branchResult.Data?.ToString() ?? string.Empty;
     }
 
     private bool _processingDO = false;
@@ -821,11 +881,29 @@
             CallSnackBar($"Chưa có mẫu D/O cho loại '{type}'.", MudBlazor.Severity.Warning);
             return;
         }
+
+        var optionsdialog = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true,
+        };
+        var companyRef = await DialogService.ShowAsync<Shipment.Pages.DialogCompanyOption>("D/O QR - Chọn Company", optionsdialog);
+        var companyResult = await companyRef.Result;
+        if (companyResult.Canceled) return;
+        var billType = (string)companyResult.Data!;
+        var branches = await ResolveBranchByCompanyAsync(billType, "D/O QR - Chọn Branch");
+        if (branches is null) return;
+
         var parameters = new DialogParameters
         {
             [nameof(Shipment.Pages.DialogDoQr.HblId)] = hbldetail.hblID,
             [nameof(Shipment.Pages.DialogDoQr.Type)] = type,
-            [nameof(Shipment.Pages.DialogDoQr.HblNo)] = hbldetail.hbl
+            [nameof(Shipment.Pages.DialogDoQr.HblNo)] = hbldetail.hbl,
+            ["BillType"] = billType,
+            ["Branches"] = branches
         };
         var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small };
         await DialogService.ShowAsync<Shipment.Pages.DialogDoQr>(Localizer["D/O"] + " QR Code", parameters, options);
