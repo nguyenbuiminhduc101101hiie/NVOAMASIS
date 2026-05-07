@@ -1,0 +1,710 @@
+﻿@page "/accounting/general-journal"
+
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Models
+
+@inject NVOAMASIS.Data.AppDbContext Db
+@inject ISnackbar Snackbar
+
+<MudPaper Class="journal-page pa-4" Elevation="0">
+
+    <MudStack Row="true"
+              AlignItems="AlignItems.Center"
+              Justify="Justify.SpaceBetween"
+              Class="mb-4">
+
+        <div>
+            <MudText Typo="Typo.h5" Class="fw-700">
+                Sổ Nhật Ký Chung
+            </MudText>
+
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Theo dõi bút toán kế toán Nợ / Có
+            </MudText>
+        </div>
+
+        <MudButton Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   OnClick="LoadData">
+            Tải lại
+        </MudButton>
+
+    </MudStack>
+
+    <MudPaper Class="journal-filter pa-3 mb-4" Elevation="0">
+
+        <MudGrid>
+
+            <MudItem xs="12" md="3">
+                <MudDatePicker Label="Từ ngày"
+                               Dense="true"
+                               Variant="Variant.Outlined"
+                               @bind-Date="_fromDate" />
+            </MudItem>
+
+            <MudItem xs="12" md="3">
+                <MudDatePicker Label="Đến ngày"
+                               Dense="true"
+                               Variant="Variant.Outlined"
+                               @bind-Date="_toDate" />
+            </MudItem>
+
+            <MudItem xs="12" md="3">
+                <MudSelect T="int?"
+                           Label="Trạng thái"
+                           Dense="true"
+                           Variant="Variant.Outlined"
+                           @bind-Value="_status">
+
+                    <MudSelectItem T="int?" Value="null">
+                        Tất cả
+                    </MudSelectItem>
+
+                    <MudSelectItem T="int?" Value="1">
+                        Draft
+                    </MudSelectItem>
+
+                    <MudSelectItem T="int?" Value="2">
+                        Posted
+                    </MudSelectItem>
+
+                    <MudSelectItem T="int?" Value="3">
+                        Cancelled
+                    </MudSelectItem>
+
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" md="3">
+                <MudTextField @bind-Value="_searchText"
+                              Label="Tìm kiếm"
+                              Dense="true"
+                              Variant="Variant.Outlined"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+
+            <MudItem xs="12">
+
+                <MudButton Color="Color.Primary"
+                           Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.FilterAlt"
+                           OnClick="LoadData">
+
+                    Lọc dữ liệu
+
+                </MudButton>
+
+            </MudItem>
+
+        </MudGrid>
+
+    </MudPaper>
+
+    <MudGrid Class="mb-4">
+
+        <MudItem xs="12" md="3">
+            <MudPaper Class="journal-kpi pa-3">
+                <MudText Typo="Typo.caption">Tổng dòng</MudText>
+                <MudText Typo="Typo.h6">
+                    @FilteredItems.Count().ToString("N0")
+                </MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="3">
+            <MudPaper Class="journal-kpi pa-3">
+                <MudText Typo="Typo.caption">Tổng Nợ</MudText>
+                <MudText Typo="Typo.h6">
+                    @FilteredItems.Sum(x => x.DebitAmount).ToString("N0")
+                </MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="3">
+            <MudPaper Class="journal-kpi pa-3">
+                <MudText Typo="Typo.caption">Tổng Có</MudText>
+                <MudText Typo="Typo.h6">
+                    @FilteredItems.Sum(x => x.CreditAmount).ToString("N0")
+                </MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="3">
+            <MudPaper Class="journal-kpi pa-3">
+                <MudText Typo="Typo.caption">Chênh lệch</MudText>
+                <MudText Typo="Typo.h6">
+                    @((FilteredItems.Sum(x => x.DebitAmount) - FilteredItems.Sum(x => x.CreditAmount)).ToString("N0"))
+                </MudText>
+            </MudPaper>
+        </MudItem>
+
+    </MudGrid>
+
+    <MudDataGrid T="GeneralJournalRow"
+                 Items="@FilteredItems"
+                 Dense="true"
+                 Hover="true"
+                 Bordered="false"
+                 Striped="true"
+                 Filterable="true"
+                 Loading="@_loading"
+                 FixedHeader="true"
+                 Height="calc(100vh - 350px)"
+                 Class="journal-grid">
+
+        <Columns>
+
+            <TemplateColumn Title="STT" StickyLeft="true">
+                <CellTemplate>
+                    @context.Item.RowNo
+                </CellTemplate>
+            </TemplateColumn>
+
+            <PropertyColumn Property="x => x.PostingDate"
+                            Title="Ngày hạch toán"
+                            Format="dd/MM/yyyy" />
+
+            <PropertyColumn Property="x => x.VoucherDate"
+                            Title="Ngày chứng từ"
+                            Format="dd/MM/yyyy" />
+
+            <PropertyColumn Property="x => x.VoucherNo"
+                            Title="Số chứng từ" />
+
+            <PropertyColumn Property="x => x.TransactionTypeCode"
+                            Title="Loại CT" />
+
+            <PropertyColumn Property="x => x.Description"
+                            Title="Diễn giải" />
+
+            <PropertyColumn Property="x => x.ObjectName"
+                            Title="Đối tượng" />
+
+            <TemplateColumn Title="TK Nợ">
+                <CellTemplate>
+
+                    @if (!string.IsNullOrWhiteSpace(context.Item.TkNo))
+                    {
+                        <div class="account-cell debit">
+
+                            <b>@context.Item.TkNo</b>
+
+                            @if (!string.IsNullOrWhiteSpace(context.Item.AccountName))
+                            {
+                                <div>
+                                    @context.Item.AccountName
+                                </div>
+                            }
+
+                        </div>
+                    }
+
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="TK Có">
+                <CellTemplate>
+
+                    @if (!string.IsNullOrWhiteSpace(context.Item.TkCo))
+                    {
+                        <div class="account-cell credit">
+
+                            <b>@context.Item.TkCo</b>
+
+                            @if (!string.IsNullOrWhiteSpace(context.Item.AccountName))
+                            {
+                                <div>
+                                    @context.Item.AccountName
+                                </div>
+                            }
+
+                        </div>
+                    }
+
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Số tiền nguyên tệ">
+                <CellTemplate>
+
+                    <span class="amount-text">
+                        @context.Item.ForeignAmount.ToString("N2")
+                    </span>
+
+                </CellTemplate>
+            </TemplateColumn>
+
+            <PropertyColumn Property="x => x.CurrencyCode"
+                            Title="Currency" />
+
+            <TemplateColumn Title="Tỷ giá">
+                <CellTemplate>
+                    @context.Item.ExchangeRate.ToString("N2")
+                </CellTemplate>
+            </TemplateColumn>
+
+            <TemplateColumn Title="Số tiền VND">
+                <CellTemplate>
+
+                    <span class="amount-text">
+                        @context.Item.AmountVnd.ToString("N0")
+                    </span>
+
+                </CellTemplate>
+            </TemplateColumn>
+
+      @*       <PropertyColumn Property="x => x.JobShipmentDepartment"
+                            Title="Job / Shipment / Department" />
+
+            <PropertyColumn Property="x => x.InvoiceNo"
+                            Title="Invoice No." />
+
+            <PropertyColumn Property="x => x.ReferenceNo"
+                            Title="Bill No. / Ref No." />
+
+            <PropertyColumn Property="x => x.Branch"
+                            Title="Branch" /> *@
+
+            <PropertyColumn Property="x => x.UpdatedBy"
+                            Title="User tạo/sửa" />
+
+            <PropertyColumn Property="x => x.UpdatedDate"
+                            Title="Ngày cập nhật"
+                            Format="dd/MM/yyyy HH:mm" />
+
+            <TemplateColumn Title="Trạng thái" StickyRight="true">
+
+                <CellTemplate>
+
+                    <MudChip T="string"
+                             Size="Size.Small"
+                             Color="@GetStatusColor(context.Item.Status)">
+
+                        @GetStatusText(context.Item.Status)
+
+                    </MudChip>
+
+                </CellTemplate>
+
+            </TemplateColumn>
+
+        </Columns>
+
+        <PagerContent>
+            <MudDataGridPager T="GeneralJournalRow" />
+        </PagerContent>
+
+    </MudDataGrid>
+
+</MudPaper>
+
+<style>
+
+    .journal-page {
+        background: #f8fafc;
+        min-height: 100vh;
+    }
+
+    .fw-700 {
+        font-weight: 700;
+    }
+
+    .journal-filter,
+    .journal-kpi {
+        border: 1px solid #e5e7eb;
+        border-radius: 16px;
+        background: #ffffff;
+    }
+
+    .journal-grid {
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid #e5e7eb;
+        background: #ffffff;
+    }
+
+        .journal-grid .mud-table-head {
+            background: #f1f5f9;
+        }
+
+        .journal-grid th {
+            white-space: nowrap;
+            font-weight: 700 !important;
+        }
+
+        .journal-grid td {
+            white-space: nowrap;
+            vertical-align: middle;
+        }
+
+    .account-cell {
+        line-height: 1.2;
+    }
+
+        .account-cell div {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 2px;
+        }
+
+    .debit b {
+        color: #047857;
+    }
+
+    .credit b {
+        color: #dc2626;
+    }
+
+    .amount-text {
+        font-weight: 600;
+    }
+
+</style>
+
+@code {
+
+    private bool _loading;
+
+    private DateTime? _fromDate =
+        new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+
+    private DateTime? _toDate = DateTime.Today;
+
+    private int? _status;
+
+    private string _searchText = "";
+
+    private List<GeneralJournalRow> _items = new();
+
+    private IEnumerable<GeneralJournalRow> FilteredItems
+    {
+        get
+        {
+            var query = _items.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(_searchText))
+            {
+                var key = _searchText.Trim().ToLower();
+
+                query = query.Where(x =>
+
+                    (x.VoucherNo ?? "").ToLower().Contains(key) ||
+                    (x.Description ?? "").ToLower().Contains(key) ||
+                    (x.TransactionTypeCode ?? "").ToLower().Contains(key) ||
+                    (x.TkNo ?? "").ToLower().Contains(key) ||
+                    (x.TkCo ?? "").ToLower().Contains(key) ||
+                    (x.ObjectName ?? "").ToLower().Contains(key) ||
+                    (x.InvoiceNo ?? "").ToLower().Contains(key) ||
+                    (x.ReferenceNo ?? "").ToLower().Contains(key) ||
+                    (x.CurrencyCode ?? "").ToLower().Contains(key)
+
+                );
+            }
+
+            return query;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        try
+        {
+            _loading = true;
+
+            var fromDate = _fromDate?.Date;
+
+            var toDate = _toDate?
+                .Date
+                .AddDays(1)
+                .AddTicks(-1);
+
+            var query =
+
+                from v in Db.Set<M_AccountingVouchers>().AsNoTracking()
+
+                join l in Db.Set<M_AccountingVoucherLines>().AsNoTracking()
+                    on v.Id equals l.VoucherId
+
+                join tk in Db.Set<DanhMucTaiKhoan>().AsNoTracking()
+                    on l.DanhMucTaiKhoanID equals tk.Id into tkJoin
+
+                from tk in tkJoin.DefaultIfEmpty()
+
+                join cus in Db.Set<M_Customer>().AsNoTracking()
+                    on l.CustomerId equals cus.Customer_ID into cusJoin
+
+                from cus in cusJoin.DefaultIfEmpty()
+
+                where
+
+                    (!fromDate.HasValue || v.PostingDate >= fromDate.Value)
+                    &&
+
+                    (!toDate.HasValue || v.PostingDate <= toDate.Value)
+                    &&
+
+                    (!_status.HasValue || v.Status == _status.Value)
+
+                orderby
+                    v.PostingDate,
+                    v.VoucherNo,
+                    l.SortKey,
+                    l.LineNo_
+
+                select new GeneralJournalRow
+                {
+                    VoucherId = v.Id,
+                    LineId = l.Id,
+
+                    PostingDate = v.PostingDate,
+                    VoucherDate = v.VoucherDate,
+
+                    VoucherNo = v.VoucherNo,
+
+                    TransactionTypeCode = v.TransactionTypeCode,
+
+                    Description =
+                        !string.IsNullOrWhiteSpace(l.LineDescription)
+                        ? l.LineDescription
+                        : v.Description,
+
+                    DebitAmount = l.DebitAmount,
+                    CreditAmount = l.CreditAmount,
+
+                    DebitAmountFC = l.DebitAmountFC,
+                    CreditAmountFC = l.CreditAmountFC,
+
+                    AccountCode =
+                        tk != null &&
+                        !string.IsNullOrWhiteSpace(tk.Taikhoan)
+
+                        ? tk.Taikhoan!
+                        : l.AccountCode,
+
+                    AccountName =
+                        tk != null
+                        ? tk.Tentaikhoan ?? tk.Accountname
+                        : null,
+
+                    TkNo =
+                        l.DebitAmount != 0
+
+                        ? (
+                            tk != null &&
+                            !string.IsNullOrWhiteSpace(tk.Taikhoan)
+
+                            ? tk.Taikhoan!
+                            : l.AccountCode
+                        )
+
+                        : "",
+
+                    TkCo =
+                        l.CreditAmount != 0
+
+                        ? (
+                            tk != null &&
+                            !string.IsNullOrWhiteSpace(tk.Taikhoan)
+
+                            ? tk.Taikhoan!
+                            : l.AccountCode
+                        )
+
+                        : "",
+
+                    CurrencyCode = v.CurrencyCode,
+
+                    ExchangeRate = v.ExchangeRate,
+
+                    CustomerId = l.CustomerId,
+
+                    ObjectName =
+                        cus != null
+
+                        ? (
+                            (cus.Customer_Code ?? "")
+                            + "_"
+                            + (cus.COMPANY ?? "")
+                        )
+
+                        : "",
+
+                    ShipmentId = l.ShipmentId,
+                    DepartmentId = l.DepartmentId,
+                    BranchId = l.BranchId,
+
+                    InvoiceNo = l.InvoiceNo,
+
+                    ReferenceNo = v.ReferenceNo,
+
+                    CreatedBy = v.CreatedBy,
+                    CreatedDate = v.CreatedDate,
+
+                    ModifiedBy = v.ModifiedBy,
+                    ModifiedDate = v.ModifiedDate,
+
+                    Status = v.Status,
+
+                    Ghiso = v.Ghiso,
+                    Approve = v.Approve
+                };
+
+            _items = await query.ToListAsync();
+
+            var stt = 1;
+
+            foreach (var item in _items)
+            {
+                item.RowNo = stt;
+                stt++;
+            }
+
+            Snackbar.Add(
+                $"Đã tải {_items.Count:N0} dòng dữ liệu",
+                MudBlazor.Severity.Success
+            );
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(
+                ex.Message,
+                MudBlazor.Severity.Error
+            );
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string GetStatusText(int status)
+    {
+        return status switch
+        {
+            1 => "Draft",
+            2 => "Posted",
+            3 => "Cancelled",
+            _ => "Unknown"
+        };
+    }
+
+    private static Color GetStatusColor(int status)
+    {
+        return status switch
+        {
+            1 => Color.Warning,
+            2 => Color.Success,
+            3 => Color.Error,
+            _ => Color.Default
+        };
+    }
+
+    public class GeneralJournalRow
+    {
+        public int RowNo { get; set; }
+
+        public Guid VoucherId { get; set; }
+        public Guid LineId { get; set; }
+
+        public DateTime PostingDate { get; set; }
+        public DateTime VoucherDate { get; set; }
+
+        public string VoucherNo { get; set; } = "";
+
+        public string TransactionTypeCode { get; set; } = "";
+
+        public string? Description { get; set; }
+
+        public Guid? CustomerId { get; set; }
+
+        public string ObjectName { get; set; } = "";
+
+        public string AccountCode { get; set; } = "";
+
+        public string? AccountName { get; set; }
+
+        public string TkNo { get; set; } = "";
+
+        public string TkCo { get; set; } = "";
+
+        public decimal DebitAmount { get; set; }
+
+        public decimal CreditAmount { get; set; }
+
+        public decimal DebitAmountFC { get; set; }
+
+        public decimal CreditAmountFC { get; set; }
+
+        public decimal ForeignAmount
+            => DebitAmountFC != 0
+                ? DebitAmountFC
+                : CreditAmountFC;
+
+        public decimal AmountVnd
+            => DebitAmount != 0
+                ? DebitAmount
+                : CreditAmount;
+
+        public string CurrencyCode { get; set; } = "";
+
+        public decimal ExchangeRate { get; set; }
+
+        public Guid? ShipmentId { get; set; }
+
+        public Guid? DepartmentId { get; set; }
+
+        public Guid? BranchId { get; set; }
+
+        public string JobShipmentDepartment
+        {
+            get
+            {
+                var list = new List<string>();
+
+                if (ShipmentId.HasValue)
+                    list.Add($"Shipment: {ShipmentId}");
+
+                if (DepartmentId.HasValue)
+                    list.Add($"Dept: {DepartmentId}");
+
+                return string.Join(" / ", list);
+            }
+        }
+
+        public string Branch
+            => BranchId?.ToString() ?? "";
+
+        public string? InvoiceNo { get; set; }
+
+        public string? ReferenceNo { get; set; }
+
+        public string CreatedBy { get; set; } = "";
+
+        public DateTime CreatedDate { get; set; }
+
+        public string? ModifiedBy { get; set; }
+
+        public DateTime? ModifiedDate { get; set; }
+
+        public string UpdatedBy
+            => !string.IsNullOrWhiteSpace(ModifiedBy)
+                ? ModifiedBy!
+                : CreatedBy;
+
+        public DateTime UpdatedDate
+            => ModifiedDate ?? CreatedDate;
+
+        public int Status { get; set; }
+
+        public bool? Ghiso { get; set; }
+
+        public bool? Approve { get; set; }
+    }
+
+}
