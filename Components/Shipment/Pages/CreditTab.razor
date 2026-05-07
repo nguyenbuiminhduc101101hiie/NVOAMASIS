@@ -10,6 +10,7 @@
 @inject HistoryLogService HistoryLogService
 @using System.Text.Json;
 @inject tigiaVCBservices Vcbsv
+@inject GlobalServices gsv
 
 
 <MudTabs SliderColor="Color.Success">
@@ -65,6 +66,28 @@
                                 Variant="Variant.Filled"
                                 Disabled="HBLDetail == null || HBLDetail.hblID == Guid.Empty"
                                 Class="btn-compact" />
+                            </MudTooltip>
+
+                            <MudTooltip Text="@Localizer["Bills"]">
+                                <MudMenu Icon="@Icons.Material.Filled.Download"
+                                         Color="Color.Success"
+                                         Size="Size.Small"
+                                         Variant="Variant.Filled"
+                                         Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                         AnchorOrigin="Origin.BottomCenter"
+                                         TransformOrigin="Origin.TopCenter">
+                                    <MudMenuItem Disabled="_processingUpload" OnClick="ExportBill">
+                                        @if (_processingUpload)
+                                        {
+                                            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                                            <span class="ms-2">Exporting...</span>
+                                        }
+                                        else
+                                        {
+                                            @Localizer["Export Credit"]
+                                        }
+                                    </MudMenuItem>
+                                </MudMenu>
                             </MudTooltip>
 
                             <MudTooltip Text="Copy Credit (MBL/HBL)">
@@ -284,7 +307,140 @@
         Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
         Snackbar.Add(message, severity);
     }
+    private bool _processingUpload = false;
+    private async Task ExportBill()
+    {
+        try
+        {
+            var companyDialogOptions = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.ExtraSmall,
+                CloseOnEscapeKey = true,
+                DisableBackdropClick = true,
+            };
+            var companyDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogCompanyOption>("Credit - Chọn Company", companyDialogOptions);
+            var companyResult = await companyDialogRef.Result;
+            if (companyResult.Canceled) return;
+            var billType = (string)companyResult.Data!;
+            var branches = await ResolveBranchByCompanyAsync(billType);
+            if (branches is null) return;
+            var cur_type = await ResolveCurrencyAsync();
+            if (cur_type is null) return;
 
+            _processingUpload = true;
+            StateHasChanged();
+            await Task.Delay(1);
+
+            var credits = isMBL
+                ? (await shipsv.GetListCreditMBL(MBLDetail!.MblID))
+                : (await shipsv.GetListCreditHBL(HBLDetail!.hblID, isCommission));
+            if (!credits.Any())
+            {
+                CallSnackBar("Không tìm thấy dữ liệu credit để export.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var hblIds = credits
+                .Where(x => x.hblid != Guid.Empty)
+                .Select(x => x.hblid)
+                .Distinct()
+                .ToList();
+            var hblInfos = new List<M_HBL>();
+            foreach (var hblId in hblIds)
+            {
+                var hblInfo = await shipsv.GetHBL_byHBLid(hblId);
+                if (hblInfo.hblID != Guid.Empty)
+                {
+                    hblInfos.Add(hblInfo);
+                }
+            }
+            if (!hblInfos.Any() && !isMBL && HBLDetail != null && HBLDetail.hblID != Guid.Empty)
+            {
+                hblInfos.Add(HBLDetail);
+            }
+            if (!hblInfos.Any())
+            {
+                CallSnackBar("Không tìm thấy HBL cho credit đã chọn.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var rs = await shipsv.ExportCreditSI(credits, hblInfos, cur_type, billType, branches);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+        }
+    }
+    private async Task<string?> ResolveBranchByCompanyAsync(string billType)
+    {
+        var companyOptions = await gsv.GetCompanyOtherList();
+        var branchesByCompany = companyOptions
+            .Where(x => string.Equals(x.Code?.Trim(), billType.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Branches?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!branchesByCompany.Any())
+        {
+            return string.Empty;
+        }
+
+        if (branchesByCompany.Count == 1)
+        {
+            return branchesByCompany[0]!;
+        }
+
+        var branchDialogOptions = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true
+        };
+        var branchParameters = new DialogParameters<Shipment.Pages.DialogBranchOption>
+        {
+            { x => x.BranchOptions, branchesByCompany! }
+        };
+        var branchDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogBranchOption>("Credit - Chon Branch", branchParameters, branchDialogOptions);
+        var branchResult = await branchDialogRef.Result;
+        if (branchResult.Canceled)
+        {
+            return null;
+        }
+        return branchResult.Data?.ToString() ?? string.Empty;
+    }
+    private async Task<string?> ResolveCurrencyAsync()
+    {
+        var defaultCurrency = Listdata.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.tiente))?.tiente ?? "VND";
+        var currencyDialogOptions = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true
+        };
+        var currencyDialogParameters = new DialogParameters<Shipment.Pages.DialogCurrencyOption>
+        {
+            { x => x.DefaultCurrency, defaultCurrency }
+        };
+        var currencyDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogCurrencyOption>("Credit - Chon Currency", currencyDialogParameters, currencyDialogOptions);
+        var currencyResult = await currencyDialogRef.Result;
+        if (currencyResult.Canceled)
+        {
+            return null;
+        }
+        return currencyResult.Data?.ToString() ?? "VND";
+    }
     private void Submit()
     {
         MudDialog!.Close();

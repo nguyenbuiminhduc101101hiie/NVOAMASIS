@@ -10,6 +10,7 @@
 @inject HistoryLogService HistoryLogService
 @using System.Text.Json;
 @inject tigiaVCBservices Vcbsv
+@inject GlobalServices gsv
 
 <MudTabs SliderColor="Color.Success">
     <MudTabPanel Text="@(isDuty ? "Input" : "Debit")" BadgeColor="Color.Secondary" Class="custom-tab">
@@ -657,6 +658,22 @@
     {
         try
         {
+            // Show company selection dialog first
+            var companyDialogOptions = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom",
+                FullWidth = true,
+                MaxWidth = MaxWidth.ExtraSmall,
+                CloseOnEscapeKey = true,
+                DisableBackdropClick = true,
+            };
+            var companyDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogCompanyOption>("Debit - Chọn Company", companyDialogOptions);
+            var companyResult = await companyDialogRef.Result;
+            if (companyResult.Canceled) return;
+            var billType = (string)companyResult.Data!;
+            var branches = await ResolveBranchByCompanyAsync(billType);
+            if (branches is null) return;
+
             var optionsdialog = new DialogOptions
             {
                 ClassBackground = "class-dialog-custom",
@@ -694,56 +711,69 @@
 
             }
 
+
             _processingUpload = true;
             StateHasChanged();
             await Task.Delay(1);
 
             if (type == "SI")
             {
-                if (isMBL){
-                    var rs = await shipsv.ExportDebitSI_mbl(debitdetail, cur_type);
+                if (isMBL)
+                {
+                    var rs = await shipsv.ExportDebitSI_mbl(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
-                }else{
-                    var rs = await shipsv.ExportDebitSI(debitdetail, cur_type);
+                }
+                else
+                {
+                    var rs = await shipsv.ExportDebitSI(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
 
             }
             else if (type == "SE")
             {
-                if (isMBL){
-                    var rs = await shipsv.ExportDebitSE_mbl(debitdetail, cur_type);
+                if (isMBL)
+                {
+                    var rs = await shipsv.ExportDebitSE_mbl(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
-                }else{
-                    var rs = await shipsv.ExportDebitSE(debitdetail, cur_type);
+                }
+                else
+                {
+                    var rs = await shipsv.ExportDebitSE(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
 
             }
             else if (type == "AI")
             {
-                if (isMBL){
-                    var rs = await shipsv.ExportDebitAI_mbl(debitdetail, cur_type);
+                if (isMBL)
+                {
+                    var rs = await shipsv.ExportDebitAI_mbl(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
-                }else{
-                    var rs = await shipsv.ExportDebitAI(debitdetail, cur_type);
+                }
+                else
+                {
+                    var rs = await shipsv.ExportDebitAI(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
             }
             else if (type == "AE")
             {
-                if (isMBL){
-                    var rs = await shipsv.ExportDebitAE_mbl(debitdetail, cur_type);
+                if (isMBL)
+                {
+                    var rs = await shipsv.ExportDebitAE_mbl(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
-                }else{
-                    var rs = await shipsv.ExportDebitAE(debitdetail, cur_type);
+                }
+                else
+                {
+                    var rs = await shipsv.ExportDebitAE(debitdetail, cur_type, billType, branches);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
 
             }
-            else if(type == "Truck")
+            else if (type == "Truck")
             {
-                var rs = await shipsv.ExportDebitTruck(debitdetail, cur_type, isMBL);
+                var rs = await shipsv.ExportDebitTruck(debitdetail, cur_type, isMBL, billType, branches);
                 CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
             }
             else
@@ -765,6 +795,48 @@
             _processingUpload = false;
         }
     }
+
+    private async Task<string?> ResolveBranchByCompanyAsync(string billType)
+    {
+        var companyOptions = await gsv.GetCompanyOtherList();
+        var branchesByCompany = companyOptions
+            .Where(x => string.Equals(x.Code?.Trim(), billType.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Branches?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!branchesByCompany.Any())
+        {
+            return string.Empty;
+        }
+
+        if (branchesByCompany.Count == 1)
+        {
+            return branchesByCompany[0]!;
+        }
+
+        var branchDialogOptions = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.ExtraSmall,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true
+        };
+        var branchParameters = new DialogParameters<Shipment.Pages.DialogBranchOption>
+        {
+            { x => x.BranchOptions, branchesByCompany! }
+        };
+        var branchDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogBranchOption>("Debit - Chon Branch", branchParameters, branchDialogOptions);
+        var branchResult = await branchDialogRef.Result;
+        if (branchResult.Canceled)
+        {
+            return null;
+        }
+        return branchResult.Data?.ToString() ?? string.Empty;
+    }
+
     async Task UpdateDebitNo(M_Debit item, DateTime value)
     {
         var refno = await supsv.GetRefNoByFunc("Debit", value.Month, value.Year, usr);
