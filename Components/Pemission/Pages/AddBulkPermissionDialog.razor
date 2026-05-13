@@ -1,0 +1,116 @@
+@inject AccountService asv
+@inject SharedServices ssv
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2" Class="pa-2" Style="min-width: 520px;">
+            <MudText Typo="Typo.subtitle1">@Localizer["permission"] — @Localizer["add"]</MudText>
+            <MudAutocomplete T="string"
+                             @bind-Value="UserName"
+                             Label="@Localizer["user"]"
+                             SearchFunc="SearchUserAsync"
+                             MaxItems="@(Math.Max(UserOptions.Count, 1))"
+                             ResetValueOnEmptyText="false"
+                             Clearable="true"
+                             Immediate="true"
+                             Required
+                             ToStringFunc="@(x => x ?? string.Empty)" />
+            <MudText Typo="Typo.subtitle2" Class="mt-2">@Localizer["view_name"]</MudText>
+            <MudDataGrid T="FormMenu"
+                         Items="@Menus"
+                         Dense="true"
+                         Bordered="true"
+                         FixedHeader="true"
+                         Height="380px"
+                         MultiSelection="true"
+                         FilterMode="@DataGridFilterMode.Simple"
+                         Filterable="true"
+                         SelectedItemsChanged="OnSelectedMenusChanged"
+                         ReadOnly="true"
+                         ColumnResizeMode="ResizeMode.Column">
+                <Columns>
+                    <SelectColumn T="FormMenu" />
+                    <PropertyColumn Property="x => x.Title" Title="@Localizer["Title"]" />
+                </Columns>
+            </MudDataGrid>
+            <MudStack Row Spacing="2" Wrap="true" AlignItems="AlignItems.Center">
+                <MudCheckBox @bind-Value="See" Label="@Localizer["can_view"]" />
+                <MudCheckBox @bind-Value="Edit" Label="@Localizer["can_edit"]" />
+                <MudCheckBox @bind-Value="Del" Label="@Localizer["can_delete"]" />
+                <MudCheckBox @bind-Value="Approve" Label="@Localizer["can_approve"]" />
+                <MudCheckBox @bind-Value="Add" Label="@Localizer["can_add"]" />
+            </MudStack>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SubmitAsync">@Localizer["add"]</MudButton>
+        <MudButton OnClick="@(() => Muddialog.Cancel())">@Localizer["close"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public MudDialogInstance Muddialog { get; set; } = default!;
+
+    List<FormMenu> Menus = new();
+    List<string> UserOptions = new();
+    string? UserName;
+    HashSet<FormMenu> SelectedMenus = new();
+
+    bool See;
+    bool Edit;
+    bool Del;
+    bool Approve;
+    bool Add;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Menus = await ssv.GetListFormMenu();
+        var usrs = await asv.GetListUser();
+        UserOptions = usrs
+            .Select(x => x.Name)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .ToList()!;
+    }
+
+    Task OnSelectedMenusChanged(HashSet<FormMenu> items)
+    {
+        SelectedMenus = items ?? new HashSet<FormMenu>();
+        return Task.CompletedTask;
+    }
+
+    private Task<IEnumerable<string>> SearchUserAsync(string? text)
+    {
+        var q = UserOptions.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(text))
+            q = q.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(q.Take(50));
+    }
+
+    async Task SubmitAsync()
+    {
+        if (string.IsNullOrWhiteSpace(UserName) || SelectedMenus.Count == 0)
+        {
+            CallSnackBar("Choose user and at least one form.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var ids = SelectedMenus.Select(m => m.MenuID).ToList();
+        var rs = await ssv.CreatePermissionsBulk(UserName, ids, See, Edit, Del, Approve, Add);
+        if (rs.Flag)
+            Muddialog.Close(rs);
+        else
+            CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}

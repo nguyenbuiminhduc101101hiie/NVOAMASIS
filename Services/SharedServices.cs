@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.JSInterop;
 using NVOAMASIS.Data;
@@ -891,7 +892,108 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Upload Fail with Error: " + ex.Message);
             }
         }
+        /// <summary>
+        /// Creates one permission row per selected menu for a user. Skips menus that already have a row for that user.
+        /// </summary>
+        public async Task<BoolandMessReponse> CreatePermissionsBulk(
+            string? userName,
+            IReadOnlyList<Guid> menuIds,
+            bool see,
+            bool edit,
+            bool del,
+            bool approve,
+            bool add)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(userName))
+                    return new BoolandMessReponse(false, "User is required");
+                if (menuIds == null || menuIds.Count == 0)
+                    return new BoolandMessReponse(false, "Select at least one form");
 
+                _context.ChangeTracker.Clear();
+                var existingMenuIds = await _context.Permissions
+                    .AsNoTracking()
+                    .Where(x => x.UserName == userName && x.MenuId != null)
+                    .Select(x => x.MenuId!.Value)
+                    .ToListAsync();
+
+                var existingSet = existingMenuIds.ToHashSet();
+                var distinctNew = menuIds.Distinct().Where(id => !existingSet.Contains(id)).ToList();
+                var skipped = menuIds.Count - distinctNew.Count;
+
+                if (distinctNew.Count == 0)
+                    return new BoolandMessReponse(false,
+                        skipped > 0
+                            ? "All selected forms already have permission for this user."
+                            : "Nothing to add.");
+
+                // Avoid EF OPENJSON(... WITH ...) translation for in-memory Guid lists — some SQL Server
+                // batches then fail with "Incorrect syntax near the keyword 'WITH'" unless prefixed with ';'.
+                List<FormMenu> menus;
+                if (distinctNew.Count == 1)
+                {
+                    var onlyId = distinctNew[0];
+                    menus = await _context.MenuNames
+                        .AsNoTracking()
+                        .Where(m => m.MenuID == onlyId)
+                        .ToListAsync();
+                }
+                else
+                {
+                    var sqlParameters = distinctNew
+                        .Select((id, i) => new SqlParameter($"@m{i}", id))
+                        .Cast<object>()
+                        .ToArray();
+                    var inClause = string.Join(", ", distinctNew.Select((_, i) => $"@m{i}"));
+                    var sql = $";SELECT * FROM [MenuNames] WHERE [MenuID] IN ({inClause})";
+                    menus = await _context.MenuNames
+                        .FromSqlRaw(sql, sqlParameters)
+                        .AsNoTracking()
+                        .ToListAsync();
+                }
+
+                var missingIds = distinctNew.Except(menus.Select(m => m.MenuID)).ToList();
+
+                string usr = asv.GetAuth().Result.User.Identity!.Name!;
+                var list = new List<Permission_M>();
+                foreach (var menu in menus)
+                {
+                    list.Add(new Permission_M
+                    {
+                        PermissionId = Guid.NewGuid(),
+                        MenuId = menu.MenuID,
+                        MenuName = menu.MenuName,
+                        UserName = userName,
+                        See = see,
+                        Edit = edit,
+                        Del = del,
+                        Approve = approve,
+                        Add = add
+                    });
+                }
+
+                if (list.Count == 0)
+                    return new BoolandMessReponse(false, "No valid menus to add.");
+
+                _context.Permissions.AddRange(list);
+                await _context.SaveChangesAsync();
+
+                await HistoryLogService.LogAsync(usr, "ADD Permission (bulk)", "Permission", Guid.Empty, userName,
+                    new { UserName = userName, AddedMenus = menus.Select(m => m.MenuName).ToList(), Count = list.Count });
+
+                var msg = $"Added {list.Count} permission(s).";
+                if (skipped > 0)
+                    msg += $" Skipped {skipped} already assigned.";
+                if (missingIds.Count > 0)
+                    msg += $" {missingIds.Count} menu id(s) were not found.";
+                return new BoolandMessReponse(true, msg);
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Cannot add permissions: " + ex.Message);
+            }
+        }
         public async Task<BoolandMessReponse> DuplicatePermission(string UserRef, string UserChild)
         {
             try
