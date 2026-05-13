@@ -44,6 +44,10 @@ namespace NVOAMASIS.Data
         public DbSet<M_Job> Job { get; set; }
         public DbSet<M_HBL> HBL { get; set; }
         public DbSet<M_MBL> MBL { get; set; }
+        public DbSet<M_BalanceSheetItemAccounts> BalanceSheetItemAccounts { get; set; }
+        public DbSet<M_BalanceSheetItems> BalanceSheetItems { get; set; }
+        public DbSet<M_BalanceSheetMapping> BalanceSheetMapping { get; set; }
+
         public DbSet<M_VesselSpace> VesselSpace { get; set; }
         public DbSet<M_Container> Container { get; set; }
         public DbSet<M_Debit> Debit { get; set; }

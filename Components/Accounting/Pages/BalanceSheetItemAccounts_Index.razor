@@ -1,0 +1,298 @@
+@page "/balance-sheet-item-accounts"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["BalanceSheetItemAccounts.Title"]</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"5.8.12 {Localizer["BalanceSheetItemAccounts.Title"]}")" Subtitle="@Localizer["BalanceSheetItemAccounts.Subtitle"]">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddDialogAsync" Disabled="_busy">@Localizer["new"]</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialogAsync" Disabled="_busy || _selected is null">@Localizer["edit"]</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">@Localizer["delete"]</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudTextField @bind-Value="_search" Label="@Localizer["BalanceSheetItemAccounts.Search"]" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" />
+        <MudDataGrid T="M_BalanceSheetItemAccounts"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClass"
+                     Height="calc(100vh - 300px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.ItemCode" Title="@Localizer["BalanceSheetItemAccounts.ItemCode"]" />
+                <PropertyColumn Property="x => x.AccountCode" Title="@Localizer["BalanceSheetItemAccounts.AccountCode"]" />
+                <PropertyColumn Property="x => x.AccountName" Title="@Localizer["BalanceSheetItemAccounts.AccountName"]" />
+                <PropertyColumn Property="x => x.Sign" Title="@Localizer["BalanceSheetItemAccounts.Sign"]" />
+                <PropertyColumn Property="x => x.BalanceSide" Title="@Localizer["BalanceSheetItemAccounts.BalanceSide"]" />
+                <PropertyColumn Property="x => x.IsPrefixMatch" Title="@Localizer["BalanceSheetItemAccounts.IsPrefixMatch"]" />
+                <PropertyColumn Property="x => x.IsActive" Title="@Localizer["BalanceSheetItemAccounts.IsActive"]" />
+                <PropertyColumn Property="x => x.Note" Title="@Localizer["BalanceSheetItemAccounts.Note"]" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_BalanceSheetItemAccounts" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    private const string PermissionMenuName = "BalanceSheetItemAccounts";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private string _search = string.Empty;
+    private List<M_BalanceSheetItemAccounts> _items = new();
+    private M_BalanceSheetItemAccounts? _selected;
+
+    private IEnumerable<M_BalanceSheetItemAccounts> VisibleItems =>
+        string.IsNullOrWhiteSpace(_search)
+            ? _items
+            : _items.Where(x =>
+                (x.ItemCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.AccountCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.AccountName?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.Note?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["BalanceSheetItemAccounts.NoAccessView"], MudBlazor.Severity.Warning);
+            _items.Clear();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.BalanceSheetItemAccounts.AsNoTracking()
+                .OrderBy(x => x.ItemCode)
+                .ThenBy(x => x.AccountCode)
+                .ToListAsync();
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_BalanceSheetItemAccounts> args)
+    {
+        var r = args.Item;
+        _selected = new M_BalanceSheetItemAccounts
+        {
+            Id = r.Id,
+            ItemCode = r.ItemCode,
+            AccountCode = r.AccountCode,
+            AccountName = r.AccountName,
+            Sign = r.Sign,
+            BalanceSide = r.BalanceSide,
+            IsPrefixMatch = r.IsPrefixMatch,
+            IsActive = r.IsActive,
+            Note = r.Note
+        };
+    }
+
+    private string RowClass(M_BalanceSheetItemAccounts row, int _) =>
+        _selected?.Id == row.Id ? "selected-row-blue" : string.Empty;
+
+    private async Task OpenAddDialogAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["BalanceSheetItemAccounts.NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<BalanceSheetItemAccounts_AddEditDialog>(
+            Localizer["BalanceSheetItemAccounts.AddTitle"],
+            new DialogParameters
+            {
+                ["Model"] = new M_BalanceSheetItemAccounts { IsActive = true, Sign = 1 },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_BalanceSheetItemAccounts data)
+            return;
+
+        await SaveAsync(data, false);
+    }
+
+    private async Task OpenEditDialogAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["BalanceSheetItemAccounts.NoAccessEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = DialogService.Show<BalanceSheetItemAccounts_AddEditDialog>(
+            Localizer["BalanceSheetItemAccounts.EditTitle"],
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_BalanceSheetItemAccounts data)
+            return;
+
+        await SaveAsync(data, true);
+    }
+
+    private async Task SaveAsync(M_BalanceSheetItemAccounts data, bool isEdit)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            if (!isEdit)
+            {
+                var dup = await db.BalanceSheetItemAccounts.AsNoTracking().AnyAsync(x =>
+                    x.ItemCode == data.ItemCode && x.AccountCode == data.AccountCode);
+                if (dup)
+                {
+                    CallSnack(Localizer["BalanceSheetItemAccounts.DuplicateKey"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                data.Id = Guid.NewGuid();
+                db.BalanceSheetItemAccounts.Add(data);
+            }
+            else
+            {
+                var dupOther = await db.BalanceSheetItemAccounts.AsNoTracking().AnyAsync(x =>
+                    x.Id != data.Id &&
+                    x.ItemCode == data.ItemCode &&
+                    x.AccountCode == data.AccountCode);
+                if (dupOther)
+                {
+                    CallSnack(Localizer["BalanceSheetItemAccounts.DuplicateKey"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                var entity = await db.BalanceSheetItemAccounts.FirstOrDefaultAsync(x => x.Id == data.Id);
+                if (entity is null)
+                {
+                    CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.ItemCode = data.ItemCode;
+                entity.AccountCode = data.AccountCode;
+                entity.AccountName = data.AccountName;
+                entity.Sign = data.Sign;
+                entity.BalanceSide = data.BalanceSide;
+                entity.IsPrefixMatch = data.IsPrefixMatch;
+                entity.IsActive = data.IsActive;
+                entity.Note = data.Note;
+            }
+
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["Common.SavedSuccessfully"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null)
+            return;
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            CallSnack(Localizer["BalanceSheetItemAccounts.NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(Localizer["warning"], Localizer["askDelete"], yesText: Localizer["delete"], cancelText: Localizer["cancel"]);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.BalanceSheetItemAccounts.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.BalanceSheetItemAccounts.Remove(entity);
+            await db.SaveChangesAsync();
+            CallSnack(Localizer["Common.DeletedSuccessfully"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
+
+<style>
+    .selected-row-blue { background-color: #2196f3 !important; }
+</style>
