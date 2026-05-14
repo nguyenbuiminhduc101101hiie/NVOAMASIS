@@ -13,13 +13,26 @@
 @inject IDialogService DialogService
 @inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>@Localizer["BalanceSheetMapping.Title"]</PageTitle>
+<PageTitle>5.8.10 @LblScreenTitle</PageTitle>
 
 <div class="product-price-page">
-    <PpScreenHeader Title="@($"5.8.10 {Localizer["BalanceSheetMapping.Title"]}")" Subtitle="@Localizer["BalanceSheetMapping.Subtitle"]">
+    <PpScreenHeader Title="@($"5.8.10 {LblScreenTitle}")" Subtitle="@LblScreenSubtitle">
         <Toolbar>
-            <MudStack Row="true" Spacing="1" Class="flex-wrap">
-                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddDialogAsync" Disabled="_busy">@Localizer["new"]</MudButton>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap align-items-center">
+                <MudSelect T="Guid"
+                           Value="_filterCompanyId"
+                           ValueChanged="OnCompanyFilterChangedAsync"
+                           Label="@LblCompany"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Style="min-width:220px"
+                           Dense="true">
+                    @foreach (var c in _customers)
+                    {
+                        <MudSelectItem Value="@c.Customer_ID">@CompanyLabel(c)</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddDialogAsync" Disabled="_busy || _filterCompanyId == Guid.Empty">@Localizer["new"]</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialogAsync" Disabled="_busy || _selected is null">@Localizer["edit"]</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">@Localizer["delete"]</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
@@ -29,7 +42,7 @@
 
     <MudPaper Class="product-price-card pa-3" Elevation="0">
         <MudTextField @bind-Value="_search" Label="@Localizer["BalanceSheetMapping.Search"]" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" />
-        <MudDataGrid T="M_BalanceSheetMapping"
+        <MudDataGrid T="M_FinancialReportLine"
                      Items="VisibleItems"
                      Dense="true"
                      Striped="true"
@@ -41,18 +54,51 @@
                      FixedHeader="true"
                      Loading="_busy">
             <Columns>
-                <PropertyColumn Property="x => x.ItemCode" Title="@Localizer["BalanceSheetMapping.ItemCode"]" />
-                <PropertyColumn Property="x => x.ItemName" Title="@Localizer["BalanceSheetMapping.ItemName"]" />
+                <PropertyColumn Property="x => x.ReportType" Title="@LblColReportType" />
+                <PropertyColumn Property="x => x.LineCode" Title="@LblColLineCode" />
+                <PropertyColumn Property="x => x.LineName" Title="@LblColLineName" />
                 <PropertyColumn Property="x => x.Section" Title="@Localizer["BalanceSheetMapping.Section"]" />
-                <PropertyColumn Property="x => x.AccountCode" Title="@Localizer["BalanceSheetMapping.AccountCode"]" />
-                <PropertyColumn Property="x => x.Sign" Title="@Localizer["BalanceSheetMapping.Sign"]" />
-                <PropertyColumn Property="x => x.SortOrder" Title="@Localizer["BalanceSheetMapping.SortOrder"]" />
-                <PropertyColumn Property="x => x.IsActive" Title="@Localizer["BalanceSheetMapping.IsActive"]" />
-                <PropertyColumn Property="x => x.CreatedDate" Title="@Localizer["BalanceSheetMapping.CreatedDate"]" Format="dd/MM/yyyy HH:mm" />
-                <PropertyColumn Property="x => x.Note" Title="@Localizer["BalanceSheetMapping.Note"]" />
+                <PropertyColumn Property="x => x.ReportGroup" Title="@LblColReportGroup" />
+                <TemplateColumn Title="@LblColParent" Sortable="false">
+                    <CellTemplate>
+                        @{
+                            var p = context.Item.ParentLine;
+                        }
+                        @if (p is null && context.Item.ParentLineId is null)
+                        {
+                            <span class="mud-text-secondary">—</span>
+                        }
+                        else if (p is null)
+                        {
+                            <span class="mud-text-secondary">@context.Item.ParentLineId</span>
+                        }
+                        else
+                        {
+                            <span>@p.LineCode — @p.LineName</span>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.LineLevel" Title="@LblColLineLevel" />
+                <TemplateColumn Title="@LblColTotal" Sortable="false">
+                    <CellTemplate>
+                        <MudIcon Icon="@(context.Item.IsTotalLine ? Icons.Material.Filled.CheckBox : Icons.Material.Filled.CheckBoxOutlineBlank)" Size="Size.Small" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="@LblColBold" Sortable="false">
+                    <CellTemplate>
+                        <MudIcon Icon="@(context.Item.IsBold ? Icons.Material.Filled.CheckBox : Icons.Material.Filled.CheckBoxOutlineBlank)" Size="Size.Small" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.DisplayOrder" Title="@Localizer["AccountMapping.DisplayOrder"]" />
+                <TemplateColumn Title="@Localizer["AccountMapping.IsActive"]" Sortable="false">
+                    <CellTemplate>
+                        <MudIcon Icon="@(context.Item.Active ? Icons.Material.Filled.CheckBox : Icons.Material.Filled.CheckBoxOutlineBlank)" Size="Size.Small" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.CreatedAt" Title="@LblColCreated" Format="dd/MM/yyyy HH:mm" />
             </Columns>
             <PagerContent>
-                <MudDataGridPager T="M_BalanceSheetMapping" PageSizeOptions="new int[] { 10, 25, 50 }" />
+                <MudDataGridPager T="M_FinancialReportLine" PageSizeOptions="new int[] { 10, 25, 50 }" />
             </PagerContent>
         </MudDataGrid>
     </MudPaper>
@@ -61,26 +107,76 @@
 @code {
     private const string PermissionMenuName = "BalanceSheetMapping";
 
+    private const string LblScreenTitle = "Dòng báo cáo TC / Financial report lines";
+    private const string LblScreenSubtitle = "FinancialReportLines — ReportType, LineCode, LineName, Section, ParentLineId, DisplayOrder, Active.";
+    private const string LblCompany = "Công ty / Company";
+    private const string LblSelectCompanyFirst = "Chọn công ty trước. / Select a company first.";
+    private const string LblDuplicateLine = "Đã tồn tại dòng cùng loại BC và mã dòng. / A line with this report type and line code already exists.";
+    private const string LblAddTitle = "Thêm dòng báo cáo / Add financial report line";
+    private const string LblEditTitle = "Sửa dòng báo cáo / Edit financial report line";
+    private const string LblHasChildLines = "Có dòng con trỏ tới dòng này; xóa hoặc đổi cha của các dòng con trước. / Child lines reference this row; remove or re-parent them first.";
+    private const string LblColReportType = "Loại BC / Type";
+    private const string LblColLineCode = "Mã dòng / Code";
+    private const string LblColLineName = "Tên dòng / Name";
+    private const string LblColReportGroup = "Nhóm / Group";
+    private const string LblColParent = "Dòng cha / Parent";
+    private const string LblColLineLevel = "Cấp / Level";
+    private const string LblColTotal = "Tổng / Total";
+    private const string LblColBold = "Đậm / Bold";
+    private const string LblColCreated = "Tạo lúc / Created";
+
     private bool _busy;
     private string _usr = string.Empty;
     private string _search = string.Empty;
-    private List<M_BalanceSheetMapping> _items = new();
-    private M_BalanceSheetMapping? _selected;
+    private Guid _filterCompanyId;
+    private List<M_Customer> _customers = new();
+    private List<M_FinancialReportLine> _items = new();
+    private M_FinancialReportLine? _selected;
 
-    private IEnumerable<M_BalanceSheetMapping> VisibleItems =>
+    private IEnumerable<M_FinancialReportLine> VisibleItems =>
         string.IsNullOrWhiteSpace(_search)
             ? _items
             : _items.Where(x =>
-                (x.ItemCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (x.ItemName?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.ReportType?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.LineCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.LineName?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 (x.Section?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (x.AccountCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (x.Note?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+                (x.ReportGroup?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
 
     protected override async Task OnInitializedAsync()
     {
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _customers = await db.Customer.AsNoTracking()
+            .Where(x => x.Customer_ID != Guid.Empty)
+            .OrderBy(x => x.COMPANY)
+            .ThenBy(x => x.BIZName)
+            .ToListAsync();
+
+        if (_customers.Count > 0)
+            _filterCompanyId = _customers[0].Customer_ID;
+
+        await LoadAsync();
+    }
+
+    private static string CompanyLabel(M_Customer c)
+    {
+        var a = (c.COMPANY ?? string.Empty).Trim();
+        var b = (c.BIZName ?? string.Empty).Trim();
+        if (!string.IsNullOrEmpty(a) && !string.IsNullOrEmpty(b) && !string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+            return $"{a} ({b})";
+        return string.IsNullOrEmpty(a) ? b : a;
+    }
+
+    private string? SelectedCompanyDisplay()
+        => _customers.FirstOrDefault(x => x.Customer_ID == _filterCompanyId) is { } c ? CompanyLabel(c) : null;
+
+    private async Task OnCompanyFilterChangedAsync(Guid id)
+    {
+        _filterCompanyId = id;
+        _selected = null;
         await LoadAsync();
     }
 
@@ -98,10 +194,19 @@
         {
             _busy = true;
             await using var db = await DbFactory.CreateDbContextAsync();
-            _items = await db.BalanceSheetMapping.AsNoTracking()
-                .OrderBy(x => x.Section)
-                .ThenBy(x => x.SortOrder)
-                .ThenBy(x => x.ItemCode)
+            if (_filterCompanyId == Guid.Empty)
+            {
+                _items.Clear();
+                _selected = null;
+                return;
+            }
+
+            _items = await db.FinancialReportLines.AsNoTracking()
+                .Include(x => x.ParentLine)
+                .Where(x => x.CompanyId == _filterCompanyId)
+                .OrderBy(x => x.ReportType)
+                .ThenBy(x => x.DisplayOrder)
+                .ThenBy(x => x.LineCode)
                 .ToListAsync();
             _selected = null;
         }
@@ -115,29 +220,41 @@
         }
     }
 
-    private void OnRowClick(DataGridRowClickEventArgs<M_BalanceSheetMapping> args)
+    private void OnRowClick(DataGridRowClickEventArgs<M_FinancialReportLine> args)
     {
         var r = args.Item;
-        _selected = new M_BalanceSheetMapping
+        _selected = new M_FinancialReportLine
         {
             Id = r.Id,
-            ItemCode = r.ItemCode,
-            ItemName = r.ItemName,
+            CompanyId = r.CompanyId,
+            ReportType = r.ReportType,
+            LineCode = r.LineCode,
+            LineName = r.LineName,
             Section = r.Section,
-            AccountCode = r.AccountCode,
-            Sign = r.Sign,
-            SortOrder = r.SortOrder,
-            Note = r.Note,
-            IsActive = r.IsActive,
-            CreatedDate = r.CreatedDate
+            ReportGroup = r.ReportGroup,
+            ParentLineId = r.ParentLineId,
+            LineLevel = r.LineLevel,
+            IsTotalLine = r.IsTotalLine,
+            IsBold = r.IsBold,
+            DisplayOrder = r.DisplayOrder,
+            Active = r.Active,
+            CreatedAt = r.CreatedAt,
+            UpdatedAt = r.UpdatedAt,
+            ParentLine = r.ParentLine
         };
     }
 
-    private string RowClass(M_BalanceSheetMapping row, int _) =>
+    private string RowClass(M_FinancialReportLine row, int _) =>
         _selected?.Id == row.Id ? "selected-row-blue" : string.Empty;
 
     private async Task OpenAddDialogAsync()
     {
+        if (_filterCompanyId == Guid.Empty)
+        {
+            CallSnack(LblSelectCompanyFirst, MudBlazor.Severity.Warning);
+            return;
+        }
+
         if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
         {
             CallSnack(Localizer["BalanceSheetMapping.NoAccessAdd"], MudBlazor.Severity.Warning);
@@ -145,16 +262,24 @@
         }
 
         var dialog = DialogService.Show<BalanceSheetMapping_AddEditDialog>(
-            Localizer["BalanceSheetMapping.AddTitle"],
+            LblAddTitle,
             new DialogParameters
             {
-                ["Model"] = new M_BalanceSheetMapping { IsActive = true, Sign = 1 },
-                ["IsEdit"] = false
+                ["Model"] = new M_FinancialReportLine
+                {
+                    CompanyId = _filterCompanyId,
+                    ReportType = "BalanceSheet",
+                    LineLevel = 1,
+                    DisplayOrder = 0,
+                    Active = true
+                },
+                ["IsEdit"] = false,
+                ["CompanyDisplayName"] = SelectedCompanyDisplay() ?? string.Empty
             },
             new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
 
         var result = await dialog.Result;
-        if (result.Canceled || result.Data is not M_BalanceSheetMapping data)
+        if (result.Canceled || result.Data is not M_FinancialReportLine data)
             return;
 
         await SaveAsync(data, false);
@@ -171,22 +296,23 @@
         }
 
         var dialog = DialogService.Show<BalanceSheetMapping_AddEditDialog>(
-            Localizer["BalanceSheetMapping.EditTitle"],
+            LblEditTitle,
             new DialogParameters
             {
                 ["Model"] = _selected,
-                ["IsEdit"] = true
+                ["IsEdit"] = true,
+                ["CompanyDisplayName"] = SelectedCompanyDisplay() ?? string.Empty
             },
             new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
 
         var result = await dialog.Result;
-        if (result.Canceled || result.Data is not M_BalanceSheetMapping data)
+        if (result.Canceled || result.Data is not M_FinancialReportLine data)
             return;
 
         await SaveAsync(data, true);
     }
 
-    private async Task SaveAsync(M_BalanceSheetMapping data, bool isEdit)
+    private async Task SaveAsync(M_FinancialReportLine data, bool isEdit)
     {
         try
         {
@@ -194,48 +320,52 @@
             await using var db = await DbFactory.CreateDbContextAsync();
             if (!isEdit)
             {
-                var dup = await db.BalanceSheetMapping.AsNoTracking().AnyAsync(x =>
-                    x.ItemCode == data.ItemCode &&
-                    x.AccountCode == data.AccountCode &&
-                    x.Section == data.Section);
+                var dup = await db.FinancialReportLines.AsNoTracking().AnyAsync(x =>
+                    x.CompanyId == data.CompanyId &&
+                    x.ReportType == data.ReportType &&
+                    x.LineCode == data.LineCode);
                 if (dup)
                 {
-                    CallSnack(Localizer["BalanceSheetMapping.DuplicateKey"], MudBlazor.Severity.Warning);
+                    CallSnack(LblDuplicateLine, MudBlazor.Severity.Warning);
                     return;
                 }
 
+                var now = DateTime.UtcNow;
                 data.Id = Guid.NewGuid();
-                data.CreatedDate = DateTime.UtcNow;
-                db.BalanceSheetMapping.Add(data);
+                data.CreatedAt = now;
+                data.UpdatedAt = null;
+                db.FinancialReportLines.Add(data);
             }
             else
             {
-                var dupOther = await db.BalanceSheetMapping.AsNoTracking().AnyAsync(x =>
+                var dupOther = await db.FinancialReportLines.AsNoTracking().AnyAsync(x =>
                     x.Id != data.Id &&
-                    x.ItemCode == data.ItemCode &&
-                    x.AccountCode == data.AccountCode &&
-                    x.Section == data.Section);
+                    x.CompanyId == data.CompanyId &&
+                    x.ReportType == data.ReportType &&
+                    x.LineCode == data.LineCode);
                 if (dupOther)
                 {
-                    CallSnack(Localizer["BalanceSheetMapping.DuplicateKey"], MudBlazor.Severity.Warning);
+                    CallSnack(LblDuplicateLine, MudBlazor.Severity.Warning);
                     return;
                 }
 
-                var entity = await db.BalanceSheetMapping.FirstOrDefaultAsync(x => x.Id == data.Id);
+                var entity = await db.FinancialReportLines.FirstOrDefaultAsync(x => x.Id == data.Id);
                 if (entity is null)
                 {
                     CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
                     return;
                 }
 
-                entity.ItemCode = data.ItemCode;
-                entity.ItemName = data.ItemName;
+                entity.LineName = data.LineName;
                 entity.Section = data.Section;
-                entity.AccountCode = data.AccountCode;
-                entity.Sign = data.Sign;
-                entity.SortOrder = data.SortOrder;
-                entity.Note = data.Note;
-                entity.IsActive = data.IsActive;
+                entity.ReportGroup = data.ReportGroup;
+                entity.ParentLineId = data.ParentLineId;
+                entity.LineLevel = data.LineLevel;
+                entity.IsTotalLine = data.IsTotalLine;
+                entity.IsBold = data.IsBold;
+                entity.DisplayOrder = data.DisplayOrder;
+                entity.Active = data.Active;
+                entity.UpdatedAt = DateTime.UtcNow;
             }
 
             await db.SaveChangesAsync();
@@ -270,14 +400,22 @@
         {
             _busy = true;
             await using var db = await DbFactory.CreateDbContextAsync();
-            var entity = await db.BalanceSheetMapping.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            var hasChildren = await db.FinancialReportLines.AsNoTracking()
+                .AnyAsync(x => x.ParentLineId == _selected.Id);
+            if (hasChildren)
+            {
+                CallSnack(LblHasChildLines, MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var entity = await db.FinancialReportLines.FirstOrDefaultAsync(x => x.Id == _selected.Id);
             if (entity is null)
             {
                 CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
                 return;
             }
 
-            db.BalanceSheetMapping.Remove(entity);
+            db.FinancialReportLines.Remove(entity);
             await db.SaveChangesAsync();
             CallSnack(Localizer["Common.DeletedSuccessfully"], MudBlazor.Severity.Success);
             await LoadAsync();

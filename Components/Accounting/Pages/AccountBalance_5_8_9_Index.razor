@@ -188,20 +188,23 @@
 
             var glRows = await (
                 from gl in db.GeneralLedgerEntries.AsNoTracking()
-                join map in db.AccountMappings.AsNoTracking() on gl.AccountCode equals map.AccountCode
+                join fam in db.FinancialReportAccountMappings.AsNoTracking()
+                    on new { gl.AccountCode, gl.CompanyId } equals new { fam.AccountCode, fam.CompanyId }
+                join rl in db.FinancialReportLines.AsNoTracking() on fam.ReportLineId equals rl.Id
                 where gl.FiscalYear == _fiscalYear
                       && gl.FiscalPeriod == _periodMonth
-                      && map.StatementType == "Balance Sheet"
-                      && map.IsActive
-                select new { gl, map })
+                      && fam.Active
+                      && rl.Active
+                      && rl.ReportType == "BalanceSheet"
+                select new { gl, fam, rl })
                 .ToListAsync();
 
             var groups = glRows
                 .GroupBy(x => new
                 {
                     x.gl.AccountCode,
-                    x.map.BsSection,
-                    NormalBalance = x.map.NormalBalance ?? "Debit"
+                    BsSection = x.rl.Section ?? string.Empty,
+                    NormalBalance = x.fam.NormalBalance ?? "Debit"
                 })
                 .ToList();
 
@@ -240,6 +243,8 @@
                     && x.PeriodYear == _fiscalYear
                     && x.PeriodMonth == _periodMonth);
 
+                var companyId = lines.Count > 0 ? lines[0].CompanyId : (Guid?)null;
+
                 var isDebitNatural = string.Equals(key.NormalBalance, "Debit", StringComparison.OrdinalIgnoreCase);
                 var openingForRow = existed?.OpeningBalance ?? 0m;
                 var closingBalance = isDebitNatural
@@ -253,14 +258,14 @@
                     {
                         Id = Guid.NewGuid(),
                         AccountCode = key.AccountCode,
-                        CompanyId = null,
+                        CompanyId = companyId,
                         PeriodYear = _fiscalYear,
                         PeriodMonth = _periodMonth,
                         OpeningBalance = 0m,
                         DebitTotal = debitTotal,
                         CreditTotal = creditTotal,
                         ClosingBalance = closingBalance,
-                        AccountType = key.BsSection,
+                        AccountType = AccountTypeFromSection(key.BsSection),
                         CalculatedFrom = calculatedFrom,
                         CalculatedTo = calculatedTo,
                         LastCalculatedAt = nowUtc,
@@ -274,7 +279,8 @@
                     balanceRow = existed;
                     balanceRow.DebitTotal = debitTotal;
                     balanceRow.CreditTotal = creditTotal;
-                    balanceRow.AccountType = key.BsSection;
+                    balanceRow.AccountType = AccountTypeFromSection(key.BsSection);
+                    balanceRow.CompanyId = companyId ?? balanceRow.CompanyId;
                     balanceRow.CalculatedFrom = calculatedFrom;
                     balanceRow.CalculatedTo = calculatedTo;
                     balanceRow.LastCalculatedAt = nowUtc;
@@ -310,6 +316,14 @@
         {
             _busy = false;
         }
+    }
+
+    private static string? AccountTypeFromSection(string section)
+    {
+        if (string.IsNullOrWhiteSpace(section))
+            return null;
+        var s = section.Trim();
+        return s.Length <= 20 ? s : s[..20];
     }
 
     private static List<M_account_balance_gl_line> OrderedGlLines(M_account_balance row) =>

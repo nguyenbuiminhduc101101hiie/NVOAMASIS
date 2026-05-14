@@ -159,6 +159,8 @@ namespace NVOAMASIS.Data
         public DbSet<M_AccountingVoucherLines> AccountingVoucherLines { get; set; }
         public DbSet<M_GeneralLedgerEntries> GeneralLedgerEntries { get; set; }
         public DbSet<M_AccountMapping> AccountMappings { get; set; }
+        public DbSet<M_FinancialReportLine> FinancialReportLines { get; set; }
+        public DbSet<M_FinancialReportAccountMapping> FinancialReportAccountMappings { get; set; }
         public DbSet<M_account_balance> AccountBalances { get; set; }
         public DbSet<M_account_balance_gl_line> AccountBalanceGlLines { get; set; }
         public DbSet<M_AccountingPeriod> AccountingPeriods { get; set; }
@@ -272,6 +274,26 @@ namespace NVOAMASIS.Data
                 .WithMany(x => x.GlSnapshotLines)
                 .HasForeignKey(x => x.AccountBalanceId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<M_FinancialReportLine>(e =>
+            {
+                e.Property(x => x.Id).HasDefaultValueSql("NEWSEQUENTIALID()");
+                e.Property(x => x.CreatedAt).HasDefaultValueSql("GETDATE()");
+                e.HasOne(x => x.ParentLine)
+                    .WithMany(x => x.ChildLines)
+                    .HasForeignKey(x => x.ParentLineId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<M_FinancialReportAccountMapping>(e =>
+            {
+                e.Property(x => x.Id).HasDefaultValueSql("NEWSEQUENTIALID()");
+                e.Property(x => x.CreatedAt).HasDefaultValueSql("GETDATE()");
+                e.HasOne(x => x.ReportLine)
+                    .WithMany(x => x.AccountMappings)
+                    .HasForeignKey(x => x.ReportLineId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
         }
 
     }

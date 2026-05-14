@@ -1,63 +1,85 @@
+@using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Localization
 @using MudBlazor
+@using NVOAMASIS.Data
 @using NVOAMASIS.Models
 @using NVOAMASIS.Resources
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject IStringLocalizer<SharedResource> Localizer
 
 <MudDialog>
     <DialogContent>
         <MudForm @ref="_form">
             <MudGrid Spacing="2">
-                <MudItem xs="12" md="6">
-                    <MudTextField @bind-Value="_model.ItemCode"
-                                  Label="@Localizer["BalanceSheetMapping.ItemCode"]"
-                                  Variant="Variant.Outlined"
-                                  Margin="Margin.Dense"
-                                  Required="true" />
+                <MudItem xs="12">
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                        @LblCompanyHint: <strong>@_companyLabel</strong>
+                    </MudText>
                 </MudItem>
                 <MudItem xs="12" md="6">
-                    <MudTextField @bind-Value="_model.ItemName"
-                                  Label="@Localizer["BalanceSheetMapping.ItemName"]"
-                                  Variant="Variant.Outlined"
-                                  Margin="Margin.Dense"
-                                  Required="true" />
+                    <MudSelect T="string" @bind-Value="_model.ReportType" Label="@LblReportType" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" Disabled="IsEdit">
+                        <MudSelectItem Value="@("BalanceSheet")">BalanceSheet</MudSelectItem>
+                        <MudSelectItem Value="@("ProfitLoss")">ProfitLoss</MudSelectItem>
+                        <MudSelectItem Value="@("CashFlow")">CashFlow</MudSelectItem>
+                    </MudSelect>
                 </MudItem>
                 <MudItem xs="12" md="6">
-                    <MudTextField @bind-Value="_model.Section"
+                    <MudTextField @bind-Value="_model.LineCode"
+                                  Label="@LblLineCode"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Required="true"
+                                  Disabled="IsEdit"
+                                  MaxLength="50" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_model.LineName"
+                                  Label="@LblLineName"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Required="true"
+                                  MaxLength="200" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_sectionBinding"
                                   Label="@Localizer["BalanceSheetMapping.Section"]"
                                   Variant="Variant.Outlined"
                                   Margin="Margin.Dense"
-                                  Required="true" />
+                                  MaxLength="50" />
                 </MudItem>
                 <MudItem xs="12" md="6">
-                    <MudTextField @bind-Value="_model.AccountCode"
-                                  Label="@Localizer["BalanceSheetMapping.AccountCode"]"
+                    <MudTextField @bind-Value="_reportGroupBinding"
+                                  Label="@LblReportGroup"
                                   Variant="Variant.Outlined"
                                   Margin="Margin.Dense"
-                                  Required="true" />
-                </MudItem>
-                <MudItem xs="12" md="4">
-                    <MudNumericField T="int" @bind-Value="_model.Sign"
-                                     Label="@Localizer["BalanceSheetMapping.Sign"]"
-                                     Variant="Variant.Outlined"
-                                     Margin="Margin.Dense"
-                                     HelperText="1 / -1" />
-                </MudItem>
-                <MudItem xs="12" md="4">
-                    <MudNumericField T="int" @bind-Value="_model.SortOrder"
-                                     Label="@Localizer["BalanceSheetMapping.SortOrder"]"
-                                     Variant="Variant.Outlined"
-                                     Margin="Margin.Dense" />
-                </MudItem>
-                <MudItem xs="12" md="4">
-                    <MudCheckBox T="bool" @bind-Value="_model.IsActive" Label="@Localizer["BalanceSheetMapping.IsActive"]" />
+                                  MaxLength="100" />
                 </MudItem>
                 <MudItem xs="12">
-                    <MudTextField @bind-Value="_noteBinding"
-                                  Label="@Localizer["BalanceSheetMapping.Note"]"
-                                  Variant="Variant.Outlined"
-                                  Margin="Margin.Dense"
-                                  Lines="2" />
+                    <MudSelect T="string"
+                               Value="@_parentSelectValue"
+                               ValueChanged="OnParentSelectChangedAsync"
+                               Label="@LblParentLine"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Clearable="true"
+                               HelperText="@LblParentLineHint">
+                        <MudSelectItem Value="@string.Empty">—</MudSelectItem>
+                        @foreach (var p in _parentCandidates)
+                        {
+                            <MudSelectItem Value="@p.Id.ToString()">@FormatParentOption(p)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_model.LineLevel" Label="@LblLineLevel" Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="10" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int" @bind-Value="_model.DisplayOrder" Label="@Localizer["AccountMapping.DisplayOrder"]" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="4" Class="d-flex align-center flex-wrap" Style="gap:8px;">
+                    <MudCheckBox T="bool" @bind-Value="_model.IsTotalLine" Label="@LblIsTotalLine" />
+                    <MudCheckBox T="bool" @bind-Value="_model.IsBold" Label="@LblIsBold" />
+                    <MudCheckBox T="bool" @bind-Value="_model.Active" Label="@Localizer["AccountMapping.IsActive"]" />
                 </MudItem>
             </MudGrid>
         </MudForm>
@@ -69,30 +91,83 @@
 </MudDialog>
 
 @code {
+    private const string LblCompanyHint = "Công ty / Company";
+    private const string LblReportType = "Loại BC / Report type";
+    private const string LblLineCode = "Mã dòng / Line code";
+    private const string LblLineName = "Tên dòng / Line name";
+    private const string LblReportGroup = "Nhóm BC / Report group";
+    private const string LblParentLine = "Dòng cha / Parent line";
+    private const string LblParentLineHint = "Cùng công ty / Same company";
+    private const string LblLineLevel = "Cấp / Level";
+    private const string LblIsTotalLine = "Dòng tổng / Total line";
+    private const string LblIsBold = "In đậm / Bold";
+
     [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
-    [Parameter] public M_BalanceSheetMapping Model { get; set; } = new();
+    [Parameter] public M_FinancialReportLine Model { get; set; } = new();
     [Parameter] public bool IsEdit { get; set; }
+    [Parameter] public string CompanyDisplayName { get; set; } = string.Empty;
 
     private MudForm? _form;
-    private M_BalanceSheetMapping _model = new();
-    private string _noteBinding = string.Empty;
+    private M_FinancialReportLine _model = new();
+    private string _sectionBinding = string.Empty;
+    private string _reportGroupBinding = string.Empty;
+    private string _parentSelectValue = string.Empty;
+    private List<M_FinancialReportLine> _parentCandidates = new();
+    private string _companyLabel = "—";
 
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
-        _model = new M_BalanceSheetMapping
+        _model = new M_FinancialReportLine
         {
             Id = Model.Id,
-            ItemCode = Model.ItemCode ?? string.Empty,
-            ItemName = Model.ItemName ?? string.Empty,
-            Section = Model.Section ?? string.Empty,
-            AccountCode = Model.AccountCode ?? string.Empty,
-            Sign = Model.Sign == 0 ? 1 : Model.Sign,
-            SortOrder = Model.SortOrder,
-            Note = Model.Note,
-            IsActive = Model.IsActive,
-            CreatedDate = Model.CreatedDate
+            CompanyId = Model.CompanyId,
+            ReportType = string.IsNullOrWhiteSpace(Model.ReportType) ? "BalanceSheet" : Model.ReportType,
+            LineCode = Model.LineCode ?? string.Empty,
+            LineName = Model.LineName ?? string.Empty,
+            Section = Model.Section,
+            ReportGroup = Model.ReportGroup,
+            ParentLineId = Model.ParentLineId,
+            LineLevel = Model.LineLevel <= 0 ? 1 : Model.LineLevel,
+            IsTotalLine = Model.IsTotalLine,
+            IsBold = Model.IsBold,
+            DisplayOrder = Model.DisplayOrder,
+            Active = Model.Active,
+            CreatedAt = Model.CreatedAt,
+            UpdatedAt = Model.UpdatedAt
         };
-        _noteBinding = Model.Note ?? string.Empty;
+        _sectionBinding = Model.Section ?? string.Empty;
+        _reportGroupBinding = Model.ReportGroup ?? string.Empty;
+        _parentSelectValue = Model.ParentLineId.HasValue ? Model.ParentLineId.Value.ToString() : string.Empty;
+        _companyLabel = string.IsNullOrWhiteSpace(CompanyDisplayName) ? "—" : CompanyDisplayName.Trim();
+
+        _parentCandidates = new List<M_FinancialReportLine>();
+        if (Model.CompanyId != Guid.Empty)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            IQueryable<M_FinancialReportLine> query = db.FinancialReportLines.AsNoTracking()
+                .Where(x => x.CompanyId == Model.CompanyId && x.Active);
+            if (IsEdit && Model.Id != Guid.Empty)
+                query = query.Where(x => x.Id != Model.Id);
+            _parentCandidates = await query
+                .OrderBy(x => x.ReportType)
+                .ThenBy(x => x.DisplayOrder)
+                .ThenBy(x => x.LineCode)
+                .ToListAsync();
+        }
+    }
+
+    private Task OnParentSelectChangedAsync(string? value)
+    {
+        _parentSelectValue = value ?? string.Empty;
+        return Task.CompletedTask;
+    }
+
+    private static string FormatParentOption(M_FinancialReportLine p)
+    {
+        var rt = p.ReportType ?? string.Empty;
+        var code = p.LineCode ?? string.Empty;
+        var name = p.LineName ?? string.Empty;
+        return string.IsNullOrWhiteSpace(rt) ? $"{code} — {name}" : $"{rt} · {code} — {name}";
     }
 
     private async Task SubmitAsync()
@@ -100,17 +175,20 @@
         if (_form is not null)
             await _form.Validate();
 
-        if (string.IsNullOrWhiteSpace(_model.ItemCode) ||
-            string.IsNullOrWhiteSpace(_model.ItemName) ||
-            string.IsNullOrWhiteSpace(_model.Section) ||
-            string.IsNullOrWhiteSpace(_model.AccountCode))
+        if (string.IsNullOrWhiteSpace(_model.ReportType) ||
+            string.IsNullOrWhiteSpace(_model.LineCode) ||
+            string.IsNullOrWhiteSpace(_model.LineName) ||
+            _model.CompanyId == Guid.Empty)
             return;
 
-        _model.ItemCode = _model.ItemCode.Trim();
-        _model.ItemName = _model.ItemName.Trim();
-        _model.Section = _model.Section.Trim();
-        _model.AccountCode = _model.AccountCode.Trim();
-        _model.Note = string.IsNullOrWhiteSpace(_noteBinding) ? null : _noteBinding.Trim();
+        _model.LineCode = _model.LineCode.Trim();
+        _model.LineName = _model.LineName.Trim();
+        _model.ReportType = _model.ReportType.Trim();
+        _model.Section = string.IsNullOrWhiteSpace(_sectionBinding) ? null : _sectionBinding.Trim();
+        _model.ReportGroup = string.IsNullOrWhiteSpace(_reportGroupBinding) ? null : _reportGroupBinding.Trim();
+        _model.ParentLineId = string.IsNullOrWhiteSpace(_parentSelectValue) || !Guid.TryParse(_parentSelectValue, out var pid)
+            ? null
+            : pid;
 
         MudDialog.Close(DialogResult.Ok(_model));
     }
