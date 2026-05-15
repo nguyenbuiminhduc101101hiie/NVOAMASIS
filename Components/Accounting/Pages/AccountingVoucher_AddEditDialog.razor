@@ -1,3 +1,4 @@
+@using System.Globalization
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @using NVOAMASIS.Data
@@ -79,25 +80,18 @@
                     <MudDatePicker Date="@_referenceDate" DateChanged="OnReferenceDateChanged" Label="Ngày tham chiếu" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
                 </MudItem>
                 <MudItem xs="12" md="4">
-                    <MudSelect T="string" @bind-Value="_model.BookScope" Label="BookScope" Variant="Variant.Outlined" Margin="Margin.Dense">
-                        <MudSelectItem Value="@("TAX")">TAX</MudSelectItem>
-                        <MudSelectItem Value="@("MANAGEMENT")">MANAGEMENT</MudSelectItem>
-                        <MudSelectItem Value="@("BOTH")">BOTH</MudSelectItem>
+                    <MudSelect T="string"
+                               Value="@(_model.SourceModule ?? string.Empty)"
+                               ValueChanged="OnSourceModuleChanged"
+                               Label="@Localizer["AccountingVoucher.SourceModule"]"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Clearable="true">
+                        @foreach (var opt in SourceModuleOptions)
+                        {
+                            <MudSelectItem Value="@opt.Module">@($"{opt.Module} - {opt.Meaning}")</MudSelectItem>
+                        }
                     </MudSelect>
-                </MudItem>
-                <MudItem xs="12" md="4">
-                    <MudSelect T="string" Value="_model.SourceModule" ValueChanged="OnSourceModuleChanged" Label="Module nguồn" Variant="Variant.Outlined" Margin="Margin.Dense">
-                        <MudSelectItem Value="@("AR")">AR (Account Receivable)</MudSelectItem>
-                        <MudSelectItem Value="@("AP")">AP (Account Payable)</MudSelectItem>
-                        <MudSelectItem Value="@("GL")">GL (General Ledger)</MudSelectItem>
-                        <MudSelectItem Value="@("INV")">INV (Inventory)</MudSelectItem>
-                        <MudSelectItem Value="@("SHIPMENT")">SHIPMENT</MudSelectItem>
-                        <MudSelectItem Value="@("BILLING")">BILLING</MudSelectItem>
-                        <MudSelectItem Value="@("PAYMENT")">PAYMENT</MudSelectItem>
-                    </MudSelect>
-                </MudItem>
-                <MudItem xs="12" md="4">
-                    <MudTextField @bind-Value="SourceIdText" Label="Source Id (Guid)" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 </MudItem>
                 <MudItem xs="12" md="4">
                     <MudTextField @bind-Value="_model.CreatedBy" Label="Created By" Variant="Variant.Outlined" Margin="Margin.Dense" />
@@ -112,10 +106,18 @@
                     <MudDatePicker Date="@_modifiedDate" DateChanged="OnModifiedDateChanged" Label="Modified Date" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
                 </MudItem>
                 <MudItem xs="12" md="4">
-                    <MudTextField @bind-Value="_model.PostedBy" Label="Posted By" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudTextField Value="@(_model.PostedBy ?? string.Empty)"
+                                   Label="Posted By"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   ReadOnly="true" />
                 </MudItem>
                 <MudItem xs="12" md="4">
-                    <MudDatePicker Date="@_postedDate" DateChanged="OnPostedDateChanged" Label="Posted Date" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
+                    <MudTextField Value="@FormatPostedDateTime(_model.PostedDate)"
+                                   Label="Posted Date"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   ReadOnly="true" />
                 </MudItem>
                 <MudItem xs="12" md="4">
                     <MudTextField @bind-Value="_model.CancelledBy" Label="Cancelled By" Variant="Variant.Outlined" Margin="Margin.Dense" />
@@ -209,7 +211,6 @@
     private DateTime? _referenceDate;
     private DateTime? _createdDate;
     private DateTime? _modifiedDate;
-    private DateTime? _postedDate;
     private DateTime? _cancelledDate;
     private List<M_Customer> _companies = new();
     private List<M_TransactionTypes> _transactionTypes = new();
@@ -223,6 +224,19 @@
     private decimal _diff;
     private string BalanceLabel => _diff == 0 && _lines.Count > 0 ? "Cân bút toán" : (_lines.Count == 0 ? "" : "Chưa cân");
     private bool CanEditLines => VoucherId.HasValue;
+
+    private sealed record SourceModuleOption(string Module, string Meaning);
+
+    private static readonly SourceModuleOption[] SourceModuleOptions =
+    {
+        new("AR (Account Receivable)", "Công nợ khách hàng"),
+        new("AP (Account Payable)", "Công nợ nhà cung cấp"),
+        new("GL (General Ledger)", "Nhập tay bút toán"),
+        new("INV (Inventory)", "Xuất nhập kho"),
+        new("SHIPMENT", "Nghiệp vụ vận chuyển (core của m)"),
+        new("BILLING", "Xuất hóa đơn"),
+        new("PAYMENT", "Thu / chi tiền"),
+    };
 
     protected override async Task OnInitializedAsync()
     {
@@ -271,7 +285,6 @@
                 Status = entity.Status,
                 ReferenceNo = entity.ReferenceNo,
                 ReferenceDate = entity.ReferenceDate,
-                BookScope = entity.BookScope,
                 SourceModule = entity.SourceModule,
                 SourceId = entity.SourceId,
                 CreatedBy = entity.CreatedBy,
@@ -288,7 +301,6 @@
             _referenceDate = entity.ReferenceDate?.Date;
             _createdDate = entity.CreatedDate.Date;
             _modifiedDate = entity.ModifiedDate?.Date;
-            _postedDate = entity.PostedDate?.Date;
             _cancelledDate = entity.CancelledDate?.Date;
             _lines = await db.AccountingVoucherLines.AsNoTracking()
                 .Where(x => x.VoucherId == entity.Id)
@@ -325,7 +337,6 @@
             _referenceDate = null;
             _createdDate = DateTime.UtcNow.Date;
             _modifiedDate = null;
-            _postedDate = null;
             _cancelledDate = null;
             _lines = new List<M_AccountingVoucherLines>();
             RecalcTotals();
@@ -370,12 +381,8 @@
         _model.ModifiedDate = d;
         return Task.CompletedTask;
     }
-    private Task OnPostedDateChanged(DateTime? d)
-    {
-        _postedDate = d;
-        _model.PostedDate = d;
-        return Task.CompletedTask;
-    }
+    private static string FormatPostedDateTime(DateTime? d) =>
+        d.HasValue ? d.Value.ToString("dd/MM/yyyy HH:mm", CultureInfo.CurrentCulture) : string.Empty;
     private Task OnCancelledDateChanged(DateTime? d)
     {
         _cancelledDate = d;
@@ -383,37 +390,10 @@
         return Task.CompletedTask;
     }
 
-    private string SourceIdText
+    private Task OnSourceModuleChanged(string value)
     {
-        get => _model.SourceId?.ToString() ?? string.Empty;
-        set
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                _model.SourceId = null;
-            else if (Guid.TryParse(value.Trim(), out var g))
-                _model.SourceId = g;
-        }
-    }
-
-    private void OnSourceModuleChanged(string value)
-    {
-        _model.SourceModule = value;
-        if (!string.IsNullOrWhiteSpace(value))
-        {
-            var suffix = value switch
-            {
-                "AR"       => 1,
-                "AP"       => 2,
-                "GL"       => 3,
-                "INV"      => 4,
-                "SHIPMENT" => 5,
-                "BILLING"  => 6,
-                "PAYMENT"  => 7,
-                _          => 0
-            };
-            // 00000000-0000-0000-0000-00000000000X
-            _model.SourceId = new Guid($"00000000-0000-0000-0000-00000000000{suffix}");
-        }
+        _model.SourceModule = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        return Task.CompletedTask;
     }
 
     private async Task<string> GenerateVoucherNoAsync(DateTime value)
@@ -644,7 +624,7 @@
             return;
         }
         var mappings = await db.TransactionTypeMappings.AsNoTracking()
-            .Where(x => x.TransactionID == tt.Id && x.IsActive)
+            .Where(x => x.TransactionID == tt.Id && (x.IsActive ?? false))
             .OrderBy(x => x.SortOrder)
             .ToListAsync();
         if (mappings.Count == 0)
@@ -653,7 +633,12 @@
             return;
         }
 
-        var dmIds = mappings.Select(m => m.DanhMucTaiKhoanID).Distinct().ToHashSet();
+        var dmIds = mappings
+            .Select(m => m.DanhMucTaiKhoanID)
+            .Where(id => id.HasValue && id.Value != Guid.Empty)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToHashSet();
         var dms = (await db.DanhMucTaiKhoan.AsNoTracking().ToListAsync())
             .Where(x => dmIds.Contains(x.Id))
             .ToDictionary(x => x.Id);
@@ -662,7 +647,7 @@
         var n = 1;
         foreach (var m in mappings)
         {
-            if (!dms.TryGetValue(m.DanhMucTaiKhoanID, out var dm))
+            if (m.DanhMucTaiKhoanID is null || !dms.TryGetValue(m.DanhMucTaiKhoanID.Value, out var dm))
                 continue;
             _lines.Add(new M_AccountingVoucherLines
             {
@@ -678,7 +663,7 @@
                 CreditAmountFC = 0,
                 IsTaxBook = false,
                 IsManagementBook = false,
-                SortKey = m.SortOrder
+                SortKey = m.SortOrder ?? 0
             });
             n++;
         }
@@ -764,10 +749,17 @@
             var voucherEntity = await db.AccountingVouchers.FirstOrDefaultAsync(x => x.Id == _model.Id);
             if (voucherEntity is not null)
             {
+                var postedAt = DateTime.UtcNow;
                 voucherEntity.Ghiso = true;
                 voucherEntity.Approve = true;
+                voucherEntity.Status = 2; // 1-Posted
+                voucherEntity.PostedBy = user;
+                voucherEntity.PostedDate = postedAt;
                 _model.Ghiso = true;
                 _model.Approve = true;
+                _model.Status = 2;
+                _model.PostedBy = user;
+                _model.PostedDate = postedAt;
             }
 
             await db.SaveChangesAsync();
@@ -823,7 +815,6 @@
                 if (_createdDate.HasValue)
                     _model.CreatedDate = _createdDate.Value;
                 _model.ModifiedDate = _modifiedDate;
-                _model.PostedDate = _postedDate;
                 _model.CancelledDate = _cancelledDate;
                 db.AccountingVouchers.Add(_model);
             }
@@ -853,7 +844,6 @@
                 entity.Status = _model.Status;
                 entity.ReferenceNo = _model.ReferenceNo;
                 entity.ReferenceDate = _referenceDate;
-                entity.BookScope = _model.BookScope;
                 entity.SourceModule = _model.SourceModule;
                 entity.SourceId = _model.SourceId;
                 entity.CreatedBy = _model.CreatedBy;
@@ -861,7 +851,7 @@
                 entity.ModifiedBy = string.IsNullOrWhiteSpace(_model.ModifiedBy) ? user : _model.ModifiedBy;
                 entity.ModifiedDate = _modifiedDate ?? DateTime.UtcNow;
                 entity.PostedBy = _model.PostedBy;
-                entity.PostedDate = _postedDate;
+                entity.PostedDate = _model.PostedDate;
                 entity.CancelledBy = _model.CancelledBy;
                 entity.CancelledDate = _cancelledDate;
             }

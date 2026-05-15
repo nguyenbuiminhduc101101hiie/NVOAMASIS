@@ -196,7 +196,7 @@
             return;
 
         var mappings = await db.TransactionTypeMappings.AsNoTracking()
-            .Where(x => x.TransactionID == tt.Id && x.IsActive)
+            .Where(x => x.TransactionID == tt.Id && (x.IsActive ?? false))
             .OrderBy(x => x.SortOrder)
             .ToListAsync();
         if (mappings.Count == 0)
@@ -233,7 +233,7 @@
         }
 
         var mappings = await db.TransactionTypeMappings.AsNoTracking()
-            .Where(x => x.TransactionID == tt.Id && x.IsActive)
+            .Where(x => x.TransactionID == tt.Id && (x.IsActive ?? false))
             .OrderBy(x => x.SortOrder)
             .ToListAsync();
         if (mappings.Count == 0)
@@ -259,7 +259,12 @@
                 await db.SaveChangesAsync();
             }
 
-            var dmIds = mappings.Select(m => m.DanhMucTaiKhoanID).Distinct().ToHashSet();
+            var dmIds = mappings
+                .Select(m => m.DanhMucTaiKhoanID)
+                .Where(id => id.HasValue && id.Value != Guid.Empty)
+                .Select(id => id!.Value)
+                .Distinct()
+                .ToHashSet();
             // Avoid SQL translation that may emit OPENJSON ... WITH on older SQL compatibility levels.
             var dms = (await db.DanhMucTaiKhoan.AsNoTracking().ToListAsync())
                 .Where(x => dmIds.Contains(x.Id))
@@ -267,7 +272,7 @@
             var n = 1;
             foreach (var m in mappings)
             {
-                if (!dms.TryGetValue(m.DanhMucTaiKhoanID, out var dm))
+                if (m.DanhMucTaiKhoanID is null || !dms.TryGetValue(m.DanhMucTaiKhoanID.Value, out var dm))
                     continue;
 
                 var line = new M_AccountingVoucherLines
@@ -284,7 +289,7 @@
                     CreditAmountFC = 0,
                     IsTaxBook = false,
                     IsManagementBook = false,
-                    SortKey = m.SortOrder
+                    SortKey = m.SortOrder ?? 0
                 };
 
                 db.AccountingVoucherLines.Add(line);

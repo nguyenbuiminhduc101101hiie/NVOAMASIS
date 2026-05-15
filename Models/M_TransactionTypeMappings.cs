@@ -12,16 +12,16 @@ namespace NVOAMASIS.Models
         [Required]
         public Guid TransactionID { get; set; }
 
-        [Required]
+        /// <summary>DEBIT / CREDIT. Nullable to tolerate legacy rows with NULL in SQL.</summary>
         [MaxLength(10)]
-        [RegularExpression("^(DEBIT|CREDIT)$")]
-        public string LineType { get; set; } = "DEBIT"; // DEBIT / CREDIT
+        public string? LineType { get; set; } = "DEBIT";
 
-        [Required]
-        public Guid DanhMucTaiKhoanID { get; set; }
-        
-        public int SortOrder { get; set; } =1;
-        public bool IsActive { get; set; } = true;
+        /// <summary>Nullable to tolerate legacy rows with NULL in SQL.</summary>
+        public Guid? DanhMucTaiKhoanID { get; set; }
+
+        public int? SortOrder { get; set; } = 1;
+
+        public bool? IsActive { get; set; } = true;
     }
 }
 
