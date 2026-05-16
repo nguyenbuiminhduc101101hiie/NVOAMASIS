@@ -26,7 +26,7 @@ namespace NVOAMASIS.Models
         public Guid? CustomerId { get; set; }
         public Guid? ShipmentId { get; set; }
         public string? ContractId { get; set; }
-        public Guid? BranchId { get; set; }
+        public string? BranchId { get; set; }
         public Guid? DepartmentId { get; set; }
 
         public DateTime? DueDate { get; set; }
