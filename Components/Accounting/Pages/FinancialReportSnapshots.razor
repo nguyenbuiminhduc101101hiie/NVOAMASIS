@@ -1,0 +1,754 @@
+@page "/accounting/financial-report-snapshots"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@using NVOAMASIS.Services
+@attribute [Authorize]
+@inject AppDbContext Db
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject SharedServices ssv
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@($"5.8.13 {Localizer["FinancialReportSnapshot.Title"]}")</PageTitle>
+
+<div class="product-price-page financial-report-snapshots-page">
+    <PpScreenHeader Title="@($"5.8.13 {Localizer["FinancialReportSnapshot.Title"]}")"
+                    Subtitle="@Localizer["FinancialReportSnapshot.Subtitle"]">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="NewSnapshot" Disabled="_busy">
+                    @Localizer["new"]
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Save" OnClick="SaveSnapshot" Disabled="_busy || !CanSaveHeader">
+                    @Localizer["FinancialReportSnapshot.SaveHeader"]
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">
+                    @Localizer["reload"]
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudGrid Spacing="2">
+        <MudItem xs="12" lg="4">
+            <MudPaper Class="product-price-card pa-3" Elevation="0">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold">@Localizer["FinancialReportSnapshot.Snapshots"]</MudText>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                        @_snapshots.Count
+                    </MudChip>
+                </MudStack>
+
+                <MudTextField T="string" @bind-Value="_search" Label="@Localizer["FinancialReportSnapshot.Search"]"
+                              Placeholder="@Localizer["FinancialReportSnapshot.SearchPlaceholder"]"
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Immediate="true" Clearable="true" Class="mb-2"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+
+                <MudTable T="FinancialReportSnapshot"
+                          Items="VisibleSnapshots"
+                          Dense="true" Hover="true" Striped="true" Bordered="true"
+                          Elevation="0" FixedHeader="true"
+                          Class="snapshot-list-table"
+                          Style="max-height: calc(100vh - 280px); overflow: auto;"
+                          RowClassFunc="SnapshotRowClass"
+                          OnRowClick="OnSnapshotClicked"
+                          Loading="_busy">
+                    <HeaderContent>
+                        <MudTh>@Localizer["FinancialReportSnapshot.ColReport"]</MudTh>
+                        <MudTh>@Localizer["FinancialReportSnapshot.ColPeriod"]</MudTh>
+                        <MudTh>@Localizer["FinancialReportSnapshot.ColStatus"]</MudTh>
+                        <MudTh Class="text-end">@Localizer["FinancialReportSnapshot.ColDifference"]</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>
+                            <MudText Typo="Typo.body2" Class="fw-bold">@context.ReportCode</MudText>
+                        </MudTd>
+                        <MudTd>@context.FiscalYear / @context.PeriodMonth.ToString("00")</MudTd>
+                        <MudTd>
+                            <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(context.Status)" Variant="Variant.Filled">
+                                @context.Status
+                            </MudChip>
+                        </MudTd>
+                        <MudTd Class="text-end">
+                            <MudText Typo="Typo.body2" Color="@(context.Difference == 0 ? Color.Success : Color.Error)">
+                                @context.Difference.ToString("N0")
+                            </MudText>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">
+                            @Localizer["FinancialReportSnapshot.NoSnapshots"]
+                        </MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="8">
+            <MudStack Spacing="2">
+                <MudPaper Class="product-price-card pa-3" Elevation="0">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2 flex-wrap">
+                        <MudText Typo="Typo.subtitle2" Class="fw-bold">@Localizer["FinancialReportSnapshot.Header"]</MudText>
+                        @if (_snapshot.Id != Guid.Empty)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Fingerprint">
+                                @(_snapshot.Id.ToString()[..8])…
+                            </MudChip>
+                        }
+                    </MudStack>
+
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">@Localizer["FinancialReportSnapshot.PeriodStatus"]</MudText>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="6" md="4">
+                            <MudSelect T="string" Label="@Localizer["FinancialReportSnapshot.ReportCode"]" @bind-Value="_snapshot.ReportCode"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                <MudSelectItem T="string" Value="@("BALANCE_SHEET")">BALANCE_SHEET</MudSelectItem>
+                                <MudSelectItem T="string" Value="@("INCOME_STATEMENT")">INCOME_STATEMENT</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="6" sm="3" md="2">
+                            <MudNumericField T="int" Label="@Localizer["FinancialReportSnapshot.Year"]" @bind-Value="_snapshot.FiscalYear"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" Min="2000" Max="2100" />
+                        </MudItem>
+                        <MudItem xs="6" sm="3" md="2">
+                            <MudNumericField T="int" Label="@Localizer["FinancialReportSnapshot.Month"]" @bind-Value="_snapshot.PeriodMonth"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="12" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="4">
+                            <MudSelect T="string" Label="@Localizer["FinancialReportSnapshot.ColStatus"]" @bind-Value="_snapshot.Status"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                <MudSelectItem T="string" Value="@("DRAFT")">DRAFT</MudSelectItem>
+                                <MudSelectItem T="string" Value="@("FINAL")">FINAL</MudSelectItem>
+                                <MudSelectItem T="string" Value="@("LOCKED")">LOCKED</MudSelectItem>
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker Label="@Localizer["FinancialReportSnapshot.FromDate"]" @bind-Date="_snapshot.FromDate"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudDatePicker Label="@Localizer["FinancialReportSnapshot.ToDate"]" @bind-Date="_snapshot.ToDate"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField T="string" Label="@Localizer["FinancialReportSnapshot.CreatedBy"]" Value="_snapshot.CreatedBy"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="true" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField T="string" Label="@Localizer["FinancialReportSnapshot.Note"]" @bind-Value="_snapshot.Note" Lines="2"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudDivider Class="my-3" />
+
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">
+                        @Localizer["FinancialReportSnapshot.Totals"] <span class="mud-text-secondary">@Localizer["FinancialReportSnapshot.TotalsHint"]</span>
+                    </MudText>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="6" sm="4" md="2">
+                            <MudPaper Class="pa-2 text-center frs-stat" Elevation="0" Outlined="true">
+                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Assets"]</MudText>
+                                <MudText Typo="Typo.subtitle2" Class="fw-bold">@_snapshot.TotalAssets.ToString("N0")</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="2">
+                            <MudPaper Class="pa-2 text-center frs-stat" Elevation="0" Outlined="true">
+                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Liabilities"]</MudText>
+                                <MudText Typo="Typo.subtitle2" Class="fw-bold">@_snapshot.TotalLiabilities.ToString("N0")</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="2">
+                            <MudPaper Class="pa-2 text-center frs-stat" Elevation="0" Outlined="true">
+                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Equity"]</MudText>
+                                <MudText Typo="Typo.subtitle2" Class="fw-bold">@_snapshot.TotalEquity.ToString("N0")</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="2">
+                            <MudPaper Class="pa-2 text-center frs-stat" Elevation="0" Outlined="true">
+                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Source"]</MudText>
+                                <MudText Typo="Typo.subtitle2" Class="fw-bold">@_snapshot.TotalSource.ToString("N0")</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="12" sm="4" md="4">
+                            <MudPaper Class="pa-2 text-center frs-stat frs-stat-diff" Elevation="0" Outlined="true">
+                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Difference"]</MudText>
+                                <MudText Typo="Typo.subtitle1" Class="fw-bold"
+                                        Color="@(_snapshot.Difference == 0 ? Color.Success : Color.Error)">
+                                    @_snapshot.Difference.ToString("N0")
+                                </MudText>
+                            </MudPaper>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+
+                <MudPaper Class="product-price-card pa-3" Elevation="0">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2 flex-wrap">
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.subtitle2" Class="fw-bold">@Localizer["FinancialReportSnapshot.Lines"]</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @string.Format(Localizer["FinancialReportSnapshot.LinesHint"], _lines.Count)
+                            </MudText>
+                        </MudStack>
+                        <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.Save" OnClick="SaveLine"
+                                       Disabled="_busy || !CanWorkWithLines">
+                                @Localizer["FinancialReportSnapshot.SaveLine"]
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Default" Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.Add" OnClick="NewLine" Disabled="_busy || !CanWorkWithLines">
+                                @Localizer["FinancialReportSnapshot.NewLine"]
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteLine"
+                                       Disabled="_busy || !CanWorkWithLines">
+                                @Localizer["delete"]
+                            </MudButton>
+                        </MudStack>
+                    </MudStack>
+
+                    @if (_headerSession == HeaderSessionMode.None)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+                            @Localizer["FinancialReportSnapshot.SelectOrNewFirst"]
+                        </MudAlert>
+                    }
+                    else if (!HeaderExistsInDb)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+                            @Localizer["FinancialReportSnapshot.SaveHeaderFirst"]
+                        </MudAlert>
+                    }
+
+                    <MudPaper Class="pa-2 mb-2 frs-line-editor" Elevation="0" Outlined="true">
+                        <MudGrid Spacing="2">
+                            <MudItem xs="6" sm="3" md="2">
+                                <MudTextField T="string" Label="@Localizer["FinancialReportSnapshot.LineCode"]" @bind-Value="_line.LineCode"
+                                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            </MudItem>
+                            <MudItem xs="6" sm="3" md="2">
+                                <MudTextField T="string" Label="@Localizer["FinancialReportSnapshot.ParentCode"]" @bind-Value="_line.ParentLineCode"
+                                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            </MudItem>
+                            <MudItem xs="12" sm="6" md="4">
+                                <MudTextField T="string" Label="@Localizer["FinancialReportSnapshot.LineName"]" @bind-Value="_line.LineName"
+                                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            </MudItem>
+                            <MudItem xs="4" sm="2" md="1">
+                                <MudNumericField T="int" Label="@Localizer["FinancialReportSnapshot.Sort"]" @bind-Value="_line.SortOrder"
+                                                 Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            </MudItem>
+                            <MudItem xs="4" sm="2" md="1">
+                                <MudNumericField T="int" Label="@Localizer["FinancialReportSnapshot.Level"]" @bind-Value="_line.LevelNo"
+                                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="0" Max="9" />
+                            </MudItem>
+                            <MudItem xs="4" sm="4" md="2">
+                                <MudNumericField T="decimal" Label="@Localizer["FinancialReportSnapshot.Amount"]" @bind-Value="_line.Amount"
+                                                 Variant="Variant.Outlined" Margin="Margin.Dense" Format="N2" />
+                            </MudItem>
+                            <MudItem xs="6" sm="4" md="2" Class="d-flex align-center ga-3">
+                                <MudCheckBox T="bool" Label="@Localizer["FinancialReportSnapshot.Bold"]" @bind-Value="_line.IsBold" Dense="true" Color="Color.Primary" />
+                                <MudCheckBox T="bool" Label="@Localizer["FinancialReportSnapshot.Total"]" @bind-Value="_line.IsTotalLine" Dense="true" Color="Color.Primary" />
+                            </MudItem>
+                        </MudGrid>
+                    </MudPaper>
+
+                    <MudTable T="FinancialReportSnapshotLine"
+                              Items="_lines"
+                              Dense="true" Hover="true" Striped="true" Bordered="true"
+                              Elevation="0" FixedHeader="true"
+                              Class="lines-table"
+                              Style="max-height: calc(100vh - 520px); overflow: auto;"
+                              RowClassFunc="LineRowClass"
+                              OnRowClick="OnLineClicked"
+                              Loading="_busy">
+                        <HeaderContent>
+                            <MudTh>@Localizer["FinancialReportSnapshot.ColCode"]</MudTh>
+                            <MudTh>@Localizer["FinancialReportSnapshot.ColParent"]</MudTh>
+                            <MudTh>@Localizer["FinancialReportSnapshot.ColName"]</MudTh>
+                            <MudTh Style="width:64px">@Localizer["FinancialReportSnapshot.Sort"]</MudTh>
+                            <MudTh Style="width:48px">@Localizer["FinancialReportSnapshot.Level"]</MudTh>
+                            <MudTh Style="width:48px">@Localizer["FinancialReportSnapshot.Bold"]</MudTh>
+                            <MudTh Style="width:48px">@Localizer["FinancialReportSnapshot.Total"]</MudTh>
+                            <MudTh Class="text-end">@Localizer["FinancialReportSnapshot.Amount"]</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Code">@context.LineCode</MudTd>
+                            <MudTd DataLabel="Parent">@context.ParentLineCode</MudTd>
+                            <MudTd DataLabel="Name" Style="@GetLineStyle(context)">@context.LineName</MudTd>
+                            <MudTd DataLabel="Sort">@context.SortOrder</MudTd>
+                            <MudTd DataLabel="Lvl">@context.LevelNo</MudTd>
+                            <MudTd DataLabel="Bold">
+                                @if (context.IsBold)
+                                {
+                                    <MudIcon Icon="@Icons.Material.Filled.FormatBold" Size="Size.Small" />
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="Total">
+                                @if (context.IsTotalLine)
+                                {
+                                    <MudIcon Icon="@Icons.Material.Filled.Functions" Size="Size.Small" Color="Color.Primary" />
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="Amount" Class="text-end fw-bold">@context.Amount.ToString("N0")</MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">
+                                @Localizer["FinancialReportSnapshot.NoLines"]
+                            </MudText>
+                        </NoRecordsContent>
+                    </MudTable>
+                </MudPaper>
+            </MudStack>
+        </MudItem>
+    </MudGrid>
+</div>
+
+<style>
+    .financial-report-snapshots-page .frs-stat {
+        border-radius: 10px;
+        background: #f8fafc;
+    }
+
+    .financial-report-snapshots-page .frs-stat-diff {
+        background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+    }
+
+    .financial-report-snapshots-page .frs-line-editor {
+        border-radius: 12px;
+        background: #fafbfc;
+    }
+
+    .financial-report-snapshots-page .snapshot-list-table thead,
+    .financial-report-snapshots-page .lines-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+</style>
+
+@code {
+    private const string PermissionMenuName = "FinancialReportSnapshot";
+
+    private enum HeaderSessionMode { None, NewDraft, EditingExisting }
+
+    private bool _busy;
+    private HeaderSessionMode _headerSession = HeaderSessionMode.None;
+    private string _usr = string.Empty;
+    private string _currentUser = string.Empty;
+    private string _search = string.Empty;
+    private List<FinancialReportSnapshot> _snapshots = new();
+    private List<FinancialReportSnapshotLine> _lines = new();
+
+    private FinancialReportSnapshot _snapshot = CreateBlankSnapshot();
+
+    private FinancialReportSnapshotLine _line = new();
+
+    private bool HeaderExistsInDb =>
+        _snapshots.Any(x => x.Id == _snapshot.Id);
+
+    private bool CanSaveHeader => _headerSession != HeaderSessionMode.None;
+
+    private bool CanWorkWithLines =>
+        _headerSession == HeaderSessionMode.EditingExisting && HeaderExistsInDb;
+
+    private IEnumerable<FinancialReportSnapshot> VisibleSnapshots =>
+        string.IsNullOrWhiteSpace(_search)
+            ? _snapshots
+            : _snapshots.Where(x =>
+                (x.ReportCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                x.FiscalYear.ToString().Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                x.PeriodMonth.ToString().Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                (x.Status?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        _currentUser = string.IsNullOrWhiteSpace(_usr) ? "system" : _usr;
+        _snapshot.CreatedBy = _currentUser;
+
+        await LoadAsync();
+        ResetToIdleState();
+    }
+
+    private static FinancialReportSnapshot CreateBlankSnapshot() => new()
+    {
+        Id = Guid.NewGuid(),
+        ReportCode = "BALANCE_SHEET",
+        FiscalYear = DateTime.Now.Year,
+        PeriodMonth = DateTime.Now.Month,
+        Status = "DRAFT",
+        CreatedAt = DateTime.Now
+    };
+
+    private void ResetToIdleState()
+    {
+        _headerSession = HeaderSessionMode.None;
+        _snapshot = CreateBlankSnapshot();
+        _snapshot.CreatedBy = _currentUser;
+        _lines.Clear();
+        _line = new FinancialReportSnapshotLine();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessView"], MudBlazor.Severity.Warning);
+            _snapshots.Clear();
+            _lines.Clear();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            _snapshots = await Db.FinancialReportSnapshots
+                .AsNoTracking()
+                .OrderByDescending(x => x.CreatedAt)
+                .ToListAsync();
+
+            if (_headerSession == HeaderSessionMode.EditingExisting
+                && _snapshots.Any(x => x.Id == _snapshot.Id))
+            {
+                await LoadLines(_snapshot.Id);
+            }
+            else
+            {
+                _lines.Clear();
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task LoadLines(Guid snapshotId)
+    {
+        _lines = await Db.FinancialReportSnapshotLines
+            .AsNoTracking()
+            .Where(x => x.SnapshotId == snapshotId)
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync();
+    }
+
+    private async Task NewSnapshot()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _headerSession = HeaderSessionMode.NewDraft;
+        _snapshot = CreateBlankSnapshot();
+        _snapshot.CreatedBy = _currentUser;
+
+        _lines.Clear();
+        _line = new FinancialReportSnapshotLine();
+    }
+
+    private async Task SaveSnapshot()
+    {
+        if (!CanSaveHeader)
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.SelectOrNewFirst"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await SaveSnapshotInternal(true);
+    }
+
+    private async Task SaveSnapshotInternal(bool showMessage)
+    {
+        if (_headerSession == HeaderSessionMode.None)
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.SelectOrNewFirst"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_snapshot.Id == Guid.Empty)
+            _snapshot.Id = Guid.NewGuid();
+
+        var tracked = await Db.FinancialReportSnapshots
+            .FirstOrDefaultAsync(x => x.Id == _snapshot.Id);
+
+        if (tracked != null)
+        {
+            if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+            {
+                CallSnack(Localizer["FinancialReportSnapshot.NoAccessEdit"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            Db.Entry(tracked).CurrentValues.SetValues(_snapshot);
+            _snapshot = tracked;
+        }
+        else
+        {
+            if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+            {
+                CallSnack(Localizer["FinancialReportSnapshot.NoAccessAdd"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _snapshot.CreatedAt = DateTime.Now;
+            if (string.IsNullOrWhiteSpace(_snapshot.CreatedBy))
+                _snapshot.CreatedBy = _currentUser;
+            Db.FinancialReportSnapshots.Add(_snapshot);
+        }
+
+        await Db.SaveChangesAsync();
+        _headerSession = HeaderSessionMode.EditingExisting;
+        await LoadAsync();
+
+        if (showMessage)
+            CallSnack(Localizer["Common.SavedSuccessfully"], MudBlazor.Severity.Success);
+    }
+
+    private async Task SaveSnapshotTotalsAsync()
+    {
+        if (!CanWorkWithLines)
+            return;
+
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        RecalculateHeaderFromLines();
+
+        var tracked = await Db.FinancialReportSnapshots
+            .FirstOrDefaultAsync(x => x.Id == _snapshot.Id);
+
+        if (tracked == null)
+            return;
+
+        tracked.TotalAssets = _snapshot.TotalAssets;
+        tracked.TotalLiabilities = _snapshot.TotalLiabilities;
+        tracked.TotalEquity = _snapshot.TotalEquity;
+        tracked.TotalSource = _snapshot.TotalSource;
+        tracked.Difference = _snapshot.Difference;
+
+        await Db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnSnapshotClicked(TableRowClickEventArgs<FinancialReportSnapshot> args)
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessView"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var selected = await Db.FinancialReportSnapshots
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == args.Item.Id);
+
+        if (selected == null)
+            return;
+
+        _headerSession = HeaderSessionMode.EditingExisting;
+        _snapshot = selected;
+        await LoadLines(_snapshot.Id);
+        NewLine();
+    }
+
+    private void NewLine()
+    {
+        _line = new FinancialReportSnapshotLine
+        {
+            Id = Guid.NewGuid(),
+            SnapshotId = _snapshot.Id,
+            ReportCode = _snapshot.ReportCode,
+            CreatedAt = DateTime.Now,
+            SortOrder = _lines.Count == 0 ? 10 : _lines.Max(x => x.SortOrder) + 10
+        };
+    }
+
+    private async Task SaveLine()
+    {
+        if (!CanWorkWithLines)
+        {
+            if (_headerSession == HeaderSessionMode.None)
+                CallSnack(Localizer["FinancialReportSnapshot.SelectOrNewFirst"], MudBlazor.Severity.Warning);
+            else
+                CallSnack(Localizer["FinancialReportSnapshot.SaveHeaderFirstMsg"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var headerExists = await Db.FinancialReportSnapshots
+            .AnyAsync(x => x.Id == _snapshot.Id);
+
+        if (!headerExists)
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.SaveHeaderFirstMsg"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var lineExists = await Db.FinancialReportSnapshotLines
+            .AnyAsync(x => x.Id == _line.Id);
+
+        if (lineExists)
+        {
+            if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+            {
+                CallSnack(Localizer["FinancialReportSnapshot.NoAccessEdit"], MudBlazor.Severity.Warning);
+                return;
+            }
+        }
+        else if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_line.LineCode))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.LineCodeRequired"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_line.LineName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.LineNameRequired"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _line.SnapshotId = _snapshot.Id;
+        _line.ReportCode = _snapshot.ReportCode;
+        _line.Snapshot = null;
+
+        var trackedLine = await Db.FinancialReportSnapshotLines
+            .FirstOrDefaultAsync(x => x.Id == _line.Id);
+
+        if (trackedLine != null)
+        {
+            Db.Entry(trackedLine).CurrentValues.SetValues(_line);
+        }
+        else
+        {
+            _line.CreatedAt = DateTime.Now;
+            Db.FinancialReportSnapshotLines.Add(_line);
+        }
+
+        await Db.SaveChangesAsync();
+        await LoadLines(_snapshot.Id);
+
+        await SaveSnapshotTotalsAsync();
+
+        CallSnack(Localizer["Common.SavedSuccessfully"], MudBlazor.Severity.Success);
+        NewLine();
+    }
+
+    private async Task OnLineClicked(TableRowClickEventArgs<FinancialReportSnapshotLine> args)
+    {
+        if (!CanWorkWithLines)
+            return;
+
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessView"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var selected = await Db.FinancialReportSnapshotLines
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == args.Item.Id);
+
+        if (selected == null)
+            return;
+
+        _line = selected;
+    }
+
+    private async Task DeleteLine()
+    {
+        if (!CanWorkWithLines)
+        {
+            if (_headerSession == HeaderSessionMode.None)
+                CallSnack(Localizer["FinancialReportSnapshot.SelectOrNewFirst"], MudBlazor.Severity.Warning);
+            else
+                CallSnack(Localizer["FinancialReportSnapshot.SaveHeaderFirstMsg"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var line = await Db.FinancialReportSnapshotLines
+            .FirstOrDefaultAsync(x => x.Id == _line.Id);
+
+        if (line == null)
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoLineSelected"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        Db.FinancialReportSnapshotLines.Remove(line);
+        await Db.SaveChangesAsync();
+
+        await LoadLines(_snapshot.Id);
+        await SaveSnapshotTotalsAsync();
+
+        CallSnack(Localizer["Common.DeletedSuccessfully"], MudBlazor.Severity.Success);
+        NewLine();
+    }
+
+    private void RecalculateHeaderFromLines()
+    {
+        _snapshot.TotalAssets = _lines.FirstOrDefault(x => x.LineCode == "A")?.Amount ?? 0;
+        _snapshot.TotalLiabilities = _lines.FirstOrDefault(x => x.LineCode == "B.1")?.Amount ?? 0;
+        _snapshot.TotalEquity = _lines.FirstOrDefault(x => x.LineCode == "B.2")?.Amount ?? 0;
+        _snapshot.TotalSource = _lines.FirstOrDefault(x => x.LineCode == "B")?.Amount ?? 0;
+        _snapshot.Difference = _snapshot.TotalAssets - _snapshot.TotalSource;
+    }
+
+    private string SnapshotRowClass(FinancialReportSnapshot row, int _) =>
+        CanSaveHeader && row.Id == _snapshot.Id ? "selected" : string.Empty;
+
+    private string LineRowClass(FinancialReportSnapshotLine row, int _) =>
+        row.Id == _line.Id ? "selected" : string.Empty;
+
+    private static Color GetStatusColor(string? status) => status switch
+    {
+        "FINAL" => Color.Success,
+        "LOCKED" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private string GetLineStyle(FinancialReportSnapshotLine row)
+    {
+        var padding = row.LevelNo * 20;
+        var fontWeight = row.IsBold ? "font-weight:700;" : "";
+        return $"{fontWeight} padding-left:{padding}px;";
+    }
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}

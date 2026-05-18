@@ -169,7 +169,8 @@ namespace NVOAMASIS.Data
         public DbSet<UserThemePreference> UserThemePreferences { get; set; }
         public DbSet<DoQrTokenRecord> DoQrTokens { get; set; }
         public DbSet<ArrivalNoticeQrTokenRecord> ArrivalNoticeQrTokens { get; set; }
-
+        public DbSet<FinancialReportSnapshot> FinancialReportSnapshots { get; set; }
+        public DbSet<FinancialReportSnapshotLine> FinancialReportSnapshotLines { get; set; }
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -293,6 +294,39 @@ namespace NVOAMASIS.Data
                     .WithMany(x => x.AccountMappings)
                     .HasForeignKey(x => x.ReportLineId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+            modelBuilder.Entity<FinancialReportSnapshot>(entity =>
+            {
+                entity.ToTable("FinancialReportSnapshots");
+                entity.HasKey(x => x.Id);
+
+                entity.Property(x => x.ReportCode).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.Status).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.CreatedBy).HasMaxLength(100);
+                entity.Property(x => x.Note).HasMaxLength(500);
+
+                entity.Property(x => x.TotalAssets).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.TotalLiabilities).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.TotalEquity).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.TotalSource).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.Difference).HasColumnType("decimal(18,2)");
+
+                entity.HasMany(x => x.Lines)
+                    .WithOne(x => x.Snapshot)
+                    .HasForeignKey(x => x.SnapshotId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<FinancialReportSnapshotLine>(entity =>
+            {
+                entity.ToTable("FinancialReportSnapshotLines");
+                entity.HasKey(x => x.Id);
+
+                entity.Property(x => x.ReportCode).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.LineCode).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.ParentLineCode).HasMaxLength(50);
+                entity.Property(x => x.LineName).HasMaxLength(255).IsRequired();
+                entity.Property(x => x.Amount).HasColumnType("decimal(18,2)");
             });
         }
 
