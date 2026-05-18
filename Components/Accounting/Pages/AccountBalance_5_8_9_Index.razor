@@ -116,6 +116,8 @@
 
 @code {
     private const string PermissionMenuName = "account_balance";
+    /// <summary>Must match CK_account_mapping_statement_type in SQL.</summary>
+    private const string BalanceSheetStatementType = "Balance Sheet";
 
     private bool _busy;
     private string _usr = string.Empty;
@@ -199,16 +201,46 @@
                 select new { gl, fam, rl })
                 .ToListAsync();
 
+            // One balance row per account/period (UQ_account_balance_account_period).
             var groups = glRows
-                .GroupBy(x => new
-                {
-                    x.gl.AccountCode,
-                    BsSection = x.rl.Section ?? string.Empty,
-                    NormalBalance = x.fam.NormalBalance ?? "Debit"
-                })
+                .GroupBy(x => x.gl.AccountCode, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var accountCodesInGl = groups.Select(g => g.Key.AccountCode).Distinct().ToList();
+            if (groups.Count == 0)
+            {
+                CallSnack(Localizer["AccountBalance.NoGlForPeriod"], MudBlazor.Severity.Info);
+                return;
+            }
+
+            // account_balance.account_code FK → dbo.account_mapping (5.8.7 uses FinancialReportAccountMappings only).
+            var mappingByCode = (await db.AccountMappings.ToListAsync())
+                .ToDictionary(x => x.AccountCode, StringComparer.OrdinalIgnoreCase);
+            var mappingsCreated = 0;
+            foreach (var g in groups)
+            {
+                var code = g.Key;
+                if (mappingByCode.ContainsKey(code))
+                    continue;
+
+                var sample = g.First();
+                var newMapping = new M_AccountMapping
+                {
+                    AccountCode = code,
+                    AccountName = code,
+                    StatementType = BalanceSheetStatementType,
+                    BsSection = sample.rl.Section,
+                    NormalBalance = sample.fam.NormalBalance ?? "Debit",
+                    IsActive = true
+                };
+                db.AccountMappings.Add(newMapping);
+                mappingByCode[code] = newMapping;
+                mappingsCreated++;
+            }
+
+            if (mappingsCreated > 0)
+                await db.SaveChangesAsync();
+
+            var accountCodesInGl = groups.Select(g => g.Key).Distinct().ToList();
             if (accountCodesInGl.Count > 0)
             {
                 // Không dùng .Contains(list) trong LINQ-to-SQL: EF có thể sinh OPENJSON(...) WITH (...)
@@ -228,36 +260,46 @@
                     db.AccountBalanceGlLines.RemoveRange(linesToClear);
             }
 
+            var existingBalances = await db.AccountBalances
+                .Where(x => x.PeriodYear == _fiscalYear && x.PeriodMonth == _periodMonth)
+                .ToListAsync();
+            var balanceByCode = existingBalances.ToDictionary(
+                x => x.AccountCode,
+                StringComparer.OrdinalIgnoreCase);
+
             var nowUtc = DateTime.UtcNow;
             foreach (var g in groups)
             {
-                var key = g.Key;
+                var accountCode = g.Key;
+                var mapRow = mappingByCode[accountCode];
                 var lines = g.Select(x => x.gl).DistinctBy(x => x.Id).ToList();
                 var debitTotal = lines.Sum(x => x.Debit);
                 var creditTotal = lines.Sum(x => x.Credit);
                 var calculatedFrom = lines.Count > 0 ? lines.Min(x => x.PostingDate) : (DateTime?)null;
                 var calculatedTo = lines.Count > 0 ? lines.Max(x => x.PostingDate) : (DateTime?)null;
 
-                var existed = await db.AccountBalances.FirstOrDefaultAsync(x =>
-                    x.AccountCode == key.AccountCode
-                    && x.PeriodYear == _fiscalYear
-                    && x.PeriodMonth == _periodMonth);
-
                 var companyId = lines.Count > 0 ? lines[0].CompanyId : (Guid?)null;
 
-                var isDebitNatural = string.Equals(key.NormalBalance, "Debit", StringComparison.OrdinalIgnoreCase);
-                var openingForRow = existed?.OpeningBalance ?? 0m;
+                var bsSection = mapRow.BsSection
+                    ?? g.Select(x => x.rl.Section).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
+                    ?? string.Empty;
+                var normalBalance = mapRow.NormalBalance
+                    ?? g.Select(x => x.fam.NormalBalance).FirstOrDefault(nb => !string.IsNullOrWhiteSpace(nb))
+                    ?? "Debit";
+
+                var isDebitNatural = string.Equals(normalBalance, "Debit", StringComparison.OrdinalIgnoreCase);
+                balanceByCode.TryGetValue(accountCode, out var balanceRow);
+                var openingForRow = balanceRow?.OpeningBalance ?? 0m;
                 var closingBalance = isDebitNatural
                     ? openingForRow + debitTotal - creditTotal
                     : openingForRow + creditTotal - debitTotal;
 
-                M_account_balance balanceRow;
-                if (existed is null)
+                if (balanceRow is null)
                 {
                     balanceRow = new M_account_balance
                     {
                         Id = Guid.NewGuid(),
-                        AccountCode = key.AccountCode,
+                        AccountCode = accountCode,
                         CompanyId = companyId,
                         PeriodYear = _fiscalYear,
                         PeriodMonth = _periodMonth,
@@ -265,7 +307,7 @@
                         DebitTotal = debitTotal,
                         CreditTotal = creditTotal,
                         ClosingBalance = closingBalance,
-                        AccountType = AccountTypeFromSection(key.BsSection),
+                        AccountType = AccountTypeFromSection(bsSection),
                         CalculatedFrom = calculatedFrom,
                         CalculatedTo = calculatedTo,
                         LastCalculatedAt = nowUtc,
@@ -273,13 +315,13 @@
                         UpdatedAt = nowUtc
                     };
                     db.AccountBalances.Add(balanceRow);
+                    balanceByCode[accountCode] = balanceRow;
                 }
                 else
                 {
-                    balanceRow = existed;
                     balanceRow.DebitTotal = debitTotal;
                     balanceRow.CreditTotal = creditTotal;
-                    balanceRow.AccountType = AccountTypeFromSection(key.BsSection);
+                    balanceRow.AccountType = AccountTypeFromSection(bsSection);
                     balanceRow.CompanyId = companyId ?? balanceRow.CompanyId;
                     balanceRow.CalculatedFrom = calculatedFrom;
                     balanceRow.CalculatedTo = calculatedTo;
@@ -305,7 +347,10 @@
             }
 
             await db.SaveChangesAsync();
-            CallSnack(string.Format(Localizer["AccountBalance.CalculatedCount"], groups.Count), MudBlazor.Severity.Success);
+            var successMsg = string.Format(Localizer["AccountBalance.CalculatedCount"], groups.Count);
+            if (mappingsCreated > 0)
+                successMsg += " " + string.Format(Localizer["AccountBalance.MappingsEnsured"], mappingsCreated);
+            CallSnack(successMsg, MudBlazor.Severity.Success);
             await LoadAsync();
         }
         catch (Exception ex)
