@@ -9,6 +9,7 @@
 @attribute [Authorize]
 @inject AppDbContext Db
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 @inject AccountService asv
 @inject SharedServices ssv
 @inject IStringLocalizer<SharedResource> Localizer
@@ -27,6 +28,11 @@
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
                            StartIcon="@Icons.Material.Filled.Save" OnClick="SaveSnapshot" Disabled="_busy || !CanSaveHeader">
                     @Localizer["FinancialReportSnapshot.SaveHeader"]
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteSnapshotAsync"
+                           Disabled="_busy || !CanDeleteHeader">
+                    @Localizer["FinancialReportSnapshot.DeleteHeader"]
                 </MudButton>
                 <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
                            StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">
@@ -361,6 +367,9 @@
     private bool CanWorkWithLines =>
         _headerSession == HeaderSessionMode.EditingExisting && HeaderExistsInDb;
 
+    private bool CanDeleteHeader =>
+        _headerSession == HeaderSessionMode.EditingExisting && HeaderExistsInDb;
+
     private IEnumerable<FinancialReportSnapshot> VisibleSnapshots =>
         string.IsNullOrWhiteSpace(_search)
             ? _snapshots
@@ -485,40 +494,160 @@
         if (_snapshot.Id == Guid.Empty)
             _snapshot.Id = Guid.NewGuid();
 
-        var tracked = await Db.FinancialReportSnapshots
-            .FirstOrDefaultAsync(x => x.Id == _snapshot.Id);
+        var snapshotId = _snapshot.Id;
+        var existsInDb = await Db.FinancialReportSnapshots.AsNoTracking()
+            .AnyAsync(x => x.Id == snapshotId);
 
-        if (tracked != null)
+        try
         {
-            if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+            _busy = true;
+
+            if (existsInDb)
             {
-                CallSnack(Localizer["FinancialReportSnapshot.NoAccessEdit"], MudBlazor.Severity.Warning);
+                if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+                {
+                    CallSnack(Localizer["FinancialReportSnapshot.NoAccessEdit"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                var entity = await Db.FinancialReportSnapshots
+                    .FirstOrDefaultAsync(x => x.Id == snapshotId);
+
+                if (entity is null)
+                {
+                    CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                ApplySnapshotToEntity(entity, preserveCreated: true);
+            }
+            else
+            {
+                if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+                {
+                    CallSnack(Localizer["FinancialReportSnapshot.NoAccessAdd"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                _snapshot.CreatedAt = DateTime.Now;
+                if (string.IsNullOrWhiteSpace(_snapshot.CreatedBy))
+                    _snapshot.CreatedBy = _currentUser;
+
+                Db.FinancialReportSnapshots.Add(_snapshot);
+            }
+
+            await Db.SaveChangesAsync();
+            _headerSession = HeaderSessionMode.EditingExisting;
+            await LoadAsync();
+            await BindSnapshotAsync(snapshotId);
+
+            if (showMessage)
+                CallSnack(Localizer["Common.SavedSuccessfully"], MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteSnapshotAsync()
+    {
+        if (!CanDeleteHeader)
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.SelectOrNewFirst"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["warning"],
+            Localizer["FinancialReportSnapshot.DeleteHeaderConfirm"],
+            yesText: Localizer["delete"],
+            cancelText: Localizer["cancel"]);
+
+        if (confirm != true)
+            return;
+
+        var snapshotId = _snapshot.Id;
+
+        try
+        {
+            _busy = true;
+
+            await Db.FinancialReportSnapshotLines
+                .Where(x => x.SnapshotId == snapshotId)
+                .ExecuteDeleteAsync();
+
+            var entity = await Db.FinancialReportSnapshots
+                .FirstOrDefaultAsync(x => x.Id == snapshotId);
+
+            if (entity is null)
+            {
+                CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
+                await LoadAsync();
+                ResetToIdleState();
                 return;
             }
 
-            Db.Entry(tracked).CurrentValues.SetValues(_snapshot);
-            _snapshot = tracked;
+            Db.FinancialReportSnapshots.Remove(entity);
+            await Db.SaveChangesAsync();
+
+            CallSnack(Localizer["Common.DeletedSuccessfully"], MudBlazor.Severity.Success);
+            await LoadAsync();
+            ResetToIdleState();
         }
-        else
+        catch (Exception ex)
         {
-            if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
-            {
-                CallSnack(Localizer["FinancialReportSnapshot.NoAccessAdd"], MudBlazor.Severity.Warning);
-                return;
-            }
-
-            _snapshot.CreatedAt = DateTime.Now;
-            if (string.IsNullOrWhiteSpace(_snapshot.CreatedBy))
-                _snapshot.CreatedBy = _currentUser;
-            Db.FinancialReportSnapshots.Add(_snapshot);
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
         }
+        finally
+        {
+            _busy = false;
+        }
+    }
 
-        await Db.SaveChangesAsync();
-        _headerSession = HeaderSessionMode.EditingExisting;
-        await LoadAsync();
+    private void ApplySnapshotToEntity(FinancialReportSnapshot entity, bool preserveCreated)
+    {
+        entity.ReportCode = _snapshot.ReportCode;
+        entity.FiscalYear = _snapshot.FiscalYear;
+        entity.PeriodMonth = _snapshot.PeriodMonth;
+        entity.FromDate = _snapshot.FromDate;
+        entity.ToDate = _snapshot.ToDate;
+        entity.TotalAssets = _snapshot.TotalAssets;
+        entity.TotalLiabilities = _snapshot.TotalLiabilities;
+        entity.TotalEquity = _snapshot.TotalEquity;
+        entity.TotalSource = _snapshot.TotalSource;
+        entity.Difference = _snapshot.Difference;
+        entity.Status = _snapshot.Status;
+        entity.Note = _snapshot.Note;
 
-        if (showMessage)
-            CallSnack(Localizer["Common.SavedSuccessfully"], MudBlazor.Severity.Success);
+        if (!preserveCreated)
+        {
+            entity.CreatedAt = _snapshot.CreatedAt;
+            entity.CreatedBy = _snapshot.CreatedBy;
+        }
+    }
+
+    private async Task BindSnapshotAsync(Guid snapshotId)
+    {
+        var fresh = await Db.FinancialReportSnapshots.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == snapshotId);
+
+        if (fresh is null)
+            return;
+
+        _snapshot = fresh;
+        await LoadLines(snapshotId);
+        NewLine();
     }
 
     private async Task SaveSnapshotTotalsAsync()
@@ -534,20 +663,22 @@
 
         RecalculateHeaderFromLines();
 
-        var tracked = await Db.FinancialReportSnapshots
-            .FirstOrDefaultAsync(x => x.Id == _snapshot.Id);
+        var snapshotId = _snapshot.Id;
+        var entity = await Db.FinancialReportSnapshots
+            .FirstOrDefaultAsync(x => x.Id == snapshotId);
 
-        if (tracked == null)
+        if (entity is null)
             return;
 
-        tracked.TotalAssets = _snapshot.TotalAssets;
-        tracked.TotalLiabilities = _snapshot.TotalLiabilities;
-        tracked.TotalEquity = _snapshot.TotalEquity;
-        tracked.TotalSource = _snapshot.TotalSource;
-        tracked.Difference = _snapshot.Difference;
+        entity.TotalAssets = _snapshot.TotalAssets;
+        entity.TotalLiabilities = _snapshot.TotalLiabilities;
+        entity.TotalEquity = _snapshot.TotalEquity;
+        entity.TotalSource = _snapshot.TotalSource;
+        entity.Difference = _snapshot.Difference;
 
         await Db.SaveChangesAsync();
         await LoadAsync();
+        await BindSnapshotAsync(snapshotId);
     }
 
     private async Task OnSnapshotClicked(TableRowClickEventArgs<FinancialReportSnapshot> args)
@@ -558,17 +689,8 @@
             return;
         }
 
-        var selected = await Db.FinancialReportSnapshots
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Id == args.Item.Id);
-
-        if (selected == null)
-            return;
-
         _headerSession = HeaderSessionMode.EditingExisting;
-        _snapshot = selected;
-        await LoadLines(_snapshot.Id);
-        NewLine();
+        await BindSnapshotAsync(args.Item.Id);
     }
 
     private void NewLine()
