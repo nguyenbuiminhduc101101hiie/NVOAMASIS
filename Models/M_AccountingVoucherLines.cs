@@ -13,7 +13,7 @@ namespace NVOAMASIS.Models
 
         public string LineNo_ { get; set; } = string.Empty;
 
-        public Guid DanhMucTaiKhoanID { get; set; }
+        public Guid? DanhMucTaiKhoanID { get; set; }
         public string AccountCode { get; set; } = string.Empty;
 
         public decimal DebitAmount { get; set; }
