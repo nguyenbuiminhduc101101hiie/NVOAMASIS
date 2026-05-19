@@ -1,4 +1,7 @@
 @page "/AccountingVouchers584"
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @using NVOAMASIS.Data
@@ -20,6 +23,7 @@
             <MudStack Row="true" Spacing="1" Class="flex-wrap">
                 <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenAddAsync" Disabled="_busy">@Localizer["new"]</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditAsync" Disabled="_busy || _selected is null">@Localizer["edit"]</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.CheckCircle" OnClick="ApproveAsync" Disabled="_busy || _selected is null || _selected.Approve == true">Approve</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.CheckCircleOutline" OnClick="UnapproveAsync" Disabled="_busy || _selected is null || _selected.Approve != true">Hủy Approve</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_busy || _selected is null">@Localizer["delete"]</MudButton>
                 <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">@Localizer["reload"]</MudButton>
@@ -28,8 +32,15 @@
     </PpScreenHeader>
 
     <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudTextField @bind-Value="_search"
+                      Label="@Localizer["search"]"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Immediate="true"
+                      Clearable="true"
+                      Class="mb-2" />
         <MudDataGrid T="M_AccountingVouchers"
-                     Items="_items"
+                     Items="VisibleItems"
                      Class="auto-fit-grid"
                      Dense="true"
                      Striped="true"
@@ -37,7 +48,7 @@
                      Hover="true"
                      RowClick="OnRowClick"
                      RowClassFunc="RowClass"
-                     Height="calc(100vh - 280px)"
+                     Height="calc(100vh - 300px)"
                      FixedHeader="true"
                      Loading="_busy">
             <Columns>
@@ -94,10 +105,44 @@
 
     private bool _busy;
     private string _usr = string.Empty;
+    private string _search = string.Empty;
     private List<M_AccountingVouchers> _items = new();
     private M_AccountingVouchers? _selected;
     private Dictionary<string, string> _transactionTypeNames = new();
     private Dictionary<Guid, M_Customer> _customerById = new();
+
+    private IEnumerable<M_AccountingVouchers> VisibleItems =>
+        string.IsNullOrWhiteSpace(_search)
+            ? _items
+            : _items.Where(MatchesSearch);
+
+    private bool MatchesSearch(M_AccountingVouchers x)
+    {
+        var key = _search.Trim();
+        return (x.VoucherNo?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || CustomerLabel(x.CompanyId).Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.VoucherDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.PostingDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.FiscalYear.ToString().Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.FiscalPeriod.ToString().Contains(key, StringComparison.OrdinalIgnoreCase)
+            || GetTransactionTypeName(x.TransactionTypeCode).Contains(key, StringComparison.OrdinalIgnoreCase)
+            || (x.TransactionTypeCode?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || StatusLabel(x.Status).Contains(key, StringComparison.OrdinalIgnoreCase)
+            || ApproveLabel(x.Approve).Contains(key, StringComparison.OrdinalIgnoreCase)
+            || (x.CurrencyCode?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || x.ExchangeRate.ToString().Contains(key, StringComparison.OrdinalIgnoreCase)
+            || (x.Description?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.ReferenceNo?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.ReferenceDate?.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.SourceModule?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.SourceId?.ToString().Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || BoolLabel(x.Ghiso).Contains(key, StringComparison.OrdinalIgnoreCase)
+            || BoolLabel(x.Both).Contains(key, StringComparison.OrdinalIgnoreCase)
+            || (x.CreatedBy?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.ModifiedBy?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.PostedBy?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.CancelledBy?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -281,6 +326,47 @@
             db.AccountingVouchers.Remove(entity);
             await db.SaveChangesAsync();
             CallSnack(Localizer["DeletedSuccess"], MudBlazor.Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ApproveAsync()
+    {
+        if (_selected is null)
+            return;
+        if (_selected.Approve == true)
+        {
+            CallSnack("Chứng từ đã được Approve.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(_usr, "Approve", PermissionMenuName))
+        {
+            CallSnack("Không có quyền Approve.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.AccountingVouchers.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnack(Localizer["RecordNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            entity.Approve = true;
+            await db.SaveChangesAsync();
+            CallSnack("Đã Approve.", MudBlazor.Severity.Success);
             await LoadAsync();
         }
         catch (Exception ex)

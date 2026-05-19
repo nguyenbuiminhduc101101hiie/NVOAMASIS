@@ -185,5 +185,6 @@ namespace NVOAMASIS.Models
         public string? SettingTemperature { get; set; }
         public string? VentOpen { get; set; }
         public string? PIC { get; set; }
+        public string? Code { get; set; }
     }
 }
