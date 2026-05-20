@@ -1,4 +1,5 @@
 @page "/accounting/financial-report-snapshots"
+@using Microsoft.Data.SqlClient
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Localization
 @using MudBlazor
@@ -116,8 +117,10 @@
                         <MudItem xs="12" sm="6" md="4">
                             <MudSelect T="string" Label="@Localizer["FinancialReportSnapshot.ReportCode"]" @bind-Value="_snapshot.ReportCode"
                                        Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
-                                <MudSelectItem T="string" Value="@("BALANCE_SHEET")">BALANCE_SHEET</MudSelectItem>
-                                <MudSelectItem T="string" Value="@("INCOME_STATEMENT")">INCOME_STATEMENT</MudSelectItem>
+                                @foreach (var rt in _financialReportTypes)
+                                {
+                                    <MudSelectItem T="string" Value="@rt.ReportCode">@(rt.ReportName ?? rt.ReportCode)</MudSelectItem>
+                                }
                             </MudSelect>
                         </MudItem>
                         <MudItem xs="6" sm="3" md="2">
@@ -188,7 +191,7 @@
                             <MudPaper Class="pa-2 text-center frs-stat frs-stat-diff" Elevation="0" Outlined="true">
                                 <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Difference"]</MudText>
                                 <MudText Typo="Typo.subtitle1" Class="fw-bold"
-                                        Color="@(_snapshot.Difference == 0 ? Color.Success : Color.Error)">
+                                         Color="@(_snapshot.Difference == 0 ? Color.Success : Color.Error)">
                                     @_snapshot.Difference.ToString("N0")
                                 </MudText>
                             </MudPaper>
@@ -205,6 +208,12 @@
                             </MudText>
                         </MudStack>
                         <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                            <MudButton Variant="Variant.Filled" Color="Color.Tertiary" Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.AutoMode"
+                                       OnClick="GenerateLinesFromAccountBalanceAsync"
+                                       Disabled="_busy || !CanGenerateLinesFromBalance">
+                                @Localizer["FinancialReportSnapshot.GenerateFromAccountBalance"]
+                            </MudButton>
                             <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
                                        StartIcon="@Icons.Material.Filled.Save" OnClick="SaveLine"
                                        Disabled="_busy || !CanWorkWithLines">
@@ -354,8 +363,9 @@
     private string _search = string.Empty;
     private List<FinancialReportSnapshot> _snapshots = new();
     private List<FinancialReportSnapshotLine> _lines = new();
+    private List<M_FinancialReportTypes> _financialReportTypes = new();
 
-    private FinancialReportSnapshot _snapshot = CreateBlankSnapshot();
+    private FinancialReportSnapshot _snapshot = new();
 
     private FinancialReportSnapshotLine _line = new();
 
@@ -369,6 +379,30 @@
 
     private bool CanDeleteHeader =>
         _headerSession == HeaderSessionMode.EditingExisting && HeaderExistsInDb;
+
+    private bool CanGenerateLinesFromBalance =>
+        CanWorkWithLines
+        && GetGenerateProcedureName(_snapshot.ReportCode) != null;
+
+    private static string NormalizeReportCode(string? reportCode)
+    {
+        return (reportCode ?? string.Empty).Trim().ToUpperInvariant();
+    }
+
+    private static string? GetGenerateProcedureName(string? reportCode)
+    {
+        return NormalizeReportCode(reportCode) switch
+        {
+            "BALANCE_SHEET" => "dbo.usp_GenerateBalanceSheetSnapshot_FromAccountBalance",
+            "INCOME_STATEMENT" => "dbo.usp_GenerateIncomeStatementSnapshot_PostVoucherToLedger_TT200",
+
+            // Sau này thêm procedure thì mở tiếp:
+            // "CASH_FLOW_STATEMENT" => "dbo.usp_GenerateCashFlowStatementSnapshot_TT200",
+            // "FINANCIAL_NOTES" => "dbo.usp_GenerateFinancialNotesSnapshot_TT200",
+
+            _ => null
+        };
+    }
 
     private IEnumerable<FinancialReportSnapshot> VisibleSnapshots =>
         string.IsNullOrWhiteSpace(_search)
@@ -386,14 +420,24 @@
         _currentUser = string.IsNullOrWhiteSpace(_usr) ? "system" : _usr;
         _snapshot.CreatedBy = _currentUser;
 
+        await LoadReportTypesAsync();
         await LoadAsync();
         ResetToIdleState();
     }
 
-    private static FinancialReportSnapshot CreateBlankSnapshot() => new()
+    private async Task LoadReportTypesAsync()
+    {
+        _financialReportTypes = await Db.FinancialReportTypes
+            .AsNoTracking()
+            .Where(x => x.IsActive == true && !string.IsNullOrWhiteSpace(x.ReportCode))
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync();
+    }
+
+    private FinancialReportSnapshot CreateBlankSnapshot() => new()
     {
         Id = Guid.NewGuid(),
-        ReportCode = "BALANCE_SHEET",
+        ReportCode = _financialReportTypes.FirstOrDefault()?.ReportCode ?? string.Empty,
         FiscalYear = DateTime.Now.Year,
         PeriodMonth = DateTime.Now.Month,
         Status = "DRAFT",
@@ -454,6 +498,105 @@
             .Where(x => x.SnapshotId == snapshotId)
             .OrderBy(x => x.SortOrder)
             .ToListAsync();
+    }
+
+    private async Task GenerateLinesFromAccountBalanceAsync()
+    {
+        if (!CanWorkWithLines)
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.SaveHeaderFirstMsg"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var reportCode = NormalizeReportCode(_snapshot.ReportCode);
+        var procedureName = GetGenerateProcedureName(reportCode);
+
+        if (string.IsNullOrWhiteSpace(procedureName))
+        {
+            CallSnack($"ReportCode {reportCode} chưa có thủ tục generate từ account_balance.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["FinancialReportSnapshot.NoAccessEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["FinancialReportSnapshot.GenerateLinesConfirmTitle"],
+            $"Generate report {reportCode} từ account_balance cho kỳ {_snapshot.FiscalYear}/{_snapshot.PeriodMonth:00}?",
+            yesText: Localizer["FinancialReportSnapshot.GenerateFromAccountBalance"],
+            cancelText: Localizer["cancel"]);
+
+        if (confirm != true)
+            return;
+
+        var createdBy = string.IsNullOrWhiteSpace(_snapshot.CreatedBy)
+            ? _currentUser
+            : _snapshot.CreatedBy.Trim();
+
+        try
+        {
+            _busy = true;
+
+            var pFiscalYear = new SqlParameter("@FiscalYear", _snapshot.FiscalYear);
+            var pPeriodMonth = new SqlParameter("@PeriodMonth", _snapshot.PeriodMonth);
+            var pReportCode = new SqlParameter("@ReportCode", reportCode);
+            var pCreatedBy = new SqlParameter("@CreatedBy", createdBy);
+
+            // Hiện page chưa có CompanyId selector nên truyền NULL.
+            // Nếu sau này có CompanyId, thay DBNull.Value bằng Guid CompanyId tương ứng.
+            var pCompanyId = new SqlParameter("@CompanyId", System.Data.SqlDbType.UniqueIdentifier)
+            {
+                Value = DBNull.Value
+            };
+
+            await Db.Database.ExecuteSqlRawAsync(
+                $@"EXEC {procedureName}
+                    @FiscalYear = @FiscalYear,
+                    @PeriodMonth = @PeriodMonth,
+                    @ReportCode = @ReportCode,
+                    @CreatedBy = @CreatedBy,
+                    @CompanyId = @CompanyId",
+                pFiscalYear,
+                pPeriodMonth,
+                pReportCode,
+                pCreatedBy,
+                pCompanyId);
+
+            var updated = await Db.FinancialReportSnapshots.AsNoTracking()
+                .Where(x => x.ReportCode == reportCode
+                    && x.FiscalYear == _snapshot.FiscalYear
+                    && x.PeriodMonth == _snapshot.PeriodMonth)
+                .OrderByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (updated is null)
+            {
+                CallSnack(Localizer["FinancialReportSnapshot.GenerateLinesNoResult"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _headerSession = HeaderSessionMode.EditingExisting;
+
+            await LoadAsync();
+            await BindSnapshotAsync(updated.Id);
+
+            CallSnack($"Generate {reportCode} thành công.", MudBlazor.Severity.Success);
+        }
+        catch (SqlException ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task NewSnapshot()
@@ -839,11 +982,33 @@
 
     private void RecalculateHeaderFromLines()
     {
-        _snapshot.TotalAssets = _lines.FirstOrDefault(x => x.LineCode == "A")?.Amount ?? 0;
-        _snapshot.TotalLiabilities = _lines.FirstOrDefault(x => x.LineCode == "B.1")?.Amount ?? 0;
-        _snapshot.TotalEquity = _lines.FirstOrDefault(x => x.LineCode == "B.2")?.Amount ?? 0;
-        _snapshot.TotalSource = _lines.FirstOrDefault(x => x.LineCode == "B")?.Amount ?? 0;
-        _snapshot.Difference = _snapshot.TotalAssets - _snapshot.TotalSource;
+        var reportCode = NormalizeReportCode(_snapshot.ReportCode);
+
+        if (reportCode == "BALANCE_SHEET")
+        {
+            _snapshot.TotalAssets = _lines.FirstOrDefault(x => x.LineCode == "270")?.Amount ?? 0;
+            _snapshot.TotalLiabilities = _lines.FirstOrDefault(x => x.LineCode == "300")?.Amount ?? 0;
+            _snapshot.TotalEquity = _lines.FirstOrDefault(x => x.LineCode == "400")?.Amount ?? 0;
+            _snapshot.TotalSource = _lines.FirstOrDefault(x => x.LineCode == "440")?.Amount ?? 0;
+            _snapshot.Difference = _snapshot.TotalAssets - _snapshot.TotalSource;
+            return;
+        }
+
+        if (reportCode == "INCOME_STATEMENT")
+        {
+            _snapshot.TotalAssets = _lines.FirstOrDefault(x => x.LineCode == "B02_10")?.Amount ?? 0;       // Doanh thu thuần
+            _snapshot.TotalLiabilities = _lines.FirstOrDefault(x => x.LineCode == "B02_11")?.Amount ?? 0;  // Giá vốn
+            _snapshot.TotalEquity = _lines.FirstOrDefault(x => x.LineCode == "B02_60")?.Amount ?? 0;       // LNST
+            _snapshot.TotalSource = _lines.FirstOrDefault(x => x.LineCode == "B02_50")?.Amount ?? 0;       // LNTT
+            _snapshot.Difference = _snapshot.TotalEquity;
+            return;
+        }
+
+        _snapshot.TotalAssets = 0;
+        _snapshot.TotalLiabilities = 0;
+        _snapshot.TotalEquity = 0;
+        _snapshot.TotalSource = 0;
+        _snapshot.Difference = 0;
     }
 
     private string SnapshotRowClass(FinancialReportSnapshot row, int _) =>

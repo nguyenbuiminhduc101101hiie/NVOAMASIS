@@ -1,0 +1,350 @@
+@page "/financial-report-types"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Localization
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@using NVOAMASIS.Services
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["FinancialReportTypes"]</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"1.16 {Localizer["FinancialReportTypes"]}")"
+                    Subtitle="@Localizer["FinancialReportTypes_Subtitle"]">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="OpenNewDialogAsync" Disabled="_busy">
+                    @Localizer["new"]
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialogAsync"
+                           Disabled="_selected is null || _busy">
+                    @Localizer["edit"]
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteSelectedAsync"
+                           Disabled="_selected is null || _busy">
+                    @Localizer["delete"]
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadListAsync" Disabled="_busy">
+                    @Localizer["reload"]
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudTextField @bind-Value="_searchText"
+                      Class="mb-2"
+                      Label="@Localizer["FinancialReportTypes_SearchHint"]"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Clearable="true"
+                      Immediate="true"
+                      Style="max-width: 420px;" />
+        <MudDataGrid T="M_FinancialReportTypes"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClassFunc"
+                     Height="calc(100vh - 220px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.SortOrder" Title="@Localizer["FinancialReportTypes_SortOrder"]" />
+                <PropertyColumn Property="x => x.ReportCode" Title="@Localizer["FinancialReportTypes_ReportCode"]" />
+                <PropertyColumn Property="x => x.ReportName" Title="@Localizer["FinancialReportTypes_ReportName"]" />
+                <PropertyColumn Property="x => x.FormNo" Title="@Localizer["FinancialReportTypes_FormNo"]" />
+                <PropertyColumn Property="x => x.Description" Title="@Localizer["FinancialReportTypes_Description"]" />
+                <TemplateColumn Title="@Localizer["FinancialReportTypes_IsActive"]">
+                    <CellTemplate>
+                        <MudChip T="string" Size="Size.Small" Color="@(context.Item.IsActive == true ? Color.Success : Color.Default)">
+                            @(context.Item.IsActive == true ? Localizer["FinancialReportTypes_Yes"] : Localizer["FinancialReportTypes_No"])
+                        </MudChip>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_FinancialReportTypes" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    private const string PermissionMenuName = "FinancialReportTypes";
+
+    private bool _busy;
+    private List<M_FinancialReportTypes> _items = new();
+    private M_FinancialReportTypes? _selected;
+    private string _usr = string.Empty;
+    private string _searchText = string.Empty;
+
+    private IEnumerable<M_FinancialReportTypes> VisibleItems
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+                return _items;
+            var t = _searchText.Trim();
+            return _items.Where(x =>
+                ContainsIc(x.ReportCode, t) ||
+                ContainsIc(x.ReportName, t) ||
+                ContainsIc(x.FormNo, t) ||
+                ContainsIc(x.Description, t));
+        }
+    }
+
+    private static bool ContainsIc(string? s, string needle) =>
+        !string.IsNullOrEmpty(s) && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadListAsync();
+    }
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+            _items = new List<M_FinancialReportTypes>();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.FinancialReportTypes
+                .AsNoTracking()
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.ReportCode)
+                .ToListAsync();
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnack(Localizer["FinancialReportTypes_CannotLoad", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_FinancialReportTypes> args) =>
+        _selected = CloneRow(args.Item);
+
+    private static M_FinancialReportTypes CloneRow(M_FinancialReportTypes row) => new()
+    {
+        id = row.id,
+        ReportCode = row.ReportCode ?? string.Empty,
+        ReportName = row.ReportName ?? string.Empty,
+        FormNo = row.FormNo,
+        Description = row.Description,
+        SortOrder = row.SortOrder,
+        IsActive = row.IsActive
+    };
+
+    private string RowClassFunc(M_FinancialReportTypes row, int _) =>
+        _selected != null && _selected.id == row.id ? "frt-selected-row" : string.Empty;
+
+    private async Task OpenNewDialogAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<FinancialReportTypes_EditDialog>(
+            Localizer["FinancialReportTypes_NewDialogTitle"],
+            new DialogParameters
+            {
+                ["Model"] = new M_FinancialReportTypes { id = Guid.Empty, IsActive = true },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not FinancialReportTypes_EditDialog.FinancialReportTypesDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task OpenEditDialogAsync()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<FinancialReportTypes_EditDialog>(
+            Localizer["FinancialReportTypes_EditDialogTitle"],
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not FinancialReportTypes_EditDialog.FinancialReportTypesDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(FinancialReportTypes_EditDialog.FinancialReportTypesDialogResult data)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var codeNorm = data.ReportCode.Trim();
+            var dup = await db.FinancialReportTypes.AnyAsync(x => x.ReportCode == codeNorm && x.id != data.Id);
+            if (dup)
+            {
+                CallSnack(Localizer["FinancialReportTypes_CodeAlreadyExists"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (!data.IsEdit)
+            {
+                db.FinancialReportTypes.Add(new M_FinancialReportTypes
+                {
+                    id = Guid.NewGuid(),
+                    ReportCode = codeNorm,
+                    ReportName = data.ReportName.Trim(),
+                    FormNo = data.FormNo,
+                    Description = data.Description,
+                    SortOrder = data.SortOrder,
+                    IsActive = data.IsActive
+                });
+            }
+            else
+            {
+                var entity = await db.FinancialReportTypes.FirstOrDefaultAsync(x => x.id == data.Id);
+                if (entity is null)
+                {
+                    CallSnack(Localizer["FinancialReportTypes_RecordNotFound"], MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.ReportName = data.ReportName.Trim();
+                entity.FormNo = data.FormNo;
+                entity.Description = data.Description;
+                entity.SortOrder = data.SortOrder;
+                entity.IsActive = data.IsActive;
+            }
+
+            await db.SaveChangesAsync();
+            _selected = null;
+            await LoadListAsync();
+            CallSnack(Localizer["FinancialReportTypes_Saved"], MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnack(Localizer["FinancialReportTypes_CannotSave", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "Delete", PermissionMenuName))
+        {
+            CallSnack(Localizer["NoPermission_Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_selected is null)
+            return;
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["FinancialReportTypes_Warning"],
+            Localizer["FinancialReportTypes_DeleteConfirmBody"],
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.FinancialReportTypes.FirstOrDefaultAsync(x => x.id == _selected.id);
+            if (entity is null)
+            {
+                CallSnack(Localizer["FinancialReportTypes_RecordNotFound"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var code = entity.ReportCode ?? string.Empty;
+            var usedSnapshot = await db.FinancialReportSnapshots.AnyAsync(x => x.ReportCode == code);
+            var usedLine = await db.FinancialReportLines.AnyAsync(x => x.ReportType == code);
+            if (usedSnapshot || usedLine)
+            {
+                CallSnack(Localizer["FinancialReportTypes_CannotDeleteReferenced"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.FinancialReportTypes.Remove(entity);
+            await db.SaveChangesAsync();
+            _selected = null;
+            CallSnack(Localizer["FinancialReportTypes_Deleted"], MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnack(Localizer["FinancialReportTypes_CannotDelete", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
+
+<style>
+    .frt-selected-row {
+        background-color: #2196f3 !important;
+    }
+</style>
