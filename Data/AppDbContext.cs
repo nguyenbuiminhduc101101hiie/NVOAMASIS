@@ -171,6 +171,8 @@ namespace NVOAMASIS.Data
         public DbSet<ArrivalNoticeQrTokenRecord> ArrivalNoticeQrTokens { get; set; }
         public DbSet<FinancialReportSnapshot> FinancialReportSnapshots { get; set; }
         public DbSet<FinancialReportSnapshotLine> FinancialReportSnapshotLines { get; set; }
+        public DbSet<M_FinancialReportTypes> FinancialReportTypes { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
