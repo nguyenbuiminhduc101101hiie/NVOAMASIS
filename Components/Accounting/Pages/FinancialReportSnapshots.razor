@@ -2,6 +2,9 @@
 @using Microsoft.Data.SqlClient
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Localization
+@using Microsoft.JSInterop
+@using OfficeOpenXml
+@using OfficeOpenXml.Style
 @using MudBlazor
 @using NVOAMASIS.Data
 @using NVOAMASIS.Models
@@ -14,6 +17,7 @@
 @inject AccountService asv
 @inject SharedServices ssv
 @inject IStringLocalizer<SharedResource> Localizer
+@inject IJSRuntime JS
 
 <PageTitle>@($"10.13 {Localizer["FinancialReportSnapshot.Title"]}")</PageTitle>
 
@@ -38,6 +42,12 @@
                 <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
                            StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">
                     @Localizer["reload"]
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FileDownload"
+                           OnClick="ExportCurrentSnapshotToExcelAsync"
+                           Disabled="_busy || !CanWorkWithLines">
+                    Export Excel
                 </MudButton>
             </MudStack>
         </Toolbar>
@@ -274,31 +284,31 @@
                     <MudGrid Spacing="2">
                         <MudItem xs="6" sm="4" md="2">
                             <MudPaper Class="pa-2 text-center frs-stat" Elevation="0" Outlined="true">
-                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Assets"]</MudText>
+                                <MudText Typo="Typo.caption">@GetTotalLabel("Assets")</MudText>
                                 <MudText Typo="Typo.subtitle2" Class="fw-bold">@_snapshot.TotalAssets.ToString("N0")</MudText>
                             </MudPaper>
                         </MudItem>
                         <MudItem xs="6" sm="4" md="2">
                             <MudPaper Class="pa-2 text-center frs-stat" Elevation="0" Outlined="true">
-                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Liabilities"]</MudText>
+                                <MudText Typo="Typo.caption">@GetTotalLabel("Liabilities")</MudText>
                                 <MudText Typo="Typo.subtitle2" Class="fw-bold">@_snapshot.TotalLiabilities.ToString("N0")</MudText>
                             </MudPaper>
                         </MudItem>
                         <MudItem xs="6" sm="4" md="2">
                             <MudPaper Class="pa-2 text-center frs-stat" Elevation="0" Outlined="true">
-                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Equity"]</MudText>
+                                <MudText Typo="Typo.caption">@GetTotalLabel("Equity")</MudText>
                                 <MudText Typo="Typo.subtitle2" Class="fw-bold">@_snapshot.TotalEquity.ToString("N0")</MudText>
                             </MudPaper>
                         </MudItem>
                         <MudItem xs="6" sm="4" md="2">
                             <MudPaper Class="pa-2 text-center frs-stat" Elevation="0" Outlined="true">
-                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Source"]</MudText>
+                                <MudText Typo="Typo.caption">@GetTotalLabel("Source")</MudText>
                                 <MudText Typo="Typo.subtitle2" Class="fw-bold">@_snapshot.TotalSource.ToString("N0")</MudText>
                             </MudPaper>
                         </MudItem>
                         <MudItem xs="12" sm="4" md="4">
                             <MudPaper Class="pa-2 text-center frs-stat frs-stat-diff" Elevation="0" Outlined="true">
-                                <MudText Typo="Typo.caption">@Localizer["FinancialReportSnapshot.Difference"]</MudText>
+                                <MudText Typo="Typo.caption">@GetTotalLabel("Difference")</MudText>
                                 <MudText Typo="Typo.subtitle1" Class="fw-bold"
                                          Color="@(_snapshot.Difference == 0 ? Color.Success : Color.Error)">
                                     @_snapshot.Difference.ToString("N0")
@@ -327,21 +337,6 @@
                                 <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
                                 <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
                             </MudSelect>
-                            <MudAutocomplete T="Guid?"
-                                             Label="Company"
-                                             Variant="Variant.Outlined"
-                                             Margin="Margin.Dense"
-                                             Dense="true"
-                                             Style="min-width:220px"
-                                             @bind-Value="_generateCompanyId"
-                                             SearchFunc="SearchGenerateCompanyAsync"
-                                             ToStringFunc="GenerateCompanyToString"
-                                             Clearable="true"
-                                             CoerceText="true"
-                                             CoerceValue="true"
-                                             ResetValueOnEmptyText="true"
-                                             MinCharacters="0"
-                                             MaxItems="30" />
                             <MudButton Variant="Variant.Filled" Color="Color.Tertiary" Size="Size.Small"
                                        StartIcon="@Icons.Material.Filled.AutoMode"
                                        OnClick="GenerateLinesFromAccountBalanceAsync"
@@ -433,7 +428,17 @@
                         <RowTemplate>
                             <MudTd DataLabel="Code">@context.LineCode</MudTd>
                             <MudTd DataLabel="Parent">@context.ParentLineCode</MudTd>
-                            <MudTd DataLabel="Name" Style="@GetLineStyle(context)">@context.LineName</MudTd>
+                            <MudTd DataLabel="Name" Style="@GetLineStyle(context)">
+                                @if (IsDebtLikeReport() && IsDebtDetailLine(context))
+                                {
+                                    <MudText Typo="Typo.body2" Class="fw-bold">@GetDebtLineTitle(context.LineName)</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">@GetDebtLineDetail(context.LineName)</MudText>
+                                }
+                                else
+                                {
+                                    @context.LineName
+                                }
+                            </MudTd>
                             <MudTd DataLabel="Sort">@context.SortOrder</MudTd>
                             <MudTd DataLabel="Lvl">@context.LevelNo</MudTd>
                             <MudTd DataLabel="Bold">
@@ -507,8 +512,6 @@
     private int? _monthFilter;
     private bool _onlyDifference;
     private string _generateBookCode = "TAX";
-    private Guid? _generateCompanyId;
-    private List<M_Customer> _customers = new();
     private List<FinancialReportSnapshot> _snapshots = new();
     private List<FinancialReportSnapshotLine> _lines = new();
     private List<M_FinancialReportTypes> _financialReportTypes = new();
@@ -598,6 +601,7 @@
             "NOTES_TO_FINANCIAL_STATEMENTS" => "dbo.usp_GenerateNotesToFinancialStatements_TT200",
             "NOTES_TO_FINANCIAL_STATEMENTS_NGC" => "dbo.usp_GenerateNotesNonGoingConcern_TT200",
             "NOTES_INTERIM_SELECTED" => "dbo.usp_GenerateNotesInterimSelected_TT200",
+            "DEBT_REPORT_TT200" => "dbo.usp_GenerateDebtReport_TT200",
             _ => null
         };
     }
@@ -683,18 +687,8 @@
         _snapshot.CreatedBy = _currentUser;
 
         await LoadReportTypesAsync();
-        await LoadCustomersAsync();
         await LoadAsync();
         ResetToIdleState();
-    }
-
-    private async Task LoadCustomersAsync()
-    {
-        _customers = await Db.Customer.AsNoTracking()
-            .Where(x => x.Customer_ID != Guid.Empty)
-            .OrderBy(x => x.EnglishName)
-            .ThenBy(x => x.Customer_Code)
-            .ToListAsync();
     }
 
     private async Task LoadReportTypesAsync()
@@ -825,15 +819,15 @@
             var pCreatedBy = new SqlParameter("@CreatedBy", createdBy);
             var pBookCode = new SqlParameter("@BookCode", bookCode);
 
+            // Hiện page chưa có CompanyId selector nên truyền NULL.
+            // Nếu sau này có CompanyId, thay DBNull.Value bằng Guid CompanyId tương ứng.
             var pCompanyId = new SqlParameter("@CompanyId", System.Data.SqlDbType.UniqueIdentifier)
                 {
-                    Value = _generateCompanyId is System.Guid companyId && companyId != System.Guid.Empty
-                        ? companyId
-                        : DBNull.Value
+                    Value = DBNull.Value
                 };
 
             await Db.Database.ExecuteSqlRawAsync(
-                                                $@"EXEC {procedureName}
+                                                    $@"EXEC {procedureName}
                     @FiscalYear = @FiscalYear,
                     @PeriodMonth = @PeriodMonth,
                     @ReportCode = @ReportCode,
@@ -870,75 +864,16 @@
         }
         catch (SqlException ex)
         {
-            if (IsCompanyIdRequiredError(ex.Message))
-            {
-                CallSnack(
-                    "Vui lòng chọn Công ty (Company). Hệ thống không tự xác định được CompanyId từ số dư tài khoản — chọn công ty từ combo Company (English name) rồi thử lại.",
-                    MudBlazor.Severity.Warning);
-            }
-            else
-            {
-                CallSnack(ex.Message, MudBlazor.Severity.Error);
-            }
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
         }
         catch (Exception ex)
         {
-            if (IsCompanyIdRequiredError(ex.Message))
-            {
-                CallSnack(
-                    "Vui lòng chọn Công ty (Company). Hệ thống không tự xác định được CompanyId từ số dư tài khoản — chọn công ty từ combo Company (English name) rồi thử lại.",
-                    MudBlazor.Severity.Warning);
-            }
-            else
-            {
-                CallSnack(ex.Message, MudBlazor.Severity.Error);
-            }
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
         }
         finally
         {
             _busy = false;
         }
-    }
-
-    private static bool IsCompanyIdRequiredError(string? message)
-        => !string.IsNullOrWhiteSpace(message)
-           && message.Contains("Cannot detect CompanyId from account_balance", StringComparison.OrdinalIgnoreCase);
-
-    private Task<IEnumerable<Guid?>> SearchGenerateCompanyAsync(string value)
-    {
-        IEnumerable<M_Customer> query = _customers;
-        if (!string.IsNullOrWhiteSpace(value))
-        {
-            var k = value.Trim();
-            query = query.Where(x =>
-                (x.EnglishName?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (x.Customer_Code?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (x.COMPANY?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (x.BIZName?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                (x.MainCode?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false));
-        }
-
-        return Task.FromResult(query.Select(x => (Guid?)x.Customer_ID).Take(30));
-    }
-
-    private string GenerateCompanyToString(Guid? id)
-    {
-        if (id is null || id.Value == System.Guid.Empty)
-            return string.Empty;
-
-        var c = _customers.FirstOrDefault(x => x.Customer_ID == id.Value);
-        if (c is null)
-            return string.Empty;
-
-        var english = (c.EnglishName ?? string.Empty).Trim();
-        if (!string.IsNullOrEmpty(english))
-            return english;
-
-        var company = (c.COMPANY ?? string.Empty).Trim();
-        if (!string.IsNullOrEmpty(company))
-            return company;
-
-        return (c.BIZName ?? string.Empty).Trim();
     }
 
     private async Task NewSnapshot()
@@ -1431,12 +1366,333 @@
                 ?? (_snapshot.TotalAssets - _snapshot.TotalSource);
             return;
         }
+        if (reportCode == "DEBT_REPORT_TT200")
+        {
+            _snapshot.TotalAssets = _lines.FirstOrDefault(x => x.LineCode == "CN_180")?.Amount ?? 0;       // Tổng phải thu
+            _snapshot.TotalLiabilities = _lines.FirstOrDefault(x => x.LineCode == "CN_280")?.Amount ?? 0;  // Tổng phải trả
+            _snapshot.TotalEquity = _lines.FirstOrDefault(x => x.LineCode == "CN_900")?.Amount ?? 0;       // Công nợ thuần
+            _snapshot.TotalSource =
+                (_lines.FirstOrDefault(x => x.LineCode == "CN_180")?.Amount ?? 0)
+                + (_lines.FirstOrDefault(x => x.LineCode == "CN_280")?.Amount ?? 0);
+            _snapshot.Difference = _snapshot.TotalEquity;
+            return;
+        }
 
         _snapshot.TotalAssets = 0;
         _snapshot.TotalLiabilities = 0;
         _snapshot.TotalEquity = 0;
         _snapshot.TotalSource = 0;
         _snapshot.Difference = 0;
+    }
+
+
+    private string GetTotalLabel(string key)
+    {
+        var reportCode = NormalizeReportCode(_snapshot.ReportCode);
+
+        if (reportCode == "DEBT_REPORT_TT200" || reportCode == "DEBT_BY_CUSTOMER_TT200")
+        {
+            return key switch
+            {
+                "Assets" => "Phải thu",
+                "Liabilities" => "Phải trả",
+                "Equity" => "Công nợ thuần",
+                "Source" => "Tổng công nợ",
+                "Difference" => "Chênh lệch",
+                _ => key
+            };
+        }
+
+        if (reportCode == "INCOME_STATEMENT" || reportCode == "INCOME_STATEMENT_INTERIM_FULL" || reportCode == "INCOME_STATEMENT_INTERIM_SUMMARY")
+        {
+            return key switch
+            {
+                "Assets" => "Doanh thu thuần",
+                "Liabilities" => "Giá vốn",
+                "Equity" => "LNST",
+                "Source" => "LNTT",
+                "Difference" => "Kết quả",
+                _ => key
+            };
+        }
+
+        if (reportCode == "CASH_FLOW_DIRECT" || reportCode == "CASH_FLOW_INTERIM_FULL_DIRECT" || reportCode == "CASH_FLOW_INTERIM_SUMMARY_DIRECT" ||
+            reportCode == "CASH_FLOW_INDIRECT" || reportCode == "CASH_FLOW_INTERIM_FULL_INDIRECT" || reportCode == "CASH_FLOW_INTERIM_SUMMARY_INDIRECT")
+        {
+            return key switch
+            {
+                "Assets" => "HĐKD",
+                "Liabilities" => "HĐĐT",
+                "Equity" => "HĐTC",
+                "Source" => "LCTT thuần",
+                "Difference" => "Check",
+                _ => key
+            };
+        }
+
+        return key switch
+        {
+            "Assets" => Localizer["FinancialReportSnapshot.Assets"],
+            "Liabilities" => Localizer["FinancialReportSnapshot.Liabilities"],
+            "Equity" => Localizer["FinancialReportSnapshot.Equity"],
+            "Source" => Localizer["FinancialReportSnapshot.Source"],
+            "Difference" => Localizer["FinancialReportSnapshot.Difference"],
+            _ => key
+        };
+    }
+
+    private bool IsDebtLikeReport()
+    {
+        var reportCode = NormalizeReportCode(_snapshot.ReportCode);
+        return reportCode == "DEBT_REPORT_TT200" || reportCode == "DEBT_BY_CUSTOMER_TT200";
+    }
+
+    private static bool IsDebtDetailLine(FinancialReportSnapshotLine line)
+    {
+        return !line.IsTotalLine
+            && !string.IsNullOrWhiteSpace(line.LineName)
+            && line.LineName.Contains("|")
+            && line.LineName.Contains("TK ", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetDebtLineTitle(string? lineName)
+    {
+        if (string.IsNullOrWhiteSpace(lineName))
+            return string.Empty;
+
+        var parts = lineName.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0]} | {parts[1]}" : lineName;
+    }
+
+    private static string GetDebtLineDetail(string? lineName)
+    {
+        if (string.IsNullOrWhiteSpace(lineName))
+            return string.Empty;
+
+        var parts = lineName.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 2 ? string.Join(" | ", parts.Skip(2)) : string.Empty;
+    }
+
+    private string BuildExportFileName()
+    {
+        var reportCode = NormalizeReportCode(_snapshot.ReportCode);
+        var bookCode = NormalizeBookCode(_snapshot.BookCode);
+        return $"{reportCode}_{bookCode}_{_snapshot.FiscalYear}_{_snapshot.PeriodMonth:00}.xlsx";
+    }
+
+    private async Task ExportCurrentSnapshotToExcelAsync()
+    {
+        if (!CanWorkWithLines)
+        {
+            CallSnack("Chọn snapshot có dữ liệu trước khi export Excel.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+
+            if (_lines.Count == 0)
+                await LoadLines(_snapshot.Id);
+
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var stream = new MemoryStream();
+            using (var package = new ExcelPackage(stream))
+            {
+                var worksheet = package.Workbook.Worksheets.Add("Report");
+
+                var reportCode = NormalizeReportCode(_snapshot.ReportCode);
+                var reportName = GetReportDisplayName(reportCode);
+                var bookCode = NormalizeBookCode(_snapshot.BookCode);
+                var titleRange = worksheet.Cells["A1:H1"];
+                titleRange.Merge = true;
+                worksheet.Cells[1, 1].Value = reportName;
+                titleRange.Style.Font.Bold = true;
+                titleRange.Style.Font.Size = 16;
+                titleRange.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+                titleRange.Style.Fill.PatternType = ExcelFillStyle.Solid;
+                titleRange.Style.Fill.BackgroundColor.SetColor(System.Drawing.ColorTranslator.FromHtml("#1f4e79"));
+                titleRange.Style.Font.Color.SetColor(System.Drawing.Color.White);
+
+                var infoRange = worksheet.Cells["A2:H2"];
+                infoRange.Merge = true;
+                worksheet.Cells[2, 1].Value = $"ReportCode: {reportCode} | Book: {bookCode} | Kỳ: {_snapshot.FiscalYear}/{_snapshot.PeriodMonth:00} | From: {_snapshot.FromDate:dd/MM/yyyy} | To: {_snapshot.ToDate:dd/MM/yyyy}";
+                infoRange.Style.Font.Italic = true;
+                infoRange.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+
+                var noteRange = worksheet.Cells["A3:H3"];
+                noteRange.Merge = true;
+                worksheet.Cells[3, 1].Value = string.IsNullOrWhiteSpace(_snapshot.Note) ? "" : _snapshot.Note;
+                noteRange.Style.Font.Color.SetColor(System.Drawing.Color.DarkGray);
+                noteRange.Style.WrapText = true;
+
+                worksheet.Cells[5, 1].Value = GetTotalLabel("Assets");
+                worksheet.Cells[5, 2].Value = _snapshot.TotalAssets;
+                worksheet.Cells[5, 3].Value = GetTotalLabel("Liabilities");
+                worksheet.Cells[5, 4].Value = _snapshot.TotalLiabilities;
+                worksheet.Cells[5, 5].Value = GetTotalLabel("Equity");
+                worksheet.Cells[5, 6].Value = _snapshot.TotalEquity;
+                worksheet.Cells[5, 7].Value = GetTotalLabel("Difference");
+                worksheet.Cells[5, 8].Value = _snapshot.Difference;
+
+                worksheet.Cells[6, 1].Value = GetTotalLabel("Source");
+                worksheet.Cells[6, 2].Value = _snapshot.TotalSource;
+                worksheet.Cells[6, 3].Value = "Status";
+                worksheet.Cells[6, 4].Value = _snapshot.Status;
+                worksheet.Cells[6, 5].Value = "Created By";
+                worksheet.Cells[6, 6].Value = _snapshot.CreatedBy;
+                worksheet.Cells[6, 7].Value = "Created At";
+                worksheet.Cells[6, 8].Value = _snapshot.CreatedAt;
+
+                var summaryRange = worksheet.Cells[5, 1, 6, 8];
+                ApplyThinBorder(summaryRange);
+                summaryRange.Style.Fill.PatternType = ExcelFillStyle.Solid;
+                summaryRange.Style.Fill.BackgroundColor.SetColor(System.Drawing.ColorTranslator.FromHtml("#eaf3f8"));
+                summaryRange.Style.Font.Bold = true;
+                worksheet.Cells["B5:B6"].Style.Numberformat.Format = "#,##0";
+                worksheet.Cells["D5:D6"].Style.Numberformat.Format = "#,##0";
+                worksheet.Cells["F5:F6"].Style.Numberformat.Format = "#,##0";
+                worksheet.Cells["H5:H6"].Style.Numberformat.Format = "#,##0";
+                worksheet.Cells[6, 8].Style.Numberformat.Format = "dd/MM/yyyy HH:mm";
+
+                var startRow = 8;
+                if (IsDebtLikeReport())
+                    WriteDebtExcelTable(worksheet, startRow);
+                else
+                    WriteStandardExcelTable(worksheet, startRow);
+
+                worksheet.View.FreezePanes(startRow + 1, 1);
+                if (worksheet.Dimension != null)
+                    worksheet.Cells[worksheet.Dimension.Address].AutoFitColumns();
+                worksheet.Column(3).Width = Math.Min(Math.Max(worksheet.Column(3).Width, 35), 80);
+                worksheet.Column(3).Style.WrapText = true;
+
+                package.Save();
+            }
+
+            var bytes = stream.ToArray();
+            var base64 = Convert.ToBase64String(bytes);
+
+            await JS.InvokeVoidAsync(
+                "downloadFileFromBase64",
+                BuildExportFileName(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                base64);
+
+            CallSnack("Export Excel thành công.", MudBlazor.Severity.Success);
+        }
+        catch (JSException)
+        {
+            CallSnack("Thiếu JS function downloadFileFromBase64. Thêm script download vào _Host.cshtml hoặc index.html.", MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void WriteStandardExcelTable(ExcelWorksheet worksheet, int startRow)
+    {
+        var headers = new[] { "Code", "Parent", "Name", "Sort", "Level", "Bold", "Total", "Amount" };
+        for (var i = 0; i < headers.Length; i++)
+            worksheet.Cells[startRow, i + 1].Value = headers[i];
+
+        StyleHeaderRow(worksheet.Cells[startRow, 1, startRow, 8]);
+
+        var row = startRow + 1;
+        foreach (var line in _lines.OrderBy(x => x.SortOrder))
+        {
+            worksheet.Cells[row, 1].Value = line.LineCode;
+            worksheet.Cells[row, 2].Value = line.ParentLineCode;
+            worksheet.Cells[row, 3].Value = line.LineName;
+            worksheet.Cells[row, 4].Value = line.SortOrder;
+            worksheet.Cells[row, 5].Value = line.LevelNo;
+            worksheet.Cells[row, 6].Value = line.IsBold ? "Y" : "";
+            worksheet.Cells[row, 7].Value = line.IsTotalLine ? "Y" : "";
+            worksheet.Cells[row, 8].Value = line.Amount;
+            worksheet.Cells[row, 8].Style.Numberformat.Format = "#,##0";
+            worksheet.Cells[row, 3].Style.Indent = Math.Min(Math.Max(line.LevelNo, 0), 8);
+
+            if (line.IsBold || line.IsTotalLine)
+                worksheet.Cells[row, 1, row, 8].Style.Font.Bold = true;
+
+            if (line.IsTotalLine)
+            {
+                var totalRow = worksheet.Cells[row, 1, row, 8];
+                totalRow.Style.Fill.PatternType = ExcelFillStyle.Solid;
+                totalRow.Style.Fill.BackgroundColor.SetColor(System.Drawing.ColorTranslator.FromHtml("#fff2cc"));
+            }
+
+            row++;
+        }
+
+        StyleTableBody(worksheet.Cells[startRow, 1, Math.Max(startRow, row - 1), 8]);
+    }
+
+    private void WriteDebtExcelTable(ExcelWorksheet worksheet, int startRow)
+    {
+        var headers = new[] { "Code", "Parent", "Đối tượng / Nội dung", "Thông tin phát sinh", "Sort", "Level", "Total", "Amount" };
+        for (var i = 0; i < headers.Length; i++)
+            worksheet.Cells[startRow, i + 1].Value = headers[i];
+
+        StyleHeaderRow(worksheet.Cells[startRow, 1, startRow, 8]);
+
+        var row = startRow + 1;
+        foreach (var line in _lines.OrderBy(x => x.SortOrder))
+        {
+            var isDebtDetail = IsDebtDetailLine(line);
+            worksheet.Cells[row, 1].Value = line.LineCode;
+            worksheet.Cells[row, 2].Value = line.ParentLineCode;
+            worksheet.Cells[row, 3].Value = isDebtDetail ? GetDebtLineTitle(line.LineName) : line.LineName;
+            worksheet.Cells[row, 4].Value = isDebtDetail ? GetDebtLineDetail(line.LineName) : string.Empty;
+            worksheet.Cells[row, 5].Value = line.SortOrder;
+            worksheet.Cells[row, 6].Value = line.LevelNo;
+            worksheet.Cells[row, 7].Value = line.IsTotalLine ? "Y" : "";
+            worksheet.Cells[row, 8].Value = line.Amount;
+            worksheet.Cells[row, 8].Style.Numberformat.Format = "#,##0";
+            worksheet.Cells[row, 3].Style.Indent = Math.Min(Math.Max(line.LevelNo, 0), 8);
+
+            if (line.IsBold || line.IsTotalLine)
+                worksheet.Cells[row, 1, row, 8].Style.Font.Bold = true;
+
+            if (line.IsTotalLine)
+            {
+                var totalRow = worksheet.Cells[row, 1, row, 8];
+                totalRow.Style.Fill.PatternType = ExcelFillStyle.Solid;
+                totalRow.Style.Fill.BackgroundColor.SetColor(System.Drawing.ColorTranslator.FromHtml("#fff2cc"));
+            }
+
+            row++;
+        }
+
+        StyleTableBody(worksheet.Cells[startRow, 1, Math.Max(startRow, row - 1), 8]);
+    }
+
+    private static void StyleHeaderRow(ExcelRange headerRange)
+    {
+        headerRange.Style.Font.Bold = true;
+        headerRange.Style.Fill.PatternType = ExcelFillStyle.Solid;
+        headerRange.Style.Fill.BackgroundColor.SetColor(System.Drawing.ColorTranslator.FromHtml("#d9eaf7"));
+        headerRange.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+        ApplyThinBorder(headerRange);
+    }
+
+    private static void StyleTableBody(ExcelRange tableRange)
+    {
+        ApplyThinBorder(tableRange);
+        tableRange.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
+    }
+
+    private static void ApplyThinBorder(ExcelRange range)
+    {
+        range.Style.Border.Top.Style = ExcelBorderStyle.Thin;
+        range.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+        range.Style.Border.Left.Style = ExcelBorderStyle.Thin;
+        range.Style.Border.Right.Style = ExcelBorderStyle.Thin;
     }
 
     private string SnapshotRowClass(FinancialReportSnapshot row, int _) =>
