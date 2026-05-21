@@ -19,7 +19,7 @@ namespace NVOAMASIS.Models
 
         [Required]
         [Column("period_year")]
-        public int PeriodYear { get; set; }
+                public int PeriodYear { get; set; }
 
         [Required]
         [Column("period_month")]
@@ -48,6 +48,11 @@ namespace NVOAMASIS.Models
         [Column("company_id")]
         public Guid? CompanyId { get; set; }
 
+        //them
+        [Column("book_code")]
+        public string? BookCode { get; set; } = "TAX";
+        //---
+     
         [Column("calculated_from")]
         public DateTime? CalculatedFrom { get; set; }
 
