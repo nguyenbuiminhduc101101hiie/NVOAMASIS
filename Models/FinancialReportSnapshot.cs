@@ -21,6 +21,7 @@ namespace NVOAMASIS.Models
         public decimal Difference { get; set; }
 
         public string Status { get; set; } = "DRAFT";
+        public string BookCode { get; set; } = "TAX";
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public string? CreatedBy { get; set; }
         public string? Note { get; set; }

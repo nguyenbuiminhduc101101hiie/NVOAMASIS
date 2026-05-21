@@ -70,6 +70,7 @@
                           Loading="_busy">
                     <HeaderContent>
                         <MudTh>@Localizer["FinancialReportSnapshot.ColReport"]</MudTh>
+                        <MudTh>BookCode</MudTh>
                         <MudTh>@Localizer["FinancialReportSnapshot.ColPeriod"]</MudTh>
                         <MudTh>@Localizer["FinancialReportSnapshot.ColStatus"]</MudTh>
                         <MudTh Class="text-end">@Localizer["FinancialReportSnapshot.ColDifference"]</MudTh>
@@ -77,6 +78,11 @@
                     <RowTemplate>
                         <MudTd>
                             <MudText Typo="Typo.body2" Class="fw-bold">@context.ReportCode</MudText>
+                        </MudTd>
+                        <MudTd>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">
+                                @(string.IsNullOrWhiteSpace(context.BookCode) ? "TAX" : context.BookCode)
+                            </MudChip>
                         </MudTd>
                         <MudTd>@context.FiscalYear / @context.PeriodMonth.ToString("00")</MudTd>
                         <MudTd>
@@ -150,6 +156,13 @@
                         <MudItem xs="12" sm="6">
                             <MudTextField T="string" Label="@Localizer["FinancialReportSnapshot.CreatedBy"]" Value="_snapshot.CreatedBy"
                                           Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="true" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudSelect T="string" Label="BookCode" @bind-Value="_snapshot.BookCode"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                                <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                            </MudSelect>
                         </MudItem>
                         <MudItem xs="12">
                             <MudTextField T="string" Label="@Localizer["FinancialReportSnapshot.Note"]" @bind-Value="_snapshot.Note" Lines="2"
@@ -389,6 +402,13 @@
         return (reportCode ?? string.Empty).Trim().ToUpperInvariant();
     }
 
+    private static string NormalizeBookCode(string? bookCode)
+    {
+        return string.IsNullOrWhiteSpace(bookCode)
+            ? "TAX"
+            : bookCode.Trim().ToUpperInvariant();
+    }
+
     private static string? GetGenerateProcedureName(string? reportCode)
     {
         return NormalizeReportCode(reportCode) switch
@@ -409,6 +429,7 @@
             ? _snapshots
             : _snapshots.Where(x =>
                 (x.ReportCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.BookCode?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false) ||
                 x.FiscalYear.ToString().Contains(_search, StringComparison.OrdinalIgnoreCase) ||
                 x.PeriodMonth.ToString().Contains(_search, StringComparison.OrdinalIgnoreCase) ||
                 (x.Status?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
@@ -441,6 +462,7 @@
         FiscalYear = DateTime.Now.Year,
         PeriodMonth = DateTime.Now.Month,
         Status = "DRAFT",
+        BookCode = "TAX",
         CreatedAt = DateTime.Now
     };
 
@@ -509,6 +531,7 @@
         }
 
         var reportCode = NormalizeReportCode(_snapshot.ReportCode);
+        var bookCode = NormalizeBookCode(_snapshot.BookCode);
         var procedureName = GetGenerateProcedureName(reportCode);
 
         if (string.IsNullOrWhiteSpace(procedureName))
@@ -525,7 +548,7 @@
 
         var confirm = await DialogService.ShowMessageBox(
             Localizer["FinancialReportSnapshot.GenerateLinesConfirmTitle"],
-            $"Generate report {reportCode} từ account_balance cho kỳ {_snapshot.FiscalYear}/{_snapshot.PeriodMonth:00}?",
+            $"Generate report {reportCode} ({bookCode}) từ account_balance cho kỳ {_snapshot.FiscalYear}/{_snapshot.PeriodMonth:00}?",
             yesText: Localizer["FinancialReportSnapshot.GenerateFromAccountBalance"],
             cancelText: Localizer["cancel"]);
 
@@ -544,6 +567,7 @@
             var pPeriodMonth = new SqlParameter("@PeriodMonth", _snapshot.PeriodMonth);
             var pReportCode = new SqlParameter("@ReportCode", reportCode);
             var pCreatedBy = new SqlParameter("@CreatedBy", createdBy);
+            var pBookCode = new SqlParameter("@BookCode", bookCode);
 
             // Hiện page chưa có CompanyId selector nên truyền NULL.
             // Nếu sau này có CompanyId, thay DBNull.Value bằng Guid CompanyId tương ứng.
@@ -558,17 +582,20 @@
                     @PeriodMonth = @PeriodMonth,
                     @ReportCode = @ReportCode,
                     @CreatedBy = @CreatedBy,
-                    @CompanyId = @CompanyId",
+                    @CompanyId = @CompanyId,
+                    @BookCode = @BookCode",
                 pFiscalYear,
                 pPeriodMonth,
                 pReportCode,
                 pCreatedBy,
-                pCompanyId);
+                pCompanyId,
+                pBookCode);
 
             var updated = await Db.FinancialReportSnapshots.AsNoTracking()
                 .Where(x => x.ReportCode == reportCode
                     && x.FiscalYear == _snapshot.FiscalYear
-                    && x.PeriodMonth == _snapshot.PeriodMonth)
+                    && x.PeriodMonth == _snapshot.PeriodMonth
+                    && x.BookCode == bookCode)
                 .OrderByDescending(x => x.CreatedAt)
                 .FirstOrDefaultAsync();
 
@@ -771,6 +798,7 @@
         entity.TotalSource = _snapshot.TotalSource;
         entity.Difference = _snapshot.Difference;
         entity.Status = _snapshot.Status;
+        entity.BookCode = string.IsNullOrWhiteSpace(_snapshot.BookCode) ? "TAX" : _snapshot.BookCode.Trim().ToUpperInvariant();
         entity.Note = _snapshot.Note;
 
         if (!preserveCreated)
@@ -789,6 +817,8 @@
             return;
 
         _snapshot = fresh;
+        if (string.IsNullOrWhiteSpace(_snapshot.BookCode))
+            _snapshot.BookCode = "TAX";
         await LoadLines(snapshotId);
         NewLine();
     }

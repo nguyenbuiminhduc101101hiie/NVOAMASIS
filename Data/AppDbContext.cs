@@ -265,6 +265,83 @@ namespace NVOAMASIS.Data
                 .HasForeignKey(x => x.VoucherId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            modelBuilder.Entity<M_account_balance>(entity =>
+            {
+                entity.ToTable("account_balance");
+
+                entity.HasKey(e => e.Id);
+
+                entity.Property(e => e.Id)
+                    .HasColumnName("id");
+
+                entity.Property(e => e.AccountCode)
+                    .HasColumnName("account_code")
+                    .HasMaxLength(20)
+                    .IsRequired();
+
+                entity.Property(e => e.BookCode)
+                    .HasColumnName("book_code")
+                    .HasMaxLength(50)
+                    .HasDefaultValue("TAX");
+
+                entity.Property(e => e.PeriodYear)
+                    .HasColumnName("period_year");
+
+                entity.Property(e => e.PeriodMonth)
+                    .HasColumnName("period_month");
+
+                entity.Property(e => e.OpeningBalance)
+                    .HasColumnName("opening_balance")
+                    .HasColumnType("decimal(18,2)");
+
+                entity.Property(e => e.DebitTotal)
+                    .HasColumnName("debit_total")
+                    .HasColumnType("decimal(18,2)");
+
+                entity.Property(e => e.CreditTotal)
+                    .HasColumnName("credit_total")
+                    .HasColumnType("decimal(18,2)");
+
+                entity.Property(e => e.ClosingBalance)
+                    .HasColumnName("closing_balance")
+                    .HasColumnType("decimal(18,2)");
+
+                entity.Property(e => e.AccountType)
+                    .HasColumnName("account_type")
+                    .HasMaxLength(20);
+
+                entity.Property(e => e.CompanyId)
+                    .HasColumnName("company_id");
+
+                entity.Property(e => e.CalculatedFrom)
+                    .HasColumnName("calculated_from");
+
+                entity.Property(e => e.CalculatedTo)
+                    .HasColumnName("calculated_to");
+
+                entity.Property(e => e.LastCalculatedAt)
+                    .HasColumnName("last_calculated_at");
+
+                entity.Property(e => e.CreatedAt)
+                    .HasColumnName("created_at");
+
+                entity.Property(e => e.UpdatedAt)
+                    .HasColumnName("updated_at");
+
+                entity.HasIndex(e => new
+                {
+                    e.AccountCode,
+                    e.PeriodYear,
+                    e.PeriodMonth,
+                    e.BookCode
+                })
+                .HasDatabaseName("UQ_account_balance_account_period_book")
+                .IsUnique();
+            });
+            //---
+
+
+
             modelBuilder.Entity<M_account_balance_gl_line>()
           .ToTable("account_balance_gl_line");
             modelBuilder.Entity<M_account_balance_gl_line>()
@@ -304,6 +381,9 @@ namespace NVOAMASIS.Data
 
                 entity.Property(x => x.ReportCode).HasMaxLength(50).IsRequired();
                 entity.Property(x => x.Status).HasMaxLength(50).IsRequired();
+                entity.Property(x => x.BookCode)
+                    .HasMaxLength(50)
+                    .HasDefaultValue("TAX");
                 entity.Property(x => x.CreatedBy).HasMaxLength(100);
                 entity.Property(x => x.Note).HasMaxLength(500);
 
