@@ -337,6 +337,23 @@ namespace NVOAMASIS.Data
                 })
                 .HasDatabaseName("UQ_account_balance_account_period_book")
                 .IsUnique();
+
+                entity.HasIndex(e => new
+                {
+                    e.CompanyId,
+                    e.AccountCode,
+                    e.PeriodYear,
+                    e.PeriodMonth,
+                    e.BookCode
+                })
+                .HasDatabaseName("UQ_account_balance_company_account_period_book")
+                .IsUnique();
+
+                entity.HasOne<M_AccountMapping>()
+                    .WithMany()
+                    .HasForeignKey(e => e.AccountCode)
+                    .HasPrincipalKey(m => m.AccountCode)
+                    .OnDelete(DeleteBehavior.NoAction);
             });
             //---
 
