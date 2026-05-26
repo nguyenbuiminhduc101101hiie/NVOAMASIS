@@ -249,7 +249,7 @@
                       && gl.FiscalPeriod == _periodMonth
                       && fam.Active
                       && rl.Active
-                      && (rl.ReportType == "BALANCE_SHEET" || rl.ReportType == "BalanceSheet")
+
                 select new { gl, fam, rl })
                 .ToListAsync();
 
@@ -264,9 +264,8 @@
                     if (x.gl.IsManagementBook == true)
                         books.Add("MGMT");
 
-                    if (books.Count == 0)
-                        books.Add("TAX");
-
+                    // Do not force a fallback book.
+                    // If both IsTaxBook and IsManagementBook are false, the GL line is ignored.
                     return books.Select(bookCode => new
                     {
                         BookCode = bookCode,
@@ -304,14 +303,14 @@
 
                 var sample = g.First();
                 var newMapping = new M_AccountMapping
-                    {
-                        AccountCode = code,
-                        AccountName = code,
-                        StatementType = BalanceSheetStatementType,
-                        BsSection = sample.rl.Section,
-                        NormalBalance = sample.fam.NormalBalance ?? "Debit",
-                        IsActive = true
-                    };
+                {
+                    AccountCode = code,
+                    AccountName = code,
+                    StatementType = BalanceSheetStatementType,
+                    BsSection = sample.rl.Section,
+                    NormalBalance = sample.fam.NormalBalance ?? "Debit",
+                    IsActive = true
+                };
 
                 db.AccountMappings.Add(newMapping);
                 mappingByCode[code] = newMapping;
@@ -383,10 +382,20 @@
                 var calculatedTo = lines.Count > 0 ? lines.Max(x => x.PostingDate) : (DateTime?)null;
                 var companyId = lines.Count > 0 ? lines[0].CompanyId : (Guid?)null;
 
-                var bsSection = mapRow.BsSection
-                    ?? g.Select(x => x.rl.Section).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
-                    ?? string.Empty;
+                var financialPositionLine = g
+                    .FirstOrDefault(x => x.rl.ReportType == "FINANCIAL_POSITION_TT99"
+                                      || x.rl.ReportType == "BALANCE_SHEET"
+                                      || x.rl.ReportType == "BalanceSheet");
 
+                var bsSection =
+                    financialPositionLine?.rl.Section
+                    ?? g.Select(x => x.rl.Section)
+                        .FirstOrDefault(s =>
+                            s == "ASSET" ||
+                            s == "LIABILITY" ||
+                            s == "EQUITY")
+                    ?? mapRow.BsSection
+                    ?? string.Empty;
                 var normalBalance = mapRow.NormalBalance
                     ?? g.Select(x => x.fam.NormalBalance).FirstOrDefault(nb => !string.IsNullOrWhiteSpace(nb))
                     ?? "Debit";
@@ -406,24 +415,24 @@
                 if (balanceRow is null)
                 {
                     balanceRow = new M_account_balance
-                        {
-                            Id = Guid.NewGuid(),
-                            AccountCode = accountCode,
-                            BookCode = bookCode,
-                            CompanyId = companyId,
-                            PeriodYear = _fiscalYear,
-                            PeriodMonth = _periodMonth,
-                            OpeningBalance = openingForRow,
-                            DebitTotal = debitTotal,
-                            CreditTotal = creditTotal,
-                            ClosingBalance = closingBalance,
-                            AccountType = AccountTypeFromSection(bsSection),
-                            CalculatedFrom = calculatedFrom,
-                            CalculatedTo = calculatedTo,
-                            LastCalculatedAt = nowUtc,
-                            CreatedAt = nowUtc,
-                            UpdatedAt = nowUtc
-                        };
+                    {
+                        Id = Guid.NewGuid(),
+                        AccountCode = accountCode,
+                        BookCode = bookCode,
+                        CompanyId = companyId,
+                        PeriodYear = _fiscalYear,
+                        PeriodMonth = _periodMonth,
+                        OpeningBalance = openingForRow,
+                        DebitTotal = debitTotal,
+                        CreditTotal = creditTotal,
+                        ClosingBalance = closingBalance,
+                        AccountType = AccountTypeFromAccountCode(accountCode, bsSection),
+                        CalculatedFrom = calculatedFrom,
+                        CalculatedTo = calculatedTo,
+                        LastCalculatedAt = nowUtc,
+                        CreatedAt = nowUtc,
+                        UpdatedAt = nowUtc
+                    };
 
                     db.AccountBalances.Add(balanceRow);
                     balanceByBookAndCode[key] = balanceRow;
@@ -434,7 +443,7 @@
                     balanceRow.OpeningBalance = openingForRow;
                     balanceRow.DebitTotal = debitTotal;
                     balanceRow.CreditTotal = creditTotal;
-                    balanceRow.AccountType = AccountTypeFromSection(bsSection);
+                    balanceRow.AccountType = AccountTypeFromAccountCode(accountCode, bsSection);
                     balanceRow.CompanyId = companyId ?? balanceRow.CompanyId;
                     balanceRow.CalculatedFrom = calculatedFrom;
                     balanceRow.CalculatedTo = calculatedTo;
@@ -446,16 +455,16 @@
                 foreach (var gl in lines.OrderBy(x => x.PostingDate).ThenBy(x => x.VoucherNo))
                 {
                     db.AccountBalanceGlLines.Add(new M_account_balance_gl_line
-                        {
-                            Id = Guid.NewGuid(),
-                            AccountBalanceId = balanceRow.Id,
-                            GeneralLedgerEntryId = gl.Id,
-                            VoucherNo = gl.VoucherNo ?? string.Empty,
-                            PostingDate = gl.PostingDate,
-                            Debit = gl.Debit,
-                            Credit = gl.Credit,
-                            Description = gl.Description
-                        });
+                    {
+                        Id = Guid.NewGuid(),
+                        AccountBalanceId = balanceRow.Id,
+                        GeneralLedgerEntryId = gl.Id,
+                        VoucherNo = gl.VoucherNo ?? string.Empty,
+                        PostingDate = gl.PostingDate,
+                        Debit = gl.Debit,
+                        Credit = gl.Credit,
+                        Description = gl.Description
+                    });
                 }
             }
 
@@ -478,12 +487,35 @@
         }
     }
 
-    private static string? AccountTypeFromSection(string section)
+    private static string AccountTypeFromAccountCode(string? accountCode, string? fallbackSection = null)
     {
-        if (string.IsNullOrWhiteSpace(section))
-            return null;
-        var s = section.Trim();
-        return s.Length <= 20 ? s : s[..20];
+        var code = string.IsNullOrWhiteSpace(accountCode)
+            ? string.Empty
+            : accountCode.Trim();
+
+        if (code.StartsWith("1") || code.StartsWith("2"))
+            return "ASSET";
+
+        if (code.StartsWith("3"))
+            return "LIABILITY";
+
+        if (code.StartsWith("4"))
+            return "EQUITY";
+
+        if (code.StartsWith("5") || code.StartsWith("7"))
+            return "REVENUE";
+
+        if (code.StartsWith("6") || code.StartsWith("8"))
+            return "EXPENSE";
+
+        if (!string.IsNullOrWhiteSpace(fallbackSection))
+        {
+            var s = fallbackSection.Trim().ToUpperInvariant();
+            if (s is "ASSET" or "LIABILITY" or "EQUITY" or "REVENUE" or "EXPENSE")
+                return s;
+        }
+
+        return "OTHER";
     }
 
     private static List<M_account_balance_gl_line> OrderedGlLines(M_account_balance row) =>
