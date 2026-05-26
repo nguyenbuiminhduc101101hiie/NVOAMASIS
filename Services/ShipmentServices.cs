@@ -3800,10 +3800,10 @@ namespace NVOAMASIS.Services
         public string GetNumberandRemark(Guid? id)
         {
             var rs = "";
-            List<M_Container> cont = this.GetListContainerMBL(id);
+            List<M_Container> cont = this.GetListContainerMBL(id) ?? new List<M_Container>();
             foreach (M_Container c in cont)
             {
-                rs += c.CONTAINER_NO + "/" + c.CTN_SIZE_TYPE + "/" + c.Seal + "\n";
+                rs += (c?.CONTAINER_NO ?? "") + "/" + (c?.CTN_SIZE_TYPE ?? "") + "/" + (c?.Seal ?? "") + "\n";
             }
             return rs;
         }
@@ -3855,12 +3855,12 @@ namespace NVOAMASIS.Services
         {
             var rs = "";
             double tong = 0;
-            List<M_Container> cont = this.GetListContainerMBL(id);
+            List<M_Container> cont = this.GetListContainerMBL(id) ?? new List<M_Container>();
             foreach (M_Container c in cont)
             {
-                rs += c.GrossWeight + " KGS" + "\n";
-                tong += double.Parse(c.GrossWeight.ToString()!);
-
+                var gross = c?.GrossWeight ?? 0d;
+                rs += gross.ToString() + " KGS" + "\n";
+                tong += gross;
             }
             rs += "--------------------" + "\n" + tong.ToString() + " KGS";
             return rs;
@@ -3869,12 +3869,13 @@ namespace NVOAMASIS.Services
         {
             var rs = "";
             double tong = 0;
-            List<M_Container> cont = this.GetListContainerMBL(id);
+            List<M_Container> cont = this.GetListContainerMBL(id) ?? new List<M_Container>();
             foreach (M_Container c in cont)
             {
-                rs += c.cbm + " CBM" + "\n";
-                tong += double.Parse(c.cbm!.ToString());
-
+                var cbmText = c?.cbm;
+                if (!double.TryParse(cbmText, out var cbmValue)) cbmValue = 0d;
+                rs += cbmValue.ToString() + " CBM" + "\n";
+                tong += cbmValue;
             }
             rs += "--------------------" + "\n" + tong.ToString() + " CBM";
             return rs;
@@ -3882,7 +3883,7 @@ namespace NVOAMASIS.Services
         public string GetDescriptionOfGoods(Guid? id, Guid? cusID)
         {
             var rs = "";
-            List<M_Container> cont = this.GetListContainerMBL(id);
+            List<M_Container> cont = this.GetListContainerMBL(id) ?? new List<M_Container>();
             var type = GetNameFLCByMBLID(id);
             if (type == "F")
                 rs += (this.saycont(id).Replace("SAY: ", "").Replace("ONLY", "S.T.C")).ToUpper() + "\n";
@@ -3891,13 +3892,9 @@ namespace NVOAMASIS.Services
             var checkCold = false;
             foreach (M_Container c in cont)
             {
-                rs += c.description + "\n";
-                try
-                {
-                    if (c.CTN_SIZE_TYPE!.Contains("F"))
-                        checkCold = true;
-                }
-                catch { }
+                rs += (c?.description ?? "") + "\n";
+                if ((c?.CTN_SIZE_TYPE ?? "").Contains("F"))
+                    checkCold = true;
             }
             //rs += "HS CODE: " + csv.GetHSCodeCompanyFromID(cusID);
             if (checkCold)
@@ -3909,7 +3906,7 @@ namespace NVOAMASIS.Services
         public string GetDescriptionOfGoodsHBL(Guid? id, Guid? cusID)
         {
             var rs = "";
-            List<M_Container> cont = this.GetListContainerHBL(id);
+            List<M_Container> cont = this.GetListContainerHBL(id) ?? new List<M_Container>();
             var type = GetFLCByHBLID(id);
             if (type == "F")
                 rs += (this.saycontHBL(id).Replace("SAY: ", "").Replace("ONLY", "S.T.C")).ToUpper() + "\n";
@@ -3918,13 +3915,9 @@ namespace NVOAMASIS.Services
             var checkCold = false;
             foreach (M_Container c in cont)
             {
-                rs += c.description + "\n";
-                try
-                {
-                    if (c.CTN_SIZE_TYPE!.Contains("F"))
-                        checkCold = true;
-                }
-                catch { }
+                rs += (c?.description ?? "") + "\n";
+                if ((c?.CTN_SIZE_TYPE ?? "").Contains("F"))
+                    checkCold = true;
             }
             //rs += "HS CODE: " + csv.GetHSCodeCompanyFromID(cusID);
             if (checkCold)
@@ -3937,10 +3930,10 @@ namespace NVOAMASIS.Services
         public string GetNumberandRemarkHBL(Guid? id)
         {
             var rs = "";
-            List<M_Container> cont = this.GetListContainerHBL(id);
+            List<M_Container> cont = this.GetListContainerHBL(id) ?? new List<M_Container>();
             foreach (M_Container c in cont)
             {
-                rs += c.CONTAINER_NO + "/" + c.CTN_SIZE_TYPE + "/" + c.Seal + "\n";
+                rs += (c?.CONTAINER_NO ?? "") + "/" + (c?.Seal ?? "") + "/" + (c?.CTN_SIZE_TYPE ?? "") + "\n";
             }
             return rs;
         }
@@ -3950,18 +3943,23 @@ namespace NVOAMASIS.Services
             var rs = "";
             double tong = 0;
             var dvt = "";
-            List<M_Container> cont = this.GetListContainerHBL(id);
+            List<M_Container> cont = this.GetListContainerHBL(id) ?? new List<M_Container>();
             List<string> list = new List<string>();
             foreach (M_Container c in cont)
             {
-                rs += c.pkgs + " " + c.pkgsCode + "\n";
-                tong += double.Parse(c.pkgs.ToString());
-                if (!list.Contains(c.pkgsCode))
-                    list.Add(c.pkgsCode);
+                var pkgsVal = c?.pkgs ?? 0d;
+                var code = string.IsNullOrWhiteSpace(c?.pkgsCode) ? "" : c!.pkgsCode!.Trim();
+
+                rs += pkgsVal.ToString() + (code.Length > 0 ? " " + code : "") + "\n";
+                tong += pkgsVal;
+                if (code.Length > 0 && !list.Contains(code))
+                    list.Add(code);
             }
             try
             {
                 if (list.Count > 1)
+                    dvt = "PACKAGE(S)";
+                else if (list.Count == 0)
                     dvt = "PACKAGE(S)";
                 else
                 {
@@ -3969,10 +3967,11 @@ namespace NVOAMASIS.Services
                         dvt = list.LastOrDefault();
                     else
                     {
-                        if (list.LastOrDefault().Contains("(S)"))
-                            dvt = list.LastOrDefault();
+                        var last = list.LastOrDefault() ?? "";
+                        if (last.Contains("(S)"))
+                            dvt = last;
                         else
-                            dvt = list.LastOrDefault() + "(S)";
+                            dvt = last + "(S)";
 
                     }
 
