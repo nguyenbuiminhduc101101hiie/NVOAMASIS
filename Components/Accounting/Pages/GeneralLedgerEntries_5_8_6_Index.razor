@@ -1,4 +1,6 @@
+﻿@page "/accounting/general-ledger-entries"
 @page "/GeneralLedgerEntries586"
+@using Microsoft.AspNetCore.Components
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @using NVOAMASIS.Data
@@ -34,6 +36,12 @@
                       Immediate="true"
                       Clearable="true"
                       Class="mb-2" />
+        @if (FilterYear.HasValue || FilterMonth.HasValue || !string.IsNullOrWhiteSpace(FilterBook) || !string.IsNullOrWhiteSpace(FilterAccountCode) || FilterCustomerId.HasValue)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+                Lọc sổ cái: Year=@(FilterYear?.ToString() ?? "ALL"), Month=@(FilterMonth?.ToString() ?? "ALL"), Book=@(FilterBook ?? "ALL"), Account=@(FilterAccountCode ?? "ALL")
+            </MudAlert>
+        }
         <MudDataGrid T="M_GeneralLedgerEntries" Items="VisibleItems" Dense="true" Striped="true" Hover="true" Bordered="true"
                      Filterable="true"
                      FilterMode="@DataGridFilterMode.ColumnFilterRow"
@@ -73,13 +81,68 @@
     private Dictionary<Guid, string> _companyShortById = new();
     private M_GeneralLedgerEntries? _selected;
 
+    [SupplyParameterFromQuery(Name = "year")]
+    public int? QueryYear { get; set; }
+
+    [SupplyParameterFromQuery(Name = "month")]
+    public int? QueryMonth { get; set; }
+
+    [SupplyParameterFromQuery(Name = "book")]
+    public string? QueryBook { get; set; }
+
+    [SupplyParameterFromQuery(Name = "accountCode")]
+    public string? QueryAccountCode { get; set; }
+
+    [SupplyParameterFromQuery(Name = "customerId")]
+    public Guid? QueryCustomerId { get; set; }
+
+    [Parameter] public int? InitialYear { get; set; }
+    [Parameter] public int? InitialMonth { get; set; }
+    [Parameter] public string? InitialBook { get; set; }
+    [Parameter] public string? InitialAccountCode { get; set; }
+    [Parameter] public Guid? InitialCustomerId { get; set; }
+
+    private int? FilterYear => InitialYear ?? QueryYear;
+    private int? FilterMonth => InitialMonth ?? QueryMonth;
+    private string? FilterBook => !string.IsNullOrWhiteSpace(InitialBook) ? InitialBook : QueryBook;
+    private string? FilterAccountCode => !string.IsNullOrWhiteSpace(InitialAccountCode) ? InitialAccountCode : QueryAccountCode;
+    private Guid? FilterCustomerId => InitialCustomerId ?? QueryCustomerId;
+
     private IEnumerable<M_GeneralLedgerEntries> VisibleItems =>
-        string.IsNullOrWhiteSpace(_search)
-            ? _rows
-            : _rows.Where(MatchesSearch);
+        _rows.Where(MatchesQueryFilters).Where(MatchesSearch);
+
+    private bool MatchesQueryFilters(M_GeneralLedgerEntries x)
+    {
+        if (FilterYear.HasValue && x.FiscalYear != FilterYear.Value)
+            return false;
+
+        if (FilterMonth.HasValue && x.FiscalPeriod != FilterMonth.Value)
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(FilterBook))
+        {
+            var book = FilterBook.Trim().ToUpperInvariant();
+            if (book == "TAX" && x.IsTaxBook != true)
+                return false;
+            if (book == "MGMT" && x.IsManagementBook != true)
+                return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(FilterAccountCode)
+            && !string.Equals(x.AccountCode?.Trim(), FilterAccountCode.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (FilterCustomerId.HasValue && x.CustomerId != FilterCustomerId.Value)
+            return false;
+
+        return true;
+    }
 
     private bool MatchesSearch(M_GeneralLedgerEntries x)
     {
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
         var key = _search.Trim();
         return (x.VoucherNo?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false)
             || x.PostingDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
@@ -103,6 +166,10 @@
     {
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(QueryAccountCode))
+            _search = QueryAccountCode.Trim();
+
         await LoadAsync();
     }
 
