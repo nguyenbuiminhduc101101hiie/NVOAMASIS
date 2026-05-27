@@ -11,6 +11,7 @@
 @inject AccountService asv
 @inject SupportServices supsv
 @inject IStringLocalizer<SharedResource> Localizer
+@inject HistoryLogService HistoryLogService
 
 <MudDialog>
     <DialogContent>
@@ -529,6 +530,37 @@
         return Task.CompletedTask;
     }
 
+    private static M_AccountingVouchers CloneVoucher(M_AccountingVouchers src) => new()
+    {
+        Id = src.Id,
+        CompanyId = src.CompanyId,
+        VoucherNo = src.VoucherNo,
+        VoucherDate = src.VoucherDate,
+        PostingDate = src.PostingDate,
+        FiscalYear = src.FiscalYear,
+        FiscalPeriod = src.FiscalPeriod,
+        TransactionTypeCode = src.TransactionTypeCode,
+        Description = src.Description,
+        CurrencyCode = src.CurrencyCode,
+        ExchangeRate = src.ExchangeRate,
+        Status = src.Status,
+        ReferenceNo = src.ReferenceNo,
+        ReferenceDate = src.ReferenceDate,
+        SourceModule = src.SourceModule,
+        SourceId = src.SourceId,
+        Ghiso = src.Ghiso,
+        Both = src.Both,
+        Approve = src.Approve,
+        CreatedBy = src.CreatedBy,
+        CreatedDate = src.CreatedDate,
+        ModifiedBy = src.ModifiedBy,
+        ModifiedDate = src.ModifiedDate,
+        PostedBy = src.PostedBy,
+        PostedDate = src.PostedDate,
+        CancelledBy = src.CancelledBy,
+        CancelledDate = src.CancelledDate
+    };
+
     private static M_AccountingVoucherLines CloneLine(M_AccountingVoucherLines src) => new()
     {
         Id = src.Id,
@@ -569,8 +601,8 @@
         }
     }
 
-    private string GetTenTaiKhoan(Guid? id) => id is Guid dmId && _danhMucById.TryGetValue(dmId, out var dm) ? (dm.Tentaikhoan ?? string.Empty) : string.Empty;
-    private string GetTaiKhoan(Guid? id) => id is Guid dmId && _danhMucById.TryGetValue(dmId, out var dm) ? (dm.Taikhoan ?? string.Empty) : string.Empty;
+    private string GetTenTaiKhoan(Guid id) => _danhMucById.TryGetValue(id, out var dm) ? (dm.Tentaikhoan ?? string.Empty) : string.Empty;
+    private string GetTaiKhoan(Guid id) => _danhMucById.TryGetValue(id, out var dm) ? (dm.Taikhoan ?? string.Empty) : string.Empty;
     private string GetCustomerLabel(Guid? id)
     {
         if (id is null || id == Guid.Empty) return string.Empty;
@@ -801,6 +833,9 @@
             var auth = await asv.GetAuth();
             var user = auth.User.Identity?.Name ?? "system";
 
+            M_AccountingVouchers? oldVoucher = null;
+            List<M_AccountingVoucherLines>? oldLines = null;
+
             if (VoucherId is null)
             {
                 _model.Id = _model.Id == Guid.Empty ? Guid.NewGuid() : _model.Id;
@@ -826,6 +861,11 @@
                     Snackbar.Add(Localizer["RecordNotFound"], MudBlazor.Severity.Warning);
                     return;
                 }
+
+                oldVoucher = CloneVoucher(entity);
+                oldLines = await db.AccountingVoucherLines.AsNoTracking()
+                    .Where(x => x.VoucherId == entity.Id)
+                    .ToListAsync();
 
                 entity.CompanyId = _model.CompanyId;
                 entity.VoucherNo = _model.VoucherNo;
@@ -902,6 +942,13 @@
             }
 
             await db.SaveChangesAsync();
+
+            if (VoucherId is null)
+                await HistoryLogService.LogAsync(_usr, "ADD", "PhieuKeToan", _model.Id, _model.VoucherNo, new { Voucher = _model, Lines = _lines });
+            else
+                await HistoryLogService.LogAsync(_usr, "Update", "PhieuKeToan", _model.Id, _model.VoucherNo,
+                    new { OldData = new { Voucher = oldVoucher, Lines = oldLines }, NewData = new { Voucher = _model, Lines = _lines } });
+
             RecalcTotals();
             Snackbar.Add("Đã lưu.", MudBlazor.Severity.Success);
 
