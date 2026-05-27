@@ -1,4 +1,3 @@
-@page "/accounting/financial-report-snapshots-tt99"
 @using Microsoft.Data.SqlClient
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Localization
@@ -363,6 +362,14 @@
                                        Disabled="_busy || !CanWorkWithLines">
                                 @Localizer["FinancialReportSnapshot.SaveLine"]
                             </MudButton>
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Dark"
+                                       Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.Print"
+                                       OnClick="PrintCurrentSnapshotAsync"
+                                       Disabled="_busy || !CanWorkWithLines">
+                                IN BẢN ĐẸP
+                            </MudButton>
                             <MudButton Variant="Variant.Outlined" Color="Color.Default" Size="Size.Small"
                                        StartIcon="@Icons.Material.Filled.Add" OnClick="NewLine" Disabled="_busy || !CanWorkWithLines">
                                 @Localizer["FinancialReportSnapshot.NewLine"]
@@ -421,11 +428,45 @@
                         </MudGrid>
                     </MudPaper>
 
+                    <MudPaper Class="pa-2 mb-2 d-flex flex-wrap gap-3 frs-column-toggle" Elevation="0" Outlined="true">
+                        <MudText Typo="Typo.caption" Class="mr-2 d-flex align-center fw-bold">Hiển thị cột:</MudText>
+
+                        <MudCheckBox T="bool" @bind-Value="_showCode"
+                                     Label="Code"
+                                     Dense="true"
+                                     Color="Color.Primary" />
+
+                        <MudCheckBox T="bool" @bind-Value="_showParent"
+                                     Label="Parent"
+                                     Dense="true"
+                                     Color="Color.Primary" />
+
+                        <MudCheckBox T="bool" @bind-Value="_showSort"
+                                     Label="Sort"
+                                     Dense="true"
+                                     Color="Color.Primary" />
+
+                        <MudCheckBox T="bool" @bind-Value="_showLevel"
+                                     Label="Lvl"
+                                     Dense="true"
+                                     Color="Color.Primary" />
+
+                        <MudCheckBox T="bool" @bind-Value="_showBold"
+                                     Label="Bold"
+                                     Dense="true"
+                                     Color="Color.Primary" />
+
+                        <MudCheckBox T="bool" @bind-Value="_showTotal"
+                                     Label="Total"
+                                     Dense="true"
+                                     Color="Color.Primary" />
+                    </MudPaper>
+
                     <MudDataGrid T="FinancialReportSnapshotLine"
                                  Items="_lines"
                                  Dense="true" Hover="true" Striped="true" Bordered="true"
                                  Elevation="0" FixedHeader="true"
-                                 Class="lines-table"
+                                 Class="@GetLinesTableClass()"
                                  Style="max-height: calc(100vh - 520px); overflow: auto;"
                                  RowClassFunc="LineRowClass"
                                  RowClick="OnLineClicked"
@@ -455,6 +496,18 @@
                             <PropertyColumn Property="x => x.IsBold" Title="@Localizer["FinancialReportSnapshot.Bold"]" />
                             <PropertyColumn Property="x => x.IsTotalLine" Title="@Localizer["FinancialReportSnapshot.Total"]" />
                             <PropertyColumn Property="x => x.Amount" Title="@Localizer["FinancialReportSnapshot.Amount"]" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                            <TemplateColumn Title="Sổ cái" CellClass="text-center" HeaderClass="text-center">
+                                <CellTemplate>
+                                    <MudButton Size="Size.Small"
+                                               Variant="Variant.Outlined"
+                                               Color="Color.Info"
+                                               StartIcon="@Icons.Material.Filled.OpenInNew"
+                                               Disabled="@(!CanOpenLedgerForLine(context.Item))"
+                                               OnClick="@(() => OpenLedgerForLineAsync(context.Item))">
+                                        Sổ cái
+                                    </MudButton>
+                                </CellTemplate>
+                            </TemplateColumn>
                         </Columns>
                         <NoRecordsContent>
                             <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">
@@ -466,6 +519,92 @@
             </MudStack>
         </MudItem>
     </MudGrid>
+
+
+    <div class="professional-print-report">
+        <div class="print-company-row">
+            <div>
+                <div class="print-company-name">CÔNG TY / COMPANY</div>
+                <div class="print-company-subtitle">Financial Report TT99</div>
+            </div>
+            <div class="print-meta-box">
+                <div>Ngày in: @DateTime.Now.ToString("dd/MM/yyyy HH:mm")</div>
+                <div>Người lập: @_snapshot.CreatedBy</div>
+            </div>
+        </div>
+
+        <div class="print-title-block">
+            <h1>@GetReportDisplayName(_snapshot.ReportCode)</h1>
+            <div class="print-period">
+                Kỳ báo cáo: @_snapshot.FiscalYear / @_snapshot.PeriodMonth.ToString("00")
+                &nbsp; | &nbsp; Book: @BookCodeOrDefault(_snapshot.BookCode)
+                &nbsp; | &nbsp; Trạng thái: @_snapshot.Status
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_snapshot.Note))
+            {
+                <div class="print-note">Ghi chú: @_snapshot.Note</div>
+            }
+        </div>
+
+        <div class="print-summary-row">
+            <div class="print-summary-card">
+                <span>@GetTotalLabel("Assets")</span>
+                <strong>@_snapshot.TotalAssets.ToString("N0")</strong>
+            </div>
+            <div class="print-summary-card">
+                <span>@GetTotalLabel("Liabilities")</span>
+                <strong>@_snapshot.TotalLiabilities.ToString("N0")</strong>
+            </div>
+            <div class="print-summary-card">
+                <span>@GetTotalLabel("Equity")</span>
+                <strong>@_snapshot.TotalEquity.ToString("N0")</strong>
+            </div>
+            <div class="print-summary-card">
+                <span>@GetTotalLabel("Difference")</span>
+                <strong>@_snapshot.Difference.ToString("N0")</strong>
+            </div>
+        </div>
+
+        <table class="print-table">
+            <thead>
+                <tr>
+                    <th style="width:8%;">Mã</th>
+                    <th style="width:62%;">Chỉ tiêu</th>
+                    <th style="width:30%;">Số tiền</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var line in _lines.OrderBy(x => x.SortOrder))
+                {
+                    <tr class="@(line.IsBold || line.IsTotalLine ? "print-bold" : string.Empty)">
+                        <td class="print-code">@line.LineCode</td>
+                        <td style="padding-left:@(line.LevelNo * 14 + 6)px">@line.LineName</td>
+                        <td class="print-amount">@line.Amount.ToString("N0")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <div class="print-signature-date">
+            Ngày ...... tháng ...... năm @_snapshot.FiscalYear
+        </div>
+
+        <div class="print-signature">
+            <div>
+                <strong>Người lập biểu</strong>
+                <span>(Ký, họ tên)</span>
+            </div>
+            <div>
+                <strong>Kế toán trưởng</strong>
+                <span>(Ký, họ tên)</span>
+            </div>
+            <div>
+                <strong>Giám đốc</strong>
+                <span>(Ký, họ tên, đóng dấu)</span>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <style>
@@ -523,9 +662,47 @@
                 width: 100%;
             }
 
+        .financial-report-snapshots-page .frs-column-toggle {
+            border-radius: 10px;
+            background: #fbfdff;
+            align-items: center;
+        }
+
+    .hide-col-code th:nth-child(1),
+    .hide-col-code td:nth-child(1) {
+        display: none !important;
+    }
+
+    .hide-col-parent th:nth-child(2),
+    .hide-col-parent td:nth-child(2) {
+        display: none !important;
+    }
+
+    .hide-col-sort th:nth-child(4),
+    .hide-col-sort td:nth-child(4) {
+        display: none !important;
+    }
+
+    .hide-col-level th:nth-child(5),
+    .hide-col-level td:nth-child(5) {
+        display: none !important;
+    }
+
+    .hide-col-bold th:nth-child(6),
+    .hide-col-bold td:nth-child(6) {
+        display: none !important;
+    }
+
+    .hide-col-total th:nth-child(7),
+    .hide-col-total td:nth-child(7) {
+        display: none !important;
+    }
+
 </style>
 
 @code {
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
     private const string PermissionMenuName = "FinancialReportSnapshotTT99";
 
     private enum HeaderSessionMode { None, NewDraft, EditingExisting }
@@ -547,7 +724,12 @@
     private List<M_FinancialReportTypes> _financialReportTypes = new();
     private List<CustomerOption> _customers = new();
     private string _selectedCustomerId = string.Empty;
-
+    private bool _showCode = false;
+    private bool _showParent = false;
+    private bool _showSort = false;
+    private bool _showLevel = false;
+    private bool _showBold = false;
+    private bool _showTotal = false;
     private sealed class CustomerOption
     {
         public Guid CustomerId { get; set; }
@@ -558,7 +740,19 @@
             ? CustomerName
             : $"{CustomerCode} - {CustomerName}";
     }
+    private string GetLinesTableClass()
+    {
+        var css = "lines-table";
 
+        if (!_showCode) css += " hide-col-code";
+        if (!_showParent) css += " hide-col-parent";
+        if (!_showSort) css += " hide-col-sort";
+        if (!_showLevel) css += " hide-col-level";
+        if (!_showBold) css += " hide-col-bold";
+        if (!_showTotal) css += " hide-col-total";
+
+        return css;
+    }
     private FinancialReportSnapshot _snapshot = new();
 
     private FinancialReportSnapshotLine _line = new();
@@ -681,6 +875,10 @@
                 ? id
                 : null;
         }
+    }
+    private async Task PrintCurrentSnapshotAsync()
+    {
+        await JS.InvokeVoidAsync("window.print");
     }
 
     private IEnumerable<FinancialReportSnapshot> VisibleSnapshots
@@ -1790,6 +1988,102 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
         };
     }
 
+    private bool CanOpenLedgerForLine(FinancialReportSnapshotLine line)
+    {
+        return !string.IsNullOrWhiteSpace(GuessAccountCodeFromLine(line));
+    }
+
+    private async Task OpenLedgerForLineAsync(FinancialReportSnapshotLine line)
+    {
+        var accountCode = GuessAccountCodeFromLine(line);
+
+        if (string.IsNullOrWhiteSpace(accountCode))
+        {
+            CallSnack("Không xác định được tài khoản từ dòng báo cáo này.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var book = NormalizeBookCode(_snapshot.BookCode);
+        var customerId = IsCustomerDebtReport(_snapshot.ReportCode) ? SelectedCustomerId : null;
+        var tabKey = $"GeneralLedgerEntries586_{_snapshot.FiscalYear}_{_snapshot.PeriodMonth}_{book}_{accountCode}_{customerId}";
+        var tabTitle = $"10.6 Sổ cái {accountCode} - {_snapshot.FiscalYear}/{_snapshot.PeriodMonth:00}";
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index>(0);
+            builder.AddAttribute(1, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialYear), _snapshot.FiscalYear);
+            builder.AddAttribute(2, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialMonth), _snapshot.PeriodMonth);
+            builder.AddAttribute(3, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialBook), book);
+            builder.AddAttribute(4, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialAccountCode), accountCode);
+            builder.AddAttribute(5, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialCustomerId), customerId);
+            builder.CloseComponent();
+        };
+
+        if (OnTabRequest.HasDelegate)
+        {
+            await OnTabRequest.InvokeAsync((tabKey, tabTitle, content));
+            return;
+        }
+
+        CallSnack("Không mở được tab Sổ cái. Cần truyền OnTabRequest từ NavMenu/MainLayout.", MudBlazor.Severity.Warning);
+    }
+
+    private static string? GuessAccountCodeFromLine(FinancialReportSnapshotLine line)
+    {
+        var code = (line.LineCode ?? string.Empty).Trim().ToUpperInvariant();
+        var name = (line.LineName ?? string.Empty).Trim().ToUpperInvariant();
+
+        if (code.StartsWith("B09_", StringComparison.OrdinalIgnoreCase))
+        {
+            var tail = code.Replace("B09_", string.Empty, StringComparison.OrdinalIgnoreCase);
+            if (tail.Length >= 3 && tail.Take(3).All(char.IsDigit))
+                return tail[..3];
+        }
+
+        if (code.Length >= 3 && code.Take(3).All(char.IsDigit))
+            return code[..3];
+
+        if (name.Contains("TK 131", StringComparison.OrdinalIgnoreCase))
+            return "131";
+
+        if (name.Contains("TK 331", StringComparison.OrdinalIgnoreCase))
+            return "331";
+
+        if (name.Contains("TK 131/331", StringComparison.OrdinalIgnoreCase))
+            return "131";
+
+        return code switch
+        {
+            // Income Statement TT99
+            "01" => "511",
+            "02" => "632",
+            "04" => "515",
+            "05" => "635",
+            "06" => "641",
+            "07" => "642",
+            "09" => "711",
+            "10" => "811",
+            "13" => "821",
+
+            // Cash Flow TT99
+            "B03_02" => "131",
+            "B03_03" => "331",
+            "B03_04" => "334",
+            "B03_05" => "635",
+            "B03_06" => "333",
+            "B03_31" => "211",
+            "B03_41" => "411",
+            "B03_42" => "341",
+
+            // Debt reports
+            "CN_100" => "131",
+            "CN_180" => "131",
+            "CN_200" => "331",
+            "CN_280" => "331",
+            _ => null
+        };
+    }
+
     private bool IsDebtLikeReport()
     {
         var reportCode = NormalizeReportCode(_snapshot.ReportCode);
@@ -2074,3 +2368,186 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
         Snackbar.Add(message, severity);
     }
 }
+<style>
+    .professional-print-report {
+        display: none;
+    }
+
+    @@media print {
+        body * {
+            visibility: hidden !important;
+        }
+
+        .professional-print-report,
+        .professional-print-report * {
+            visibility: visible !important;
+        }
+
+        .professional-print-report {
+            display: block !important;
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            padding: 12mm 14mm;
+            font-family: "Times New Roman", serif;
+            color: #000;
+            background: #fff;
+        }
+
+        .print-company-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+            font-size: 12px;
+        }
+
+        .print-company-name {
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .print-company-subtitle {
+            margin-top: 2px;
+            color: #333;
+        }
+
+        .print-meta-box {
+            text-align: right;
+            line-height: 1.5;
+        }
+
+        .print-title-block {
+            text-align: center;
+            margin: 14px 0 14px 0;
+        }
+
+            .print-title-block h1 {
+                font-size: 19px;
+                font-weight: 700;
+                text-transform: uppercase;
+                margin: 0 0 6px 0;
+            }
+
+        .print-period,
+        .print-note {
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .print-summary-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .print-summary-card {
+            border: 1px solid #000;
+            padding: 6px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            min-height: 42px;
+        }
+
+            .print-summary-card span {
+                font-size: 11px;
+            }
+
+            .print-summary-card strong {
+                font-size: 13px;
+                text-align: right;
+            }
+
+        .print-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            page-break-inside: auto;
+        }
+
+            .print-table thead {
+                display: table-header-group;
+            }
+
+            .print-table tr {
+                page-break-inside: avoid;
+                page-break-after: auto;
+            }
+
+            .print-table th,
+            .print-table td {
+                border: 1px solid #000;
+                padding: 5px 6px;
+                vertical-align: top;
+            }
+
+            .print-table th {
+                text-align: center;
+                font-weight: 700;
+                background: #f2f2f2 !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+        .print-code {
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .print-amount {
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .print-bold {
+            font-weight: 700;
+        }
+
+        .print-signature-date {
+            margin-top: 22px;
+            text-align: right;
+            font-style: italic;
+            font-size: 12px;
+        }
+
+        .print-signature {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-top: 18px;
+            text-align: center;
+            font-size: 12px;
+        }
+
+            .print-signature div {
+                min-height: 80px;
+            }
+
+            .print-signature span {
+                display: block;
+                margin-top: 4px;
+                font-style: italic;
+                font-weight: 400;
+            }
+
+        .mud-popover,
+        .mud-overlay,
+        .mud-button,
+        .mud-drawer,
+        .mud-appbar,
+        .mud-toolbar,
+        nav,
+        header,
+        aside {
+            display: none !important;
+        }
+
+        @@page {
+            size: A4 portrait;
+            margin: 10mm;
+        }
+    }
+</style>
