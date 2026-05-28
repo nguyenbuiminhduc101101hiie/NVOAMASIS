@@ -1,0 +1,536 @@
+@page "/accounting/t-account"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>T-Account Ledger</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="10.13 T-Account Ledger" Subtitle="Sổ cái chữ T lấy chi tiết từ General Ledger" />
+
+    <MudPaper Class="product-price-card pa-3 mb-3" Elevation="0">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="2">
+                <MudNumericField T="int" @bind-Value="_fiscalYear" Label="Year" Min="2000" Max="2100" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+
+            <MudItem xs="12" sm="2">
+                <MudNumericField T="int" @bind-Value="_periodMonth" Label="Month" Min="1" Max="12" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string" @bind-Value="_bookCode" Label="Book" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="3">
+                <MudSelect T="string"
+                           @bind-Value="_accountCode"
+                           Label="Account Code"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true"
+                           Clearable="true"
+                           Class="account-code-select"
+                           Style="width:100%;">
+                    @foreach (var acc in _accountCodes)
+                    {
+                        <MudSelectItem T="string" Value="@acc">@acc</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="3" Class="d-flex align-center ga-2">
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Secondary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FormatListBulleted"
+                           Disabled="_busy"
+                           OnClick="LoadAccountCodesAsync">
+                    Load Accounts
+                </MudButton>
+
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search"
+                           Disabled="_busy"
+                           OnClick="LoadTAccountAsync">
+                    Load
+                </MudButton>
+
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Info"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           Disabled="_busy"
+                           OnClick="ResetAsync">
+                    Reset
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Class="pa-3 mb-3" Elevation="0" Outlined="true">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="pa-2 text-center" Elevation="0" Outlined="true">
+                    <MudText Typo="Typo.caption">Total Debit</MudText>
+                    <MudText Typo="Typo.subtitle1" Class="fw-bold">@_totalDebit.ToString("N0")</MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="pa-2 text-center" Elevation="0" Outlined="true">
+                    <MudText Typo="Typo.caption">Total Credit</MudText>
+                    <MudText Typo="Typo.subtitle1" Class="fw-bold">@_totalCredit.ToString("N0")</MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="pa-2 text-center" Elevation="0" Outlined="true">
+                    <MudText Typo="Typo.caption">Balance</MudText>
+                    <MudText Typo="Typo.subtitle1" Class="fw-bold">@Math.Abs(_balance).ToString("N0")</MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="pa-2 text-center" Elevation="0" Outlined="true">
+                    <MudText Typo="Typo.caption">Balance Side</MudText>
+                    <MudText Typo="Typo.subtitle1" Class="fw-bold">@_balanceSide</MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Class="pa-3 mb-3" Elevation="0" Outlined="true">
+        <MudText Typo="Typo.h6" Align="Align.Center" Class="mb-2">
+            TK @_accountCodeDisplay - Sổ cái chữ T
+        </MudText>
+
+        <div class="t-account-wrap">
+            <div class="t-account-title">
+                <span>NỢ</span>
+                <span>CÓ</span>
+            </div>
+
+            <div class="t-account-body">
+                <div class="t-account-side debit-side">
+                    @if (_debitLines.Count == 0)
+                    {
+                        <div class="empty-side">Không có phát sinh Nợ</div>
+                    }
+                    else
+                    {
+                        @foreach (var item in _debitLines)
+                        {
+                            <div class="t-row">
+                                <div>
+                                    <b>@item.PostingDate.ToString("dd/MM/yyyy")</b>
+                                    <span>@item.VoucherNo</span>
+                                    <small>@item.Description</small>
+                                </div>
+                                <div class="amount">@item.Debit.ToString("N0")</div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="t-account-side credit-side">
+                    @if (_creditLines.Count == 0)
+                    {
+                        <div class="empty-side">Không có phát sinh Có</div>
+                    }
+                    else
+                    {
+                        @foreach (var item in _creditLines)
+                        {
+                            <div class="t-row">
+                                <div>
+                                    <b>@item.PostingDate.ToString("dd/MM/yyyy")</b>
+                                    <span>@item.VoucherNo</span>
+                                    <small>@item.Description</small>
+                                </div>
+                                <div class="amount">@item.Credit.ToString("N0")</div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+
+            <div class="t-account-footer">
+                <div>Tổng Nợ: @_totalDebit.ToString("N0")</div>
+                <div>Tổng Có: @_totalCredit.ToString("N0")</div>
+            </div>
+
+            <div class="t-account-balance">
+                Số dư cuối kỳ: @Math.Abs(_balance).ToString("N0") @_balanceSide
+            </div>
+        </div>
+    </MudPaper>
+
+    <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Chi tiết General Ledger</MudText>
+
+        <MudDataGrid T="TAccountLine"
+                     Items="_lines"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     Filterable="true"
+                     FilterMode="@DataGridFilterMode.ColumnFilterRow"
+                     Height="calc(100vh - 620px)"
+                     FixedHeader="true"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.BookCode" Title="Book" />
+                <PropertyColumn Property="x => x.PostingDate" Title="Posting Date" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.VoucherNo" Title="Voucher No" />
+                <PropertyColumn Property="x => x.AccountCode" Title="Account" />
+                <PropertyColumn Property="x => x.Description" Title="Description" />
+                <PropertyColumn Property="x => x.Debit" Title="Debit" Format="#,##0.00" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Credit" Title="Credit" Format="#,##0.00" CellClass="text-end" HeaderClass="text-end" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="TAccountLine" PageSizeOptions="new int[] { 10, 25, 50 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+<style>
+    .t-account-wrap {
+        border: 1px solid #d7dde8;
+        border-radius: 12px;
+        overflow: hidden;
+        background: white;
+    }
+
+    .t-account-title {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        background: linear-gradient(90deg, #087f8c, #2868d8);
+        color: white;
+        font-weight: 700;
+        text-align: center;
+    }
+
+        .t-account-title span {
+            padding: 10px;
+        }
+
+            .t-account-title span:first-child {
+                border-right: 2px solid white;
+            }
+
+    .t-account-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        min-height: 280px;
+    }
+
+    .t-account-side {
+        padding: 8px;
+    }
+
+    .debit-side {
+        border-right: 2px solid #2b6cb0;
+    }
+
+    .t-row {
+        display: grid;
+        grid-template-columns: 1fr 150px;
+        gap: 8px;
+        padding: 8px;
+        border-bottom: 1px solid #edf2f7;
+        align-items: center;
+    }
+
+        .t-row span {
+            margin-left: 8px;
+            color: #4a5568;
+        }
+
+        .t-row small {
+            display: block;
+            color: #718096;
+            margin-top: 2px;
+        }
+
+    .amount {
+        text-align: right;
+        font-weight: 700;
+    }
+
+    .empty-side {
+        color: #718096;
+        font-style: italic;
+        text-align: center;
+        padding: 40px 0;
+    }
+
+    .t-account-footer {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border-top: 1px solid #d7dde8;
+        background: #f8fafc;
+        font-weight: 700;
+    }
+
+        .t-account-footer div {
+            padding: 10px;
+            text-align: right;
+        }
+
+            .t-account-footer div:first-child {
+                border-right: 2px solid #2b6cb0;
+            }
+
+    .t-account-balance {
+        padding: 12px;
+        text-align: center;
+        font-size: 1.05rem;
+        font-weight: 800;
+        background: #ecfdf5;
+        color: #065f46;
+    }
+
+    .account-code-select {
+        width: 100%;
+        min-width: 100%;
+    }
+</style>
+
+@code {
+    private const string PermissionMenuName = "account_balance";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private int _fiscalYear = DateTime.UtcNow.Year;
+    private int _periodMonth = DateTime.UtcNow.Month;
+    private string _bookCode = "TAX";
+    private string _accountCode = "131";
+    private List<string> _accountCodes = new();
+
+    private List<TAccountLine> _lines = new();
+    private List<TAccountLine> _debitLines = new();
+    private List<TAccountLine> _creditLines = new();
+
+    private decimal _totalDebit;
+    private decimal _totalCredit;
+    private decimal _balance;
+    private string _balanceSide = "-";
+    private string _accountCodeDisplay => string.IsNullOrWhiteSpace(_accountCode) ? "ALL" : _accountCode.Trim();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+
+        await LoadAccountCodesAsync();
+        await LoadTAccountAsync();
+    }
+
+    private async Task ResetAsync()
+    {
+        _accountCode = "131";
+        _bookCode = "TAX";
+        _fiscalYear = DateTime.UtcNow.Year;
+        _periodMonth = DateTime.UtcNow.Month;
+
+        await LoadAccountCodesAsync();
+        await LoadTAccountAsync();
+    }
+
+
+    private async Task LoadAccountCodesAsync()
+    {
+        try
+        {
+            _busy = true;
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var ledgerQuery = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.FiscalYear == _fiscalYear
+                         && x.FiscalPeriod == _periodMonth
+                         && !string.IsNullOrWhiteSpace(x.AccountCode));
+
+            if (string.Equals(_bookCode, "TAX", StringComparison.OrdinalIgnoreCase))
+                ledgerQuery = ledgerQuery.Where(x => x.IsTaxBook == true);
+
+            if (string.Equals(_bookCode, "MGMT", StringComparison.OrdinalIgnoreCase))
+                ledgerQuery = ledgerQuery.Where(x => x.IsManagementBook == true);
+
+            var ledgerAccounts = await ledgerQuery
+                .Select(x => x.AccountCode!)
+                .Distinct()
+                .ToListAsync();
+
+            var balanceQuery = db.AccountBalances.AsNoTracking()
+                .Where(x => x.PeriodYear == _fiscalYear
+                         && x.PeriodMonth == _periodMonth
+                         && !string.IsNullOrWhiteSpace(x.AccountCode));
+
+            if (!string.Equals(_bookCode, "ALL", StringComparison.OrdinalIgnoreCase))
+                balanceQuery = balanceQuery.Where(x => x.BookCode == _bookCode);
+
+            var balanceAccounts = await balanceQuery
+                .Select(x => x.AccountCode!)
+                .Distinct()
+                .ToListAsync();
+
+            _accountCodes = ledgerAccounts
+                .Concat(balanceAccounts)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x)
+                .ToList();
+
+            if (_accountCodes.Count > 0 && !_accountCodes.Contains(_accountCode, StringComparer.OrdinalIgnoreCase))
+                _accountCode = _accountCodes.First();
+
+            CallSnack($"Loaded {_accountCodes.Count:N0} accounts.", MudBlazor.Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task LoadTAccountAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            CallSnack("Bạn không có quyền xem sổ cái.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_accountCode))
+        {
+            CallSnack("Vui lòng nhập Account Code.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var query = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.FiscalYear == _fiscalYear
+                         && x.FiscalPeriod == _periodMonth
+                         && x.AccountCode == _accountCode.Trim());
+
+            if (string.Equals(_bookCode, "TAX", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.IsTaxBook == true);
+
+            if (string.Equals(_bookCode, "MGMT", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.IsManagementBook == true);
+
+            var data = await query
+                .OrderBy(x => x.PostingDate)
+                .ThenBy(x => x.VoucherNo)
+                .Select(x => new TAccountLine
+                {
+                    Id = x.Id,
+                    BookCode =
+                        x.IsTaxBook == true && x.IsManagementBook == true ? "TAX/MGMT" :
+                        x.IsTaxBook == true ? "TAX" :
+                        x.IsManagementBook == true ? "MGMT" :
+                        "",
+                    PostingDate = x.PostingDate,
+                    VoucherNo = x.VoucherNo ?? string.Empty,
+                    AccountCode = x.AccountCode ?? string.Empty,
+                    Description = x.Description ?? string.Empty,
+                    Debit = x.Debit,
+                    Credit = x.Credit
+                })
+                .ToListAsync();
+            var balanceRow = await db.AccountBalances.AsNoTracking()
+.FirstOrDefaultAsync(x =>
+    x.PeriodYear == _fiscalYear &&
+    x.PeriodMonth == _periodMonth &&
+    x.AccountCode == _accountCode.Trim() &&
+    (_bookCode == "ALL" || x.BookCode == _bookCode));
+
+            if (balanceRow != null && balanceRow.OpeningBalance != 0)
+            {
+                var openingLine = new TAccountLine
+                {
+                    Id = Guid.NewGuid(),
+                    BookCode = balanceRow.BookCode ?? _bookCode,
+                    PostingDate = new DateTime(_fiscalYear, _periodMonth, 1),
+                    VoucherNo = "OPENING",
+                    AccountCode = balanceRow.AccountCode ?? _accountCode,
+                    Description = "Số dư đầu kỳ",
+                    Debit = balanceRow.OpeningBalance > 0 ? balanceRow.OpeningBalance : 0,
+                    Credit = balanceRow.OpeningBalance < 0 ? Math.Abs(balanceRow.OpeningBalance) : 0
+                };
+
+                data.Insert(0, openingLine);
+            }
+            _lines = data;
+            _debitLines = data.Where(x => x.Debit > 0).ToList();
+            _creditLines = data.Where(x => x.Credit > 0).ToList();
+
+            _totalDebit = data.Sum(x => x.Debit);
+            _totalCredit = data.Sum(x => x.Credit);
+            _balance = _totalDebit - _totalCredit;
+
+            _balanceSide = _balance switch
+            {
+                > 0 => "Nợ",
+                < 0 => "Có",
+                _ => "Cân"
+            };
+
+            CallSnack($"Loaded {_lines.Count:N0} ledger lines.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnack(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private sealed class TAccountLine
+    {
+        public Guid Id { get; set; }
+        public string BookCode { get; set; } = string.Empty;
+        public DateTime PostingDate { get; set; }
+        public string VoucherNo { get; set; } = string.Empty;
+        public string AccountCode { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Debit { get; set; }
+        public decimal Credit { get; set; }
+    }
+
+    private void CallSnack(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
