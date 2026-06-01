@@ -903,6 +903,9 @@
             "DEBT_BY_CUSTOMER_TT99"
                 => "dbo.usp_GenerateDebtCustomerDetail_TT99",
 
+            "TAX_REPORT_LOGISTICS_TT99"
+                => "dbo.usp_GenerateTaxReportLogistics_TT99",
+
             _ => null
         };
     }
@@ -912,6 +915,11 @@
         var code = NormalizeReportCode(reportCode);
         return code == "DEBT_CUSTOMER_DETAIL_TT99"
             || code == "DEBT_BY_CUSTOMER_TT99";
+    }
+
+    private static bool IsTaxReportLogisticsReport(string? reportCode)
+    {
+        return NormalizeReportCode(reportCode) == "TAX_REPORT_LOGISTICS_TT99";
     }
 
     private Guid? SelectedCustomerId
@@ -1030,6 +1038,16 @@
             SortOrder = 10
         };
 
+        if (NormalizeReportCode(_snapshot.ReportCode) == "TAX_REPORT_LOGISTICS_TT99")
+        {
+            _snapshot.TotalAssets = _lines.FirstOrDefault(x => x.LineCode == "TAX_012")?.Amount ?? 0;
+            _snapshot.TotalLiabilities = _lines.FirstOrDefault(x => x.LineCode == "TAX_022")?.Amount ?? 0;
+            _snapshot.TotalEquity = _lines.FirstOrDefault(x => x.LineCode == "TAX_034")?.Amount ?? 0;
+            _snapshot.TotalSource = _lines.FirstOrDefault(x => x.LineCode == "TAX_043")?.Amount ?? 0;
+            _snapshot.Difference = _snapshot.TotalSource;
+            return;
+        }
+
         _snapshot.TotalAssets = 0;
         _snapshot.TotalLiabilities = 0;
         _snapshot.TotalEquity = 0;
@@ -1072,6 +1090,18 @@
                 && x.ReportCode.Contains("TT99"))
             .OrderBy(x => x.SortOrder)
             .ToListAsync();
+
+        if (!_financialReportTypes.Any(x =>
+            string.Equals(NormalizeReportCode(x.ReportCode), "TAX_REPORT_LOGISTICS_TT99", StringComparison.OrdinalIgnoreCase)))
+        {
+            _financialReportTypes.Add(new M_FinancialReportTypes
+            {
+                ReportCode = "TAX_REPORT_LOGISTICS_TT99",
+                ReportName = "Báo cáo thuế công ty logistics TT99",
+                SortOrder = 990,
+                IsActive = true
+            });
+        }
     }
 
     private async Task LoadCustomersAsync()
@@ -1292,34 +1322,46 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
                 pPeriodMonth.Value = _snapshot.PeriodMonth;
                 cmd.Parameters.Add(pPeriodMonth);
 
-                var pBook = cmd.CreateParameter();
-                pBook.ParameterName = "@Book";
-                pBook.Value = bookCode;
-                cmd.Parameters.Add(pBook);
-
                 var pCompanyId = cmd.CreateParameter();
                 pCompanyId.ParameterName = "@CompanyId";
-                pCompanyId.Value = DBNull.Value;
+                pCompanyId.Value = _companyInfo?.CompanyID != Guid.Empty
+                    ? _companyInfo!.CompanyID
+                    : DBNull.Value;
                 cmd.Parameters.Add(pCompanyId);
 
-                var pCreatedBy = cmd.CreateParameter();
-                pCreatedBy.ParameterName = "@CreatedBy";
-                pCreatedBy.Value = createdBy;
-                cmd.Parameters.Add(pCreatedBy);
-
-                var pClearOld = cmd.CreateParameter();
-                pClearOld.ParameterName = "@ClearOld";
-                pClearOld.Value = true;
-                cmd.Parameters.Add(pClearOld);
-
-                if (IsCustomerDebtReport(reportCode))
+                if (IsTaxReportLogisticsReport(reportCode))
                 {
-                    var pCustomerId = cmd.CreateParameter();
-                    pCustomerId.ParameterName = "@CustomerId";
-                    pCustomerId.Value = SelectedCustomerId.HasValue
-                        ? SelectedCustomerId.Value
-                        : DBNull.Value;
-                    cmd.Parameters.Add(pCustomerId);
+                    var pBookCode = cmd.CreateParameter();
+                    pBookCode.ParameterName = "@BookCode";
+                    pBookCode.Value = bookCode;
+                    cmd.Parameters.Add(pBookCode);
+                }
+                else
+                {
+                    var pBook = cmd.CreateParameter();
+                    pBook.ParameterName = "@Book";
+                    pBook.Value = bookCode;
+                    cmd.Parameters.Add(pBook);
+
+                    var pCreatedBy = cmd.CreateParameter();
+                    pCreatedBy.ParameterName = "@CreatedBy";
+                    pCreatedBy.Value = createdBy;
+                    cmd.Parameters.Add(pCreatedBy);
+
+                    var pClearOld = cmd.CreateParameter();
+                    pClearOld.ParameterName = "@ClearOld";
+                    pClearOld.Value = true;
+                    cmd.Parameters.Add(pClearOld);
+
+                    if (IsCustomerDebtReport(reportCode))
+                    {
+                        var pCustomerId = cmd.CreateParameter();
+                        pCustomerId.ParameterName = "@CustomerId";
+                        pCustomerId.Value = SelectedCustomerId.HasValue
+                            ? SelectedCustomerId.Value
+                            : DBNull.Value;
+                        cmd.Parameters.Add(pCustomerId);
+                    }
                 }
 
                 await using var reader = await cmd.ExecuteReaderAsync();
@@ -1331,10 +1373,10 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
                         SnapshotId = _snapshot.Id,
                         ReportCode = reportCode,
                         LineCode = ReadString(reader, "LineCode") ?? string.Empty,
-                        ParentLineCode = ReadString(reader, "ParentCode"),
+                        ParentLineCode = ReadString(reader, "ParentCode", "ParentLineCode"),
                         LineName = ReadString(reader, "LineName") ?? string.Empty,
-                        SortOrder = ReadInt(reader, "SortOrder"),
-                        LevelNo = ReadInt(reader, "LevelNo"),
+                        SortOrder = ReadInt(reader, "SortOrder", "DisplayOrder"),
+                        LevelNo = ReadInt(reader, "LevelNo", "LineLevel"),
                         IsBold = ReadBool(reader, "IsBold"),
                         IsTotalLine = ReadBool(reader, "IsTotal", "IsTotalLine"),
                         Amount = ReadDecimal(reader, "Amount"),
@@ -1781,6 +1823,17 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
     {
         var reportCode = NormalizeReportCode(_snapshot.ReportCode);
 
+        if (NormalizeReportCode(_snapshot.ReportCode) == "TAX_REPORT_LOGISTICS_TT99")
+        {
+            _snapshot.TotalAssets = _lines.FirstOrDefault(x => x.LineCode == "TAX_012")?.Amount ?? 0;       // VAT output
+            _snapshot.TotalLiabilities = _lines.FirstOrDefault(x => x.LineCode == "TAX_022")?.Amount ?? 0;  // VAT input deductible
+            _snapshot.TotalEquity = _lines.FirstOrDefault(x => x.LineCode == "TAX_034")?.Amount ?? 0;       // temporary CIT
+            _snapshot.TotalSource = _lines.FirstOrDefault(x => x.LineCode == "TAX_043")?.Amount ?? 0;       // total tax payable
+            _snapshot.Difference = _snapshot.TotalSource;
+            return;
+        }
+
+
         if (reportCode == "FINANCIAL_POSITION_TT99"
             || reportCode == "FINANCIAL_POSITION_INTERIM_FULL_TT99"
             || reportCode == "FINANCIAL_POSITION_INTERIM_SUMMARY_TT99")
@@ -1808,30 +1861,6 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
             _snapshot.TotalSource = _lines.FirstOrDefault(x => x.LineCode == "KLT_500")?.Amount ?? 0;
             _snapshot.Difference = _lines.FirstOrDefault(x => x.LineCode == "KLT_999")?.Amount
                 ?? (_snapshot.TotalAssets - _snapshot.TotalSource);
-            return;
-        }
-
-        if (reportCode == "INCOME_STATEMENT_TT99"
-            || reportCode == "INCOME_STATEMENT_INTERIM_FULL_TT99"
-            || reportCode == "INCOME_STATEMENT_INTERIM_SUMMARY_TT99")
-        {
-            _snapshot.TotalAssets = _lines.FirstOrDefault(x => x.LineCode == "01")?.Amount
-                ?? _lines.FirstOrDefault(x => x.LineCode == "B02_10")?.Amount
-                ?? 0;
-
-            _snapshot.TotalLiabilities = _lines.FirstOrDefault(x => x.LineCode == "02")?.Amount
-                ?? _lines.FirstOrDefault(x => x.LineCode == "B02_11")?.Amount
-                ?? 0;
-
-            _snapshot.TotalEquity = _lines.FirstOrDefault(x => x.LineCode == "14")?.Amount
-                ?? _lines.FirstOrDefault(x => x.LineCode == "B02_60")?.Amount
-                ?? 0;
-
-            _snapshot.TotalSource = _lines.FirstOrDefault(x => x.LineCode == "12")?.Amount
-                ?? _lines.FirstOrDefault(x => x.LineCode == "B02_50")?.Amount
-                ?? 0;
-
-            _snapshot.Difference = _snapshot.TotalEquity;
             return;
         }
 
@@ -2127,6 +2156,18 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
             "B03_31" => "211",
             "B03_41" => "411",
             "B03_42" => "341",
+
+            // Tax logistics TT99
+            "TAX_011" => "511",
+            "TAX_012" => "3331",
+            "TAX_021" => "1331",
+            "TAX_022" => "1331",
+            "TAX_031" => "511",
+            "TAX_032" => "632",
+            "TAX_034" => "3334",
+            "TAX_041" => "3331",
+            "TAX_042" => "3334",
+            "TAX_043" => "333",
 
             // Debt reports
             "CN_100" => "131",
