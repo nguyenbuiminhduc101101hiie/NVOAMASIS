@@ -1,0 +1,403 @@
+@page "/accounting/tax/vat-reconciliation"
+@page "/VATReconciliation"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>10.12.3 VAT Reconciliation</PageTitle>
+
+<div class="product-price-page vat-recon-page">
+    <PpScreenHeader Title="10.12.3 VAT Reconciliation" Subtitle="Đối chiếu thuế GTGT đầu vào / đầu ra · VAT reconciliation">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">Load</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="ResetFilterAsync" Disabled="_busy">Reset</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2 filter-card" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày" @bind-Date="_fromDate" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày" @bind-Date="_toDate" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Year" @bind-Value="_fiscalYear" Variant="Variant.Outlined" Margin="Margin.Dense" Min="2000" Max="2100" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Month" @bind-Value="_periodMonth" Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="12" />
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudSelect T="string" Label="Book" @bind-Value="_book" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="5">
+                <MudTextField @bind-Value="_search" Label="Search" Placeholder="Voucher, tài khoản, khách hàng, diễn giải..." Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2" Class="mb-2">
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="pa-3 recon-card input-card" Elevation="0">
+                <MudText Typo="Typo.caption">VAT Input Deductible</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@_vatInput.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">TK 133*</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="pa-3 recon-card output-card" Elevation="0">
+                <MudText Typo="Typo.caption">VAT Output Payable</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@_vatOutput.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">TK 3331*</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="pa-3 recon-card net-card" Elevation="0">
+                <MudText Typo="Typo.caption">Net VAT Position</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold" Color="@(_netVat >= 0 ? Color.Error : Color.Success)">
+                    @Math.Abs(_netVat).ToString("N0") @_netVatLabel
+                </MudText>
+                <MudText Typo="Typo.caption">Output - Input</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="pa-3 recon-card status-card" Elevation="0">
+                <MudText Typo="Typo.caption">Reconciliation Status</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold" Color="@(_difference == 0 ? Color.Success : Color.Warning)">
+                    @(_difference == 0 ? "Balanced" : "Check")
+                </MudText>
+                <MudText Typo="Typo.caption">Diff: @_difference.ToString("N0")</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">VAT Summary by Account</MudText>
+        <MudTable T="VatAccountSummaryRow" Items="_summaryRows" Dense="true" Hover="true" Bordered="true" Class="summary-table">
+            <HeaderContent>
+                <MudTh>Account</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh align="right">Debit</MudTh>
+                <MudTh align="right">Credit</MudTh>
+                <MudTh align="right">Net</MudTh>
+                <MudTh>Meaning</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.AccountCode</MudTd>
+                <MudTd>@context.Type</MudTd>
+                <MudTd align="right">@context.Debit.ToString("N0")</MudTd>
+                <MudTd align="right">@context.Credit.ToString("N0")</MudTd>
+                <MudTd align="right">@context.Net.ToString("N0")</MudTd>
+                <MudTd>@context.Meaning</MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+
+    <MudPaper Class="product-price-card pa-2" Elevation="0">
+        <MudDataGrid @key="_gridKey" T="VatReconRow" Items="VisibleItems" Dense="true" Striped="true" Hover="true" Bordered="true"
+                     Filterable="true" FilterMode="@DataGridFilterMode.ColumnFilterRow" ColumnResizeMode="ResizeMode.Column"
+                     FixedHeader="true" Height="calc(100vh - 520px)" Class="vat-recon-grid" Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.PostingDate" Title="Ngày HT" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.VoucherNo" Title="Số chứng từ" />
+                <TemplateColumn Title="Voucher" Filterable="false" Sortable="false">
+                    <CellTemplate>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.OpenInNew" OnClick="@(() => OpenVoucher(context.Item))">Xem</MudButton>
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.VoucherDate" Title="Ngày CT" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.AccountCode" Title="TK Thuế" />
+                <PropertyColumn Property="x => x.TaxType" Title="Loại thuế" />
+                <PropertyColumn Property="x => x.CustomerName" Title="Đối tượng" />
+                <PropertyColumn Property="x => x.Description" Title="Diễn giải" />
+                <PropertyColumn Property="x => x.Debit" Title="Nợ" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Credit" Title="Có" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.NetAmount" Title="Net" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Book" Title="Book" />
+                <PropertyColumn Property="x => x.SourceName" Title="Nguồn" />
+                <PropertyColumn Property="x => x.CreatedBy" Title="Người tạo" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="VatReconRow" PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    private const string PermissionMenuName = "GeneralLedgerEntries";
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private int _gridKey;
+    private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _toDate = DateTime.Today;
+    private int? _fiscalYear = DateTime.Today.Year;
+    private int? _periodMonth = DateTime.Today.Month;
+    private string _book = "TAX";
+    private string _search = string.Empty;
+
+    private decimal _vatInput;
+    private decimal _vatOutput;
+    private decimal _netVat;
+    private decimal _difference;
+    private string _netVatLabel = "Payable";
+
+    private List<VatReconRow> _rows = new();
+    private List<VatAccountSummaryRow> _summaryRows = new();
+
+    private IEnumerable<VatReconRow> VisibleItems => _rows.Where(MatchesSearch);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task ResetFilterAsync()
+    {
+        _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDate = DateTime.Today;
+        _fiscalYear = DateTime.Today.Year;
+        _periodMonth = DateTime.Today.Month;
+        _book = "TAX";
+        _search = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem báo cáo thuế.", MudBlazor.Severity.Warning);
+            _rows.Clear();
+            _summaryRows.Clear();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var query = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.AccountCode.StartsWith("133") || x.AccountCode.StartsWith("3331"));
+
+            if (_fromDate.HasValue) query = query.Where(x => x.PostingDate >= _fromDate.Value.Date);
+            if (_toDate.HasValue) query = query.Where(x => x.PostingDate <= _toDate.Value.Date);
+            if (_fiscalYear.HasValue) query = query.Where(x => x.FiscalYear == _fiscalYear.Value);
+            if (_periodMonth.HasValue) query = query.Where(x => x.FiscalPeriod == _periodMonth.Value);
+            if (_book == "TAX") query = query.Where(x => x.IsTaxBook == true);
+            if (_book == "MGMT") query = query.Where(x => x.IsManagementBook == true);
+
+            var data = await query.OrderBy(x => x.PostingDate).ThenBy(x => x.VoucherNo).ThenBy(x => x.CreatedAt).Take(10000).ToListAsync();
+
+            var customerIds = data.Where(x => x.CustomerId.HasValue && x.CustomerId.Value != Guid.Empty).Select(x => x.CustomerId!.Value).Distinct().ToHashSet();
+            var customerMap = new Dictionary<Guid, string>();
+            if (customerIds.Count > 0)
+            {
+                var customers = await db.Customer.AsNoTracking()
+                    .Where(c => customerIds.Contains(c.Customer_ID))
+                    .Select(c => new { c.Customer_ID, c.Customer_Code, c.COMPANY })
+                    .ToListAsync();
+
+                customerMap = customers.GroupBy(x => x.Customer_ID).ToDictionary(
+                    g => g.Key,
+                    g =>
+                    {
+                        var c = g.First();
+                        return string.IsNullOrWhiteSpace(c.Customer_Code) ? (c.COMPANY ?? string.Empty) : $"{c.Customer_Code} - {c.COMPANY}";
+                    });
+            }
+
+            var sourceMap = await LoadSourceMapAsync(db, data);
+
+            _rows = data.Select(x =>
+            {
+                var isInput = x.AccountCode?.StartsWith("133") == true;
+                return new VatReconRow
+                {
+                    Id = x.Id,
+                    VoucherId = x.VoucherId,
+                    PostingDate = x.PostingDate,
+                    VoucherNo = x.VoucherNo ?? string.Empty,
+                    VoucherDate = x.VoucherDate,
+                    AccountCode = x.AccountCode ?? string.Empty,
+                    TaxType = isInput ? "VAT Input" : "VAT Output",
+                    CustomerName = x.CustomerId.HasValue && customerMap.TryGetValue(x.CustomerId.Value, out var customerName) ? customerName : string.Empty,
+                    Description = x.Description ?? string.Empty,
+                    Debit = x.Debit,
+                    Credit = x.Credit,
+                    NetAmount = isInput ? x.Debit - x.Credit : x.Credit - x.Debit,
+                    Book = x.IsTaxBook == true && x.IsManagementBook == true ? "TAX/MGMT" : x.IsTaxBook == true ? "TAX" : x.IsManagementBook == true ? "MGMT" : string.Empty,
+                    SourceName = !string.IsNullOrWhiteSpace(x.SourceId) && sourceMap.TryGetValue(x.SourceId.Trim(), out var sourceName) ? sourceName : x.SourceModule ?? string.Empty,
+                    CreatedBy = x.CreatedBy ?? string.Empty
+                };
+            }).ToList();
+
+            _vatInput = _rows.Where(x => x.AccountCode.StartsWith("133")).Sum(x => x.Debit - x.Credit);
+            _vatOutput = _rows.Where(x => x.AccountCode.StartsWith("3331")).Sum(x => x.Credit - x.Debit);
+            _netVat = _vatOutput - _vatInput;
+            _netVatLabel = _netVat >= 0 ? "Payable" : "Deductible";
+            _difference = Math.Round(_rows.Sum(x => x.Debit) - _rows.Sum(x => x.Credit), 2);
+
+            _summaryRows = _rows
+                .GroupBy(x => x.AccountCode)
+                .Select(g =>
+                {
+                    var isInput = g.Key.StartsWith("133");
+                    var debit = g.Sum(x => x.Debit);
+                    var credit = g.Sum(x => x.Credit);
+                    return new VatAccountSummaryRow
+                    {
+                        AccountCode = g.Key,
+                        Type = isInput ? "Input VAT" : "Output VAT",
+                        Debit = debit,
+                        Credit = credit,
+                        Net = isInput ? debit - credit : credit - debit,
+                        Meaning = isInput ? "Thuế GTGT được khấu trừ" : "Thuế GTGT phải nộp"
+                    };
+                })
+                .OrderBy(x => x.AccountCode)
+                .ToList();
+
+            _gridKey++;
+            Snackbar.Add($"Loaded {_rows.Count:N0} VAT reconciliation lines.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<Dictionary<string, string>> LoadSourceMapAsync(AppDbContext db, List<M_GeneralLedgerEntries> data)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var sourceIdsText = data.Where(x => !string.IsNullOrWhiteSpace(x.SourceId)).Select(x => x.SourceId!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (sourceIdsText.Count == 0) return result;
+
+        var sourceVouchers = await db.AccountingVouchers.AsNoTracking()
+            .Where(v => !string.IsNullOrWhiteSpace(v.SourceId) && sourceIdsText.Contains(v.SourceId))
+            .Select(v => new { v.SourceId, v.VoucherNo, v.Description })
+            .ToListAsync();
+
+        foreach (var v in sourceVouchers)
+        {
+            if (string.IsNullOrWhiteSpace(v.SourceId)) continue;
+            result[v.SourceId.Trim()] = string.IsNullOrWhiteSpace(v.Description) ? v.VoucherNo : $"{v.VoucherNo} - {v.Description}";
+        }
+
+        return result;
+    }
+
+    private async Task OpenVoucher(VatReconRow row)
+    {
+        if (row == null || row.VoucherId == Guid.Empty)
+            return;
+
+        if (OnTabRequest.HasDelegate)
+        {
+            await OnTabRequest.InvokeAsync((
+                $"AccountingVouchers584_{row.VoucherId}",
+                $"10.4 Chứng Từ Kế Toán - {row.VoucherNo}",
+                builder =>
+                {
+                    builder.OpenComponent<Components.Accounting.Pages.AccountingVouchers_5_8_4_Index>(0);
+                    builder.AddAttribute(1, "InitialVoucherId", row.VoucherId);
+                    builder.CloseComponent();
+                }
+            ));
+        }
+        else
+        {
+            Snackbar.Add("Không mở được tab Voucher vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+        }
+    }
+
+    private bool MatchesSearch(VatReconRow x)
+    {
+        if (string.IsNullOrWhiteSpace(_search)) return true;
+        var key = _search.Trim();
+        return x.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.PostingDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.VoucherDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.AccountCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.TaxType.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.CustomerName.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Description.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Debit.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Credit.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.NetAmount.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Book.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.SourceName.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.CreatedBy.Contains(key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class VatReconRow
+    {
+        public Guid Id { get; set; }
+        public Guid VoucherId { get; set; }
+        public DateTime PostingDate { get; set; }
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime VoucherDate { get; set; }
+        public string AccountCode { get; set; } = string.Empty;
+        public string TaxType { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Debit { get; set; }
+        public decimal Credit { get; set; }
+        public decimal NetAmount { get; set; }
+        public string Book { get; set; } = string.Empty;
+        public string SourceName { get; set; } = string.Empty;
+        public string CreatedBy { get; set; } = string.Empty;
+    }
+
+    private sealed class VatAccountSummaryRow
+    {
+        public string AccountCode { get; set; } = string.Empty;
+        public string Type { get; set; } = string.Empty;
+        public decimal Debit { get; set; }
+        public decimal Credit { get; set; }
+        public decimal Net { get; set; }
+        public string Meaning { get; set; } = string.Empty;
+    }
+}
+
+<style>
+    .vat-recon-page { background: #f4fdf7; }
+    .vat-recon-page .product-price-card { border: 1px solid #d1fae5; border-radius: 14px; box-shadow: 0 8px 20px rgba(22, 101, 52, 0.06); }
+    .vat-recon-page .filter-card { background: linear-gradient(90deg, #ffffff, #ecfdf5); }
+    .vat-recon-page .recon-card { border-radius: 14px; border: 1px solid #d1fae5; min-height: 92px; box-shadow: 0 8px 20px rgba(22, 101, 52, 0.05); }
+    .vat-recon-page .input-card { background: #eff6ff; border-color: #bfdbfe; }
+    .vat-recon-page .output-card { background: #fff7ed; border-color: #fed7aa; }
+    .vat-recon-page .net-card { background: #fef2f2; border-color: #fecaca; }
+    .vat-recon-page .status-card { background: #f0fdf4; border-color: #bbf7d0; }
+    .vat-recon-page .summary-table .mud-table-cell { padding: 5px 8px !important; white-space: nowrap; }
+    .vat-recon-page .vat-recon-grid { font-size: 0.82rem; }
+    .vat-recon-page .vat-recon-grid .mud-table-container { overflow-x: auto; }
+    .vat-recon-page .vat-recon-grid .mud-table-root .mud-table { width: max-content !important; min-width: 100%; }
+    .vat-recon-page .vat-recon-grid .mud-table-cell,
+    .vat-recon-page .vat-recon-grid td,
+    .vat-recon-page .vat-recon-grid th { padding: 4px 8px !important; white-space: nowrap; }
+</style>
