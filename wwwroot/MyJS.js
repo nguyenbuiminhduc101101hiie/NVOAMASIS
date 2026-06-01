@@ -163,3 +163,37 @@ window.nvoccLoadShipmentColorSettings = () => {
         );
     }
 };
+
+window.nvoccBkavInvoiceCredentialStorageKey = "nvoamasis.bkavInvoice.credentials";
+
+window.nvoccGetBkavInvoiceCredentials = () => {
+    try {
+        const raw = localStorage.getItem(window.nvoccBkavInvoiceCredentialStorageKey);
+        if (!raw) return null;
+
+        const data = JSON.parse(raw);
+        if (!data || typeof data !== "object") return null;
+
+        return {
+            partnerGuid: typeof data.partnerGuid === "string" ? data.partnerGuid : "",
+            partnerToken: typeof data.partnerToken === "string" ? data.partnerToken : "",
+            savedAt: typeof data.savedAt === "string" ? data.savedAt : ""
+        };
+    } catch (e) {
+        return null;
+    }
+};
+
+window.nvoccSetBkavInvoiceCredentials = (partnerGuid, partnerToken) => {
+    const data = {
+        partnerGuid: partnerGuid || "",
+        partnerToken: partnerToken || "",
+        savedAt: new Date().toISOString()
+    };
+    localStorage.setItem(window.nvoccBkavInvoiceCredentialStorageKey, JSON.stringify(data));
+    return data;
+};
+
+window.nvoccClearBkavInvoiceCredentials = () => {
+    localStorage.removeItem(window.nvoccBkavInvoiceCredentialStorageKey);
+};

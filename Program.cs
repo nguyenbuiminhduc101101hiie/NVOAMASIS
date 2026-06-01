@@ -136,6 +136,8 @@ builder.Services.AddScoped<DNTUServices>();
 builder.Services.AddScoped<PhieuThu_Chi_Services>();
 builder.Services.AddScoped<Danhmuctaikhoan_services>();
 builder.Services.AddScoped<TaxServices>();
+builder.Services.Configure<BkavInvoiceSettings>(builder.Configuration.GetSection("BkavInvoice"));
+builder.Services.AddHttpClient<BkavInvoiceService>();
 builder.Services.AddScoped<ExportCostPriceServices>();
 builder.Services.AddScoped<IssueReportServices>();
 builder.Services.AddSignalR();

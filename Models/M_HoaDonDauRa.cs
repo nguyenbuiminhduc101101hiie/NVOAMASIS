@@ -26,6 +26,17 @@ namespace NVOAMASIS.Models
         public bool? continued { get; set; } = true;
         public string? ghiChu { get; set; }
         public int? soThuTu { get; set; }
-        public double? tigia { get; set; }  
+        public double? tigia { get; set; }
+        public long? BkavPartnerInvoiceID { get; set; }
+        public string? BkavPartnerInvoiceStringID { get; set; }
+        public string? BkavInvoiceGUID { get; set; }
+        public int? BkavInvoiceNo { get; set; }
+        public string? BkavInvoiceForm { get; set; }
+        public string? BkavInvoiceSerial { get; set; }
+        public string? BkavInvoiceLink { get; set; }
+        public string? BkavPdfPath { get; set; }
+        public string? BkavXmlPath { get; set; }
+        public int? BkavStatusID { get; set; }
+        public string? BkavLastMessage { get; set; }
     }
 }
