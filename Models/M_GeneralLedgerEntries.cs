@@ -35,7 +35,6 @@ namespace NVOAMASIS.Models
         public Guid? ShipmentId { get; set; }
         public Guid? ContractId { get; set; }
         public string? BranchCode { get; set; }
-
         public string? Description { get; set; }
         public string? SourceModule { get; set; }
         public string? SourceId { get; set; }

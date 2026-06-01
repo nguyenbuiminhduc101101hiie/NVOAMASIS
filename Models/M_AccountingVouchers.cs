@@ -31,7 +31,7 @@ namespace NVOAMASIS.Models
 
         public string? BookScope { get; set; }
         public string? SourceModule { get; set; }
-        public Guid? SourceId { get; set; }
+        public string? SourceId { get; set; }
 
         public string CreatedBy { get; set; } = string.Empty;
         public DateTime CreatedDate { get; set; }
