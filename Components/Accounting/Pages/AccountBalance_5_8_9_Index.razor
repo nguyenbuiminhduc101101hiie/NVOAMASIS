@@ -27,13 +27,55 @@
 
     <MudPaper Class="product-price-card pa-3 mb-3" Elevation="0">
         <MudGrid>
-            <MudItem xs="12" sm="3">
-                <MudNumericField T="int" @bind-Value="_fiscalYear" Label="@Localizer["AccountBalance.FiscalYear"]" Min="2000" Max="2100" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            <MudItem xs="12" sm="2">
+                <MudNumericField T="int"
+                                 Value="_fiscalYear"
+                                 ValueChanged="OnFiscalYearChangedAsync"
+                                 Label="@Localizer["AccountBalance.FiscalYear"]"
+                                 Min="2000"
+                                 Max="2100"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense" />
             </MudItem>
-            <MudItem xs="12" sm="3">
-                <MudNumericField T="int" @bind-Value="_periodMonth" Label="@Localizer["AccountBalance.PeriodMonth"]" Min="1" Max="12" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            <MudItem xs="12" sm="2">
+                <MudNumericField T="int"
+                                 Value="_periodMonth"
+                                 ValueChanged="OnPeriodMonthChangedAsync"
+                                 Label="@Localizer["AccountBalance.PeriodMonth"]"
+                                 Min="1"
+                                 Max="12"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense" />
             </MudItem>
-            <MudItem xs="12" sm="6" Class="d-flex align-center ga-2">
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày"
+                               Date="_periodStartDate"
+                               ReadOnly="true"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày"
+                               Date="_periodEndDate"
+                               ReadOnly="true"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           @bind-Value="_bookFilter"
+                           Label="Book"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="12" Class="d-flex align-center ga-2 flex-wrap">
                 <MudButton Variant="Variant.Filled"
                            Color="Color.Primary"
                            Size="Size.Small"
@@ -381,6 +423,9 @@
     private string _bookFilter = "ALL";
     private int _fiscalYear = DateTime.UtcNow.Year;
     private int _periodMonth = DateTime.UtcNow.Month;
+    private DateTime? _periodStartDate;
+    private DateTime? _periodEndDate;
+
 
     private int _carryFromYear = DateTime.UtcNow.AddMonths(-1).Year;
     private int _carryFromMonth = DateTime.UtcNow.AddMonths(-1).Month;
@@ -846,7 +891,80 @@ END";
     {
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
+
+        await LoadAccountingPeriodDatesAsync();
         await LoadAsync();
+    }
+
+
+    private async Task OnFiscalYearChangedAsync(int value)
+    {
+        _fiscalYear = value;
+        await LoadAccountingPeriodDatesAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnPeriodMonthChangedAsync(int value)
+    {
+        _periodMonth = value;
+        await LoadAccountingPeriodDatesAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAccountingPeriodDatesAsync()
+    {
+        if (_fiscalYear < 2000 || _periodMonth < 1 || _periodMonth > 12)
+            return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var conn = db.Database.GetDbConnection();
+            var shouldClose = conn.State != System.Data.ConnectionState.Open;
+
+            if (shouldClose)
+                await conn.OpenAsync();
+
+            try
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+SELECT TOP (1)
+    start_date,
+    end_date
+FROM dbo.accounting_period
+WHERE fiscal_year = @fiscal_year
+  AND period_month = @period_month
+ORDER BY start_date;";
+                cmd.CommandType = System.Data.CommandType.Text;
+
+                AddSqlParameter(cmd, "@fiscal_year", _fiscalYear);
+                AddSqlParameter(cmd, "@period_month", _periodMonth);
+
+                await using var reader = await cmd.ExecuteReaderAsync();
+
+                if (await reader.ReadAsync())
+                {
+                    _periodStartDate = reader.IsDBNull(0) ? null : reader.GetDateTime(0).Date;
+                    _periodEndDate = reader.IsDBNull(1) ? null : reader.GetDateTime(1).Date;
+                }
+                else
+                {
+                    _periodStartDate = new DateTime(_fiscalYear, _periodMonth, 1);
+                    _periodEndDate = _periodStartDate.Value.AddMonths(1).AddDays(-1);
+                    CallSnack($"Không tìm thấy kỳ kế toán {_periodMonth:00}/{_fiscalYear}; dùng ngày mặc định theo tháng.", MudBlazor.Severity.Warning);
+                }
+            }
+            finally
+            {
+                if (shouldClose)
+                    await conn.CloseAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnack($"Không load được ngày kỳ kế toán: {ex.Message}", MudBlazor.Severity.Error);
+        }
     }
 
     private async Task LoadAsync()
@@ -861,13 +979,26 @@ END";
         try
         {
             _busy = true;
+
             await using var db = await DbFactory.CreateDbContextAsync();
-            _items = await db.AccountBalances.AsNoTracking()
+
+            var query = db.AccountBalances.AsNoTracking()
                 .Include(x => x.GlSnapshotLines)
-                .Where(x => x.PeriodYear == _fiscalYear && x.PeriodMonth == _periodMonth)
+                .Where(x => x.PeriodYear == _fiscalYear
+                         && x.PeriodMonth == _periodMonth);
+
+            if (!string.Equals(_bookFilter, "ALL", StringComparison.OrdinalIgnoreCase))
+            {
+                var book = NormalizeBookCode(_bookFilter);
+                query = query.Where(x => x.BookCode == book);
+            }
+
+            _items = await query
                 .OrderBy(x => x.BookCode)
                 .ThenBy(x => x.AccountCode)
                 .ToListAsync();
+
+            CallSnack($"Loaded {_items.Count:N0} dòng - Book: {_bookFilter}.", MudBlazor.Severity.Info);
         }
         catch (Exception ex)
         {
@@ -1217,6 +1348,7 @@ ORDER BY created_at DESC, book_code, account_code;";
 
             _fiscalYear = _carryToYear;
             _periodMonth = _carryToMonth;
+            await LoadAccountingPeriodDatesAsync();
 
             CallSnack($"Kết chuyển thành công từ {_carryFromYear}/{_carryFromMonth:00} sang {_carryToYear}/{_carryToMonth:00}.", MudBlazor.Severity.Success);
             await LoadAsync();
@@ -1249,244 +1381,42 @@ ORDER BY created_at DESC, book_code, account_code;";
         try
         {
             _busy = true;
+
             await using var db = await DbFactory.CreateDbContextAsync();
+            var conn = db.Database.GetDbConnection();
+            var shouldClose = conn.State != System.Data.ConnectionState.Open;
 
-            var glRows = await (
-                from gl in db.GeneralLedgerEntries.AsNoTracking()
-                join fam in db.FinancialReportAccountMappings.AsNoTracking()
-                    on new { gl.AccountCode, gl.CompanyId } equals new { fam.AccountCode, fam.CompanyId }
-                join rl in db.FinancialReportLines.AsNoTracking()
-                    on fam.ReportLineId equals rl.Id
-                where gl.FiscalYear == _fiscalYear
-                      && gl.FiscalPeriod == _periodMonth
-                      && fam.Active
-                      && rl.Active
+            if (shouldClose)
+                await conn.OpenAsync();
 
-                select new { gl, fam, rl })
-                .ToListAsync();
-
-            var bookRows = glRows
-                .SelectMany(x =>
-                {
-                    var books = new List<string>();
-
-                    if (x.gl.IsTaxBook == true)
-                        books.Add("TAX");
-
-                    if (x.gl.IsManagementBook == true)
-                        books.Add("MGMT");
-
-                    // Do not force a fallback book.
-                    // If both IsTaxBook and IsManagementBook are false, the GL line is ignored.
-                    return books.Select(bookCode => new
-                    {
-                        BookCode = bookCode,
-                        x.gl,
-                        x.fam,
-                        x.rl
-                    });
-                })
-                .ToList();
-
-            var groups = bookRows
-                .GroupBy(x => new
-                {
-                    x.BookCode,
-                    x.gl.AccountCode
-                })
-                .ToList();
-
-            if (groups.Count == 0)
+            try
             {
-                CallSnack(Localizer["AccountBalance.NoGlForPeriod"], MudBlazor.Severity.Info);
-                return;
-            }
+                var booksToCalculate = string.Equals(_bookFilter, "ALL", StringComparison.OrdinalIgnoreCase)
+                    ? new[] { "TAX", "MGMT" }
+                    : new[] { NormalizeBookCode(_bookFilter) };
 
-            var mappingByCode = (await db.AccountMappings.ToListAsync())
-                .ToDictionary(x => x.AccountCode, StringComparer.OrdinalIgnoreCase);
-
-            var mappingsCreated = 0;
-
-            foreach (var g in groups)
-            {
-                var code = g.Key.AccountCode;
-                if (mappingByCode.ContainsKey(code))
-                    continue;
-
-                var sample = g.First();
-                var newMapping = new M_AccountMapping
+                foreach (var bookCode in booksToCalculate)
                 {
-                    AccountCode = code,
-                    AccountName = code,
-                    StatementType = BalanceSheetStatementType,
-                    BsSection = sample.rl.Section,
-                    NormalBalance = sample.fam.NormalBalance ?? "Debit",
-                    IsActive = true
-                };
+                    await using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "dbo.usp_CalculateAccountBalance_FromLedger";
+                    cmd.CommandType = System.Data.CommandType.StoredProcedure;
+                    cmd.CommandTimeout = 180;
 
-                db.AccountMappings.Add(newMapping);
-                mappingByCode[code] = newMapping;
-                mappingsCreated++;
-            }
+                    AddSqlParameter(cmd, "@FiscalYear", _fiscalYear);
+                    AddSqlParameter(cmd, "@PeriodMonth", _periodMonth);
+                    AddSqlParameter(cmd, "@CompanyId", DBNull.Value);
+                    AddSqlParameter(cmd, "@BookCode", bookCode);
 
-            if (mappingsCreated > 0)
-                await db.SaveChangesAsync();
-
-            var affectedKeys = groups
-                .Select(g => BalanceKey(g.Key.BookCode, g.Key.AccountCode))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            if (affectedKeys.Count > 0)
-            {
-                var snapshotRowsInPeriod = await (
-                        from line in db.AccountBalanceGlLines
-                        join bal in db.AccountBalances on line.AccountBalanceId equals bal.Id
-                        where bal.PeriodYear == _fiscalYear
-                              && bal.PeriodMonth == _periodMonth
-                        select new
-                        {
-                            line,
-                            bal.AccountCode,
-                            bal.BookCode
-                        })
-                    .ToListAsync();
-
-                var linesToClear = snapshotRowsInPeriod
-                    .Where(x => affectedKeys.Contains(BalanceKey(x.BookCode, x.AccountCode)))
-                    .Select(x => x.line)
-                    .ToList();
-
-                if (linesToClear.Count > 0)
-                    db.AccountBalanceGlLines.RemoveRange(linesToClear);
-            }
-
-            var existingBalances = await db.AccountBalances
-                .Where(x => x.PeriodYear == _fiscalYear && x.PeriodMonth == _periodMonth)
-                .ToListAsync();
-
-            var balanceByBookAndCode = existingBalances.ToDictionary(
-                x => BalanceKey(x.BookCode, x.AccountCode),
-                StringComparer.OrdinalIgnoreCase);
-
-            var prevDate = new DateTime(_fiscalYear, _periodMonth, 1).AddMonths(-1);
-            var previousBalances = await db.AccountBalances.AsNoTracking()
-                .Where(x => x.PeriodYear == prevDate.Year && x.PeriodMonth == prevDate.Month)
-                .ToListAsync();
-
-            var previousBalanceByBookAndCode = previousBalances.ToDictionary(
-                x => BalanceKey(x.BookCode, x.AccountCode),
-                x => x.ClosingBalance,
-                StringComparer.OrdinalIgnoreCase);
-
-            var nowUtc = DateTime.UtcNow;
-
-            foreach (var g in groups)
-            {
-                var bookCode = g.Key.BookCode;
-                var accountCode = g.Key.AccountCode;
-                var key = BalanceKey(bookCode, accountCode);
-
-                var mapRow = mappingByCode[accountCode];
-                var lines = g.Select(x => x.gl).DistinctBy(x => x.Id).ToList();
-                var debitTotal = lines.Sum(x => x.Debit);
-                var creditTotal = lines.Sum(x => x.Credit);
-                var calculatedFrom = lines.Count > 0 ? lines.Min(x => x.PostingDate) : (DateTime?)null;
-                var calculatedTo = lines.Count > 0 ? lines.Max(x => x.PostingDate) : (DateTime?)null;
-                var companyId = lines.Count > 0 ? lines[0].CompanyId : (Guid?)null;
-
-                var financialPositionLine = g
-                    .FirstOrDefault(x => x.rl.ReportType == "FINANCIAL_POSITION_TT99"
-                                      || x.rl.ReportType == "BALANCE_SHEET"
-                                      || x.rl.ReportType == "BalanceSheet");
-
-                var bsSection =
-                    financialPositionLine?.rl.Section
-                    ?? g.Select(x => x.rl.Section)
-                        .FirstOrDefault(s =>
-                            s == "ASSET" ||
-                            s == "LIABILITY" ||
-                            s == "EQUITY")
-                    ?? mapRow.BsSection
-                    ?? string.Empty;
-                var normalBalance = mapRow.NormalBalance
-                    ?? g.Select(x => x.fam.NormalBalance).FirstOrDefault(nb => !string.IsNullOrWhiteSpace(nb))
-                    ?? "Debit";
-
-                var isDebitNatural = string.Equals(normalBalance, "Debit", StringComparison.OrdinalIgnoreCase);
-
-                balanceByBookAndCode.TryGetValue(key, out var balanceRow);
-
-                var openingForRow = previousBalanceByBookAndCode.TryGetValue(key, out var prevClosing)
-                    ? prevClosing
-                    : balanceRow?.OpeningBalance ?? 0m;
-
-                var closingBalance = isDebitNatural
-                    ? openingForRow + debitTotal - creditTotal
-                    : openingForRow + creditTotal - debitTotal;
-
-                if (balanceRow is null)
-                {
-                    balanceRow = new M_account_balance
-                    {
-                        Id = Guid.NewGuid(),
-                        AccountCode = accountCode,
-                        BookCode = bookCode,
-                        CompanyId = companyId,
-                        PeriodYear = _fiscalYear,
-                        PeriodMonth = _periodMonth,
-                        OpeningBalance = openingForRow,
-                        DebitTotal = debitTotal,
-                        CreditTotal = creditTotal,
-                        ClosingBalance = closingBalance,
-                        AccountType = AccountTypeFromAccountCode(accountCode, bsSection),
-                        CalculatedFrom = calculatedFrom,
-                        CalculatedTo = calculatedTo,
-                        LastCalculatedAt = nowUtc,
-                        CreatedAt = nowUtc,
-                        UpdatedAt = nowUtc
-                    };
-
-                    db.AccountBalances.Add(balanceRow);
-                    balanceByBookAndCode[key] = balanceRow;
-                }
-                else
-                {
-                    balanceRow.BookCode = bookCode;
-                    balanceRow.OpeningBalance = openingForRow;
-                    balanceRow.DebitTotal = debitTotal;
-                    balanceRow.CreditTotal = creditTotal;
-                    balanceRow.AccountType = AccountTypeFromAccountCode(accountCode, bsSection);
-                    balanceRow.CompanyId = companyId ?? balanceRow.CompanyId;
-                    balanceRow.CalculatedFrom = calculatedFrom;
-                    balanceRow.CalculatedTo = calculatedTo;
-                    balanceRow.LastCalculatedAt = nowUtc;
-                    balanceRow.ClosingBalance = closingBalance;
-                    balanceRow.UpdatedAt = nowUtc;
-                }
-
-                foreach (var gl in lines.OrderBy(x => x.PostingDate).ThenBy(x => x.VoucherNo))
-                {
-                    db.AccountBalanceGlLines.Add(new M_account_balance_gl_line
-                    {
-                        Id = Guid.NewGuid(),
-                        AccountBalanceId = balanceRow.Id,
-                        GeneralLedgerEntryId = gl.Id,
-                        VoucherNo = gl.VoucherNo ?? string.Empty,
-                        PostingDate = gl.PostingDate,
-                        Debit = gl.Debit,
-                        Credit = gl.Credit,
-                        Description = gl.Description
-                    });
+                    await cmd.ExecuteNonQueryAsync();
                 }
             }
+            finally
+            {
+                if (shouldClose)
+                    await conn.CloseAsync();
+            }
 
-            await db.SaveChangesAsync();
-
-            var successMsg = $"Calculated {groups.Count} account/book balances.";
-            if (mappingsCreated > 0)
-                successMsg += $" Ensured {mappingsCreated} account mappings.";
-
-            CallSnack(successMsg, MudBlazor.Severity.Success);
+            CallSnack($"Calculated account balance {_fiscalYear}/{_periodMonth:00} - Book: {_bookFilter} thành công.", MudBlazor.Severity.Success);
             await LoadAsync();
         }
         catch (Exception ex)

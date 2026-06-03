@@ -1,0 +1,722 @@
+@page "/accounting/account-balance-snapshot"
+@page "/AccountBalanceSnapshot"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@attribute [Authorize]
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject SharedServices ssv
+@inject AccountService asv
+
+<PageTitle>10.9.1 Account Balance Snapshot</PageTitle>
+
+<div class="account-balance-page">
+    <PpScreenHeader Title="10.9.1 Account Balance Snapshot"
+                    Subtitle="Bảng cân đối tài khoản · Account balance report">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">Load</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.Build" OnClick="RebuildAsync" Disabled="_busy">Rebuild Balance</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload" OnClick="ExportExcelAsync" Disabled="_busy || !_rows.Any()">Export Excel</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="ResetFilterAsync" Disabled="_busy">Reset</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="filter-card pa-3 mb-2" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày" @bind-Date="_fromDate" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày" @bind-Date="_toDate" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?"
+                                 Label="Year"
+                                 Value="_fiscalYear"
+                                 ValueChanged="OnFiscalYearChangedAsync"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="2000"
+                                 Max="2100" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?"
+                                 Label="Month"
+                                 Value="_periodMonth"
+                                 ValueChanged="OnPeriodMonthChangedAsync"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="1"
+                                 Max="12" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string" Label="Book" @bind-Value="_book" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_accountFilter" Label="Account" Placeholder="131, 331, 1331..." Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Immediate="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_search" Label="Search" Placeholder="TK, tên tài khoản..." Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2" Class="mb-2">
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card opening-card" Elevation="0">
+                <MudText Typo="Typo.caption">Opening Debit</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.OpeningDebit).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Số dư đầu kỳ Nợ</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card movement-card" Elevation="0">
+                <MudText Typo="Typo.caption">Movement Debit</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.PeriodDebit).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Phát sinh Nợ trong kỳ</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card movement-credit-card" Elevation="0">
+                <MudText Typo="Typo.caption">Movement Credit</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.PeriodCredit).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Phát sinh Có trong kỳ</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card closing-card" Elevation="0">
+                <MudText Typo="Typo.caption">Closing Debit</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.ClosingDebit).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Số dư cuối kỳ Nợ</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Class="report-card pa-3" Elevation="0">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <div>
+                <MudText Typo="Typo.h6" Class="report-title">BẢNG CÂN ĐỐI TÀI KHOẢN</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Kỳ @_periodMonth/@_fiscalYear · Book @_book · Dòng: @VisibleRows.Count().ToString("N0")
+                </MudText>
+            </div>
+
+            <MudChip T="string" Size="Size.Small" Color="@(_difference == 0 ? Color.Success : Color.Error)" Variant="Variant.Filled">
+                Chênh lệch phát sinh: @_difference.ToString("N0")
+            </MudChip>
+        </MudStack>
+
+        <MudDataGrid T="AccountBalanceSnapshotRow"
+                     Items="@VisibleRows.ToList()"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     Filterable="true"
+                     FilterMode="@DataGridFilterMode.ColumnFilterRow"
+                     FixedHeader="true"
+                     Height="calc(100vh - 430px)"
+                     Class="balance-grid"
+                     Loading="_busy">
+            <Columns>
+                <TemplateColumn Title="Số hiệu TK" HeaderClass="account-header">
+                    <CellTemplate>
+                        <span class="@AccountCellClass(context.Item)">
+                            @context.Item.AccountCode
+                        </span>
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <TemplateColumn Title="Tên tài khoản" HeaderClass="account-header">
+                    <CellTemplate>
+                        <span class="@AccountNameCellClass(context.Item)">
+                            @context.Item.AccountName
+                        </span>
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <PropertyColumn Property="x => x.OpeningDebit" Title="Đầu kỳ Nợ" Format="N0" HeaderClass="opening-header text-end" CellClass="text-end amount-cell opening-cell" />
+                <PropertyColumn Property="x => x.OpeningCredit" Title="Đầu kỳ Có" Format="N0" HeaderClass="opening-header text-end" CellClass="text-end amount-cell opening-cell" />
+
+                <PropertyColumn Property="x => x.PeriodDebit" Title="Phát sinh Nợ" Format="N0" HeaderClass="movement-header text-end" CellClass="text-end amount-cell movement-debit-cell" />
+                <PropertyColumn Property="x => x.PeriodCredit" Title="Phát sinh Có" Format="N0" HeaderClass="movement-header text-end" CellClass="text-end amount-cell movement-credit-cell" />
+
+                <PropertyColumn Property="x => x.ClosingDebit" Title="Cuối kỳ Nợ" Format="N0" HeaderClass="closing-header text-end" CellClass="text-end amount-cell closing-cell" />
+                <PropertyColumn Property="x => x.ClosingCredit" Title="Cuối kỳ Có" Format="N0" HeaderClass="closing-header text-end" CellClass="text-end amount-cell closing-cell" />
+
+                <TemplateColumn Title="Drill" Filterable="false" Sortable="false">
+                    <CellTemplate>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ManageSearch" OnClick="@(() => OpenAccountDetail(context.Item.AccountCode))">
+                            Detail
+                        </MudButton>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+
+            <PagerContent>
+                <MudDataGridPager T="AccountBalanceSnapshotRow" PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private const string PermissionMenuName = "AccountBalance";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+
+    private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _toDate = DateTime.Today;
+    private int? _fiscalYear = DateTime.Today.Year;
+    private int? _periodMonth = DateTime.Today.Month;
+    private string _book = "TAX";
+    private string _accountFilter = string.Empty;
+    private string _search = string.Empty;
+
+    private decimal _difference;
+    private List<AccountBalanceSnapshotRow> _rows = new();
+
+    private IEnumerable<AccountBalanceSnapshotRow> VisibleRows => _rows.Where(MatchesFilter);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadAccountingPeriodDatesAsync();
+        await LoadAsync();
+    }
+
+    private async Task ResetFilterAsync()
+    {
+        _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDate = DateTime.Today;
+        _fiscalYear = DateTime.Today.Year;
+        _periodMonth = DateTime.Today.Month;
+        _book = "TAX";
+        _accountFilter = string.Empty;
+        _search = string.Empty;
+        await LoadAccountingPeriodDatesAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnFiscalYearChangedAsync(int? value)
+    {
+        _fiscalYear = value;
+        await LoadAccountingPeriodDatesAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnPeriodMonthChangedAsync(int? value)
+    {
+        _periodMonth = value;
+        await LoadAccountingPeriodDatesAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAccountingPeriodDatesAsync()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var conn = db.Database.GetDbConnection();
+            var shouldClose = conn.State != System.Data.ConnectionState.Open;
+
+            if (shouldClose)
+                await conn.OpenAsync();
+
+            try
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+SELECT TOP (1)
+    start_date,
+    end_date
+FROM dbo.accounting_period
+WHERE fiscal_year = @fiscal_year
+  AND period_month = @period_month
+  AND ISNULL(is_closed, 0) = 0
+ORDER BY start_date;";
+                cmd.CommandType = System.Data.CommandType.Text;
+
+                AddSqlParameter(cmd, "@fiscal_year", _fiscalYear.Value);
+                AddSqlParameter(cmd, "@period_month", _periodMonth.Value);
+
+                await using var reader = await cmd.ExecuteReaderAsync();
+
+                if (await reader.ReadAsync())
+                {
+                    _fromDate = reader.IsDBNull(0) ? _fromDate : reader.GetDateTime(0).Date;
+                    _toDate = reader.IsDBNull(1) ? _toDate : reader.GetDateTime(1).Date;
+                }
+                else
+                {
+                    _fromDate = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+                    _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
+                    Snackbar.Add($"Không tìm thấy kỳ kế toán {_periodMonth}/{_fiscalYear}; dùng ngày mặc định theo tháng.", MudBlazor.Severity.Warning);
+                }
+            }
+            finally
+            {
+                if (shouldClose)
+                    await conn.CloseAsync();
+            }
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Không load được ngày kỳ kế toán: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task RebuildAsync()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+        {
+            Snackbar.Add("Vui lòng chọn Year và Month trước khi Rebuild Balance.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var conn = db.Database.GetDbConnection();
+            var shouldClose = conn.State != System.Data.ConnectionState.Open;
+
+            if (shouldClose)
+                await conn.OpenAsync();
+
+            try
+            {
+                await using var cmd = conn.CreateCommand();
+
+                // Stored procedure tính lại account_balance từ GeneralLedgerEntries.
+                // Nếu DB của anh đang dùng tên khác, chỉ cần đổi CommandText tại đây.
+                cmd.CommandText = "dbo.usp_CalculateAccountBalance_FromLedger";
+                cmd.CommandType = System.Data.CommandType.StoredProcedure;
+                cmd.CommandTimeout = 180;
+
+                AddSqlParameter(cmd, "@FiscalYear", _fiscalYear.Value);
+                AddSqlParameter(cmd, "@PeriodMonth", _periodMonth.Value);
+
+                AddSqlParameter(cmd, "@BookCode",
+                    string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase)
+                        ? DBNull.Value
+                        : _book);
+
+                AddSqlParameter(cmd, "@CompanyId", DBNull.Value);
+
+                await cmd.ExecuteNonQueryAsync();
+            }
+            finally
+            {
+                if (shouldClose)
+                    await conn.CloseAsync();
+            }
+
+            Snackbar.Add($"Rebuild Balance thành công kỳ {_periodMonth}/{_fiscalYear} - Book {_book}.", MudBlazor.Severity.Success);
+
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static void AddSqlParameter(System.Data.Common.DbCommand cmd, string name, object? value)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value = value ?? DBNull.Value;
+        cmd.Parameters.Add(p);
+    }
+
+    private Task ExportExcelAsync()
+    {
+        Snackbar.Add("Export Excel: gắn hàm export hiện có tại đây.", MudBlazor.Severity.Info);
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            {
+                Snackbar.Add("Vui lòng chọn Year và Month.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+
+            var balanceQuery = db.AccountBalances.AsNoTracking()
+          .Where(x => x.PeriodYear == _fiscalYear.Value
+                   && x.PeriodMonth == _periodMonth.Value);
+
+            if (_book == "TAX")
+                balanceQuery = balanceQuery.Where(x => x.BookCode == "TAX");
+
+            if (_book == "MGMT")
+                balanceQuery = balanceQuery.Where(x => x.BookCode == "MGMT");
+
+            var balances = await balanceQuery
+     .Select(x => new
+     {
+         AccountCode = x.AccountCode,
+         OpeningBalance = x.OpeningBalance,
+         DebitTotal = x.DebitTotal,
+         CreditTotal = x.CreditTotal,
+         ClosingBalance = x.ClosingBalance,
+         AccountType = x.AccountType,
+         BookCode = x.BookCode
+     })
+     .ToListAsync();
+
+
+            var accountNames = await db.DanhMucTaiKhoan.AsNoTracking()
+                .Where(x => !string.IsNullOrWhiteSpace(x.Taikhoan))
+                .Select(x => new { x.Taikhoan, x.Tentaikhoan })
+                .ToListAsync();
+
+            var nameMap = accountNames
+                .GroupBy(x => x.Taikhoan!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Tentaikhoan ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+
+            var detailRows = balances
+                .Where(x => !string.IsNullOrWhiteSpace(x.AccountCode))
+                .GroupBy(x => x.AccountCode!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g =>
+                {
+                    var opening = g.Sum(x => x.OpeningBalance);
+                    var debit = g.Sum(x => x.DebitTotal);
+                    var credit = g.Sum(x => x.CreditTotal);
+                    var closing = g.Sum(x => x.ClosingBalance);
+
+                    return new AccountBalanceSnapshotRow
+                    {
+                        AccountCode = g.Key,
+                        AccountName = nameMap.TryGetValue(g.Key, out var name) ? name : string.Empty,
+
+                        OpeningDebit = opening >= 0 ? opening : 0,
+                        OpeningCredit = opening < 0 ? Math.Abs(opening) : 0,
+
+                        PeriodDebit = debit,
+                        PeriodCredit = credit,
+
+                        ClosingDebit = closing >= 0 ? closing : 0,
+                        ClosingCredit = closing < 0 ? Math.Abs(closing) : 0
+                    };
+                })
+                .OrderBy(x => x.AccountCode)
+                .ToList();
+
+            _rows = BuildParentRows(detailRows);
+
+            // Bảng cân đối đúng thì tổng phát sinh Nợ = tổng phát sinh Có.
+            // Chỉ tính dòng con để tránh cộng trùng dòng cha.
+            _difference = _rows
+                .Where(x => !x.IsParent)
+                .Sum(x => x.PeriodDebit - x.PeriodCredit);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private List<AccountBalanceSnapshotRow> BuildParentRows(List<AccountBalanceSnapshotRow> details)
+    {
+        var result = new List<AccountBalanceSnapshotRow>();
+        var parentCodes = details.Where(x => x.AccountCode.Length >= 3).Select(x => x.AccountCode.Substring(0, 3)).Distinct().OrderBy(x => x).ToList();
+
+        foreach (var parent in parentCodes)
+        {
+            var children = details.Where(x => x.AccountCode.StartsWith(parent) && x.AccountCode != parent).ToList();
+            var direct = details.FirstOrDefault(x => x.AccountCode == parent);
+
+            if (children.Count == 0 && direct is not null)
+            {
+                direct.IsParent = true;
+                result.Add(direct);
+                continue;
+            }
+
+            var all = new List<AccountBalanceSnapshotRow>();
+            if (direct is not null) all.Add(direct);
+            all.AddRange(children);
+
+            result.Add(new AccountBalanceSnapshotRow
+            {
+                AccountCode = parent,
+                AccountName = direct?.AccountName ?? GetParentAccountName(parent),
+                OpeningDebit = all.Sum(x => x.OpeningDebit),
+                OpeningCredit = all.Sum(x => x.OpeningCredit),
+                PeriodDebit = all.Sum(x => x.PeriodDebit),
+                PeriodCredit = all.Sum(x => x.PeriodCredit),
+                ClosingDebit = all.Sum(x => x.ClosingDebit),
+                ClosingCredit = all.Sum(x => x.ClosingCredit),
+                IsParent = true
+            });
+
+            result.AddRange(children.OrderBy(x => x.AccountCode));
+        }
+
+        return result;
+    }
+
+    private static string GetParentAccountName(string accountCode) => accountCode switch
+    {
+        "111" => "Tiền mặt",
+        "112" => "Tiền gửi ngân hàng",
+        "131" => "Phải thu của khách hàng",
+        "133" => "Thuế GTGT được khấu trừ",
+        "331" => "Phải trả cho người bán",
+        "333" => "Thuế và các khoản phải nộp Nhà nước",
+        "421" => "Lợi nhuận sau thuế chưa phân phối",
+        "511" => "Doanh thu bán hàng và cung cấp dịch vụ",
+        "632" => "Giá vốn hàng bán",
+        "641" => "Chi phí bán hàng",
+        "642" => "Chi phí quản lý doanh nghiệp",
+        _ => string.Empty
+    };
+
+    private bool MatchesFilter(AccountBalanceSnapshotRow row)
+    {
+        if (!string.IsNullOrWhiteSpace(_accountFilter) && !row.AccountCode.StartsWith(_accountFilter.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var k = _search.Trim();
+        return row.AccountCode.Contains(k, StringComparison.OrdinalIgnoreCase)
+            || row.AccountName.Contains(k, StringComparison.OrdinalIgnoreCase)
+            || row.PeriodDebit.ToString("N0").Contains(k, StringComparison.OrdinalIgnoreCase)
+            || row.PeriodCredit.ToString("N0").Contains(k, StringComparison.OrdinalIgnoreCase)
+            || row.ClosingDebit.ToString("N0").Contains(k, StringComparison.OrdinalIgnoreCase)
+            || row.ClosingCredit.ToString("N0").Contains(k, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string AccountCellClass(AccountBalanceSnapshotRow row) => row.IsParent ? "parent-account-cell" : "child-account-cell";
+    private string AccountNameCellClass(AccountBalanceSnapshotRow row) => row.IsParent ? "parent-account-name-cell" : "child-account-name-cell";
+
+    private async Task OpenAccountDetail(string accountCode)
+    {
+        if (string.IsNullOrWhiteSpace(accountCode))
+        {
+            Snackbar.Add("Không có mã tài khoản để mở chi tiết.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!OnTabRequest.HasDelegate)
+        {
+            Snackbar.Add("Chưa truyền OnTabRequest từ NavMenu.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var acc = accountCode.Trim();
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
+            builder.AddAttribute(1, "InitialAccountCode", acc);
+            builder.AddAttribute(2, "InitialFiscalYear", _fiscalYear);
+            builder.AddAttribute(3, "InitialPeriodMonth", _periodMonth);
+            builder.AddAttribute(4, "InitialBook", _book);
+   
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync((
+            $"GeneralLedgerSummary_{acc}_{_fiscalYear}_{_periodMonth}_{_book}_{_fromDate:yyyyMMdd}_{_toDate:yyyyMMdd}",
+            $"10.6.1 Sổ cái tổng hợp - TK {acc}",
+            content
+        ));
+    }
+
+    private sealed class AccountBalanceSnapshotRow
+    {
+        public string AccountCode { get; set; } = string.Empty;
+        public string AccountName { get; set; } = string.Empty;
+        public decimal OpeningDebit { get; set; }
+        public decimal OpeningCredit { get; set; }
+        public decimal PeriodDebit { get; set; }
+        public decimal PeriodCredit { get; set; }
+        public decimal ClosingDebit { get; set; }
+        public decimal ClosingCredit { get; set; }
+        public bool IsParent { get; set; }
+    }
+}
+
+<style>
+    .account-balance-page {
+        background: #f4fdf7;
+        padding-bottom: 12px;
+    }
+
+        .account-balance-page .filter-card, .account-balance-page .report-card {
+            border: 1px solid #d1fae5;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(22,101,52,.06);
+            background: #fff;
+        }
+
+        .account-balance-page .filter-card {
+            background: linear-gradient(90deg, #ffffff, #ecfdf5);
+        }
+
+        .account-balance-page .kpi-card {
+            min-height: 92px;
+            padding: 14px;
+            border-radius: 16px;
+            border: 1px solid #d1fae5;
+            box-shadow: 0 8px 20px rgba(22,101,52,.05);
+        }
+
+    .opening-card {
+        background: #f8fafc;
+        border-color: #cbd5e1 !important;
+    }
+
+    .movement-card {
+        background: #eff6ff;
+        border-color: #bfdbfe !important;
+    }
+
+    .movement-credit-card {
+        background: #fff7ed;
+        border-color: #fed7aa !important;
+    }
+
+    .closing-card {
+        background: #f0fdf4;
+        border-color: #bbf7d0 !important;
+    }
+
+    .report-title {
+        font-weight: 800;
+        letter-spacing: .2px;
+        color: #063970;
+    }
+
+    .balance-grid .mud-table-container {
+        overflow-x: auto;
+    }
+
+    .balance-grid .mud-table-root .mud-table {
+        width: max-content !important;
+        min-width: 100%;
+    }
+
+    .balance-grid .mud-table-cell, .balance-grid td, .balance-grid th {
+        padding: 5px 8px !important;
+        white-space: nowrap;
+        font-size: .83rem;
+    }
+
+    .account-header {
+        background: #0b78b6 !important;
+        color: white !important;
+        font-weight: 800 !important;
+    }
+
+    .opening-header {
+        background: #475569 !important;
+        color: white !important;
+        font-weight: 800 !important;
+    }
+
+    .movement-header {
+        background: #0f766e !important;
+        color: white !important;
+        font-weight: 800 !important;
+    }
+
+    .closing-header {
+        background: #ea580c !important;
+        color: white !important;
+        font-weight: 800 !important;
+    }
+
+    .amount-cell {
+        font-family: Consolas, monospace;
+    }
+
+    .opening-cell {
+        color: #334155;
+    }
+
+    .movement-debit-cell {
+        color: #0369a1;
+        font-weight: 600;
+    }
+
+    .movement-credit-cell {
+        color: #b45309;
+        font-weight: 600;
+    }
+
+    .closing-cell {
+        color: #15803d;
+        font-weight: 700;
+    }
+
+    .parent-account-cell, .parent-account-name-cell {
+        font-weight: 900 !important;
+        background: #f8fafc !important;
+        color: #111827 !important;
+    }
+
+    .child-account-cell {
+        padding-left: 18px !important;
+    }
+
+    .child-account-name-cell {
+        color: #374151 !important;
+    }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .text-end {
+        text-align: right !important;
+    }
+</style>

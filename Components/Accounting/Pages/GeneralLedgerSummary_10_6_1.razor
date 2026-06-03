@@ -196,7 +196,7 @@
 
             <NoRecordsContent>
                 <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">
-                    Không có dữ liệu sổ cái.
+                    Không có dữ liệu sổ cái theo điều kiện lọc hiện tại.
                 </MudText>
             </NoRecordsContent>
         </MudDataGrid>
@@ -204,6 +204,11 @@
 </div>
 
 @code {
+    [Parameter] public string? InitialAccountCode { get; set; }
+    [Parameter] public int? InitialFiscalYear { get; set; }
+    [Parameter] public int? InitialPeriodMonth { get; set; }
+    [Parameter] public string? InitialBook { get; set; }
+
     private const string PermissionMenuName = "GeneralLedgerEntries";
 
     private bool _busy;
@@ -229,7 +234,36 @@
     {
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
+
+        ApplyInitialFilters();
+
         await LoadAsync();
+    }
+
+    private void ApplyInitialFilters()
+    {
+        if (!string.IsNullOrWhiteSpace(InitialAccountCode))
+            _accountCode = InitialAccountCode.Trim();
+
+        if (InitialFiscalYear.HasValue)
+            _fiscalYear = InitialFiscalYear.Value;
+
+        if (InitialPeriodMonth.HasValue)
+            _periodMonth = InitialPeriodMonth.Value;
+
+        if (!string.IsNullOrWhiteSpace(InitialBook))
+            _book = InitialBook.Trim().ToUpperInvariant();
+        if (_fiscalYear.HasValue && _periodMonth.HasValue)
+        {
+            _fromDate = new DateTime(
+                _fiscalYear.Value,
+                _periodMonth.Value,
+                1);
+
+            _toDate = _fromDate.Value
+                .AddMonths(1)
+                .AddDays(-1);
+        }
     }
 
     private async Task ResetFilterAsync()
@@ -285,7 +319,8 @@
             if (!string.IsNullOrWhiteSpace(_accountCode)
                 && !string.Equals(_accountCode, "ALL", StringComparison.OrdinalIgnoreCase))
             {
-                query = query.Where(x => x.AccountCode == _accountCode);
+                var acc = _accountCode.Trim();
+                query = query.Where(x => x.AccountCode != null && x.AccountCode.StartsWith(acc));
             }
 
             var data = await query
@@ -445,6 +480,13 @@
                 .OrderBy(x => x)
                 .ToList();
 
+            if (!string.IsNullOrWhiteSpace(_accountCode)
+                && !string.Equals(_accountCode, "ALL", StringComparison.OrdinalIgnoreCase)
+                && !_accountCodes.Contains(_accountCode, StringComparer.OrdinalIgnoreCase))
+            {
+                _accountCodes.Insert(0, _accountCode);
+            }
+
             _gridKey++;
             Snackbar.Add($"Loaded {_rows.Count:N0} ledger lines.", MudBlazor.Severity.Success);
         }
@@ -463,7 +505,7 @@
     {
         if (!string.IsNullOrWhiteSpace(_accountCode)
             && !string.Equals(_accountCode, "ALL", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(x.AccountCode, _accountCode, StringComparison.OrdinalIgnoreCase))
+            && !x.AccountCode.StartsWith(_accountCode.Trim(), StringComparison.OrdinalIgnoreCase))
             return false;
 
         return true;

@@ -1322,13 +1322,6 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
                 pPeriodMonth.Value = _snapshot.PeriodMonth;
                 cmd.Parameters.Add(pPeriodMonth);
 
-                var pCompanyId = cmd.CreateParameter();
-                pCompanyId.ParameterName = "@CompanyId";
-                pCompanyId.Value = _companyInfo?.CompanyID != Guid.Empty
-                    ? _companyInfo!.CompanyID
-                    : DBNull.Value;
-                cmd.Parameters.Add(pCompanyId);
-
                 if (IsTaxReportLogisticsReport(reportCode))
                 {
                     var pBookCode = cmd.CreateParameter();
@@ -1353,15 +1346,15 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
                     pClearOld.Value = true;
                     cmd.Parameters.Add(pClearOld);
 
-                    if (IsCustomerDebtReport(reportCode))
-                    {
-                        var pCustomerId = cmd.CreateParameter();
-                        pCustomerId.ParameterName = "@CustomerId";
-                        pCustomerId.Value = SelectedCustomerId.HasValue
-                            ? SelectedCustomerId.Value
-                            : DBNull.Value;
-                        cmd.Parameters.Add(pCustomerId);
-                    }
+                    // if (IsCustomerDebtReport(reportCode))
+                    // {
+                    //     var pCustomerId = cmd.CreateParameter();
+                    //     pCustomerId.ParameterName = "@CustomerId";
+                    //     pCustomerId.Value = SelectedCustomerId.HasValue
+                    //         ? SelectedCustomerId.Value
+                    //         : DBNull.Value;
+                    //     cmd.Parameters.Add(pCustomerId);
+                    // }
                 }
 
                 await using var reader = await cmd.ExecuteReaderAsync();
@@ -2072,12 +2065,13 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
 
     private bool CanOpenLedgerForLine(FinancialReportSnapshotLine line)
     {
-        return !string.IsNullOrWhiteSpace(GuessAccountCodeFromLine(line));
+        var accountCode = GetAccountCodeFromLine(line);
+        return !string.IsNullOrWhiteSpace(accountCode) && accountCode.All(char.IsDigit);
     }
 
     private async Task OpenLedgerForLineAsync(FinancialReportSnapshotLine line)
     {
-        var accountCode = GuessAccountCodeFromLine(line);
+        var accountCode = GetAccountCodeFromLine(line);
 
         if (string.IsNullOrWhiteSpace(accountCode))
         {
@@ -2085,29 +2079,88 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
             return;
         }
 
-        var book = NormalizeBookCode(_snapshot.BookCode);
-        var customerId = IsCustomerDebtReport(_snapshot.ReportCode) ? SelectedCustomerId : null;
-        var tabKey = $"GeneralLedgerEntries586_{_snapshot.FiscalYear}_{_snapshot.PeriodMonth}_{book}_{accountCode}_{customerId}";
-        var tabTitle = $"10.6 Sổ cái {accountCode} - {_snapshot.FiscalYear}/{_snapshot.PeriodMonth:00}";
-
-        RenderFragment content = builder =>
+        if (!OnTabRequest.HasDelegate)
         {
-            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index>(0);
-            builder.AddAttribute(1, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialYear), _snapshot.FiscalYear);
-            builder.AddAttribute(2, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialMonth), _snapshot.PeriodMonth);
-            builder.AddAttribute(3, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialBook), book);
-            builder.AddAttribute(4, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialAccountCode), accountCode);
-            builder.AddAttribute(5, nameof(Components.Accounting.Pages.GeneralLedgerEntries_5_8_6_Index.InitialCustomerId), customerId);
-            builder.CloseComponent();
-        };
-
-        if (OnTabRequest.HasDelegate)
-        {
-            await OnTabRequest.InvokeAsync((tabKey, tabTitle, content));
+            CallSnack("Chưa truyền OnTabRequest từ NavMenu nên không thể mở tab 10.6.1.", MudBlazor.Severity.Warning);
             return;
         }
 
-        CallSnack("Không mở được tab Sổ cái. Cần truyền OnTabRequest từ NavMenu/MainLayout.", MudBlazor.Severity.Warning);
+        var book = NormalizeBookCode(_snapshot.BookCode);
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
+            builder.AddAttribute(1, "InitialAccountCode", accountCode);
+            builder.AddAttribute(2, "InitialFiscalYear", _snapshot.FiscalYear);
+            builder.AddAttribute(3, "InitialPeriodMonth", _snapshot.PeriodMonth);
+            builder.AddAttribute(4, "InitialBook", book);
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync((
+            $"GeneralLedgerSummary_{accountCode}_{_snapshot.FiscalYear}_{_snapshot.PeriodMonth}_{book}",
+            $"10.6.1 Sổ cái tổng hợp - TK {accountCode}",
+            content
+        ));
+    }
+
+
+    private static string GetAccountCodeFromLine(FinancialReportSnapshotLine line)
+    {
+        var code = (line.LineCode ?? "").Trim().ToUpperInvariant();
+        var name = (line.LineName ?? "").Trim().ToUpperInvariant();
+
+        return code switch
+        {
+            // Financial Position
+            "111" => "111",
+            "112" => "112",
+            "131" => "131",
+            "133" => "133",
+            "211" => "211",
+            "214" => "214",
+            "242" => "242",
+            "331" => "331",
+            "333" => "333",
+            "334" => "334",
+            "338" => "338",
+            "341" => "341",
+            "411" => "411",
+            "421" => "421",
+
+            // Income Statement
+            "01" => "511",
+            "02" => "632",
+            "04" => "515",
+            "05" => "635",
+            "06" => "641",
+            "07" => "642",
+            "09" => "711",
+            "10" => "811",
+            "13" => "821",
+
+            // Tax logistics
+            "TAX_011" => "511",
+            "TAX_012" => "3331",
+            "TAX_021" => "133",
+            "TAX_022" => "133",
+            "TAX_031" => "511",
+            "TAX_032" => "632",
+            "TAX_034" => "3334",
+            "TAX_041" => "3331",
+            "TAX_042" => "3334",
+            "TAX_043" => "333",
+
+            _ when name.Contains("DOANH THU") => "511",
+            _ when name.Contains("GIÁ VỐN") || name.Contains("GIA VON") => "632",
+            _ when name.Contains("CHI PHÍ BÁN HÀNG") => "641",
+            _ when name.Contains("CHI PHÍ QUẢN LÝ") => "642",
+            _ when name.Contains("THUẾ GTGT ĐẦU RA") => "3331",
+            _ when name.Contains("GTGT ĐƯỢC KHẤU TRỪ") => "133",
+            _ when name.Contains("THUẾ TNDN") => "3334",
+
+            _ => ""
+        };
     }
 
     private static string? GuessAccountCodeFromLine(FinancialReportSnapshotLine line)

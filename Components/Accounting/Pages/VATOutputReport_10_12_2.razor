@@ -32,10 +32,24 @@
                 <MudDatePicker Label="Đến ngày" @bind-Date="_toDate" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
             </MudItem>
             <MudItem xs="6" sm="1">
-                <MudNumericField T="int?" Label="Year" @bind-Value="_fiscalYear" Variant="Variant.Outlined" Margin="Margin.Dense" Min="2000" Max="2100" />
+                <MudNumericField T="int?"
+                                 Label="Year"
+                                 Value="_fiscalYear"
+                                 ValueChanged="OnYearChanged"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="2000"
+                                 Max="2100" />
             </MudItem>
             <MudItem xs="6" sm="1">
-                <MudNumericField T="int?" Label="Month" @bind-Value="_periodMonth" Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="12" />
+                <MudNumericField T="int?"
+                                 Label="Month"
+                                 Value="_periodMonth"
+                                 ValueChanged="OnMonthChanged"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="1"
+                                 Max="12" />
             </MudItem>
             <MudItem xs="12" sm="1">
                 <MudSelect T="string" Label="Book" @bind-Value="_book" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
@@ -142,7 +156,34 @@
     {
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
+        UpdateDateRange();
         await LoadAsync();
+    }
+
+    private async Task OnYearChanged(int? year)
+    {
+        _fiscalYear = year;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnMonthChanged(int? month)
+    {
+        _periodMonth = month;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private void UpdateDateRange()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            return;
+
+        if (_periodMonth.Value < 1 || _periodMonth.Value > 12)
+            return;
+
+        _fromDate = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+        _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
     }
 
     private async Task ResetFilterAsync()
@@ -154,6 +195,7 @@
         _book = "TAX";
         _vatAccount = "33311";
         _search = string.Empty;
+        UpdateDateRange();
         await LoadAsync();
     }
 
@@ -264,26 +306,45 @@
 
     private async Task OpenVoucher(VatOutputRow row)
     {
-        if (row == null || row.VoucherId == Guid.Empty)
+        if (row is null)
+        {
+            Snackbar.Add("Không có dòng để mở sổ cái.", MudBlazor.Severity.Warning);
             return;
+        }
 
-        if (OnTabRequest.HasDelegate)
+        if (!OnTabRequest.HasDelegate)
         {
-            await OnTabRequest.InvokeAsync((
-                $"AccountingVouchers584_{row.VoucherId}",
-                $"10.4 Chứng Từ Kế Toán - {row.VoucherNo}",
-                builder =>
-                {
-                    builder.OpenComponent<Components.Accounting.Pages.AccountingVouchers_5_8_4_Index>(0);
-                    builder.AddAttribute(1, "InitialVoucherId", row.VoucherId);
-                    builder.CloseComponent();
-                }
-            ));
+            Snackbar.Add("Không mở được tab 10.6.1 vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+            return;
         }
-        else
+
+        var accountCode = (row.AccountCode ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(accountCode))
         {
-            Snackbar.Add("Không mở được tab Voucher vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+            Snackbar.Add("Dòng này không có tài khoản VAT để mở sổ cái.", MudBlazor.Severity.Warning);
+            return;
         }
+
+        var book = string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase)
+            ? "TAX"
+            : _book.Trim().ToUpperInvariant();
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
+            builder.AddAttribute(1, "InitialAccountCode", accountCode);
+            builder.AddAttribute(2, "InitialFiscalYear", _fiscalYear);
+            builder.AddAttribute(3, "InitialPeriodMonth", _periodMonth);
+            builder.AddAttribute(4, "InitialBook", book);
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync((
+            $"GeneralLedgerSummary_{accountCode}_{_fiscalYear}_{_periodMonth}_{book}",
+            $"10.6.1 Sổ cái tổng hợp - TK {accountCode}",
+            content
+        ));
     }
 
     private bool MatchesSearch(VatOutputRow x)
@@ -331,17 +392,58 @@
 }
 
 <style>
-    .vat-output-page { background: #f4fdf7; }
-    .vat-output-page .product-price-card { border: 1px solid #d1fae5; border-radius: 14px; box-shadow: 0 8px 20px rgba(22, 101, 52, 0.06); }
-    .vat-output-page .filter-card { background: linear-gradient(90deg, #ffffff, #ecfdf5); }
-    .vat-output-page .vat-stat { border-radius: 12px; background: #f0fff4; border: 1px solid #bbf7d0; }
-    .vat-output-page .stat-output { background: #fff7ed; border-color: #fed7aa; }
-    .vat-output-page .stat-reduction { background: #eff6ff; border-color: #bfdbfe; }
-    .vat-output-page .stat-net { background: #fef2f2; border-color: #fecaca; }
-    .vat-output-page .vat-output-grid { font-size: 0.82rem; }
-    .vat-output-page .vat-output-grid .mud-table-container { overflow-x: auto; }
-    .vat-output-page .vat-output-grid .mud-table-root .mud-table { width: max-content !important; min-width: 100%; }
-    .vat-output-page .vat-output-grid .mud-table-cell,
-    .vat-output-page .vat-output-grid td,
-    .vat-output-page .vat-output-grid th { padding: 4px 8px !important; white-space: nowrap; }
+    .vat-output-page {
+        background: #f4fdf7;
+    }
+
+        .vat-output-page .product-price-card {
+            border: 1px solid #d1fae5;
+            border-radius: 14px;
+            box-shadow: 0 8px 20px rgba(22, 101, 52, 0.06);
+        }
+
+        .vat-output-page .filter-card {
+            background: linear-gradient(90deg, #ffffff, #ecfdf5);
+        }
+
+        .vat-output-page .vat-stat {
+            border-radius: 12px;
+            background: #f0fff4;
+            border: 1px solid #bbf7d0;
+        }
+
+        .vat-output-page .stat-output {
+            background: #fff7ed;
+            border-color: #fed7aa;
+        }
+
+        .vat-output-page .stat-reduction {
+            background: #eff6ff;
+            border-color: #bfdbfe;
+        }
+
+        .vat-output-page .stat-net {
+            background: #fef2f2;
+            border-color: #fecaca;
+        }
+
+        .vat-output-page .vat-output-grid {
+            font-size: 0.82rem;
+        }
+
+            .vat-output-page .vat-output-grid .mud-table-container {
+                overflow-x: auto;
+            }
+
+            .vat-output-page .vat-output-grid .mud-table-root .mud-table {
+                width: max-content !important;
+                min-width: 100%;
+            }
+
+            .vat-output-page .vat-output-grid .mud-table-cell,
+            .vat-output-page .vat-output-grid td,
+            .vat-output-page .vat-output-grid th {
+                padding: 4px 8px !important;
+                white-space: nowrap;
+            }
 </style>
