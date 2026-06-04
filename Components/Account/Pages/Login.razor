@@ -1,15 +1,17 @@
 ﻿@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Mvc
 @using Microsoft.AspNetCore.Authentication.Cookies
 @using Microsoft.AspNetCore.Authentication
 @using System.Security.Claims
-@using Microsoft.AspNetCore.Mvc
 @using NVOAMASIS.Services
+@using NVOAMASIS.Services.MultiTenant
+@using NVOAMASIS.Models
+@using NVOAMASIS.Helpers
 
 @page "/Account/Login"
 @inject NavigationManager navSvc
 @inject ILogger<Login> Logger
-@inject AccountService accSvc
-@inject IStringLocalizer<SharedResource> Localizer
+@inject TenantAuthService tenantAuth
 
 <PageTitle>Log in</PageTitle>
 
@@ -17,138 +19,404 @@
   <link rel="stylesheet" href="bootstrap/bootstrap.min.css" />
 </HeadContent>
 
-<div class="d-flex flex-column justify-content-center align-items-center" style="height:100vh;">
-  <h1>Log in</h1>
+<div class="d-flex flex-column justify-content-center align-items-center py-4" style="min-height:100vh;">
+  <h1>NVOAMASIS</h1>
+  <p class="text-muted mb-3">Đăng nhập theo database riêng hoặc đăng ký database mới</p>
 
   @if (errorMessage != null)
   {
-    <div class="alert alert-danger" role="alert">
+    <div class="alert alert-danger w-100" style="max-width:520px;" role="alert">
       @errorMessage
     </div>
   }
+  @if (successMessage != null)
+  {
+    <div class="alert alert-success w-100" style="max-width:520px;" role="alert">
+      @successMessage
+    </div>
+  }
 
-  <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" FormName="login">
-    <DataAnnotationsValidator />
-    <AntiForgeryToken />
-    <div class="card" style="width:400px;">
-      <div class="card-body">
+  <ul class="nav nav-tabs mb-0" style="max-width:520px; width:100%;">
+    <li class="nav-item">
+      <a class="nav-link @(activeTab == Tab.Login ? "active" : "")" href="@LoginTabUrl">Đăng nhập</a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link @(activeTab == Tab.Register ? "active" : "")" href="@RegisterTabUrl">Đăng ký database mới</a>
+    </li>
+  </ul>
 
-        <h3>Use a local account to log in.</h3>
-        <hr />
-        <ValidationSummary class="text-danger" role="alert" />
-        <div class="form-floating mb-3">
-          <InputText @bind-Value="Input.UserName" class="form-control" autocomplete="username" aria-required="true"
-            placeholder="sgn-fc-employee" />
-          <label for="text" class="form-label">User Name</label>
-          <ValidationMessage For="() => Input.UserName" class="text-danger" />
-        </div>
-        <div class="form-floating mb-3">
-          <InputText type="password" @bind-Value="Input.Password" class="form-control" autocomplete="current-password"
-            aria-required="true" placeholder="password" />
-          <label for="password" class="form-label">Password</label>
-          <ValidationMessage For="() => Input.Password" class="text-danger" />
-        </div>
-        <div class="checkbox mb-3">
-          <label class="form-label">
-            <InputCheckbox @bind-Value="Input.RememberMe" class="darker-border-checkbox form-check-input" />
-            Remember me
-          </label>
-        </div>
-        <div>
-          <button type="submit" class="w-100 btn btn-lg btn-primary">Log in</button>
-        </div>
-        <div class="mt-2 text-center">
-          <NavLink class="btn btn-link" href="/AccountPass">Quên mật khẩu?</NavLink>
+  @if (activeTab == Tab.Login)
+  {
+    <EditForm Model="LoginInput" method="post" OnValidSubmit="LoginUser" FormName="tenant-login"
+              action="@LoginTabUrl" class="w-100" style="max-width:520px;">
+      <DataAnnotationsValidator />
+      <AntiForgeryToken />
+      <div class="card border-top-0 rounded-top-0">
+        <div class="card-body">
+          <h5 class="card-title">Đăng nhập database đã có</h5>
+          <p class="small text-muted">Nhập thông tin SQL Server của tenant và tài khoản ứng dụng (UserList).</p>
+          <ValidationSummary class="text-danger" role="alert" />
 
+          <fieldset class="border rounded p-3 mb-3">
+            <legend class="float-none w-auto px-2 fs-6 mb-0">SQL Server (tenant)</legend>
+            <div class="form-floating mb-2 mt-2">
+              <InputText @bind-Value="LoginInput.DatabaseName" class="form-control" placeholder="TenDatabase" />
+              <label>Tên database</label>
+              <ValidationMessage For="() => LoginInput.DatabaseName" class="text-danger" />
+            </div>
+            <div class="form-floating mb-2">
+              <InputText @bind-Value="LoginInput.SqlUserId" class="form-control" autocomplete="off" placeholder="sql-user" />
+              <label>SQL User</label>
+              <ValidationMessage For="() => LoginInput.SqlUserId" class="text-danger" />
+            </div>
+            <div class="form-floating mb-2">
+              <InputText type="password" @bind-Value="LoginInput.SqlPassword" class="form-control" autocomplete="off" />
+              <label>SQL Password</label>
+              <ValidationMessage For="() => LoginInput.SqlPassword" class="text-danger" />
+            </div>
+          </fieldset>
+
+          <fieldset class="border rounded p-3 mb-3">
+            <legend class="float-none w-auto px-2 fs-6 mb-0">Ứng dụng (UserList)</legend>
+            <div class="form-floating mb-2 mt-2">
+              <InputText @bind-Value="LoginInput.AppUserName" class="form-control" autocomplete="username" />
+              <label>User Name</label>
+              <ValidationMessage For="() => LoginInput.AppUserName" class="text-danger" />
+            </div>
+            <div class="form-floating mb-2">
+              <InputText type="password" @bind-Value="LoginInput.AppPassword" class="form-control" autocomplete="current-password" />
+              <label>Password</label>
+              <ValidationMessage For="() => LoginInput.AppPassword" class="text-danger" />
+            </div>
+          </fieldset>
+
+          <div class="checkbox mb-3">
+            <label class="form-label">
+              <InputCheckbox @bind-Value="LoginInput.RememberMe" class="form-check-input" />
+              Remember me
+            </label>
+          </div>
+          <button type="submit" class="w-100 btn btn-lg btn-primary" disabled="@isBusy">@(isBusy ? "Đang xử lý..." : "Log in")</button>
+          <div class="mt-2 text-center">
+            <NavLink class="btn btn-link" href="/AccountPass">Quên mật khẩu?</NavLink>
+          </div>
         </div>
       </div>
-    </div>
-  </EditForm>
+    </EditForm>
+  }
+  else
+  {
+    <EditForm Model="RegisterInput" method="post" OnValidSubmit="RegisterTenant" FormName="tenant-register"
+              action="@RegisterTabUrl" class="w-100" style="max-width:520px;">
+      <DataAnnotationsValidator />
+      <AntiForgeryToken />
+      <div class="card border-top-0 rounded-top-0">
+        <div class="card-body">
+          <h5 class="card-title">Tạo database mới</h5>
+          <ValidationSummary class="text-danger" role="alert" />
+
+          <fieldset class="border rounded p-3 mb-3">
+            <legend class="float-none w-auto px-2 fs-6 mb-0">Database mới</legend>
+            <div class="form-floating mb-2 mt-2">
+              <InputText @bind-Value="RegisterInput.DatabaseName" class="form-control" placeholder="MyCompany_DB" />
+              <label>Tên database (mới)</label>
+              <ValidationMessage For="() => RegisterInput.DatabaseName" class="text-danger" />
+            </div>
+            <div class="form-floating mb-2">
+              <InputText @bind-Value="RegisterInput.SqlUserId" class="form-control" autocomplete="off" />
+              <label>SQL User (đăng nhập DB) *</label>
+              <ValidationMessage For="() => RegisterInput.SqlUserId" class="text-danger" />
+            </div>
+            <div class="form-floating mb-2">
+              <InputText type="password" @bind-Value="RegisterInput.SqlPassword" class="form-control" autocomplete="new-password" />
+              <label>SQL Password *</label>
+              <ValidationMessage For="() => RegisterInput.SqlPassword" class="text-danger" />
+            </div>
+          </fieldset>
+
+          <fieldset class="border rounded p-3 mb-3">
+            <legend class="float-none w-auto px-2 fs-6 mb-0">Admin đầu tiên (UserList)</legend>
+            <div class="form-floating mb-2 mt-2">
+              <InputText @bind-Value="RegisterInput.AppUserName" class="form-control" />
+              <label>User Name</label>
+              <ValidationMessage For="() => RegisterInput.AppUserName" class="text-danger" />
+            </div>
+            <div class="form-floating mb-2">
+              <InputText @bind-Value="RegisterInput.DisplayName" class="form-control" />
+              <label>Họ tên</label>
+            </div>
+            <div class="form-floating mb-2">
+              <InputText @bind-Value="RegisterInput.Email" class="form-control" />
+              <label>Email</label>
+            </div>
+            <div class="form-floating mb-2">
+              <InputText type="password" @bind-Value="RegisterInput.AppPassword" class="form-control" autocomplete="new-password" />
+              <label>Password</label>
+              <ValidationMessage For="() => RegisterInput.AppPassword" class="text-danger" />
+            </div>
+            <p class="small text-muted mb-2">Password: hơn 8 ký tự, có chữ hoa, chữ thường và số.</p>
+            <div class="form-floating mb-2">
+              <InputText type="password" @bind-Value="RegisterInput.ConfirmAppPassword" class="form-control" autocomplete="new-password" />
+              <label>Nhập lại password</label>
+              <ValidationMessage For="() => RegisterInput.ConfirmAppPassword" class="text-danger" />
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Chi nhánh</label>
+              <InputSelect @bind-Value="RegisterInput.Branch" class="form-select">
+                <option value="SGN">SGN</option>
+                <option value="HAN">HAN</option>
+                <option value="HPH">HPH</option>
+                <option value="DAD">DAD</option>
+              </InputSelect>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Phòng ban</label>
+              <InputText @bind-Value="RegisterInput.Department" class="form-control" />
+            </div>
+          </fieldset>
+
+          <button type="submit" class="w-100 btn btn-lg btn-success" disabled="@isBusy">@(isBusy ? "Đang tạo database..." : "Tạo database & đăng ký")</button>
+        </div>
+      </div>
+    </EditForm>
+  }
 </div>
 
 @code {
   [CascadingParameter]
   private HttpContext HttpContext { get; set; } = default!;
 
-  [SupplyParameterFromForm]
-  private InputModel Input { get; set; } = new();
+  [SupplyParameterFromForm(FormName = "tenant-login")]
+  private TenantLoginModel? LoginInput { get; set; }
+
+  [SupplyParameterFromForm(FormName = "tenant-register")]
+  private TenantRegisterModel? RegisterInput { get; set; }
 
   [SupplyParameterFromQuery]
   private string? ReturnUrl { get; set; }
 
-  string? errorMessage;
+  [SupplyParameterFromQuery(Name = "tab")]
+  private string? TabQuery { get; set; }
 
+  [SupplyParameterFromQuery(Name = "db")]
+  private string? PrefillDatabaseName { get; set; }
 
+  [SupplyParameterFromQuery(Name = "registered")]
+  private string? RegisteredFlag { get; set; }
+
+  private enum Tab { Login, Register }
+  private Tab activeTab = Tab.Login;
+
+  private string LoginTabUrl => BuildTabUrl("login");
+  private string RegisterTabUrl => BuildTabUrl("register");
+
+  private string BuildTabUrl(string tab)
+  {
+    var q = new List<string> { $"tab={tab}" };
+    if (!string.IsNullOrEmpty(ReturnUrl))
+      q.Add($"returnUrl={Uri.EscapeDataString(ReturnUrl)}");
+    return $"/Account/Login?{string.Join("&", q)}";
+  }
+  private string? errorMessage;
+  private string? successMessage;
+  private bool isBusy;
 
   protected override async Task OnInitializedAsync()
   {
-    if (HttpMethods.IsGet(HttpContext.Request.Method))
+    activeTab = TabQuery?.Equals("register", StringComparison.OrdinalIgnoreCase) == true
+        ? Tab.Register
+        : Tab.Login;
+
+    LoginInput ??= new TenantLoginModel();
+    if (!string.IsNullOrWhiteSpace(PrefillDatabaseName))
+      LoginInput.DatabaseName = PrefillDatabaseName;
+
+    RegisterInput ??= new TenantRegisterModel
     {
-      // Clear the existing external cookie to ensure a clean login process
+      Department = "ADMIN",
+      Branch = "SGN"
+    };
+
+    if (RegisteredFlag == "1")
+      successMessage = "Đăng ký database thành công. Nhập SQL user, SQL password và tài khoản ứng dụng để đăng nhập.";
+
+    if (HttpMethods.IsGet(HttpContext.Request.Method))
       await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    }
   }
-  // public async Task LoginUser()
-  // {
-  // var result = await accSvc.Authenticate($"{Input.Email}:{Input.Password}:{Input.RememberMe}");
-  // if (result.Flag)
-  // {
-  // navSvc.NavigateTo("/", forceLoad: true);
-  // }
-  // }
+
   [ValidateAntiForgeryToken]
   public async Task LoginUser()
   {
-    var authUser = await accSvc.Authenticate($"{Input.UserName}:{Input.Password}:{Input.RememberMe}");
-    errorMessage = authUser.Message;
-    if (authUser.Flag)
+    if (LoginInput == null) return;
+    isBusy = true;
+    errorMessage = null;
+    successMessage = null;
+    try
     {
+      var result = await tenantAuth.LoginAsync(
+          LoginInput.DatabaseName,
+          LoginInput.SqlUserId,
+          LoginInput.SqlPassword,
+          LoginInput.AppUserName,
+          LoginInput.AppPassword);
 
-      var userClaims = new List<Claim>
-{
-new Claim(ClaimTypes.Name, authUser.AuthUser.Usr),
-new Claim(ClaimTypes.Sid, authUser.AuthUser.UsrId.ToString()),
-new Claim(ClaimTypes.GivenName, authUser.AuthUser.Name),
-new Claim(ClaimTypes.Email, authUser.AuthUser.Email),
-new Claim(ClaimTypes.Role, authUser.AuthUser.Department),
-new Claim(ClaimTypes.NameIdentifier, authUser.AuthUser.UsrId.ToString())
-};
+      errorMessage = result.Flag ? null : result.Message;
+      if (!result.Flag || result.AuthUser == null || result.TenantId == null)
+        return;
 
-
-      // foreach (var role in authUser.Roles)
-      // userClaims.Add(new Claim(ClaimTypes.Role, role));
-
-      var userIdentity = new ClaimsIdentity(userClaims, CookieAuthenticationDefaults.AuthenticationScheme);
-      var authProperties = new AuthenticationProperties
-      {
-        //IsPersistent = authUser.RememberMe,
-        IssuedUtc = DateTimeOffset.UtcNow.AddDays(-1),
-        ExpiresUtc = DateTimeOffset.UtcNow.AddMonths(1),
-        RedirectUri = ReturnUrl, // this.Request.Host.Value
-                                 //AllowRefresh = <bool>,
-                                 // Refreshing the authentication session should be allowed.
-      };
-
-      //Cookie-Base Auth
-      await HttpContext.SignInAsync(
-      CookieAuthenticationDefaults.AuthenticationScheme,
-      new ClaimsPrincipal(userIdentity),
-      authProperties);
-      Logger.LogInformation("User logged in.");
+      await SignInWithClaimsAsync(result.AuthUser, result.TenantId.Value, result.TenantDatabaseName ?? LoginInput.DatabaseName);
+      Logger.LogInformation("User {User} logged in to tenant {Db}.", result.AuthUser.Usr, result.TenantDatabaseName);
       navSvc.NavigateTo(ReturnUrl ?? "/", true);
     }
+    finally
+    {
+      isBusy = false;
+    }
   }
-  private sealed class InputModel
+
+  [ValidateAntiForgeryToken]
+  public async Task RegisterTenant()
   {
-    [Required]
-    [DataType(DataType.Text)]
-    public string UserName { get; set; } = "";
+    if (RegisterInput == null) return;
 
-    [Required]
-    [DataType(DataType.Password)]
-    public string Password { get; set; } = "";
+    if (!PasswordPolicy.IsValid(RegisterInput.AppPassword, out var passwordError))
+    {
+      errorMessage = passwordError;
+      return;
+    }
 
-    [Display(Name = "Remember me?")]
+    if (RegisterInput.AppPassword != RegisterInput.ConfirmAppPassword)
+    {
+      errorMessage = "Password xác nhận không khớp.";
+      return;
+    }
+
+    isBusy = true;
+    errorMessage = null;
+    successMessage = null;
+    try
+    {
+      var sqlUser = RegisterInput.SqlUserId.Trim();
+      var sqlPass = RegisterInput.SqlPassword;
+
+      var admin = new AuthUser
+      {
+        Name = RegisterInput.AppUserName.Trim(),
+        Usr = RegisterInput.AppUserName.Trim(),
+        Email = RegisterInput.Email,
+        Pass_viettel = RegisterInput.AppPassword,
+        Department = RegisterInput.Department,
+        Branch = RegisterInput.Branch,
+        CompanyCode = "AMSS"
+      };
+
+      var result = await tenantAuth.RegisterTenantAsync(
+          RegisterInput.DatabaseName,
+          sqlUser,
+          sqlPass,
+          admin);
+
+      if (!result.Flag)
+      {
+        errorMessage = result.Message;
+        return;
+      }
+
+      navSvc.NavigateTo(
+          BuildTabUrl("login") +
+          $"&db={Uri.EscapeDataString(RegisterInput.DatabaseName.Trim())}&registered=1",
+          forceLoad: true);
+      return;
+    }
+    finally
+    {
+      isBusy = false;
+    }
+  }
+
+  private async Task SignInWithClaimsAsync(AuthUser authUser, Guid tenantId, string databaseName)
+  {
+    var userClaims = new List<Claim>
+    {
+      new(ClaimTypes.Name, authUser.Usr ?? ""),
+      new(ClaimTypes.Sid, authUser.UsrId.ToString()),
+      new(ClaimTypes.GivenName, authUser.Name ?? ""),
+      new(ClaimTypes.Email, authUser.Email ?? ""),
+      new(ClaimTypes.Role, authUser.Department ?? ""),
+      new(ClaimTypes.NameIdentifier, authUser.UsrId.ToString()),
+      new(TenantClaimTypes.TenantId, tenantId.ToString()),
+      new(TenantClaimTypes.DatabaseName, databaseName)
+    };
+
+    var userIdentity = new ClaimsIdentity(userClaims, CookieAuthenticationDefaults.AuthenticationScheme);
+    var authProperties = new AuthenticationProperties
+    {
+      IssuedUtc = DateTimeOffset.UtcNow.AddDays(-1),
+      ExpiresUtc = DateTimeOffset.UtcNow.AddMonths(1),
+      RedirectUri = ReturnUrl,
+      IsPersistent = LoginInput?.RememberMe ?? false
+    };
+
+    await HttpContext.SignInAsync(
+        CookieAuthenticationDefaults.AuthenticationScheme,
+        new ClaimsPrincipal(userIdentity),
+        authProperties);
+  }
+
+  private sealed class TenantLoginModel
+  {
+    [Required(ErrorMessage = "Nhập tên database.")]
+    public string DatabaseName { get; set; } = "";
+
+    [Required(ErrorMessage = "Nhập SQL user.")]
+    public string SqlUserId { get; set; } = "";
+
+    [Required(ErrorMessage = "Nhập SQL password.")]
+    public string SqlPassword { get; set; } = "";
+
+    [Required(ErrorMessage = "Nhập user ứng dụng.")]
+    public string AppUserName { get; set; } = "";
+
+    [Required(ErrorMessage = "Nhập password ứng dụng.")]
+    public string AppPassword { get; set; } = "";
+
     public bool RememberMe { get; set; }
+  }
+
+  private sealed class TenantRegisterModel : IValidatableObject
+  {
+    [Required(ErrorMessage = "Nhập tên database mới.")]
+    [RegularExpression(@"^[A-Za-z0-9_]+$", ErrorMessage = "Chỉ dùng chữ, số và _")]
+    public string DatabaseName { get; set; } = "";
+
+    [Required(ErrorMessage = "Nhập SQL user cho database mới.")]
+    [RegularExpression(@"^[A-Za-z0-9_]+$", ErrorMessage = "SQL user: chữ, số và _ (không dùng sa)")]
+    public string SqlUserId { get; set; } = "";
+
+    [Required(ErrorMessage = "Nhập SQL password.")]
+    [MinLength(4)]
+    public string SqlPassword { get; set; } = "";
+
+    [Required(ErrorMessage = "Nhập user admin.")]
+    public string AppUserName { get; set; } = "";
+
+    public string DisplayName { get; set; } = "";
+    public string Email { get; set; } = "";
+
+    [Required(ErrorMessage = "Nhập password.")]
+    public string AppPassword { get; set; } = "";
+
+    public string ConfirmAppPassword { get; set; } = "";
+    public string Branch { get; set; } = "SGN";
+    public string Department { get; set; } = "ADMIN";
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        foreach (var message in PasswordPolicy.GetValidationErrors(AppPassword))
+            yield return new ValidationResult(message, [nameof(AppPassword)]);
+
+        if (!string.IsNullOrEmpty(ConfirmAppPassword) && AppPassword != ConfirmAppPassword)
+            yield return new ValidationResult("Password xác nhận không khớp.", [nameof(ConfirmAppPassword)]);
+    }
   }
 }
