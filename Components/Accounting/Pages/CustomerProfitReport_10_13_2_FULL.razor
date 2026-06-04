@@ -1,0 +1,594 @@
+@page "/accounting/management/customer-profit-report"
+@page "/CustomerProfitReport"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>10.13.2 Lợi nhuận theo khách hàng</PageTitle>
+
+<div class="product-price-page customer-profit-page">
+    <PpScreenHeader Title="10.13.2 Lợi nhuận theo khách hàng"
+                    Subtitle="Customer Profit Report · doanh thu, chi phí, lợi nhuận theo khách hàng">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">
+                    Load
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="ResetFilterAsync" Disabled="_busy">
+                    Reset
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2 filter-card" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày" @bind-Date="_fromDate"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày" @bind-Date="_toDate"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Year" Value="_fiscalYear" ValueChanged="OnYearChanged"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="2000" Max="2100" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Month" Value="_periodMonth" ValueChanged="OnMonthChanged"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="12" />
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudSelect T="string" Label="Book" @bind-Value="_book"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_customerFilter" Label="Customer"
+                              Placeholder="Code / Name" Variant="Variant.Outlined"
+                              Margin="Margin.Dense" Immediate="true" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_search" Label="Search"
+                              Placeholder="Customer, voucher, source, account..."
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Immediate="true" Clearable="true"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2" Class="mb-2">
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card revenue-card" Elevation="0">
+                <MudText Typo="Typo.caption">Total Revenue</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.Revenue).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">TK 511*, 515*, 711*</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card cost-card" Elevation="0">
+                <MudText Typo="Typo.caption">Total Cost</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.Cost).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">TK 632*, 641*, 642*, 811*</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card profit-card" Elevation="0">
+                <MudText Typo="Typo.caption">Profit</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold" Color="@(VisibleRows.Sum(x => x.Profit) >= 0 ? Color.Success : Color.Error)">
+                    @VisibleRows.Sum(x => x.Profit).ToString("N0")
+                </MudText>
+                <MudText Typo="Typo.caption">Revenue - Cost</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card customer-card" Elevation="0">
+                <MudText Typo="Typo.caption">Customers</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Count().ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Active customers</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <div>
+                <MudText Typo="Typo.h6" Class="report-title">BÁO CÁO LỢI NHUẬN THEO KHÁCH HÀNG</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Kỳ @_periodMonth/@_fiscalYear · @_fromDate?.ToString("dd/MM/yyyy") - @_toDate?.ToString("dd/MM/yyyy") · Book @_book
+                </MudText>
+            </div>
+            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
+                Dòng: @VisibleRows.Count().ToString("N0")
+            </MudChip>
+        </MudStack>
+
+        <MudDataGrid @key="_gridKey"
+                     T="CustomerProfitRow"
+                     Items="VisibleRows.ToList()"
+                     Dense="true" Striped="true" Hover="true" Bordered="true"
+                     Filterable="true" FilterMode="@DataGridFilterMode.ColumnFilterRow"
+                     FixedHeader="true" Height="calc(100vh - 430px)"
+                     Class="customer-profit-grid" Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.CustomerCode" Title="Customer Code" />
+                <PropertyColumn Property="x => x.CustomerName" Title="Customer Name" />
+                <PropertyColumn Property="x => x.Revenue" Title="Revenue" Format="N0" CellClass="text-end fw-bold revenue-cell" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Cost" Title="Cost" Format="N0" CellClass="text-end fw-bold cost-cell" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Profit" Title="Profit" Format="N0" CellClass="text-end fw-bold profit-cell" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.GpPercent" Title="GP%" Format="N2" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.VoucherCount" Title="Vouchers" Format="N0" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.SourceCount" Title="Sources" Format="N0" CellClass="text-end" HeaderClass="text-end" />
+                <TemplateColumn Title="Drill" Filterable="false" Sortable="false">
+                    <CellTemplate>
+                        <MudStack Row="true" Spacing="1">
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Success"
+                                       StartIcon="@Icons.Material.Filled.TrendingUp"
+                                       OnClick="@(() => OpenLedger(context.Item, "511"))">
+                                DT
+                            </MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                       StartIcon="@Icons.Material.Filled.Payments"
+                                       OnClick="@(() => OpenLedger(context.Item, "632"))">
+                                CP
+                            </MudButton>
+                        </MudStack>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="CustomerProfitRow" PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">
+                    Không có dữ liệu lợi nhuận theo khách hàng trong kỳ này.
+                </MudText>
+            </NoRecordsContent>
+        </MudDataGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2">
+        <MudItem xs="12" md="6">
+            <MudPaper Class="product-price-card pa-3" Elevation="0">
+                <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Top 10 Profit Customers</MudText>
+                <MudTable T="CustomerProfitRow" Items="VisibleRows.OrderByDescending(x => x.Profit).Take(10)"
+                          Dense="true" Hover="true" Bordered="true" Class="mini-table">
+                    <HeaderContent>
+                        <MudTh>Customer</MudTh>
+                        <MudTh align="right">Profit</MudTh>
+                        <MudTh align="right">GP%</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.DisplayName</MudTd>
+                        <MudTd align="right">@context.Profit.ToString("N0")</MudTd>
+                        <MudTd align="right">@context.GpPercent.ToString("N2")%</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Class="product-price-card pa-3" Elevation="0">
+                <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Top 10 Revenue Customers</MudText>
+                <MudTable T="CustomerProfitRow" Items="VisibleRows.OrderByDescending(x => x.Revenue).Take(10)"
+                          Dense="true" Hover="true" Bordered="true" Class="mini-table">
+                    <HeaderContent>
+                        <MudTh>Customer</MudTh>
+                        <MudTh align="right">Revenue</MudTh>
+                        <MudTh align="right">Profit</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.DisplayName</MudTd>
+                        <MudTd align="right">@context.Revenue.ToString("N0")</MudTd>
+                        <MudTd align="right">@context.Profit.ToString("N0")</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</div>
+
+@code {
+    private const string PermissionMenuName = "GeneralLedgerEntries";
+
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private int _gridKey;
+
+    private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _toDate = DateTime.Today;
+    private int? _fiscalYear = DateTime.Today.Year;
+    private int? _periodMonth = DateTime.Today.Month;
+    private string _book = "MGMT";
+    private string _customerFilter = string.Empty;
+    private string _search = string.Empty;
+
+    private List<CustomerProfitRow> _rows = new();
+
+    private IEnumerable<CustomerProfitRow> VisibleRows => _rows.Where(MatchesFilter);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnYearChanged(int? year)
+    {
+        _fiscalYear = year;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnMonthChanged(int? month)
+    {
+        _periodMonth = month;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private void UpdateDateRange()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            return;
+
+        if (_periodMonth.Value < 1 || _periodMonth.Value > 12)
+            return;
+
+        _fromDate = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+        _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
+    }
+
+    private async Task ResetFilterAsync()
+    {
+        _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDate = DateTime.Today;
+        _fiscalYear = DateTime.Today.Year;
+        _periodMonth = DateTime.Today.Month;
+        _book = "MGMT";
+        _customerFilter = string.Empty;
+        _search = string.Empty;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem báo cáo lợi nhuận theo khách hàng.", MudBlazor.Severity.Warning);
+            _rows.Clear();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var query = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.CustomerId.HasValue && x.CustomerId.Value != Guid.Empty);
+
+            if (_fromDate.HasValue)
+                query = query.Where(x => x.PostingDate >= _fromDate.Value.Date);
+
+            if (_toDate.HasValue)
+                query = query.Where(x => x.PostingDate <= _toDate.Value.Date);
+
+            if (_fiscalYear.HasValue)
+                query = query.Where(x => x.FiscalYear == _fiscalYear.Value);
+
+            if (_periodMonth.HasValue)
+                query = query.Where(x => x.FiscalPeriod == _periodMonth.Value);
+
+            if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.IsTaxBook == true);
+
+            if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.IsManagementBook == true);
+
+            var data = await query
+                .Where(x => x.AccountCode != null &&
+                    (x.AccountCode.StartsWith("511") ||
+                     x.AccountCode.StartsWith("515") ||
+                     x.AccountCode.StartsWith("711") ||
+                     x.AccountCode.StartsWith("632") ||
+                     x.AccountCode.StartsWith("641") ||
+                     x.AccountCode.StartsWith("642") ||
+                     x.AccountCode.StartsWith("811")))
+                .Take(50000)
+                .ToListAsync();
+
+            var customerIds = data
+                .Where(x => x.CustomerId.HasValue && x.CustomerId.Value != Guid.Empty)
+                .Select(x => x.CustomerId!.Value)
+                .Distinct()
+                .ToHashSet();
+
+            var customerMap = new Dictionary<Guid, CustomerInfo>();
+            if (customerIds.Count > 0)
+            {
+                var customers = await db.Customer.AsNoTracking()
+                    .Where(c => customerIds.Contains(c.Customer_ID))
+                    .Select(c => new
+                    {
+                        c.Customer_ID,
+                        c.Customer_Code,
+                        c.COMPANY,
+                        c.EnglishName,
+                        c.MainCode
+                    })
+                    .ToListAsync();
+
+                customerMap = customers
+                    .GroupBy(x => x.Customer_ID)
+                    .ToDictionary(
+                        g => g.Key,
+                        g =>
+                        {
+                            var c = g.First();
+                            var code = !string.IsNullOrWhiteSpace(c.Customer_Code)
+                                ? c.Customer_Code
+                                : !string.IsNullOrWhiteSpace(c.MainCode)
+                                    ? c.MainCode
+                                    : c.Customer_ID.ToString();
+
+                            var name = !string.IsNullOrWhiteSpace(c.COMPANY)
+                                ? c.COMPANY
+                                : !string.IsNullOrWhiteSpace(c.EnglishName)
+                                    ? c.EnglishName
+                                    : code;
+
+                            return new CustomerInfo
+                            {
+                                Code = code ?? string.Empty,
+                                Name = name ?? string.Empty
+                            };
+                        });
+            }
+
+            _rows = data
+                .GroupBy(x => x.CustomerId!.Value)
+                .Select(g =>
+                {
+                    var customer = customerMap.TryGetValue(g.Key, out var c)
+                        ? c
+                        : new CustomerInfo { Code = g.Key.ToString(), Name = g.Key.ToString() };
+
+                    var revenue = g
+                        .Where(x => Starts(x.AccountCode, "511") || Starts(x.AccountCode, "515") || Starts(x.AccountCode, "711"))
+                        .Sum(x => x.Credit - x.Debit);
+
+                    var cost = g
+                        .Where(x => Starts(x.AccountCode, "632") || Starts(x.AccountCode, "641") || Starts(x.AccountCode, "642") || Starts(x.AccountCode, "811"))
+                        .Sum(x => x.Debit - x.Credit);
+
+                    return new CustomerProfitRow
+                    {
+                        CustomerId = g.Key,
+                        CustomerCode = customer.Code,
+                        CustomerName = customer.Name,
+                        Revenue = revenue,
+                        Cost = cost,
+                        Profit = revenue - cost,
+                        VoucherCount = g.Select(x => x.VoucherId).Where(x => x != Guid.Empty).Distinct().Count(),
+                        SourceCount = g.Select(x => x.SourceId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().Count()
+                    };
+                })
+                .Where(x => x.Revenue != 0 || x.Cost != 0)
+                .OrderByDescending(x => x.Profit)
+                .ToList();
+
+            _gridKey++;
+            Snackbar.Add($"Loaded {_rows.Count:N0} customer profit rows.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OpenLedger(CustomerProfitRow row, string accountCode)
+    {
+        if (!OnTabRequest.HasDelegate)
+        {
+            Snackbar.Add("Không mở được tab 10.6.1 vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var book = string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase)
+            ? "MGMT"
+            : _book.Trim().ToUpperInvariant();
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
+            builder.AddAttribute(1, "InitialAccountCode", accountCode);
+            builder.AddAttribute(2, "InitialFiscalYear", _fiscalYear);
+            builder.AddAttribute(3, "InitialPeriodMonth", _periodMonth);
+            builder.AddAttribute(4, "InitialBook", book);
+            builder.AddAttribute(5, "InitialCustomerId", row.CustomerId);
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync((
+            $"GeneralLedgerSummary_{accountCode}_{row.CustomerId}_{_fiscalYear}_{_periodMonth}_{book}",
+            $"10.6.1 Sổ cái tổng hợp - TK {accountCode} - {row.CustomerCode}",
+            content
+        ));
+    }
+
+    private bool MatchesFilter(CustomerProfitRow x)
+    {
+        if (!string.IsNullOrWhiteSpace(_customerFilter))
+        {
+            var c = _customerFilter.Trim();
+            if (!x.CustomerCode.Contains(c, StringComparison.OrdinalIgnoreCase)
+                && !x.CustomerName.Contains(c, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var key = _search.Trim();
+
+        return x.CustomerCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.CustomerName.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Revenue.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Cost.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Profit.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.GpPercent.ToString("N2").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.VoucherCount.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.SourceCount.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool Starts(string? value, string prefix)
+        => !string.IsNullOrWhiteSpace(value) && value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+
+    private sealed class CustomerInfo
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class CustomerProfitRow
+    {
+        public Guid CustomerId { get; set; }
+        public string CustomerCode { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public decimal Revenue { get; set; }
+        public decimal Cost { get; set; }
+        public decimal Profit { get; set; }
+        public decimal GpPercent => Revenue == 0 ? 0 : Profit / Revenue * 100;
+        public int VoucherCount { get; set; }
+        public int SourceCount { get; set; }
+
+        public string DisplayName =>
+            string.IsNullOrWhiteSpace(CustomerCode)
+                ? CustomerName
+                : $"{CustomerCode} - {CustomerName}";
+    }
+}
+
+<style>
+    .customer-profit-page {
+        background: #f4fdf7;
+    }
+
+        .customer-profit-page .product-price-card {
+            border: 1px solid #d1fae5;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(22, 101, 52, 0.06);
+        }
+
+        .customer-profit-page .filter-card {
+            background: linear-gradient(90deg, #ffffff, #ecfdf5);
+        }
+
+        .customer-profit-page .kpi-card {
+            min-height: 96px;
+            padding: 14px;
+            border-radius: 16px;
+            border: 1px solid #d1fae5;
+            box-shadow: 0 8px 20px rgba(22,101,52,.05);
+        }
+
+        .customer-profit-page .revenue-card {
+            background: #ecfdf5;
+        }
+
+        .customer-profit-page .cost-card {
+            background: #fff7ed;
+            border-color: #fed7aa !important;
+        }
+
+        .customer-profit-page .profit-card {
+            background: #eff6ff;
+            border-color: #bfdbfe !important;
+        }
+
+        .customer-profit-page .customer-card {
+            background: #f8fafc;
+            border-color: #cbd5e1 !important;
+        }
+
+        .customer-profit-page .report-title {
+            font-weight: 800;
+            letter-spacing: .2px;
+            color: #063970;
+        }
+
+        .customer-profit-page .customer-profit-grid {
+            font-size: .82rem;
+        }
+
+            .customer-profit-page .customer-profit-grid .mud-table-container {
+                overflow-x: auto;
+            }
+
+            .customer-profit-page .customer-profit-grid .mud-table-root .mud-table {
+                width: max-content !important;
+                min-width: 100%;
+            }
+
+            .customer-profit-page .customer-profit-grid .mud-table-cell,
+            .customer-profit-page .customer-profit-grid td,
+            .customer-profit-page .customer-profit-grid th {
+                padding: 4px 8px !important;
+                white-space: nowrap;
+            }
+
+        .customer-profit-page .mini-table .mud-table-cell {
+            padding: 5px 8px !important;
+            white-space: nowrap;
+            font-size: .82rem;
+        }
+
+        .customer-profit-page .revenue-cell {
+            color: #047857;
+        }
+
+        .customer-profit-page .cost-cell {
+            color: #c2410c;
+        }
+
+        .customer-profit-page .profit-cell {
+            color: #0369a1;
+        }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .text-end {
+        text-align: right !important;
+    }
+</style>

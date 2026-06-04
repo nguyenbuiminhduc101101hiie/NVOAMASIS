@@ -61,7 +61,8 @@
             <MudItem xs="6" sm="1">
                 <MudNumericField T="int?"
                                  Label="Year"
-                                 @bind-Value="_fiscalYear"
+                                 Value="_fiscalYear"
+                                 ValueChanged="OnYearChanged"
                                  Variant="Variant.Outlined"
                                  Margin="Margin.Dense"
                                  Min="2000"
@@ -71,7 +72,8 @@
             <MudItem xs="6" sm="1">
                 <MudNumericField T="int?"
                                  Label="Month"
-                                 @bind-Value="_periodMonth"
+                                 Value="_periodMonth"
+                                 ValueChanged="OnMonthChanged"
                                  Variant="Variant.Outlined"
                                  Margin="Margin.Dense"
                                  Min="1"
@@ -208,6 +210,7 @@
     [Parameter] public int? InitialFiscalYear { get; set; }
     [Parameter] public int? InitialPeriodMonth { get; set; }
     [Parameter] public string? InitialBook { get; set; }
+    [Parameter] public Guid? InitialCustomerId { get; set; }
 
     private const string PermissionMenuName = "GeneralLedgerEntries";
 
@@ -221,6 +224,7 @@
     private int? _periodMonth = DateTime.Today.Month;
     private string _book = "ALL";
     private string _accountCode = "ALL";
+    private Guid? _customerIdFilter;
     private string _search = string.Empty;
 
     private List<GeneralLedgerSummaryRow> _rows = new();
@@ -236,6 +240,8 @@
         _usr = auth.User.Identity?.Name ?? string.Empty;
 
         ApplyInitialFilters();
+
+        UpdateDateRange();
 
         await LoadAsync();
     }
@@ -253,6 +259,9 @@
 
         if (!string.IsNullOrWhiteSpace(InitialBook))
             _book = InitialBook.Trim().ToUpperInvariant();
+
+        if (InitialCustomerId.HasValue && InitialCustomerId.Value != Guid.Empty)
+            _customerIdFilter = InitialCustomerId.Value;
         if (_fiscalYear.HasValue && _periodMonth.HasValue)
         {
             _fromDate = new DateTime(
@@ -266,6 +275,32 @@
         }
     }
 
+    private async Task OnYearChanged(int? year)
+    {
+        _fiscalYear = year;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnMonthChanged(int? month)
+    {
+        _periodMonth = month;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private void UpdateDateRange()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            return;
+
+        if (_periodMonth.Value < 1 || _periodMonth.Value > 12)
+            return;
+
+        _fromDate = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+        _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
+    }
+
     private async Task ResetFilterAsync()
     {
         _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
@@ -274,7 +309,11 @@
         _periodMonth = DateTime.Today.Month;
         _book = "ALL";
         _accountCode = "ALL";
+        _customerIdFilter = null;
         _search = string.Empty;
+
+        UpdateDateRange();
+
         await LoadAsync();
     }
 
@@ -321,6 +360,11 @@
             {
                 var acc = _accountCode.Trim();
                 query = query.Where(x => x.AccountCode != null && x.AccountCode.StartsWith(acc));
+            }
+
+            if (_customerIdFilter.HasValue && _customerIdFilter.Value != Guid.Empty)
+            {
+                query = query.Where(x => x.CustomerId == _customerIdFilter.Value);
             }
 
             var data = await query
