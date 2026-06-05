@@ -16,6 +16,7 @@ using NVOAMASIS.Interface;
 using NVOAMASIS.Models;
 using NVOAMASIS.Services;
 using NVOAMASIS.Services.Localization;
+using NVOAMASIS.Services.MultiTenant;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Localization;
 using Microsoft.AspNetCore.Components;
@@ -86,19 +87,24 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     });
 
 //Setting
-builder.Services.AddDbContext<AppDbContext>(options =>
+builder.Services.AddScoped<ITenantContext, TenantContext>();
+builder.Services.AddDbContext<RegistryDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("RegistryConnection") ??
+        throw new InvalidOperationException("RegistryConnection is not configured")));
+builder.Services.AddScoped<TenantDatabaseProvisioningService>();
+builder.Services.AddScoped<TenantAuthService>();
 
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection") ??
-        throw new InvalidOperationException("Sorry, your connection is not found")
-    ),
-    contextLifetime: ServiceLifetime.Scoped,
-    optionsLifetime: ServiceLifetime.Singleton
-);
-builder.Services.AddDbContextFactory<AppDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 {
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection") ??
-        throw new InvalidOperationException("Sorry, your connection is not found"));
+    var tenantContext = serviceProvider.GetRequiredService<ITenantContext>();
+    tenantContext.EnsureInitializedFromHttpContext();
+    var connectionString = tenantContext.ConnectionString
+        ?? builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("Sorry, your connection is not found");
+    options.UseSqlServer(connectionString);
 });
+
+builder.Services.AddSingleton<IDbContextFactory<AppDbContext>, TenantAwareDbContextFactory>();
 builder.Services.AddScoped<AccountService>();
 builder.Services.AddScoped<ReportServices>();
 builder.Services.AddScoped<TrainScheduleServices>();
@@ -243,6 +249,7 @@ app.UseCors();
 //# for BLAZOR COOKIE Auth
 app.UseCookiePolicy();
 app.UseAuthentication();
+app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
 
 app.MapHub<NotificationHub>("/notificationhub");
