@@ -20,7 +20,7 @@ namespace NVOAMASIS.Models
         public string? TaxCode { get; set; }
         public string? IPAddress { get; set; }
         public int? hanmovecus { get; set; }
-        public string? CompanyCode { get; set; }
+        public byte[]? Logo { get; set; }
 
     }
 }

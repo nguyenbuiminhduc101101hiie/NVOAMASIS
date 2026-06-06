@@ -7,6 +7,7 @@ using OfficeOpenXml;
 using Org.BouncyCastle.Bcpg;
 using Stimulsoft.Report;
 using Stimulsoft.Report.Blazor;
+using Stimulsoft.Report.Components;
 using Stimulsoft.Report.Dictionary;
 using Stimulsoft.Report.Export;
 using Stimulsoft.Report.Web;
@@ -18,6 +19,7 @@ using NVOAMASIS.Components.Shipment.Pages;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
 using NVOAMASIS.Response;
+using NVOAMASIS.Services.MultiTenant;
 
 using ZXing;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
@@ -31,7 +33,7 @@ using System.Linq;
 
 namespace NVOAMASIS.Services
 {
-    public class ShipmentService(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv, SupportServices supsv, HistoryLogService HistoryLogService, IDbContextFactory<AppDbContext> _dbFactory)
+    public class ShipmentService(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv, SupportServices supsv, HistoryLogService HistoryLogService, IDbContextFactory<AppDbContext> _dbFactory, ITenantContext _tenantContext)
     {
         public async Task<List<M_Job>> GetListJobByMBLs(List<M_MBL> listdata)
         {
@@ -2065,35 +2067,25 @@ namespace NVOAMASIS.Services
         }
         /// <param name="showPreCarriage">true = show vessel-voy in "Pre-Carriage"; false = show in "Vessel & Voy No."</param>
         /// <param name="attach">true = export attached page template</param>
-        /// <param name="billType">Loại bill: PASL | VietStar | AMSS | HDS</param>
         /// <param name="isOriginal">true = Original (không logo); false = Draft (có logo)</param>
-        public async Task<BoolandMessReponse> ExportBillSea(Guid id, bool showPreCarriage = true, bool attach = false, string billType = "PASL", bool isOriginal = false)
+        public async Task<BoolandMessReponse> ExportBillSea(Guid id, bool showPreCarriage = true, bool attach = false, bool isOriginal = false)
         {
             try
             {
-                //Create empty report object
                 var report = new StiReport();
-
-                // Chọn template theo loại bill:
-                // HDS dùng layout riêng (BillSea_HDS / BillSea_HDS_Att)
-                // PASL, VietStar, AMSS dùng chung layout (BillSea_NVOCC / BillSea_NVOCC_Att) + variable BillType để chọn logo
-                string reportName;
-                if (billType == "HDS")
-                    reportName = attach ? "BillSea_HDS_Att.mrt" : "BillSea_HDS.mrt";
-                else
-                    reportName = attach ? "BillSea_NVOCC_Att.mrt" : "BillSea_NVOCC.mrt";
-
+                var reportName = attach ? "BillSea_NVOCC_Att.mrt" : "BillSea_NVOCC.mrt";
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", reportName);
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: !isOriginal);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["chk_show_pre_Carr"].Value = showPreCarriage ? "true" : "false";
-                // Loại bill (PASL, VietStar, AMSS, HDS) – report template dùng để chọn logo / header
-                if (report.Dictionary.Variables["BillType"] != null)
-                    report.Dictionary.Variables["BillType"].Value = billType;
                 // Original = không logo, Draft = có logo
                 if (report.Dictionary.Variables["IsOriginal"] != null)
                     report.Dictionary.Variables["IsOriginal"].Value = isOriginal ? "true" : "false";
@@ -2116,16 +2108,24 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportBilAir(Guid id)
+        /// <param name="isOriginal">true = Original (không logo); false = Draft (có logo)</param>
+        public async Task<BoolandMessReponse> ExportBilAir(Guid id, bool isOriginal = false)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillAir.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyReportConnectionString(report, connectionString);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
+                if (report.Dictionary.Variables["IsOriginal"] != null)
+                    report.Dictionary.Variables["IsOriginal"].Value = isOriginal ? "true" : "false";
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: !isOriginal);
                 report.Render();
                 using (var ms = new MemoryStream())
                 {
@@ -2141,18 +2141,19 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportArrivalAir(M_HBL detail, string billType = "PASL", string branches = "")
+        public async Task<BoolandMessReponse> ExportArrivalAir(M_HBL detail)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNotice_Air.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
 
                 var flightdate = detail.Air_FlightDate1!.Split('/').ToList();
                 var flightcode = flightdate.Count == 0 ? "" : flightdate.FirstOrDefault();
@@ -2189,18 +2190,19 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportArrival(M_HBL detail, string billType = "PASL", string branches = "")
+        public async Task<BoolandMessReponse> ExportArrival(M_HBL detail)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNoticeNVOCC.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2242,11 +2244,12 @@ namespace NVOAMASIS.Services
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNoticeNVOCC.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
+
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2284,11 +2287,12 @@ namespace NVOAMASIS.Services
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNotice_Air.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
+
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
 
                 var flightdate = (detail.Air_FlightDate1 ?? "").Split('/').ToList();
                 var flightcode = flightdate.Count == 0 ? "" : flightdate.FirstOrDefault();
@@ -2322,17 +2326,19 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportArrival_NVOCC(M_HBL detail, string billType = "PASL")
+        public async Task<BoolandMessReponse> ExportArrival_NVOCC(M_HBL detail)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNoticeNVOCC.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2596,6 +2602,149 @@ namespace NVOAMASIS.Services
                 Console.WriteLine(ex.Message);
                 return null;
             }
+        }
+
+        private static readonly string[] CompanyLogoResourceNames =
+        [
+            "logo_bill",
+            "PASLLogo",
+            "VietStartLogo",
+            "AMSSLogo",
+            "HDSLogo",
+            "CompanyLogo"
+        ];
+
+        private static readonly string[] CompanyLogoComponentNames =
+        [
+            "Text1",
+            "CompanyLogo"
+        ];
+
+        private static System.Drawing.Image? CreateLogoImage(byte[]? logo)
+        {
+            if (logo is not { Length: > 0 })
+                return null;
+
+            using var ms = new MemoryStream(logo);
+            using var temp = System.Drawing.Image.FromStream(ms);
+            return new System.Drawing.Bitmap(temp);
+        }
+
+        private string ResolveReportConnectionString()
+        {
+            _tenantContext.EnsureInitializedFromHttpContext();
+            if (!string.IsNullOrWhiteSpace(_tenantContext.ConnectionString))
+                return _tenantContext.ConnectionString;
+
+            var connectionString = _context.Database.GetConnectionString();
+            if (!string.IsNullOrWhiteSpace(connectionString))
+                return connectionString;
+
+            return _context.Database.GetDbConnection().ConnectionString;
+        }
+
+        private async Task<byte[]?> GetCompanyLogoAsync()
+        {
+            _context.ChangeTracker.Clear();
+            return await _context.CompanyInfomation
+                .AsNoTracking()
+                .Select(x => x.Logo)
+                .FirstOrDefaultAsync();
+        }
+
+        private void ApplyArrivalReportSetup(StiReport report, byte[]? companyLogo)
+        {
+            var connectionString = ResolveReportConnectionString();
+            ApplyReportConnectionString(report, connectionString);
+            ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+        }
+
+        private static void ApplyReportConnectionString(StiReport report, string connectionString)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return;
+
+            if (report.Dictionary.Variables.Contains("connectDB"))
+                report.Dictionary.Variables["connectDB"].Value = connectionString;
+
+            const string defaultDatabaseName = "MS SQL";
+            if (report.Dictionary.Databases.Contains(defaultDatabaseName))
+            {
+                ((StiSqlDatabase)report.Dictionary.Databases[defaultDatabaseName]).ConnectionString = connectionString;
+                return;
+            }
+
+            foreach (StiDatabase database in report.Dictionary.Databases)
+            {
+                if (database is StiSqlDatabase sqlDatabase)
+                {
+                    sqlDatabase.ConnectionString = connectionString;
+                    break;
+                }
+            }
+        }
+
+        private static void ApplyCompanyLogoToReport(StiReport report, byte[]? logo, bool showLogo = true)
+        {
+            ApplyLogoVariable(report, logo, showLogo);
+
+            if (!showLogo || logo is not { Length: > 0 })
+                return;
+
+            foreach (var resourceName in CompanyLogoResourceNames)
+            {
+                if (!report.Dictionary.Resources.Contains(resourceName))
+                    continue;
+
+                report.Dictionary.Resources[resourceName].Content = logo;
+            }
+
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is not StiImage image)
+                    continue;
+
+                var imageUrl = image.ImageURL?.ToString() ?? string.Empty;
+                var imageExpression = image.Image?.ToString() ?? string.Empty;
+
+                if (CompanyLogoComponentNames.Contains(image.Name, StringComparer.OrdinalIgnoreCase)
+                    && !imageUrl.Contains("AMSSform", StringComparison.OrdinalIgnoreCase))
+                {
+                    image.Image = CreateLogoImage(logo);
+                    continue;
+                }
+
+                if (imageExpression.Contains("{logo}", StringComparison.OrdinalIgnoreCase))
+                {
+                    image.Image = CreateLogoImage(logo);
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(imageUrl))
+                    continue;
+
+                if (!CompanyLogoResourceNames.Any(name =>
+                        imageUrl.Contains(name, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                image.Image = CreateLogoImage(logo);
+            }
+        }
+
+        private static void ApplyLogoVariable(StiReport report, byte[]? logo, bool showLogo)
+        {
+            if (!report.Dictionary.Variables.Contains("logo"))
+                return;
+
+            var logoVariable = report.Dictionary.Variables["logo"];
+            if (!showLogo || logo is not { Length: > 0 })
+            {
+                logoVariable.ValueObject = null;
+                return;
+            }
+
+            logoVariable.Type = typeof(System.Drawing.Image);
+            logoVariable.ValueObject = CreateLogoImage(logo);
         }
 
         private static void ApplyCompanyBranchVariable(StiReport report, string? branches)
