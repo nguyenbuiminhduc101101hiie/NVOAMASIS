@@ -24,10 +24,11 @@ public class TenantAuthService(
         if (string.IsNullOrWhiteSpace(appUserName) || string.IsNullOrWhiteSpace(appPassword))
             return new LoginResponse(false, "Nhập user và password ứng dụng.");
 
-        var tenant = await provisioning.ResolveTenantAsync(
+        var tenant = await provisioning.ResolveOrRegisterLegacyTenantAsync(
             databaseName, sqlUserId, sqlPassword, cancellationToken);
         if (tenant == null)
-            return new LoginResponse(false, "Database / SQL user / password không hợp lệ hoặc chưa đăng ký.");
+            return new LoginResponse(false,
+                "Không đăng nhập được: kiểm tra tên database (vd. nvoamasis), SQL user/password và user ứng dụng.");
 
         var canConnect = await provisioning.TestSqlConnectionAsync(
             tenant.ServerName, tenant.DatabaseName, tenant.SqlUserId, tenant.SqlPassword, cancellationToken);

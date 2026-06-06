@@ -118,8 +118,8 @@ public class TenantDatabaseProvisioningService(
 
         var row = await registryDb.TenantDatabases.AsNoTracking()
             .FirstOrDefaultAsync(x =>
-                x.DatabaseName == databaseName &&
-                x.SqlUserId == sqlUserId &&
+                x.DatabaseName.ToLower() == databaseName.ToLower() &&
+                x.SqlUserId.ToLower() == sqlUserId.ToLower() &&
                 x.IsActive,
                 cancellationToken);
 
@@ -128,6 +128,51 @@ public class TenantDatabaseProvisioningService(
             return null;
 
         return row;
+    }
+
+    /// <summary>
+    /// Database đã có trước multi-tenant (vd. nvoamasis): cho phép login nếu SQL đúng, tự ghi registry.
+    /// </summary>
+    public async Task<TenantDatabaseRegistry?> ResolveOrRegisterLegacyTenantAsync(
+        string databaseName,
+        string sqlUserId,
+        string sqlPassword,
+        CancellationToken cancellationToken = default)
+    {
+        var resolved = await ResolveTenantAsync(databaseName, sqlUserId, sqlPassword, cancellationToken);
+        if (resolved != null)
+            return resolved;
+
+        databaseName = databaseName.Trim();
+        sqlUserId = sqlUserId.Trim();
+        var server = configuration["MultiTenant:Server"] ?? "logisticssoftware.vn";
+
+        if (!await TestSqlConnectionAsync(server, databaseName, sqlUserId, sqlPassword, cancellationToken))
+            return null;
+
+        var dbNameLower = databaseName.ToLower();
+        var conflicting = await registryDb.TenantDatabases.AsNoTracking()
+            .AnyAsync(x => x.DatabaseName.ToLower() == dbNameLower && x.IsActive, cancellationToken);
+        if (conflicting)
+            return null;
+
+        var tenant = new TenantDatabaseRegistry
+        {
+            TenantId = Guid.NewGuid(),
+            DatabaseName = databaseName,
+            ServerName = server,
+            SqlUserId = sqlUserId,
+            SqlPassword = sqlPassword,
+            DisplayName = databaseName,
+            CreatedAtUtc = DateTime.UtcNow,
+            CreatedByAppUser = "legacy-import",
+            IsActive = true
+        };
+        registryDb.TenantDatabases.Add(tenant);
+        await registryDb.SaveChangesAsync(cancellationToken);
+        logger.LogInformation(
+            "Legacy tenant registered on login: {DatabaseName}, SqlUser={SqlUser}", databaseName, sqlUserId);
+        return tenant;
     }
 
     public async Task<bool> TestSqlConnectionAsync(

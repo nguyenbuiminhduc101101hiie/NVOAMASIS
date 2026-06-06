@@ -93,6 +93,49 @@ namespace NVOAMASIS.Services
 
         }
 
+        public async Task<M_CompanyInfo> GetSingleCompany_info()
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var rs = await _context.CompanyInfomation.FirstOrDefaultAsync();
+                return rs ?? new M_CompanyInfo();
+            }
+            catch
+            {
+                return new M_CompanyInfo();
+            }
+        }
+
+        public async Task<BoolandMessReponse> SaveCompany_info(M_CompanyInfo c)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+
+                if (c.CompanyID == Guid.Empty)
+                {
+                    c.CompanyID = Guid.NewGuid();
+                    _context.CompanyInfomation.Add(c);
+                }
+                else
+                {
+                    var exists = await _context.CompanyInfomation.AnyAsync(x => x.CompanyID == c.CompanyID);
+                    if (exists)
+                        _context.CompanyInfomation.Update(c);
+                    else
+                        _context.CompanyInfomation.Add(c);
+                }
+
+                await _context.SaveChangesAsync();
+                return new BoolandMessReponse(true, "Lưu thông tin công ty thành công");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Không lưu được thông tin công ty: " + ex.Message);
+            }
+        }
+
         public async Task<BoolandMessReponse> UpdateCompany_info(M_CompanyInfo c)
         {
             try

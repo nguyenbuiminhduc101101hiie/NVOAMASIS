@@ -3765,14 +3765,14 @@ namespace NVOAMASIS.Migrations
                     b.Property<string>("AddressTiengViet")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("CompanyCode")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<string>("Email")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("IPAddress")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<byte[]>("Logo")
+                        .HasColumnType("varbinary(max)");
 
                     b.Property<string>("Name")
                         .HasColumnType("nvarchar(max)");
