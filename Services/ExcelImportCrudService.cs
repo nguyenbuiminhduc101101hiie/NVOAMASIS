@@ -1,13 +1,13 @@
-using ExcelDataReader;
-using Microsoft.EntityFrameworkCore;
-using NVOAMASIS.Data;
-using NVOAMASIS.Models;
 using System.Data;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using ExcelDataReader;
+using Microsoft.EntityFrameworkCore;
+using NVOAMASIS.Data;
+using NVOAMASIS.Models;
 
-namespace NVOAMASIS.Services;
+namespace JNL.Services;
 
 public enum ExcelCrudTab
 {
@@ -30,7 +30,7 @@ public class ExcelImportCrudService(AppDbContext context)
     {
         "IN-OUT_YARD_1",
         "Current_In_Yard2"
-    };
+    }; 
 
     static ExcelImportCrudService()
     {
@@ -108,7 +108,7 @@ public class ExcelImportCrudService(AppDbContext context)
         }
     }
 
-    public async Task<ExcelImportCrudResult> ImportAsync(ExcelCrudTab tab, Stream stream, string? importUser = null, CancellationToken ct = default)
+    public async Task<ExcelImportCrudResult> ImportAsync(ExcelCrudTab tab, Stream stream, string? importUser = null, CancellationToken ct = default, string? amsLineFilter = null)
     {
         try
         {
@@ -125,7 +125,7 @@ public class ExcelImportCrudService(AppDbContext context)
             {
                 if (stream.CanSeek)
                     stream.Position = 0;
-                return await ImportAmsXmlSpreadsheetFallbackAsync(stream, importUser, ct);
+                return await ImportAmsXmlSpreadsheetFallbackAsync(stream, importUser, amsLineFilter, ct);
             }
 
             return tab switch
@@ -133,7 +133,7 @@ public class ExcelImportCrudService(AppDbContext context)
                 ExcelCrudTab.HDS => await ImportHdsAsync(ds, importUser, ct),
                 ExcelCrudTab.AG => await ImportAgAsync(ds, importUser, ct),
                 ExcelCrudTab.VSS => await ImportVssAsync(ds, importUser, ct),
-                ExcelCrudTab.AMS => await ImportAmsAsync(ds, importUser, ct),
+                ExcelCrudTab.AMS => await ImportAmsAsync(ds, importUser, amsLineFilter, ct),
                 _ => new ExcelImportCrudResult(0, "Tab không hợp lệ.")
             };
         }
@@ -143,7 +143,15 @@ public class ExcelImportCrudService(AppDbContext context)
         }
     }
 
-    private async Task<ExcelImportCrudResult> ImportAmsXmlSpreadsheetFallbackAsync(Stream stream, string? importUser, CancellationToken ct)
+    private static bool MatchesAmsLineFilter(string? line, string? amsLineFilter)
+    {
+        if (string.IsNullOrWhiteSpace(amsLineFilter))
+            return true;
+        return !string.IsNullOrWhiteSpace(line)
+            && string.Equals(line.Trim(), amsLineFilter.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<ExcelImportCrudResult> ImportAmsXmlSpreadsheetFallbackAsync(Stream stream, string? importUser, string? amsLineFilter, CancellationToken ct)
     {
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
         var content = await reader.ReadToEndAsync();
@@ -201,6 +209,10 @@ public class ExcelImportCrudService(AppDbContext context)
                 if (string.IsNullOrWhiteSpace(soCont))
                     continue;
 
+                var lineValue = GetValue("LINE");
+                if (!MatchesAmsLineFilter(lineValue, amsLineFilter))
+                    continue;
+
                 if (IsAmsImpSheet(sheetName))
                 {
                     incomingImp.Add(new M_8_3_IN_OUT_YARD_1
@@ -208,7 +220,7 @@ public class ExcelImportCrudService(AppDbContext context)
                         Id = Guid.NewGuid(),
                         METHOD = GetValue("METHOD"),
                         EXEC_TS = ParseDateValue(GetValue("EXEC_TS")),
-                        LINE = GetValue("LINE"),
+                        LINE = lineValue,
                         ITEM_KEY = GetValue("ITEM_KEY"),
                         SOCONT = soCont,
                         KICHCO = GetValue("KICHCO"),
@@ -244,7 +256,7 @@ public class ExcelImportCrudService(AppDbContext context)
                     {
                         Id = Guid.NewGuid(),
                         AGENT = GetValue("AGENT"),
-                        LINE = GetValue("LINE"),
+                        LINE = lineValue,
                         ITEM_KEY = GetValue("ITEM_KEY"),
                         ITEM_NO = soCont,
                         ISO = GetValue("ISO"),
@@ -894,7 +906,7 @@ public class ExcelImportCrudService(AppDbContext context)
         return normalized;
     }
 
-    private async Task<ExcelImportCrudResult> ImportAmsAsync(DataSet ds, string? importUser, CancellationToken ct)
+    private async Task<ExcelImportCrudResult> ImportAmsAsync(DataSet ds, string? importUser, string? amsLineFilter, CancellationToken ct)
     {
         var incomingImp = new List<M_8_3_IN_OUT_YARD_1>();
         var incomingExp = new List<M_YardMovement_AMS_26040816_Current_In_Yard2>();
@@ -925,6 +937,10 @@ public class ExcelImportCrudService(AppDbContext context)
                 if (string.IsNullOrWhiteSpace(containerNo))
                     continue;
 
+                var lineValue = ReadString(row, map, "LINE");
+                if (!MatchesAmsLineFilter(lineValue, amsLineFilter))
+                    continue;
+
                 if (IsAmsImpSheet(normalizedSheet))
                 {
                     incomingImp.Add(new M_8_3_IN_OUT_YARD_1
@@ -932,7 +948,7 @@ public class ExcelImportCrudService(AppDbContext context)
                         Id = Guid.NewGuid(),
                         METHOD = ReadString(row, map, "METHOD"),
                         EXEC_TS = ReadDate(row, map, "EXEC_TS"),
-                        LINE = ReadString(row, map, "LINE"),
+                        LINE = lineValue,
                         ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
                         SOCONT = containerNo,
                         KICHCO = ReadString(row, map, "KICHCO"),
@@ -968,7 +984,7 @@ public class ExcelImportCrudService(AppDbContext context)
                     {
                         Id = Guid.NewGuid(),
                         AGENT = ReadString(row, map, "AGENT"),
-                        LINE = ReadString(row, map, "LINE"),
+                        LINE = lineValue,
                         ITEM_KEY = ReadString(row, map, "ITEM_KEY"),
                         ITEM_NO = containerNo,
                         ISO = ReadString(row, map, "ISO"),
