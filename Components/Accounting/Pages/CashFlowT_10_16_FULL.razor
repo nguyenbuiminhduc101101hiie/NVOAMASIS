@@ -1,0 +1,1273 @@
+@page "/accounting/cash-flow-t"
+@page "/CashFlowT"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>10.16 Theo dõi dòng tiền theo T</PageTitle>
+
+<div class="product-price-page cash-flow-t-page">
+    <PpScreenHeader Title="10.16 Theo dõi dòng tiền theo T"
+                    Subtitle="Theo dõi tiền vào / tiền ra từ voucher → sổ cái → tài khoản tiền 111/112 → số dư cuối kỳ">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">
+                    Load
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PlayCircle" OnClick="LoadSimulatorAsync" Disabled="_busy">
+                    Simulator
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.MenuBook" OnClick="OpenGeneralLedgerSummary" Disabled="_busy">
+                    10.6.1 Sổ cái
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.TableChart" OnClick="OpenAccountBalanceSnapshot" Disabled="_busy">
+                    10.9.1 Balance
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PictureAsPdf" OnClick="PrintAsync" Disabled="_busy">
+                    Print / PDF
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.RestartAlt" OnClick="ResetAsync" Disabled="_busy">
+                    Reset
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="cash-filter-card pa-3 mb-2" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="AlignItems.Center">
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string" Label="Chọn theo" Value="@_dateMode" ValueChanged="OnDateModeChanged"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("PERIOD")">Theo kỳ</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("DATE_RANGE")">Từ ngày - đến ngày</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Year" Value="_fiscalYear" ValueChanged="OnYearChanged"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="2000" Max="2100"
+                                 Disabled="@IsDateRangeMode" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Month" Value="_periodMonth" ValueChanged="OnMonthChanged"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="12"
+                                 Disabled="@IsDateRangeMode" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày" @bind-Date="_fromDate"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy"
+                               Disabled="@IsPeriodMode" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày" @bind-Date="_toDate"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy"
+                               Disabled="@IsPeriodMode" />
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudSelect T="string" Label="Book" @bind-Value="_book"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudTextField @bind-Value="_cashAccountFilter" Label="TK tiền"
+                              Placeholder="111,112"
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Immediate="true" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_search" Label="Search"
+                              Placeholder="Voucher, HBL, mô tả, đối ứng..."
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Immediate="true" Clearable="true"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+        </MudGrid>
+        <MudGrid Spacing="2" AlignItems="AlignItems.Center" Class="mt-1">
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string" Label="Dòng tiền" @bind-Value="_directionFilter"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("IN")">Tiền vào</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("OUT")">Tiền ra</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("TRANSFER")">Chuyển quỹ nội bộ</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudSelect T="string" Label="Nhóm nghiệp vụ" @bind-Value="_categoryFilter"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                    @foreach (var category in CategoryOptions)
+                    {
+                        <MudSelectItem T="string" Value="@category">@category</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="7">
+                <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="cash-help-alert">
+                    TK tiền là tài sản: <b>Nợ 111/112 = tiền vào</b>, <b>Có 111/112 = tiền ra</b>. Mỗi dòng tiền được nối với tài khoản đối ứng trong cùng voucher để biết tiền đến từ đâu và đi đâu.
+                </MudAlert>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <div id="cashFlowPrintArea">
+        <MudGrid Spacing="2" Class="mb-2">
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="cash-stat-card opening-stat" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.AccountBalanceWallet" Class="cash-stat-icon" />
+                    <MudText Typo="Typo.caption">Số dư đầu kỳ</MudText>
+                    <MudText Typo="Typo.h6" Class="fw-bold">@OpeningCash.ToString("N0")</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">111/112 trước kỳ đang xem</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="cash-stat-card in-stat" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.SouthWest" Class="cash-stat-icon" />
+                    <MudText Typo="Typo.caption">Tiền vào</MudText>
+                    <MudText Typo="Typo.h6" Class="fw-bold">@PeriodCashIn.ToString("N0")</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Nợ 111/112 trong kỳ</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="cash-stat-card out-stat" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.NorthEast" Class="cash-stat-icon" />
+                    <MudText Typo="Typo.caption">Tiền ra</MudText>
+                    <MudText Typo="Typo.h6" Class="fw-bold">@PeriodCashOut.ToString("N0")</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Có 111/112 trong kỳ</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="cash-stat-card closing-stat" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.Savings" Class="cash-stat-icon" />
+                    <MudText Typo="Typo.caption">Số dư cuối kỳ</MudText>
+                    <MudText Typo="Typo.h6" Class="fw-bold">@ClosingCash.ToString("N0")</MudText>
+                    <MudText Typo="Typo.caption" Color="@((PeriodNetCash >= 0) ? Color.Success : Color.Error)">
+                        Net cash: @PeriodNetCash.ToString("N0")
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="cash-cycle-card pa-3 mb-2" Elevation="0">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold">Chu trình dòng tiền logistics</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Theo dõi từ phát sinh công nợ → thu/chi tiền → số dư tiền cuối kỳ.</MudText>
+                </MudStack>
+                <MudChip T="string" Size="Size.Small" Color="@(_usingSimulator ? Color.Secondary : Color.Primary)" Variant="Variant.Filled">
+                    @(_usingSimulator ? "Simulator" : "GeneralLedgerEntries")
+                </MudChip>
+            </MudStack>
+
+            <div class="cash-cycle-line">
+                <div class="cash-step">
+                    <span class="step-no">1</span>
+                    <div class="step-title">Xuất hóa đơn / AR</div>
+                    <div class="step-value">@ExpectedCustomerIn.ToString("N0")</div>
+                    <div class="step-note">Nợ 131: khách còn phải trả</div>
+                </div>
+                <div class="step-arrow">→</div>
+                <div class="cash-step success">
+                    <span class="step-no">2</span>
+                    <div class="step-title">Thu tiền khách</div>
+                    <div class="step-value">@CashFromCustomers.ToString("N0")</div>
+                    <div class="step-note">Nợ 111/112 / Có 131</div>
+                </div>
+                <div class="step-arrow">→</div>
+                <div class="cash-step warning">
+                    <span class="step-no">3</span>
+                    <div class="step-title">Ghi nhận AP vendor</div>
+                    <div class="step-value">@ExpectedVendorOut.ToString("N0")</div>
+                    <div class="step-note">Có 331: còn phải trả</div>
+                </div>
+                <div class="step-arrow">→</div>
+                <div class="cash-step danger">
+                    <span class="step-no">4</span>
+                    <div class="step-title">Trả vendor / chi phí</div>
+                    <div class="step-value">@CashPaidVendors.ToString("N0")</div>
+                    <div class="step-note">Nợ 331 / Có 111/112</div>
+                </div>
+                <div class="step-arrow">→</div>
+                <div class="cash-step final">
+                    <span class="step-no">5</span>
+                    <div class="step-title">Cash cuối kỳ</div>
+                    <div class="step-value">@ClosingCash.ToString("N0")</div>
+                    <div class="step-note">Đầu kỳ + vào - ra</div>
+                </div>
+            </div>
+        </MudPaper>
+
+        <MudGrid Spacing="2" Class="mb-2">
+            <MudItem xs="12" md="7">
+                <MudPaper Class="cash-t-card pa-3" Elevation="0">
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.subtitle2" Class="fw-bold">Sổ cái chữ T cho dòng tiền 111/112</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Bên Nợ là tiền vào, bên Có là tiền ra.</MudText>
+                        </MudStack>
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                            @_cashRows.Count.ToString("N0") dòng tiền
+                        </MudChip>
+                    </MudStack>
+
+                    <div class="t-ledger">
+                        <div class="t-title">TK tiền 111/112</div>
+                        <div class="t-side debit-side">
+                            <div class="side-head">NỢ - TIỀN VÀO</div>
+                            @foreach (var row in VisibleCashRows.Where(x => x.Direction == "IN").Take(18))
+                            {
+                                <div class="t-line">
+                                    <span>@row.PostingDate.ToString("dd/MM") · @row.VoucherNo</span>
+                                    <b>@row.Amount.ToString("N0")</b>
+                                    <small>@row.CounterpartSummary</small>
+                                </div>
+                            }
+                            @if (!VisibleCashRows.Any(x => x.Direction == "IN"))
+                            {
+                                <div class="empty-line">Không có tiền vào.</div>
+                            }
+                        </div>
+                        <div class="t-side credit-side">
+                            <div class="side-head">CÓ - TIỀN RA</div>
+                            @foreach (var row in VisibleCashRows.Where(x => x.Direction == "OUT" || x.Direction == "TRANSFER").Take(18))
+                            {
+                                <div class="t-line">
+                                    <span>@row.PostingDate.ToString("dd/MM") · @row.VoucherNo</span>
+                                    <b>@row.Amount.ToString("N0")</b>
+                                    <small>@row.CounterpartSummary</small>
+                                </div>
+                            }
+                            @if (!VisibleCashRows.Any(x => x.Direction == "OUT" || x.Direction == "TRANSFER"))
+                            {
+                                <div class="empty-line">Không có tiền ra.</div>
+                            }
+                        </div>
+                        <div class="t-total debit-total">@VisibleCashRows.Where(x => x.Direction == "IN").Sum(x => x.Amount).ToString("N0")</div>
+                        <div class="t-total credit-total">@VisibleCashRows.Where(x => x.Direction == "OUT" || x.Direction == "TRANSFER").Sum(x => x.Amount).ToString("N0")</div>
+                    </div>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="5">
+                <MudPaper Class="cash-summary-card pa-3" Elevation="0">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Tổng hợp theo nhóm dòng tiền</MudText>
+                    <MudTable Items="CategoryRows" Dense="true" Hover="true" Striped="true" Bordered="true" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>Nhóm</MudTh>
+                            <MudTh Class="text-end">Tiền vào</MudTh>
+                            <MudTh Class="text-end">Tiền ra</MudTh>
+                            <MudTh Class="text-end">Net</MudTh>
+                        </HeaderContent>
+                        <RowTemplate Context="cat">
+                            <MudTd DataLabel="Nhóm">@cat.Category</MudTd>
+                            <MudTd DataLabel="Tiền vào" Class="text-end">@cat.Inflow.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Tiền ra" Class="text-end">@cat.Outflow.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Net" Class="text-end fw-bold">@cat.Net.ToString("N0")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudGrid Spacing="2" Class="mb-2">
+            <MudItem xs="12" md="5">
+                <MudPaper Class="cash-summary-card pa-3" Elevation="0">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Số dư theo từng tài khoản tiền</MudText>
+                    <MudTable Items="_accountSummaries" Dense="true" Hover="true" Striped="true" Bordered="true" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>TK</MudTh>
+                            <MudTh>Tên</MudTh>
+                            <MudTh Class="text-end">Đầu kỳ</MudTh>
+                            <MudTh Class="text-end">Vào</MudTh>
+                            <MudTh Class="text-end">Ra</MudTh>
+                            <MudTh Class="text-end">Cuối kỳ</MudTh>
+                        </HeaderContent>
+                        <RowTemplate Context="acc">
+                            <MudTd DataLabel="TK">@acc.AccountCode</MudTd>
+                            <MudTd DataLabel="Tên">@acc.AccountName</MudTd>
+                            <MudTd DataLabel="Đầu kỳ" Class="text-end">@acc.Opening.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Vào" Class="text-end">@acc.Inflow.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Ra" Class="text-end">@acc.Outflow.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Cuối kỳ" Class="text-end fw-bold">@acc.Closing.ToString("N0")</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="7">
+                <MudPaper Class="cash-summary-card pa-3" Elevation="0">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Giải thích nguyên tắc chữ T</MudText>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="6">
+                            <MudAlert Severity="MudBlazor.Severity.Success" Dense="true">
+                                <b>Nợ 111/112</b> = tiền tăng. Ví dụ: thu khách hàng, nhận tạm ứng, nhận vốn góp, nhận tiền vay, rút tiền về quỹ.
+                            </MudAlert>
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true">
+                                <b>Có 111/112</b> = tiền giảm. Ví dụ: trả vendor, trả lương, nộp thuế, chi phí ngân hàng, chi phí văn phòng.
+                            </MudAlert>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudAlert Severity="MudBlazor.Severity.Info" Dense="true">
+                                Công thức dòng tiền: <b>Cash cuối kỳ = Cash đầu kỳ + Nợ 111/112 - Có 111/112</b>. Đối ứng 131/331 cho biết đang thu khách hay trả nhà cung cấp.
+                            </MudAlert>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="cash-detail-card pa-3" Elevation="0">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold">Chi tiết dòng tiền theo voucher</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Mỗi dòng là một phát sinh Nợ/Có của tài khoản tiền, nối với tài khoản đối ứng trong cùng voucher.</MudText>
+                </MudStack>
+                @if (_busy)
+                {
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                }
+            </MudStack>
+
+            <MudTable Items="VisibleCashRows" Dense="true" Hover="true" Striped="true" Bordered="true" FixedHeader="true" Height="420px" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Ngày</MudTh>
+                    <MudTh>Voucher</MudTh>
+                    <MudTh>TK tiền</MudTh>
+                    <MudTh>Dòng tiền</MudTh>
+                    <MudTh Class="text-end">Tiền vào</MudTh>
+                    <MudTh Class="text-end">Tiền ra</MudTh>
+                    <MudTh>Đối ứng</MudTh>
+                    <MudTh>Nhóm</MudTh>
+                    <MudTh>Diễn giải</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="row">
+                    <MudTd DataLabel="Ngày">@row.PostingDate.ToString("dd/MM/yyyy")</MudTd>
+                    <MudTd DataLabel="Voucher">@row.VoucherNo</MudTd>
+                    <MudTd DataLabel="TK tiền">@row.CashAccount</MudTd>
+                    <MudTd DataLabel="Dòng tiền">
+                        <MudChip T="string" Size="Size.Small" Color="@DirectionColor(row.Direction)" Variant="Variant.Filled">
+                            @DirectionText(row.Direction)
+                        </MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Tiền vào" Class="text-end">@(row.Direction == "IN" ? row.Amount.ToString("N0") : "")</MudTd>
+                    <MudTd DataLabel="Tiền ra" Class="text-end">@(row.Direction != "IN" ? row.Amount.ToString("N0") : "")</MudTd>
+                    <MudTd DataLabel="Đối ứng">@row.CounterpartSummary</MudTd>
+                    <MudTd DataLabel="Nhóm">@row.Category</MudTd>
+                    <MudTd DataLabel="Diễn giải">@row.Explanation</MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudPaper>
+    </div>
+</div>
+
+@code {
+    private const string PermissionMenuName = "GeneralLedgerEntries";
+
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private bool _busy;
+    private bool _usingSimulator;
+    private string _usr = string.Empty;
+    private string _dateMode = "PERIOD";
+    private int? _fiscalYear = DateTime.Today.Year;
+    private int? _periodMonth = DateTime.Today.Month;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+    private string _book = "TAX";
+    private string _cashAccountFilter = "111,112";
+    private string _search = string.Empty;
+    private string _directionFilter = "ALL";
+    private string _categoryFilter = "ALL";
+
+    private List<LedgerMiniRow> _allLedgerRows = new();
+    private List<CashFlowRow> _cashRows = new();
+    private List<CashAccountSummary> _accountSummaries = new();
+    private Dictionary<string, string> _accountNames = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, decimal> _openingByAccount = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool IsPeriodMode => string.Equals(_dateMode, "PERIOD", StringComparison.OrdinalIgnoreCase);
+    private bool IsDateRangeMode => !IsPeriodMode;
+    private decimal OpeningCash => _accountSummaries.Sum(x => x.Opening);
+    private decimal PeriodCashIn => _cashRows.Where(x => x.Direction == "IN").Sum(x => x.Amount);
+    private decimal PeriodCashOut => _cashRows.Where(x => x.Direction == "OUT" || x.Direction == "TRANSFER").Sum(x => x.Amount);
+    private decimal PeriodNetCash => PeriodCashIn - PeriodCashOut;
+    private decimal ClosingCash => OpeningCash + PeriodNetCash;
+    private decimal ExpectedCustomerIn => _allLedgerRows.Where(x => IsAccount(x.AccountCode, "131") && x.Debit > 0).Sum(x => x.Debit);
+    private decimal CashFromCustomers => _cashRows.Where(x => x.Category == "Thu khách hàng").Sum(x => x.Amount);
+    private decimal ExpectedVendorOut => _allLedgerRows.Where(x => IsAccount(x.AccountCode, "331") && x.Credit > 0).Sum(x => x.Credit);
+    private decimal CashPaidVendors => _cashRows.Where(x => x.Category == "Trả nhà cung cấp").Sum(x => x.Amount);
+
+    private IEnumerable<string> CategoryOptions => _cashRows
+        .Select(x => x.Category)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x);
+
+    private IEnumerable<CategoryCashRow> CategoryRows => _cashRows
+        .GroupBy(x => x.Category)
+        .Select(g => new CategoryCashRow
+        {
+            Category = g.Key,
+            Inflow = g.Where(x => x.Direction == "IN").Sum(x => x.Amount),
+            Outflow = g.Where(x => x.Direction == "OUT" || x.Direction == "TRANSFER").Sum(x => x.Amount)
+        })
+        .OrderByDescending(x => Math.Abs(x.Net));
+
+    private IEnumerable<CashFlowRow> VisibleCashRows
+    {
+        get
+        {
+            IEnumerable<CashFlowRow> query = _cashRows;
+
+            if (!string.Equals(_directionFilter, "ALL", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => string.Equals(x.Direction, _directionFilter, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.Equals(_categoryFilter, "ALL", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => string.Equals(x.Category, _categoryFilter, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var key = _search.Trim();
+                query = query.Where(x =>
+                    x.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase) ||
+                    x.CashAccount.Contains(key, StringComparison.OrdinalIgnoreCase) ||
+                    x.Description.Contains(key, StringComparison.OrdinalIgnoreCase) ||
+                    x.CounterpartSummary.Contains(key, StringComparison.OrdinalIgnoreCase) ||
+                    x.Category.Contains(key, StringComparison.OrdinalIgnoreCase) ||
+                    x.SourceModule.Contains(key, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return query
+                .OrderBy(x => x.PostingDate)
+                .ThenBy(x => x.VoucherNo)
+                .ThenBy(x => x.CashAccount);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        UpdateDateRange();
+        await LoadAccountNamesAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnDateModeChanged(string value)
+    {
+        _dateMode = string.IsNullOrWhiteSpace(value) ? "PERIOD" : value;
+        if (IsPeriodMode)
+            UpdateDateRange();
+        else
+            EnsureDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnYearChanged(int? year)
+    {
+        _fiscalYear = year;
+        if (IsPeriodMode)
+            UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnMonthChanged(int? month)
+    {
+        _periodMonth = month;
+        if (IsPeriodMode)
+            UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private void UpdateDateRange()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue || _periodMonth.Value < 1 || _periodMonth.Value > 12)
+            return;
+
+        _fromDate = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+        _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
+    }
+
+    private void EnsureDateRange()
+    {
+        if (!_fromDate.HasValue)
+            _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+
+        if (!_toDate.HasValue)
+            _toDate = DateTime.Today;
+
+        if (_fromDate.Value.Date > _toDate.Value.Date)
+        {
+            var temp = _fromDate;
+            _fromDate = _toDate;
+            _toDate = temp;
+        }
+    }
+
+    private async Task LoadAccountNamesAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var accounts = await db.DanhMucTaiKhoan.AsNoTracking().ToListAsync();
+
+            _accountNames = accounts
+                .Where(x => !string.IsNullOrWhiteSpace(x.Taikhoan))
+                .GroupBy(x => x.Taikhoan!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g =>
+                    {
+                        var item = g.First();
+                        return !string.IsNullOrWhiteSpace(item.Accountname)
+                            ? item.Accountname!
+                            : (!string.IsNullOrWhiteSpace(item.Tentaikhoan) ? item.Tentaikhoan! : g.Key);
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            _accountNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _usingSimulator = false;
+
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem sổ cái.", MudBlazor.Severity.Warning);
+            ClearData();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            if (IsPeriodMode)
+                UpdateDateRange();
+            else
+                EnsureDateRange();
+
+            var fromDate = _fromDate?.Date ?? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            var toExclusive = (_toDate?.Date ?? DateTime.Today).Date.AddDays(1);
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var baseQuery = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.PostingDate >= fromDate && x.PostingDate < toExclusive)
+                .Where(x => x.AccountCode != null);
+
+            if (IsPeriodMode && _fiscalYear.HasValue)
+                baseQuery = baseQuery.Where(x => x.FiscalYear == _fiscalYear.Value);
+
+            if (IsPeriodMode && _periodMonth.HasValue)
+                baseQuery = baseQuery.Where(x => x.FiscalPeriod == _periodMonth.Value);
+
+            if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+                baseQuery = baseQuery.Where(x => x.IsTaxBook == true || x.LedgerType == "TAX");
+
+            if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+                baseQuery = baseQuery.Where(x => x.IsManagementBook == true || x.LedgerType == "MGMT");
+
+            var data = await baseQuery
+                .OrderBy(x => x.PostingDate)
+                .ThenBy(x => x.VoucherNo)
+                .ThenBy(x => x.VoucherDate)
+                .ThenBy(x => x.Id)
+                .Take(12000)
+                .ToListAsync();
+
+            _allLedgerRows = data.Select(x => new LedgerMiniRow
+            {
+                Id = x.Id,
+                VoucherNo = string.IsNullOrWhiteSpace(x.VoucherNo) ? "NO-VOUCHER" : x.VoucherNo!,
+                VoucherKey = BuildVoucherKey(x.VoucherNo, x.PostingDate),
+                PostingDate = x.PostingDate,
+                AccountCode = x.AccountCode ?? string.Empty,
+                Description = x.Description ?? string.Empty,
+                Debit = x.Debit,
+                Credit = x.Credit,
+                Book = (x.IsTaxBook == true && x.IsManagementBook == true) ? "TAX/MGMT" :
+                       (x.IsTaxBook == true) ? "TAX" :
+                       (x.IsManagementBook == true) ? "MGMT" :
+                       (!string.IsNullOrWhiteSpace(x.LedgerType) ? x.LedgerType! : string.Empty),
+                SourceModule = x.SourceModule ?? string.Empty
+            }).ToList();
+
+            await LoadOpeningCashAsync(db, fromDate);
+            BuildCashRows();
+            Snackbar.Add($"Loaded {_cashRows.Count:N0} dòng tiền theo T.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(GetRootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task LoadOpeningCashAsync(AppDbContext db, DateTime fromDate)
+    {
+        var openingQuery = db.GeneralLedgerEntries.AsNoTracking()
+            .Where(x => x.PostingDate < fromDate)
+            .Where(x => x.AccountCode != null)
+            .Where(x => x.AccountCode!.StartsWith("111") || x.AccountCode!.StartsWith("112") || x.AccountCode!.StartsWith("113"));
+
+        if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+            openingQuery = openingQuery.Where(x => x.IsTaxBook == true || x.LedgerType == "TAX");
+
+        if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+            openingQuery = openingQuery.Where(x => x.IsManagementBook == true || x.LedgerType == "MGMT");
+
+        var openingData = await openingQuery.Take(50000).ToListAsync();
+        _openingByAccount = openingData
+            .Where(x => IsCashAccount(x.AccountCode ?? string.Empty))
+            .GroupBy(x => (x.AccountCode ?? string.Empty).Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Sum(x => x.Debit - x.Credit),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private Task LoadSimulatorAsync()
+    {
+        _usingSimulator = true;
+        _openingByAccount = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["1111"] = 5000000,
+            ["1121"] = 80000000
+        };
+
+        _allLedgerRows = new List<LedgerMiniRow>
+        {
+            NewLedgerSim("SIM-LOG-SALE-001", "LOG_SALE_AR", "Xuất hóa đơn dịch vụ logistics AMASIS", "131", 13200000, 0),
+            NewLedgerSim("SIM-LOG-SALE-001", "LOG_SALE_AR", "Doanh thu dịch vụ logistics", "5113", 0, 12000000),
+            NewLedgerSim("SIM-LOG-SALE-001", "LOG_SALE_AR", "VAT đầu ra", "33311", 0, 1200000),
+
+            NewLedgerSim("SIM-CARRIER-COST-001", "CARRIER_COST_AP", "Chi phí hãng tàu COSCO", "632", 10000000, 0),
+            NewLedgerSim("SIM-CARRIER-COST-001", "CARRIER_COST_AP", "VAT đầu vào", "1331", 526300, 0),
+            NewLedgerSim("SIM-CARRIER-COST-001", "CARRIER_COST_AP", "Công nợ phải trả COSCO", "331", 0, 10526300),
+
+            NewLedgerSim("SIM-RECEIVE-AR-001", "RECEIVE_AR_BANK", "Khách hàng AMASIS thanh toán", "1121", 13200000, 0),
+            NewLedgerSim("SIM-RECEIVE-AR-001", "RECEIVE_AR_BANK", "Giảm công nợ AMASIS", "131", 0, 13200000),
+
+            NewLedgerSim("SIM-PAY-VENDOR-001", "PAY_SUPPLIER_BANK", "Thanh toán COSCO", "331", 10526300, 0),
+            NewLedgerSim("SIM-PAY-VENDOR-001", "PAY_SUPPLIER_BANK", "Tiền ngân hàng giảm", "1121", 0, 10526300),
+
+            NewLedgerSim("SIM-BANK-FEE-001", "BANK_FEE", "Phí ngân hàng", "642", 80000, 0),
+            NewLedgerSim("SIM-BANK-FEE-001", "BANK_FEE", "Ngân hàng thu phí", "1121", 0, 80000)
+        };
+
+        BuildCashRows();
+        Snackbar.Add("Đã load simulator dòng tiền theo chữ T.", MudBlazor.Severity.Info);
+        return Task.CompletedTask;
+    }
+
+    private LedgerMiniRow NewLedgerSim(string voucherNo, string module, string description, string accountCode, decimal debit, decimal credit)
+    {
+        return new LedgerMiniRow
+        {
+            Id = Guid.NewGuid(),
+            VoucherNo = voucherNo,
+            VoucherKey = BuildVoucherKey(voucherNo, DateTime.Today),
+            PostingDate = DateTime.Today,
+            AccountCode = accountCode,
+            Description = description,
+            Debit = debit,
+            Credit = credit,
+            Book = "TAX",
+            SourceModule = module
+        };
+    }
+
+    private void BuildCashRows()
+    {
+        _cashRows.Clear();
+
+        foreach (var cashLine in _allLedgerRows.Where(x => IsCashAccount(x.AccountCode) && (x.Debit != 0 || x.Credit != 0)))
+        {
+            var counterparts = _allLedgerRows
+                .Where(x => x.VoucherKey == cashLine.VoucherKey && x.Id != cashLine.Id)
+                .OrderByDescending(x => x.Debit + x.Credit)
+                .ToList();
+
+            var direction = cashLine.Debit > 0 ? "IN" : "OUT";
+            var category = ClassifyCashFlow(cashLine, counterparts, direction);
+
+            if (IsInternalTransfer(cashLine, counterparts))
+            {
+                category = "Chuyển quỹ nội bộ";
+                direction = cashLine.Debit > 0 ? "IN" : "TRANSFER";
+            }
+
+            _cashRows.Add(new CashFlowRow
+            {
+                Id = cashLine.Id,
+                VoucherNo = cashLine.VoucherNo,
+                PostingDate = cashLine.PostingDate,
+                CashAccount = cashLine.AccountCode,
+                CashAccountName = AccountName(cashLine.AccountCode),
+                Description = cashLine.Description,
+                SourceModule = cashLine.SourceModule,
+                Debit = cashLine.Debit,
+                Credit = cashLine.Credit,
+                Amount = Math.Abs(cashLine.Debit > 0 ? cashLine.Debit : cashLine.Credit),
+                Direction = direction,
+                Category = category,
+                CounterpartSummary = BuildCounterpartSummary(counterparts),
+                Explanation = BuildExplanation(cashLine, counterparts, direction, category)
+            });
+        }
+
+        BuildAccountSummaries();
+    }
+
+    private void BuildAccountSummaries()
+    {
+        var accounts = _openingByAccount.Keys
+            .Concat(_cashRows.Select(x => x.CashAccount))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x)
+            .ToList();
+
+        _accountSummaries = accounts.Select(acc =>
+        {
+            var opening = GetOpening(acc);
+            var inflow = _cashRows.Where(x => x.CashAccount.Equals(acc, StringComparison.OrdinalIgnoreCase) && x.Direction == "IN").Sum(x => x.Amount);
+            var outflow = _cashRows.Where(x => x.CashAccount.Equals(acc, StringComparison.OrdinalIgnoreCase) && (x.Direction == "OUT" || x.Direction == "TRANSFER")).Sum(x => x.Amount);
+
+            return new CashAccountSummary
+            {
+                AccountCode = acc,
+                AccountName = AccountName(acc),
+                Opening = opening,
+                Inflow = inflow,
+                Outflow = outflow,
+                Closing = opening + inflow - outflow
+            };
+        }).ToList();
+    }
+
+    private decimal GetOpening(string accountCode)
+    {
+        return _openingByAccount.TryGetValue(accountCode, out var value) ? value : 0;
+    }
+
+    private bool IsCashAccount(string accountCode)
+    {
+        if (string.IsNullOrWhiteSpace(accountCode))
+            return false;
+
+        var prefixes = CashPrefixes();
+        return prefixes.Any(p => accountCode.Trim().StartsWith(p, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private List<string> CashPrefixes()
+    {
+        var raw = string.IsNullOrWhiteSpace(_cashAccountFilter) ? "111,112" : _cashAccountFilter;
+        return raw.Split(new[] { ',', ';', ' ', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool IsAccount(string accountCode, string prefix) =>
+        !string.IsNullOrWhiteSpace(accountCode) && accountCode.Trim().StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+
+    private bool IsInternalTransfer(LedgerMiniRow cashLine, List<LedgerMiniRow> counterparts) =>
+        counterparts.Any(x => IsCashAccount(x.AccountCode));
+
+    private string ClassifyCashFlow(LedgerMiniRow cashLine, List<LedgerMiniRow> counterparts, string direction)
+    {
+        var accounts = counterparts.Select(x => x.AccountCode).ToList();
+        var module = cashLine.SourceModule ?? string.Empty;
+
+        if (direction == "IN")
+        {
+            if (accounts.Any(x => IsAccount(x, "131")) || module.Contains("RECEIVE_AR", StringComparison.OrdinalIgnoreCase) || module.Contains("CUSTOMER_RECEIPT", StringComparison.OrdinalIgnoreCase))
+                return "Thu khách hàng";
+            if (accounts.Any(x => IsAccount(x, "3387")) || module.Contains("ADVANCE", StringComparison.OrdinalIgnoreCase))
+                return "Khách trả trước";
+            if (accounts.Any(x => IsAccount(x, "341")))
+                return "Nhận tiền vay";
+            if (accounts.Any(x => IsAccount(x, "411")))
+                return "Góp vốn";
+            if (accounts.Any(x => IsAccount(x, "511") || IsAccount(x, "711")))
+                return "Doanh thu thu ngay";
+            return "Tiền vào khác";
+        }
+
+        if (accounts.Any(x => IsAccount(x, "331")) || module.Contains("PAY_SUPPLIER", StringComparison.OrdinalIgnoreCase))
+            return "Trả nhà cung cấp";
+        if (accounts.Any(x => IsAccount(x, "334")) || module.Contains("SALARY", StringComparison.OrdinalIgnoreCase))
+            return "Trả lương";
+        if (accounts.Any(x => IsAccount(x, "333")) || module.Contains("VAT", StringComparison.OrdinalIgnoreCase) || module.Contains("CIT", StringComparison.OrdinalIgnoreCase))
+            return "Nộp thuế";
+        if (accounts.Any(x => IsAccount(x, "632") || IsAccount(x, "642") || IsAccount(x, "635")))
+            return "Chi phí vận hành";
+        if (accounts.Any(x => IsAccount(x, "141")))
+            return "Tạm ứng nhân viên";
+        if (accounts.Any(x => IsAccount(x, "242")))
+            return "Chi phí trả trước";
+
+        return "Tiền ra khác";
+    }
+
+    private string BuildCounterpartSummary(List<LedgerMiniRow> counterparts)
+    {
+        if (counterparts.Count == 0)
+            return "Không có đối ứng trong cùng voucher";
+
+        return string.Join("; ", counterparts
+            .GroupBy(x => x.AccountCode)
+            .Select(g =>
+            {
+                var debit = g.Sum(x => x.Debit);
+                var credit = g.Sum(x => x.Credit);
+                var amount = debit > 0 ? debit : credit;
+                var side = debit > 0 ? "Nợ" : "Có";
+                return $"{side} {g.Key}: {amount:N0}";
+            }));
+    }
+
+    private string BuildExplanation(LedgerMiniRow cashLine, List<LedgerMiniRow> counterparts, string direction, string category)
+    {
+        var cashSide = direction == "IN" ? $"Nợ {cashLine.AccountCode}" : $"Có {cashLine.AccountCode}";
+        var cashMeaning = direction == "IN" ? "tiền tăng" : "tiền giảm";
+        return $"{cashSide} nghĩa là {cashMeaning}. Nhóm: {category}. Đối ứng: {BuildCounterpartSummary(counterparts)}.";
+    }
+
+    private string AccountName(string accountCode)
+    {
+        if (_accountNames.TryGetValue(accountCode, out var name))
+            return name;
+
+        if (accountCode.StartsWith("111")) return "Tiền mặt";
+        if (accountCode.StartsWith("112")) return "Tiền gửi ngân hàng";
+        if (accountCode.StartsWith("113")) return "Tiền đang chuyển";
+        return accountCode;
+    }
+
+    private static string BuildVoucherKey(string? voucherNo, DateTime postingDate)
+    {
+        var v = string.IsNullOrWhiteSpace(voucherNo) ? "NO-VOUCHER" : voucherNo.Trim();
+        return $"{v}|{postingDate:yyyyMMdd}";
+    }
+
+    private Color DirectionColor(string direction) => direction switch
+    {
+        "IN" => Color.Success,
+        "OUT" => Color.Warning,
+        "TRANSFER" => Color.Info,
+        _ => Color.Default
+    };
+
+    private string DirectionText(string direction) => direction switch
+    {
+        "IN" => "Tiền vào",
+        "OUT" => "Tiền ra",
+        "TRANSFER" => "Chuyển quỹ",
+        _ => direction
+    };
+
+    private async Task ResetAsync()
+    {
+        _usingSimulator = false;
+        _dateMode = "PERIOD";
+        _fiscalYear = DateTime.Today.Year;
+        _periodMonth = DateTime.Today.Month;
+        _book = "TAX";
+        _cashAccountFilter = "111,112";
+        _search = string.Empty;
+        _directionFilter = "ALL";
+        _categoryFilter = "ALL";
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private void ClearData()
+    {
+        _allLedgerRows.Clear();
+        _cashRows.Clear();
+        _accountSummaries.Clear();
+        _openingByAccount.Clear();
+    }
+
+    private async Task PrintAsync()
+    {
+        await JS.InvokeVoidAsync("print");
+    }
+
+    private async Task OpenGeneralLedgerSummary()
+    {
+        if (OnTabRequest.HasDelegate)
+        {
+            await OnTabRequest.InvokeAsync((
+                "GeneralLedgerSummary",
+                "10.6.1 Sổ cái tổng hợp",
+                RenderComponent(typeof(Components.Accounting.Pages.GeneralLedgerSummary_10_6_1))));
+        }
+    }
+
+    private async Task OpenAccountBalanceSnapshot()
+    {
+        if (OnTabRequest.HasDelegate)
+        {
+            await OnTabRequest.InvokeAsync((
+                "AccountBalanceSnapshot",
+                "10.9.1 Account Balance Snapshot",
+                RenderComponent(typeof(Components.Accounting.Pages.AccountBalanceSnapshot_10_9_1))));
+        }
+    }
+
+    private RenderFragment RenderComponent(Type componentType) => builder =>
+    {
+        builder.OpenComponent(0, componentType);
+        builder.CloseComponent();
+    };
+
+    private static string GetRootMessage(Exception ex)
+    {
+        var e = ex;
+        while (e.InnerException != null)
+            e = e.InnerException;
+        return e.Message;
+    }
+
+    private sealed class LedgerMiniRow
+    {
+        public Guid Id { get; set; }
+        public string VoucherNo { get; set; } = string.Empty;
+        public string VoucherKey { get; set; } = string.Empty;
+        public DateTime PostingDate { get; set; }
+        public string AccountCode { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Debit { get; set; }
+        public decimal Credit { get; set; }
+        public string Book { get; set; } = string.Empty;
+        public string SourceModule { get; set; } = string.Empty;
+    }
+
+    private sealed class CashFlowRow
+    {
+        public Guid Id { get; set; }
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime PostingDate { get; set; }
+        public string CashAccount { get; set; } = string.Empty;
+        public string CashAccountName { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string SourceModule { get; set; } = string.Empty;
+        public decimal Debit { get; set; }
+        public decimal Credit { get; set; }
+        public decimal Amount { get; set; }
+        public string Direction { get; set; } = string.Empty;
+        public string Category { get; set; } = string.Empty;
+        public string CounterpartSummary { get; set; } = string.Empty;
+        public string Explanation { get; set; } = string.Empty;
+    }
+
+    private sealed class CashAccountSummary
+    {
+        public string AccountCode { get; set; } = string.Empty;
+        public string AccountName { get; set; } = string.Empty;
+        public decimal Opening { get; set; }
+        public decimal Inflow { get; set; }
+        public decimal Outflow { get; set; }
+        public decimal Closing { get; set; }
+    }
+
+    private sealed class CategoryCashRow
+    {
+        public string Category { get; set; } = string.Empty;
+        public decimal Inflow { get; set; }
+        public decimal Outflow { get; set; }
+        public decimal Net => Inflow - Outflow;
+    }
+}
+
+<style>
+    .cash-flow-t-page {
+        background: #f8fafc;
+    }
+
+    .cash-filter-card,
+    .cash-cycle-card,
+    .cash-t-card,
+    .cash-summary-card,
+    .cash-detail-card {
+        border: 1px solid #dbeafe;
+        border-radius: 16px;
+        background: #ffffff;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, .05);
+    }
+
+    .cash-stat-card {
+        position: relative;
+        min-height: 96px;
+        border-radius: 16px;
+        padding: 14px;
+        border: 1px solid #dbeafe;
+        overflow: hidden;
+    }
+
+    .cash-stat-icon {
+        position: absolute;
+        right: 14px;
+        top: 12px;
+        opacity: .16;
+        font-size: 42px;
+    }
+
+    .opening-stat { background: #eff6ff; }
+    .in-stat { background: #ecfdf5; border-color: #bbf7d0; }
+    .out-stat { background: #fff7ed; border-color: #fed7aa; }
+    .closing-stat { background: #f5f3ff; border-color: #ddd6fe; }
+
+    .cash-help-alert {
+        border-radius: 12px;
+    }
+
+    .cash-cycle-line {
+        display: flex;
+        align-items: stretch;
+        gap: 10px;
+        overflow-x: auto;
+        padding: 4px 2px 8px 2px;
+    }
+
+    .cash-step {
+        min-width: 190px;
+        flex: 1;
+        border: 1px solid #dbeafe;
+        border-radius: 16px;
+        padding: 12px;
+        background: linear-gradient(180deg, #ffffff, #eff6ff);
+        position: relative;
+    }
+
+    .cash-step.success { background: linear-gradient(180deg, #ffffff, #ecfdf5); border-color: #bbf7d0; }
+    .cash-step.warning { background: linear-gradient(180deg, #ffffff, #fff7ed); border-color: #fed7aa; }
+    .cash-step.danger { background: linear-gradient(180deg, #ffffff, #fef2f2); border-color: #fecaca; }
+    .cash-step.final { background: linear-gradient(180deg, #ffffff, #f5f3ff); border-color: #ddd6fe; }
+
+    .step-no {
+        display: inline-flex;
+        width: 24px;
+        height: 24px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: #2563eb;
+        color: white;
+        font-size: 12px;
+        font-weight: 800;
+        margin-bottom: 8px;
+    }
+
+    .step-title {
+        font-size: 13px;
+        font-weight: 800;
+        color: #0f172a;
+    }
+
+    .step-value {
+        margin-top: 6px;
+        font-size: 18px;
+        font-weight: 850;
+        color: #0f172a;
+    }
+
+    .step-note {
+        margin-top: 4px;
+        font-size: 11px;
+        color: #64748b;
+    }
+
+    .step-arrow {
+        display: flex;
+        align-items: center;
+        color: #2563eb;
+        font-size: 22px;
+        font-weight: 800;
+    }
+
+    .t-ledger {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border: 1px solid #cbd5e1;
+        border-radius: 16px;
+        overflow: hidden;
+        background: #ffffff;
+    }
+
+    .t-title {
+        grid-column: 1 / 3;
+        text-align: center;
+        font-weight: 850;
+        padding: 10px;
+        background: linear-gradient(135deg, #0f766e, #2563eb);
+        color: white;
+        letter-spacing: .2px;
+    }
+
+    .t-side {
+        min-height: 380px;
+        padding: 10px;
+    }
+
+    .debit-side {
+        border-right: 2px solid #334155;
+        background: #f0fdf4;
+    }
+
+    .credit-side {
+        background: #fff7ed;
+    }
+
+    .side-head {
+        text-align: center;
+        font-size: 12px;
+        font-weight: 850;
+        padding: 6px;
+        color: #0f172a;
+        border-bottom: 1px solid #cbd5e1;
+        margin-bottom: 8px;
+    }
+
+    .t-line {
+        border: 1px solid rgba(15, 23, 42, .08);
+        border-radius: 10px;
+        padding: 7px 8px;
+        margin-bottom: 6px;
+        background: rgba(255,255,255,.85);
+        display: grid;
+        gap: 2px;
+    }
+
+    .t-line span {
+        font-size: 11px;
+        color: #475569;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .t-line b {
+        font-size: 13px;
+        color: #0f172a;
+    }
+
+    .t-line small {
+        font-size: 10px;
+        color: #64748b;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .empty-line {
+        color: #94a3b8;
+        font-size: 12px;
+        text-align: center;
+        padding: 24px 8px;
+    }
+
+    .t-total {
+        font-weight: 850;
+        padding: 10px;
+        border-top: 2px solid #334155;
+        text-align: right;
+        background: #ffffff;
+    }
+
+    .debit-total {
+        border-right: 2px solid #334155;
+    }
+
+    .credit-total {
+        background: #ffffff;
+    }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .text-end {
+        text-align: right;
+    }
+
+    @@media print {
+        body * {
+            visibility: hidden;
+        }
+
+        #cashFlowPrintArea,
+        #cashFlowPrintArea * {
+            visibility: visible;
+        }
+
+        #cashFlowPrintArea {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+        }
+
+        .cash-detail-card .mud-table-container {
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
+        }
+    }
+
+    @@media (max-width: 960px) {
+        .cash-cycle-line {
+            flex-direction: column;
+        }
+
+        .step-arrow {
+            justify-content: center;
+            transform: rotate(90deg);
+        }
+
+        .t-ledger {
+            grid-template-columns: 1fr;
+        }
+
+        .t-title {
+            grid-column: 1;
+        }
+
+        .debit-side {
+            border-right: none;
+            border-bottom: 2px solid #334155;
+        }
+
+        .t-total {
+            border-right: none;
+        }
+    }
+</style>

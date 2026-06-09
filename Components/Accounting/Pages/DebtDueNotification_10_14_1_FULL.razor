@@ -1,0 +1,855 @@
+@page "/accounting/ar-ap/debt-due-notification"
+@page "/DebtDueNotification"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+
+<PageTitle>10.14.1 Thông báo hạn công nợ</PageTitle>
+
+<div class="product-price-page debt-due-page">
+    <PpScreenHeader Title="10.14.1 Thông báo hạn công nợ"
+                    Subtitle="Debt Due Notification · theo dõi công nợ đến hạn sau khi ghi sổ">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">Load</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="ResetFilterAsync" Disabled="_busy">Reset</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2 filter-card" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           Label="Chọn theo"
+                           Value="_dateMode"
+                           ValueChanged="OnDateModeChanged"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("DATE_RANGE")">Theo ngày</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("PERIOD")">Theo kỳ</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày đến hạn"
+                               Date="_fromDueDate"
+                               DateChanged="OnFromDueDateChanged"
+                               Disabled="IsPeriodMode"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày đến hạn"
+                               Date="_toDueDate"
+                               DateChanged="OnToDueDateChanged"
+                               Disabled="IsPeriodMode"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?"
+                                 Label="Year"
+                                 Value="_fiscalYear"
+                                 ValueChanged="OnYearChanged"
+                                 Disabled="IsDateRangeMode"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="2000"
+                                 Max="2100" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?"
+                                 Label="Month"
+                                 Value="_periodMonth"
+                                 ValueChanged="OnMonthChanged"
+                                 Disabled="IsDateRangeMode"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="1"
+                                 Max="12" />
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudSelect T="string" Label="Book" @bind-Value="_book" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string" Label="Loại công nợ" @bind-Value="_debtType" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("AR")">AR - Phải thu 131</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("AP")">AP - Phải trả 331</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudSelect T="string" Label="Status" @bind-Value="_dueStatus" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("OVERDUE")">Quá hạn</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("TODAY")">Hôm nay</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("NEXT7")">7 ngày</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_search" Label="Search" Placeholder="Khách hàng, chứng từ, hóa đơn, HBL..." Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Clearable="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2" Class="mb-2">
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card overdue-card" Elevation="0">
+                <MudText Typo="Typo.caption">Quá hạn</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Where(x => x.StatusCode == "OVERDUE").Sum(x => x.Amount).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count(x => x.StatusCode == "OVERDUE").ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card today-card" Elevation="0">
+                <MudText Typo="Typo.caption">Đến hạn hôm nay</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Where(x => x.StatusCode == "TODAY").Sum(x => x.Amount).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count(x => x.StatusCode == "TODAY").ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card next-card" Elevation="0">
+                <MudText Typo="Typo.caption">Sắp đến hạn 7 ngày</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Where(x => x.StatusCode == "NEXT7").Sum(x => x.Amount).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count(x => x.StatusCode == "NEXT7").ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card total-card" Elevation="0">
+                <MudText Typo="Typo.caption">Tổng công nợ</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.Amount).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count().ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <div>
+                <MudText Typo="Typo.h6" Class="report-title">DANH SÁCH CÔNG NỢ ĐẾN HẠN</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    @DateModeCaption · @_fromDueDate?.ToString("dd/MM/yyyy") - @_toDueDate?.ToString("dd/MM/yyyy") · Book @_book
+                </MudText>
+            </div>
+            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">Dòng: @VisibleRows.Count().ToString("N0")</MudChip>
+        </MudStack>
+
+        <MudDataGrid @key="_gridKey" T="DebtDueRow" Items="VisibleRows.ToList()" Dense="true" Striped="true" Hover="true" Bordered="true"
+                     Filterable="true" FilterMode="@DataGridFilterMode.ColumnFilterRow" FixedHeader="true"
+                     Height="calc(100vh - 430px)" Class="debt-due-grid" Loading="_busy" RowClassFunc="RowClass">
+            <Columns>
+                <PropertyColumn Property="x => x.DebtType" Title="Loại" />
+                <PropertyColumn Property="x => x.StatusText" Title="Tình trạng" />
+                <PropertyColumn Property="x => x.DaysText" Title="Số ngày" />
+                <PropertyColumn Property="x => x.DueDate" Title="Ngày đến hạn" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.VoucherNo" Title="Chứng từ" />
+                <PropertyColumn Property="x => x.VoucherDate" Title="Ngày CT" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.AccountCode" Title="TK" />
+                <PropertyColumn Property="x => x.CustomerName" Title="Khách hàng / Vendor" />
+                <PropertyColumn Property="x => x.InvoiceNo" Title="Invoice No" />
+                <PropertyColumn Property="x => x.HBLNo" Title="HBL" />
+                <PropertyColumn Property="x => x.LineDescription" Title="Diễn giải" />
+                <PropertyColumn Property="x => x.Amount" Title="Số tiền" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Book" Title="Book" />
+                <TemplateColumn Title="Action" Filterable="false" Sortable="false">
+                    <CellTemplate>
+                        <MudStack Row="true" Spacing="1">
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.MenuBook" OnClick="@(() => OpenLedger(context.Item))">Sổ cái</MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.NotificationsActive" OnClick="@(() => MarkNotified(context.Item))">Nhắc</MudButton>
+                        </MudStack>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="DebtDueRow" PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">Không có công nợ đến hạn theo điều kiện lọc hiện tại.</MudText>
+            </NoRecordsContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    private const string PermissionMenuName = "GeneralLedgerEntries";
+
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private int _gridKey;
+
+    private string _dateMode = "DATE_RANGE";
+    private bool IsPeriodMode => string.Equals(_dateMode, "PERIOD", StringComparison.OrdinalIgnoreCase);
+    private bool IsDateRangeMode => !IsPeriodMode;
+    private string DateModeCaption => IsPeriodMode ? $"Kỳ {_periodMonth}/{_fiscalYear}" : "Theo ngày";
+
+    private DateTime? _fromDueDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _toDueDate = DateTime.Today.AddDays(7);
+    private int? _fiscalYear = DateTime.Today.Year;
+    private int? _periodMonth = DateTime.Today.Month;
+    private string _book = "TAX";
+    private string _debtType = "ALL";
+    private string _dueStatus = "ALL";
+    private string _search = string.Empty;
+
+    private List<DebtDueRow> _rows = new();
+
+    private IEnumerable<DebtDueRow> VisibleRows => _rows.Where(MatchesFilter);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        EnsureDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnDateModeChanged(string value)
+    {
+        _dateMode = string.IsNullOrWhiteSpace(value) ? "DATE_RANGE" : value;
+
+        if (IsPeriodMode)
+            UpdateDateRange();
+        else
+            EnsureDateRange();
+
+        await LoadAsync();
+    }
+
+    private async Task OnFromDueDateChanged(DateTime? value)
+    {
+        _fromDueDate = value?.Date;
+        EnsureDateRange();
+
+        if (IsDateRangeMode)
+            await LoadAsync();
+    }
+
+    private async Task OnToDueDateChanged(DateTime? value)
+    {
+        _toDueDate = value?.Date;
+        EnsureDateRange();
+
+        if (IsDateRangeMode)
+            await LoadAsync();
+    }
+
+    private async Task OnYearChanged(int? year)
+    {
+        _fiscalYear = year;
+
+        if (IsPeriodMode)
+        {
+            UpdateDateRange();
+            await LoadAsync();
+        }
+    }
+
+    private async Task OnMonthChanged(int? month)
+    {
+        _periodMonth = month;
+
+        if (IsPeriodMode)
+        {
+            UpdateDateRange();
+            await LoadAsync();
+        }
+    }
+
+    private void EnsureDateRange()
+    {
+        _fromDueDate ??= new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDueDate ??= DateTime.Today.AddDays(7);
+
+        if (_fromDueDate.HasValue && _toDueDate.HasValue && _fromDueDate.Value.Date > _toDueDate.Value.Date)
+            _toDueDate = _fromDueDate.Value.Date;
+    }
+
+    private void UpdateDateRange()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            return;
+
+        if (_periodMonth.Value < 1 || _periodMonth.Value > 12)
+            return;
+
+        _fromDueDate = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+        _toDueDate = _fromDueDate.Value.AddMonths(1).AddDays(-1);
+    }
+
+    private async Task ResetFilterAsync()
+    {
+        _dateMode = "DATE_RANGE";
+        _fromDueDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDueDate = DateTime.Today.AddDays(7);
+        _fiscalYear = DateTime.Today.Year;
+        _periodMonth = DateTime.Today.Month;
+        _book = "TAX";
+        _debtType = "ALL";
+        _dueStatus = "ALL";
+        _search = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem thông báo hạn công nợ.", MudBlazor.Severity.Warning);
+            _rows.Clear();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+
+            if (IsPeriodMode)
+                UpdateDateRange();
+            else
+                EnsureDateRange();
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var fromDue = _fromDueDate?.Date;
+            var toDue = _toDueDate?.Date;
+
+            // Ngày chốt để tính số dư công nợ.
+            // Không dùng DueDate để lọc ngay từ đầu, vì dòng thanh toán 131/331 thường không có DueDate.
+            var asOfDate = toDue ?? DateTime.Today.Date;
+            var reportCutoff = asOfDate.AddDays(1);
+
+            var query =
+                from l in db.AccountingVoucherLines.AsNoTracking()
+                join v in db.AccountingVouchers.AsNoTracking() on l.VoucherId equals v.Id
+                where l.AccountCode != null
+                   && (EF.Functions.Like(l.AccountCode, "131%") || EF.Functions.Like(l.AccountCode, "331%"))
+                   && v.VoucherDate < reportCutoff
+                select new { Line = l, Voucher = v };
+
+            // Book chỉ lọc theo dòng sổ đang xem.
+            if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.Line.IsTaxBook == true);
+
+            if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.Line.IsManagementBook == true);
+
+            // Loại công nợ: AR = 131, AP = 331, ALL = lấy cả hai.
+            if (string.Equals(_debtType, "AR", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.Line.AccountCode != null && EF.Functions.Like(x.Line.AccountCode, "131%"));
+
+            if (string.Equals(_debtType, "AP", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.Line.AccountCode != null && EF.Functions.Like(x.Line.AccountCode, "331%"));
+
+            var data = await query
+                .OrderBy(x => x.Voucher.VoucherDate)
+                .ThenBy(x => x.Voucher.VoucherNo)
+                .Take(50000)
+                .ToListAsync();
+
+            // Công nợ phải tính theo số dư còn lại:
+            // AR 131: còn phải thu = Nợ 131 - Có 131.
+            // AP 331: còn phải trả = Có 331 - Nợ 331.
+            // DueDate chỉ dùng để chọn khoản cần nhắc hạn sau khi đã tính số dư.
+            var openItems = new List<DebtWorkItem>();
+
+            foreach (var group in data.GroupBy(x => new
+            {
+                x.Line.CustomerId,
+                RootAccount = GetRootDebtAccount(x.Line.AccountCode),
+                BookKey = GetLineBookKey(x.Line.IsTaxBook, x.Line.IsManagementBook)
+            }))
+            {
+                var debtItems = new List<DebtWorkItem>();
+                var settlementItems = new List<DebtSettlementItem>();
+
+                foreach (var x in group)
+                {
+                    var accountCode = x.Line.AccountCode ?? string.Empty;
+                    var isAR = accountCode.StartsWith("131", StringComparison.OrdinalIgnoreCase);
+                    var isAP = accountCode.StartsWith("331", StringComparison.OrdinalIgnoreCase);
+
+                    if (!isAR && !isAP)
+                        continue;
+
+                    var netDebtAmount = isAR
+                        ? x.Line.DebitAmount - x.Line.CreditAmount       // AR: Nợ làm tăng phải thu, Có làm giảm phải thu
+                        : x.Line.CreditAmount - x.Line.DebitAmount;      // AP: Có làm tăng phải trả, Nợ làm giảm phải trả
+
+                    var matchKey = BuildDebtMatchKey(x.Line.InvoiceNo, x.Line.HBLNo);
+
+                    if (netDebtAmount > 0.01m)
+                    {
+                        debtItems.Add(new DebtWorkItem
+                        {
+                            Id = x.Line.Id,
+                            VoucherId = x.Line.VoucherId,
+                            CustomerId = x.Line.CustomerId,
+                            DebtType = isAR ? "AR" : "AP",
+                            AccountCode = accountCode,
+                            VoucherNo = x.Voucher.VoucherNo ?? string.Empty,
+                            VoucherDate = x.Voucher.VoucherDate,
+                            DueDate = x.Line.DueDate?.Date,
+                            OriginalAmount = netDebtAmount,
+                            RemainingAmount = netDebtAmount,
+                            CustomerName = string.Empty,
+                            InvoiceNo = x.Line.InvoiceNo ?? string.Empty,
+                            HBLNo = x.Line.HBLNo ?? string.Empty,
+                            LineDescription = x.Line.LineDescription ?? string.Empty,
+                            Book = GetLineBookKey(x.Line.IsTaxBook, x.Line.IsManagementBook),
+                            MatchKey = matchKey
+                        });
+                    }
+                    else if (netDebtAmount < -0.01m)
+                    {
+                        settlementItems.Add(new DebtSettlementItem
+                        {
+                            Amount = Math.Abs(netDebtAmount),
+                            MatchKey = matchKey,
+                            VoucherDate = x.Voucher.VoucherDate,
+                            VoucherNo = x.Voucher.VoucherNo ?? string.Empty
+                        });
+                    }
+                }
+
+                // Phân bổ thanh toán:
+                // 1) Nếu phiếu thu/phiếu chi có cùng InvoiceNo/HBL thì bù đúng chứng từ đó.
+                // 2) Phần còn lại hoặc không có InvoiceNo/HBL thì bù FIFO theo ngày đến hạn.
+                foreach (var settlement in settlementItems
+                    .OrderBy(x => x.VoucherDate)
+                    .ThenBy(x => x.VoucherNo))
+                {
+                    var remainToAllocate = settlement.Amount;
+
+                    if (!string.Equals(settlement.MatchKey, CustomerBalanceMatchKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AllocateSettlement(
+                            debtItems
+                                .Where(x => x.RemainingAmount > 0.01m && string.Equals(x.MatchKey, settlement.MatchKey, StringComparison.OrdinalIgnoreCase))
+                                .OrderBy(x => x.DueDate ?? DateTime.MaxValue)
+                                .ThenBy(x => x.VoucherDate)
+                                .ThenBy(x => x.VoucherNo),
+                            ref remainToAllocate);
+                    }
+
+                    if (remainToAllocate > 0.01m)
+                    {
+                        AllocateSettlement(
+                            debtItems
+                                .Where(x => x.RemainingAmount > 0.01m)
+                                .OrderBy(x => x.DueDate ?? DateTime.MaxValue)
+                                .ThenBy(x => x.VoucherDate)
+                                .ThenBy(x => x.VoucherNo),
+                            ref remainToAllocate);
+                    }
+                }
+
+                openItems.AddRange(debtItems.Where(x => x.RemainingAmount > 0.01m));
+            }
+
+            var debtGroups = openItems
+                .Where(x => x.DueDate.HasValue)
+                .Where(x => !fromDue.HasValue || x.DueDate!.Value >= fromDue.Value)
+                .Where(x => !toDue.HasValue || x.DueDate!.Value <= toDue.Value)
+                .ToList();
+
+            var customerIds = debtGroups
+                .Where(x => x.CustomerId.HasValue && x.CustomerId.Value != Guid.Empty)
+                .Select(x => x.CustomerId!.Value)
+                .Distinct()
+                .ToHashSet();
+
+            var customerMap = new Dictionary<Guid, string>();
+            if (customerIds.Count > 0)
+            {
+                var customers = await db.Customer.AsNoTracking()
+                    .Where(c => customerIds.Contains(c.Customer_ID))
+                    .Select(c => new
+                    {
+                        c.Customer_ID,
+                        c.Customer_Code,
+                        c.COMPANY,
+                        c.EnglishName,
+                        c.MainCode
+                    })
+                    .ToListAsync();
+
+                customerMap = customers.GroupBy(x => x.Customer_ID).ToDictionary(
+                    g => g.Key,
+                    g =>
+                    {
+                        var c = g.First();
+
+                        var code = !string.IsNullOrWhiteSpace(c.Customer_Code)
+                            ? c.Customer_Code
+                            : !string.IsNullOrWhiteSpace(c.MainCode)
+                                ? c.MainCode
+                                : string.Empty;
+
+                        var name = !string.IsNullOrWhiteSpace(c.COMPANY)
+                            ? c.COMPANY
+                            : !string.IsNullOrWhiteSpace(c.EnglishName)
+                                ? c.EnglishName
+                                : string.Empty;
+
+                        if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(name))
+                            return $"{code} - {name}";
+
+                        return !string.IsNullOrWhiteSpace(name) ? name : code;
+                    });
+            }
+
+            var today = DateTime.Today;
+
+            _rows = debtGroups.Select(x =>
+                {
+                    var dueDate = x.DueDate!.Value.Date;
+                    var days = (dueDate - today).Days;
+
+                    var statusCode =
+                        days < 0 ? "OVERDUE" :
+                        days == 0 ? "TODAY" :
+                        days <= 7 ? "NEXT7" :
+                        "FUTURE";
+
+                    return new DebtDueRow
+                    {
+                        Id = x.Id,
+                        VoucherId = x.VoucherId,
+                        CustomerId = x.CustomerId,
+                        DebtType = x.DebtType,
+                        AccountCode = x.AccountCode,
+                        VoucherNo = x.VoucherNo,
+                        VoucherDate = x.VoucherDate,
+                        DueDate = dueDate,
+                        Days = days,
+                        StatusCode = statusCode,
+                        StatusText = statusCode == "OVERDUE" ? "Quá hạn" :
+                                     statusCode == "TODAY" ? "Đến hạn hôm nay" :
+                                     statusCode == "NEXT7" ? "Sắp đến hạn" : "Chưa đến hạn",
+                        CustomerName = x.CustomerId.HasValue && customerMap.TryGetValue(x.CustomerId.Value, out var customerName)
+                            ? customerName : string.Empty,
+                        InvoiceNo = x.InvoiceNo,
+                        HBLNo = x.HBLNo,
+                        LineDescription = x.LineDescription,
+                        Amount = x.RemainingAmount,
+                        Book = x.Book
+                    };
+                })
+                .Where(x => x.Amount > 0.01m)
+                .OrderBy(x => x.DueDate)
+                .ThenBy(x => x.CustomerName)
+                .ThenBy(x => x.InvoiceNo)
+                .ThenBy(x => x.HBLNo)
+                .ToList();
+
+            _gridKey++;
+            Snackbar.Add($"Loaded {_rows.Count:N0} outstanding debt rows.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static void AllocateSettlement(IEnumerable<DebtWorkItem> debts, ref decimal amount)
+    {
+        foreach (var debt in debts)
+        {
+            if (amount <= 0.01m)
+                break;
+
+            if (debt.RemainingAmount <= 0.01m)
+                continue;
+
+            var applied = Math.Min(debt.RemainingAmount, amount);
+            debt.RemainingAmount -= applied;
+            amount -= applied;
+        }
+    }
+
+    private const string CustomerBalanceMatchKey = "CUSTOMER_BALANCE";
+
+    private static string BuildDebtMatchKey(string? invoiceNo, string? hblNo)
+    {
+        if (!string.IsNullOrWhiteSpace(invoiceNo))
+            return "INV:" + invoiceNo.Trim().ToUpperInvariant();
+
+        if (!string.IsNullOrWhiteSpace(hblNo))
+            return "HBL:" + hblNo.Trim().ToUpperInvariant();
+
+        return CustomerBalanceMatchKey;
+    }
+
+    private static string GetRootDebtAccount(string? accountCode)
+    {
+        if (string.IsNullOrWhiteSpace(accountCode))
+            return string.Empty;
+
+        if (accountCode.StartsWith("131", StringComparison.OrdinalIgnoreCase))
+            return "131";
+
+        if (accountCode.StartsWith("331", StringComparison.OrdinalIgnoreCase))
+            return "331";
+
+        return accountCode.Trim();
+    }
+
+    private static string GetLineBookKey(bool isTaxBook, bool isManagementBook)
+    {
+        if (isTaxBook && isManagementBook)
+            return "TAX/MGMT";
+
+        if (isTaxBook)
+            return "TAX";
+
+        if (isManagementBook)
+            return "MGMT";
+
+        return string.Empty;
+    }
+
+    private async Task OpenLedger(DebtDueRow row)
+    {
+        if (!OnTabRequest.HasDelegate)
+        {
+            Snackbar.Add("Không mở được tab 10.6.1 vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var book = string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase)
+            ? "TAX"
+            : _book.Trim().ToUpperInvariant();
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
+            builder.AddAttribute(1, "InitialAccountCode", row.AccountCode);
+            builder.AddAttribute(2, "InitialFiscalYear", _fiscalYear);
+            builder.AddAttribute(3, "InitialPeriodMonth", _periodMonth);
+            builder.AddAttribute(4, "InitialBook", book);
+
+            if (row.CustomerId.HasValue && row.CustomerId.Value != Guid.Empty)
+                builder.AddAttribute(5, "InitialCustomerId", row.CustomerId);
+
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync((
+            $"GeneralLedgerSummary_{row.AccountCode}_{row.CustomerId}_{_fiscalYear}_{_periodMonth}_{book}",
+            $"10.6.1 Sổ cái - TK {row.AccountCode} - {row.CustomerName}",
+            content
+        ));
+    }
+
+    private void MarkNotified(DebtDueRow row)
+    {
+        Snackbar.Add($"Đã ghi nhận nhắc công nợ: {row.CustomerName} - {row.Amount:N0} - hạn {row.DueDate:dd/MM/yyyy}.", MudBlazor.Severity.Info);
+    }
+
+    private bool MatchesFilter(DebtDueRow x)
+    {
+        if (!string.Equals(_dueStatus, "ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.Equals(_dueStatus, "NEXT7", StringComparison.OrdinalIgnoreCase))
+            {
+                if (x.StatusCode != "NEXT7" && x.StatusCode != "TODAY")
+                    return false;
+            }
+            else if (!string.Equals(x.StatusCode, _dueStatus, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var key = _search.Trim();
+
+        return x.DebtType.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.StatusText.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.AccountCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.CustomerName.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.InvoiceNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.HBLNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.LineDescription.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Amount.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Book.Contains(key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string RowClass(DebtDueRow row, int rowNumber)
+    {
+        return row.StatusCode switch
+        {
+            "OVERDUE" => "row-overdue",
+            "TODAY" => "row-today",
+            "NEXT7" => "row-next",
+            _ => string.Empty
+        };
+    }
+
+    private sealed class DebtWorkItem
+    {
+        public Guid Id { get; set; }
+        public Guid VoucherId { get; set; }
+        public Guid? CustomerId { get; set; }
+        public string DebtType { get; set; } = string.Empty;
+        public string AccountCode { get; set; } = string.Empty;
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime VoucherDate { get; set; }
+        public DateTime? DueDate { get; set; }
+        public decimal OriginalAmount { get; set; }
+        public decimal RemainingAmount { get; set; }
+        public string CustomerName { get; set; } = string.Empty;
+        public string InvoiceNo { get; set; } = string.Empty;
+        public string HBLNo { get; set; } = string.Empty;
+        public string LineDescription { get; set; } = string.Empty;
+        public string Book { get; set; } = string.Empty;
+        public string MatchKey { get; set; } = string.Empty;
+    }
+
+    private sealed class DebtSettlementItem
+    {
+        public decimal Amount { get; set; }
+        public string MatchKey { get; set; } = string.Empty;
+        public DateTime VoucherDate { get; set; }
+        public string VoucherNo { get; set; } = string.Empty;
+    }
+
+    private sealed class DebtDueRow
+    {
+        public Guid Id { get; set; }
+        public Guid VoucherId { get; set; }
+        public Guid? CustomerId { get; set; }
+        public string DebtType { get; set; } = string.Empty;
+        public string AccountCode { get; set; } = string.Empty;
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime VoucherDate { get; set; }
+        public DateTime DueDate { get; set; }
+        public int Days { get; set; }
+        public string DaysText => Days < 0 ? $"{Math.Abs(Days)} ngày quá hạn" : Days == 0 ? "Hôm nay" : $"Còn {Days} ngày";
+        public string StatusCode { get; set; } = string.Empty;
+        public string StatusText { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public string InvoiceNo { get; set; } = string.Empty;
+        public string HBLNo { get; set; } = string.Empty;
+        public string LineDescription { get; set; } = string.Empty;
+        public decimal Amount { get; set; }
+        public string Book { get; set; } = string.Empty;
+    }
+}
+
+<style>
+    .debt-due-page {
+        background: #f4fdf7;
+    }
+
+        .debt-due-page .product-price-card {
+            border: 1px solid #d1fae5;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(22,101,52,.06);
+        }
+
+        .debt-due-page .filter-card {
+            background: linear-gradient(90deg, #ffffff, #ecfdf5);
+        }
+
+        .debt-due-page .kpi-card {
+            min-height: 96px;
+            padding: 14px;
+            border-radius: 16px;
+            border: 1px solid #d1fae5;
+            box-shadow: 0 8px 20px rgba(22,101,52,.05);
+        }
+
+        .debt-due-page .overdue-card {
+            background: #fef2f2;
+            border-color: #fecaca !important;
+        }
+
+        .debt-due-page .today-card {
+            background: #fff7ed;
+            border-color: #fed7aa !important;
+        }
+
+        .debt-due-page .next-card {
+            background: #eff6ff;
+            border-color: #bfdbfe !important;
+        }
+
+        .debt-due-page .total-card {
+            background: #ecfdf5;
+        }
+
+        .debt-due-page .report-title {
+            font-weight: 800;
+            letter-spacing: .2px;
+            color: #063970;
+        }
+
+        .debt-due-page .debt-due-grid {
+            font-size: .82rem;
+        }
+
+            .debt-due-page .debt-due-grid .mud-table-container {
+                overflow-x: auto;
+            }
+
+            .debt-due-page .debt-due-grid .mud-table-root .mud-table {
+                width: max-content !important;
+                min-width: 100%;
+            }
+
+            .debt-due-page .debt-due-grid .mud-table-cell,
+            .debt-due-page .debt-due-grid td,
+            .debt-due-page .debt-due-grid th {
+                padding: 4px 8px !important;
+                white-space: nowrap;
+            }
+
+        .debt-due-page .row-overdue {
+            background-color: #fff1f2 !important;
+        }
+
+        .debt-due-page .row-today {
+            background-color: #fffbeb !important;
+        }
+
+        .debt-due-page .row-next {
+            background-color: #eff6ff !important;
+        }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .text-end {
+        text-align: right !important;
+    }
+</style>

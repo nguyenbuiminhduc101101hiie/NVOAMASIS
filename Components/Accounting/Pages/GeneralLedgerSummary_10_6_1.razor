@@ -1,6 +1,12 @@
 @page "/accounting/general-ledger"
 @page "/GeneralLedgerSummary"
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.Extensions.Configuration
+@using Microsoft.JSInterop
+@using OfficeOpenXml
+@using System.Globalization
+@using System.Text
 @using MudBlazor
 @using NVOAMASIS.Data
 @using NVOAMASIS.Models
@@ -11,6 +17,8 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject IJSRuntime JS
+@inject IConfiguration Configuration
 @inject IStringLocalizer<SharedResource> Localizer
 
 <PageTitle>10.6.1 Sổ cái tổng hợp</PageTitle>
@@ -36,6 +44,33 @@
                            Disabled="_busy">
                     Reset
                 </MudButton>
+
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Warning"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.UploadFile"
+                           OnClick="ToggleImportPanel"
+                           Disabled="_busy">
+                    Import Excel
+                </MudButton>
+
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FileDownload"
+                           OnClick="DownloadImportTemplateAsync"
+                           Disabled="_busy">
+                    Mẫu Excel
+                </MudButton>
+
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FileDownload"
+                           OnClick="ExportLedgerStructureAsync"
+                           Disabled="_busy">
+                    Export file import lại
+                </MudButton>
             </MudStack>
         </Toolbar>
     </PpScreenHeader>
@@ -43,19 +78,36 @@
     <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
         <MudGrid Spacing="2" AlignItems="Center">
             <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           Label="Chọn theo"
+                           Value="@_dateMode"
+                           ValueChanged="OnDateModeChanged"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("DATE_RANGE")">Theo ngày</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("PERIOD")">Theo kỳ</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="2">
                 <MudDatePicker Label="Từ ngày"
-                               @bind-Date="_fromDate"
+                               Date="_fromDate"
+                               DateChanged="OnFromDateChanged"
                                Variant="Variant.Outlined"
                                Margin="Margin.Dense"
-                               DateFormat="dd/MM/yyyy" />
+                               DateFormat="dd/MM/yyyy"
+                               Disabled="@IsPeriodMode" />
             </MudItem>
 
             <MudItem xs="12" sm="2">
                 <MudDatePicker Label="Đến ngày"
-                               @bind-Date="_toDate"
+                               Date="_toDate"
+                               DateChanged="OnToDateChanged"
                                Variant="Variant.Outlined"
                                Margin="Margin.Dense"
-                               DateFormat="dd/MM/yyyy" />
+                               DateFormat="dd/MM/yyyy"
+                               Disabled="@IsPeriodMode" />
             </MudItem>
 
             <MudItem xs="6" sm="1">
@@ -66,7 +118,8 @@
                                  Variant="Variant.Outlined"
                                  Margin="Margin.Dense"
                                  Min="2000"
-                                 Max="2100" />
+                                 Max="2100"
+                                 Disabled="@IsDateRangeMode" />
             </MudItem>
 
             <MudItem xs="6" sm="1">
@@ -77,7 +130,8 @@
                                  Variant="Variant.Outlined"
                                  Margin="Margin.Dense"
                                  Min="1"
-                                 Max="12" />
+                                 Max="12"
+                                 Disabled="@IsDateRangeMode" />
             </MudItem>
 
             <MudItem xs="12" sm="1">
@@ -122,7 +176,108 @@
                               AdornmentIcon="@Icons.Material.Filled.Search" />
             </MudItem>
         </MudGrid>
+
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+            @DateModeHelpText
+        </MudText>
     </MudPaper>
+
+    @if (_showImportPanel)
+    {
+        <MudPaper Class="product-price-card pa-3 mb-2 import-card" Elevation="0">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                <div>
+                    <MudText Typo="Typo.h6" Class="import-title">IMPORT SỔ CÁI TỪ EXCEL</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Tool nhập liệu: chọn file → đọc thử → kiểm tra cân đối Nợ/Có → import vào GeneralLedgerEntries.
+                    </MudText>
+                </div>
+                <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">Tổng dòng: @_importRows.Count.ToString("N0")</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">Hợp lệ: @_importValidCount.ToString("N0")</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">Lỗi: @_importErrorCount.ToString("N0")</MudChip>
+                </MudStack>
+            </MudStack>
+
+            <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mb-2">
+                File Excel cần có dòng tiêu đề ở dòng 1. Cột bắt buộc: PostingDate, VoucherNo, AccountCode, Debit, Credit. Nếu DB chưa có CompanyId mặc định thì phải có cột CompanyId. Có thể dùng tên cột tiếng Việt như Ngày HT, Số chứng từ, TK, Nợ, Có.
+            </MudAlert>
+
+            <MudGrid Spacing="2" AlignItems="Center">
+                <MudItem xs="12" md="3">
+                    <MudPaper Class="pa-2 import-upload-box" Elevation="0" Outlined="true">
+                        <MudText Typo="Typo.caption" Class="fw-bold">Chọn file Excel</MudText>
+                        <InputFile OnChange="OnLedgerImportFileChanged" accept=".xlsx" />
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@(_importFileName == string.Empty ? "Chưa chọn file" : _importFileName)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" md="2">
+                    <MudCheckBox T="bool" @bind-Value="_allowDuplicateImport" Label="Cho phép trùng số CT" Dense="true" />
+                </MudItem>
+                <MudItem xs="12" md="2">
+                    <MudCheckBox T="bool" @bind-Value="_importRebuildBalance" Label="Rebuild Balance sau import" Dense="true" />
+                </MudItem>
+                <MudItem xs="12" md="5">
+                    <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Preview" OnClick="PreviewImportAsync" Disabled="_busy || _importFile is null">Đọc thử / Validate</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.Save" OnClick="ImportLedgerRowsAsync" Disabled="_busy || !_importRows.Any() || _importErrorCount > 0">Import vào sổ cái</MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload" OnClick="DownloadImportTemplateAsync" Disabled="_busy">Tải mẫu</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload" OnClick="ExportLedgerStructureAsync" Disabled="_busy">Export theo mẫu import</MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Clear" OnClick="ClearImportPreview" Disabled="_busy">Xóa preview</MudButton>
+                    </MudStack>
+                </MudItem>
+            </MudGrid>
+
+            <MudGrid Spacing="2" Class="mt-2 mb-2">
+                <MudItem xs="12" sm="3"><MudPaper Class="pa-2 import-stat" Elevation="0" Outlined="true"><MudText Typo="Typo.caption">Tổng Nợ</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_importRows.Sum(x => x.Debit).ToString("N0")</MudText></MudPaper></MudItem>
+                <MudItem xs="12" sm="3"><MudPaper Class="pa-2 import-stat" Elevation="0" Outlined="true"><MudText Typo="Typo.caption">Tổng Có</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_importRows.Sum(x => x.Credit).ToString("N0")</MudText></MudPaper></MudItem>
+                <MudItem xs="12" sm="3"><MudPaper Class="pa-2 import-stat" Elevation="0" Outlined="true"><MudText Typo="Typo.caption">Chênh lệch</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold" Color="@((_importRows.Sum(x => x.Debit) - _importRows.Sum(x => x.Credit)) == 0 ? Color.Success : Color.Error)">@((_importRows.Sum(x => x.Debit) - _importRows.Sum(x => x.Credit)).ToString("N0"))</MudText></MudPaper></MudItem>
+                <MudItem xs="12" sm="3"><MudPaper Class="pa-2 import-stat" Elevation="0" Outlined="true"><MudText Typo="Typo.caption">Số chứng từ</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_importRows.Select(x => x.VoucherNo).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Count().ToString("N0")</MudText></MudPaper></MudItem>
+            </MudGrid>
+
+            @if (_importRows.Any())
+            {
+                <MudDataGrid T="LedgerImportRow"
+                             Items="_importRows.Take(300).ToList()"
+                             Dense="true"
+                             Striped="true"
+                             Hover="true"
+                             Bordered="true"
+                             FixedHeader="true"
+                             Height="300px"
+                             Class="import-preview-grid"
+                             RowClassFunc="ImportRowClass">
+                    <Columns>
+                        <PropertyColumn Property="x => x.RowNo" Title="#" />
+                        <PropertyColumn Property="x => x.StatusText" Title="Status" />
+                        <PropertyColumn Property="x => x.PostingDate" Title="Ngày HT" Format="dd/MM/yyyy" />
+                        <PropertyColumn Property="x => x.VoucherNo" Title="Số CT" />
+                        <PropertyColumn Property="x => x.VoucherDate" Title="Ngày CT" Format="dd/MM/yyyy" />
+                        <PropertyColumn Property="x => x.AccountCode" Title="TK" />
+                        <PropertyColumn Property="x => x.CustomerId" Title="CustomerId" />
+                        <PropertyColumn Property="x => x.CustomerCode" Title="Mã ĐT" />
+                        <PropertyColumn Property="x => x.CustomerName" Title="Đối tượng" />
+                        <PropertyColumn Property="x => x.CompanyId" Title="CompanyId" />
+                        <PropertyColumn Property="x => x.BranchCode" Title="Branch" />
+                        <PropertyColumn Property="x => x.Description" Title="Diễn giải" />
+                        <PropertyColumn Property="x => x.Debit" Title="Nợ" Format="N0" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.Credit" Title="Có" Format="N0" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.DebitFC" Title="DebitFC" Format="N0" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.CreditFC" Title="CreditFC" Format="N0" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.HBLNo" Title="HBL" />
+                        <PropertyColumn Property="x => x.MBLNo" Title="MBL" />
+                        <PropertyColumn Property="x => x.ContainerNo" Title="Container" />
+                        <PropertyColumn Property="x => x.BookingNo" Title="Booking" />
+                        <PropertyColumn Property="x => x.CurrencyCode" Title="Tiền tệ" />
+                        <PropertyColumn Property="x => x.ExchangeRate" Title="Tỷ giá" Format="N2" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.Book" Title="Book" />
+                        <PropertyColumn Property="x => x.ValidationMessage" Title="Thông báo" />
+                    </Columns>
+                </MudDataGrid>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">Preview tối đa 300 dòng đầu. Khi import sẽ nhập toàn bộ dòng hợp lệ trong file.</MudText>
+            }
+        </MudPaper>
+    }
 
     <MudPaper Class="product-price-card pa-2 mb-2" Elevation="0">
         <MudGrid Spacing="2">
@@ -213,11 +368,36 @@
     [Parameter] public Guid? InitialCustomerId { get; set; }
 
     private const string PermissionMenuName = "GeneralLedgerEntries";
+    private static bool _epplusLicenseConfigured;
+
+    private void ConfigureEpplusLicense()
+    {
+        if (_epplusLicenseConfigured)
+            return;
+
+        var commercialLicenseKey = Configuration["EPPlus:LicenseKey"];
+
+        if (!string.IsNullOrWhiteSpace(commercialLicenseKey))
+        {
+            ExcelPackage.License.SetCommercial(commercialLicenseKey.Trim());
+        }
+        else
+        {
+            var organizationName = Configuration["EPPlus:NonCommercialOrganization"];
+            ExcelPackage.License.SetNonCommercialOrganization(
+                string.IsNullOrWhiteSpace(organizationName)
+                    ? "Logistics Management Software"
+                    : organizationName.Trim());
+        }
+
+        _epplusLicenseConfigured = true;
+    }
 
     private bool _busy;
     private string _usr = string.Empty;
     private int _gridKey;
 
+    private string _dateMode = "DATE_RANGE";
     private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
     private DateTime? _toDate = DateTime.Today;
     private int? _fiscalYear = DateTime.Today.Year;
@@ -231,8 +411,26 @@
     private List<string> _accountCodes = new();
     private GeneralLedgerSummaryRow? _selected;
 
+    private bool _showImportPanel;
+    private IBrowserFile? _importFile;
+    private string _importFileName = string.Empty;
+    private bool _allowDuplicateImport;
+    private bool _importRebuildBalance = true;
+    private List<LedgerImportRow> _importRows = new();
+    private Guid? _defaultCompanyId;
+
+    private int _importValidCount => _importRows.Count(x => x.IsValid);
+    private int _importErrorCount => _importRows.Count(x => !x.IsValid);
+
     private IEnumerable<GeneralLedgerSummaryRow> VisibleItems =>
         _rows.Where(MatchesFilter).Where(MatchesSearch);
+
+    private bool IsPeriodMode => string.Equals(_dateMode, "PERIOD", StringComparison.OrdinalIgnoreCase);
+    private bool IsDateRangeMode => string.Equals(_dateMode, "DATE_RANGE", StringComparison.OrdinalIgnoreCase);
+
+    private string DateModeHelpText => IsPeriodMode
+        ? "Đang lọc theo kỳ kế toán: hệ thống dùng FiscalYear/FiscalPeriod và tự set Từ ngày - Đến ngày theo tháng."
+        : "Đang lọc theo ngày hạch toán: hệ thống chỉ dùng PostingDate từ ngày - đến ngày, không ép FiscalYear/FiscalPeriod.";
 
     protected override async Task OnInitializedAsync()
     {
@@ -241,13 +439,20 @@
 
         ApplyInitialFilters();
 
-        UpdateDateRange();
+        if (IsPeriodMode)
+            UpdateDateRange();
+        else
+            EnsureDateRange();
 
         await LoadAsync();
     }
 
     private void ApplyInitialFilters()
     {
+        var hasInitialPeriod = InitialFiscalYear.HasValue || InitialPeriodMonth.HasValue;
+
+        _dateMode = hasInitialPeriod ? "PERIOD" : "DATE_RANGE";
+
         if (!string.IsNullOrWhiteSpace(InitialAccountCode))
             _accountCode = InitialAccountCode.Trim();
 
@@ -257,36 +462,79 @@
         if (InitialPeriodMonth.HasValue)
             _periodMonth = InitialPeriodMonth.Value;
 
+        if (hasInitialPeriod)
+        {
+            _fiscalYear ??= DateTime.Today.Year;
+            _periodMonth ??= DateTime.Today.Month;
+        }
+
         if (!string.IsNullOrWhiteSpace(InitialBook))
             _book = InitialBook.Trim().ToUpperInvariant();
 
         if (InitialCustomerId.HasValue && InitialCustomerId.Value != Guid.Empty)
             _customerIdFilter = InitialCustomerId.Value;
-        if (_fiscalYear.HasValue && _periodMonth.HasValue)
-        {
-            _fromDate = new DateTime(
-                _fiscalYear.Value,
-                _periodMonth.Value,
-                1);
+    }
 
-            _toDate = _fromDate.Value
-                .AddMonths(1)
-                .AddDays(-1);
+    private async Task OnDateModeChanged(string value)
+    {
+        _dateMode = string.IsNullOrWhiteSpace(value) ? "DATE_RANGE" : value;
+
+        if (IsPeriodMode)
+        {
+            _fiscalYear ??= DateTime.Today.Year;
+            _periodMonth ??= DateTime.Today.Month;
+            UpdateDateRange();
+        }
+        else
+        {
+            EnsureDateRange();
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task OnFromDateChanged(DateTime? date)
+    {
+        _fromDate = date;
+
+        if (IsDateRangeMode)
+        {
+            EnsureDateRange();
+            await LoadAsync();
+        }
+    }
+
+    private async Task OnToDateChanged(DateTime? date)
+    {
+        _toDate = date;
+
+        if (IsDateRangeMode)
+        {
+            EnsureDateRange();
+            await LoadAsync();
         }
     }
 
     private async Task OnYearChanged(int? year)
     {
         _fiscalYear = year;
-        UpdateDateRange();
-        await LoadAsync();
+
+        if (IsPeriodMode)
+        {
+            UpdateDateRange();
+            await LoadAsync();
+        }
     }
 
     private async Task OnMonthChanged(int? month)
     {
         _periodMonth = month;
-        UpdateDateRange();
-        await LoadAsync();
+
+        if (IsPeriodMode)
+        {
+            UpdateDateRange();
+            await LoadAsync();
+        }
     }
 
     private void UpdateDateRange()
@@ -301,8 +549,25 @@
         _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
     }
 
+    private void EnsureDateRange()
+    {
+        if (!_fromDate.HasValue)
+            _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+
+        if (!_toDate.HasValue)
+            _toDate = DateTime.Today;
+
+        if (_fromDate.Value.Date > _toDate.Value.Date)
+        {
+            var temp = _fromDate;
+            _fromDate = _toDate;
+            _toDate = temp;
+        }
+    }
+
     private async Task ResetFilterAsync()
     {
+        _dateMode = "DATE_RANGE";
         _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         _toDate = DateTime.Today;
         _fiscalYear = DateTime.Today.Year;
@@ -312,10 +577,1419 @@
         _customerIdFilter = null;
         _search = string.Empty;
 
-        UpdateDateRange();
+        EnsureDateRange();
 
         await LoadAsync();
     }
+
+    private void ToggleImportPanel()
+    {
+        _showImportPanel = !_showImportPanel;
+    }
+
+    private void OnLedgerImportFileChanged(InputFileChangeEventArgs e)
+    {
+        _importFile = e.File;
+        _importFileName = _importFile?.Name ?? string.Empty;
+        _importRows.Clear();
+    }
+
+    private void ClearImportPreview()
+    {
+        _importFile = null;
+        _importFileName = string.Empty;
+        _importRows.Clear();
+    }
+
+    private async Task PreviewImportAsync()
+    {
+        if (_importFile is null)
+        {
+            Snackbar.Add("Vui lòng chọn file Excel trước khi đọc thử.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            _importRows.Clear();
+
+            ConfigureEpplusLicense();
+
+            await using var stream = _importFile.OpenReadStream(maxAllowedSize: 25 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            using var package = new ExcelPackage(ms);
+            var ws = package.Workbook.Worksheets.FirstOrDefault();
+
+            if (ws?.Dimension is null)
+            {
+                Snackbar.Add("File Excel không có dữ liệu.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _defaultCompanyId = await GetDefaultCompanyIdAsync();
+
+            var headerMap = BuildImportHeaderMap(ws);
+            var missing = new List<string>();
+            foreach (var required in new[] { "PostingDate", "VoucherNo", "AccountCode" })
+            {
+                if (!headerMap.ContainsKey(required))
+                    missing.Add(required);
+            }
+
+            if (missing.Any())
+            {
+                Snackbar.Add("File thiếu cột bắt buộc: " + string.Join(", ", missing), MudBlazor.Severity.Error);
+                return;
+            }
+
+            for (var row = 2; row <= ws.Dimension.End.Row; row++)
+            {
+                if (IsExcelRowEmpty(ws, row, ws.Dimension.End.Column))
+                    continue;
+
+                var importRow = new LedgerImportRow
+                {
+                    RowNo = row,
+                    PostingDate = GetDateCell(ws, row, headerMap, "PostingDate"),
+                    VoucherDate = GetDateCell(ws, row, headerMap, "VoucherDate"),
+                    VoucherNo = GetTextCell(ws, row, headerMap, "VoucherNo"),
+                    VoucherType = GetTextCell(ws, row, headerMap, "VoucherType"),
+                    AccountCode = GetTextCell(ws, row, headerMap, "AccountCode"),
+                    CustomerId = GetGuidCell(ws, row, headerMap, "CustomerId"),
+                    CustomerCode = GetTextCell(ws, row, headerMap, "CustomerCode"),
+                    CustomerName = GetTextCell(ws, row, headerMap, "CustomerName"),
+                    Description = GetTextCell(ws, row, headerMap, "Description"),
+                    Debit = GetDecimalCell(ws, row, headerMap, "Debit"),
+                    Credit = GetDecimalCell(ws, row, headerMap, "Credit"),
+                    CurrencyCode = GetTextCell(ws, row, headerMap, "CurrencyCode"),
+                    ExchangeRate = GetDecimalCell(ws, row, headerMap, "ExchangeRate"),
+                    DebitFC = GetDecimalCell(ws, row, headerMap, "DebitFC"),
+                    CreditFC = GetDecimalCell(ws, row, headerMap, "CreditFC"),
+                    Book = GetTextCell(ws, row, headerMap, "Book"),
+                    SourceModule = GetTextCell(ws, row, headerMap, "SourceModule"),
+                    SourceId = GetTextCell(ws, row, headerMap, "SourceId"),
+                    CompanyId = GetGuidCell(ws, row, headerMap, "CompanyId"),
+                    VoucherLineId = GetGuidCell(ws, row, headerMap, "VoucherLineId"),
+                    SupplierId = GetGuidCell(ws, row, headerMap, "SupplierId"),
+                    EmployeeId = GetGuidCell(ws, row, headerMap, "EmployeeId"),
+                    ShipmentId = GetGuidCell(ws, row, headerMap, "ShipmentId"),
+                    ContractId = GetGuidCell(ws, row, headerMap, "ContractId"),
+                    HBLId = GetGuidCell(ws, row, headerMap, "HBLId"),
+                    MBLid = GetGuidCell(ws, row, headerMap, "MBLid"),
+                    AgentId = GetGuidCell(ws, row, headerMap, "AgentId"),
+                    ContainerId = GetGuidCell(ws, row, headerMap, "ContainerId"),
+                    BranchCode = GetTextCell(ws, row, headerMap, "BranchCode"),
+                    HBLNo = GetTextCell(ws, row, headerMap, "HBLNo"),
+                    MBLNo = GetTextCell(ws, row, headerMap, "MBLNo"),
+                    ContainerNo = GetTextCell(ws, row, headerMap, "ContainerNo"),
+                    BookingNo = GetTextCell(ws, row, headerMap, "BookingNo"),
+                    ShipmentNo = GetTextCell(ws, row, headerMap, "ShipmentNo"),
+                    POL = GetTextCell(ws, row, headerMap, "POL"),
+                    POD = GetTextCell(ws, row, headerMap, "POD"),
+                    RouteCode = GetTextCell(ws, row, headerMap, "RouteCode"),
+                    TransportMode = GetTextCell(ws, row, headerMap, "TransportMode"),
+                    POLCode = GetTextCell(ws, row, headerMap, "POLCode"),
+                    POLName = GetTextCell(ws, row, headerMap, "POLName"),
+                    PODCode = GetTextCell(ws, row, headerMap, "PODCode"),
+                    PODName = GetTextCell(ws, row, headerMap, "PODName"),
+                    ContainerSizeType = GetTextCell(ws, row, headerMap, "ContainerSizeType"),
+                    SealNo = GetTextCell(ws, row, headerMap, "SealNo"),
+                    Jobid = GetTextCell(ws, row, headerMap, "Jobid"),
+                    SaleName = GetTextCell(ws, row, headerMap, "SaleName"),
+                    OPS = GetTextCell(ws, row, headerMap, "OPS"),
+                    DOC = GetTextCell(ws, row, headerMap, "DOC"),
+                    DELCode = GetTextCell(ws, row, headerMap, "DELCode"),
+                    DELName = GetTextCell(ws, row, headerMap, "DELName"),
+                    PORCode = GetTextCell(ws, row, headerMap, "PORCode"),
+                    PORName = GetTextCell(ws, row, headerMap, "PORName"),
+                    Vessel = GetTextCell(ws, row, headerMap, "Vessel"),
+                    Voyage = GetTextCell(ws, row, headerMap, "Voyage")
+                };
+
+                NormalizeImportRow(importRow);
+                if (!importRow.CompanyId.HasValue && _defaultCompanyId.HasValue)
+                    importRow.CompanyId = _defaultCompanyId.Value;
+                ValidateImportRowBasic(importRow);
+                _importRows.Add(importRow);
+            }
+
+            await EnrichAndValidateImportRowsAsync();
+
+            Snackbar.Add($"Đã đọc {_importRows.Count:N0} dòng Excel. Hợp lệ {_importValidCount:N0}, lỗi {_importErrorCount:N0}.",
+                _importErrorCount == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task EnrichAndValidateImportRowsAsync()
+    {
+        if (!_importRows.Any())
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var accountCodes = _importRows
+            .Where(x => !string.IsNullOrWhiteSpace(x.AccountCode))
+            .Select(x => x.AccountCode.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var accountMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (accountCodes.Count > 0)
+        {
+            var accounts = (await db.DanhMucTaiKhoan.AsNoTracking()
+                .Where(a => !string.IsNullOrWhiteSpace(a.Taikhoan))
+                .Select(a => new { Code = a.Taikhoan, Name = a.Tentaikhoan })
+                .ToListAsync())
+                .Where(a => !string.IsNullOrWhiteSpace(a.Code) && accountCodes.Contains(a.Code.Trim()))
+                .ToList();
+
+            accountMap = accounts
+                .Where(x => !string.IsNullOrWhiteSpace(x.Code))
+                .GroupBy(x => x.Code!)
+                .ToDictionary(g => g.Key, g => g.First().Name ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+        }
+
+        var customerCodes = _importRows
+            .Where(x => !string.IsNullOrWhiteSpace(x.CustomerCode))
+            .Select(x => x.CustomerCode.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var customerIdsFromExcel = _importRows
+            .Where(x => x.CustomerId.HasValue && x.CustomerId.Value != Guid.Empty)
+            .Select(x => x.CustomerId!.Value)
+            .Distinct()
+            .ToHashSet();
+
+        var customerMap = new Dictionary<string, (Guid Id, string Name)>(StringComparer.OrdinalIgnoreCase);
+        var customerIdMap = new Dictionary<Guid, (string Code, string Name)>();
+
+        if (customerCodes.Count > 0 || customerIdsFromExcel.Count > 0)
+        {
+            var customers = (await db.Customer.AsNoTracking()
+                .Select(c => new { c.Customer_ID, c.Customer_Code, c.MainCode, c.COMPANY, c.EnglishName })
+                .Take(50000)
+                .ToListAsync())
+                .Where(c => customerIdsFromExcel.Contains(c.Customer_ID)
+                         || (!string.IsNullOrWhiteSpace(c.Customer_Code) && customerCodes.Contains(c.Customer_Code.Trim()))
+                         || (!string.IsNullOrWhiteSpace(c.MainCode) && customerCodes.Contains(c.MainCode.Trim())))
+                .ToList();
+
+            foreach (var c in customers)
+            {
+                var code = !string.IsNullOrWhiteSpace(c.Customer_Code) ? c.Customer_Code.Trim() : c.MainCode?.Trim() ?? string.Empty;
+                var name = !string.IsNullOrWhiteSpace(c.COMPANY) ? c.COMPANY : c.EnglishName ?? string.Empty;
+
+                customerIdMap[c.Customer_ID] = (code, name);
+
+                if (!string.IsNullOrWhiteSpace(c.Customer_Code))
+                    customerMap[c.Customer_Code.Trim()] = (c.Customer_ID, name);
+
+                if (!string.IsNullOrWhiteSpace(c.MainCode))
+                    customerMap[c.MainCode.Trim()] = (c.Customer_ID, name);
+            }
+        }
+
+        foreach (var row in _importRows)
+        {
+            if (!string.IsNullOrWhiteSpace(row.AccountCode))
+            {
+                if (accountMap.TryGetValue(row.AccountCode.Trim(), out var accountName))
+                    row.AccountName = accountName;
+                else
+                    row.Errors.Add("Tài khoản không có trong danh mục");
+            }
+
+            if (row.CustomerId.HasValue && row.CustomerId.Value != Guid.Empty)
+            {
+                if (customerIdMap.TryGetValue(row.CustomerId.Value, out var customerById))
+                {
+                    if (string.IsNullOrWhiteSpace(row.CustomerCode))
+                        row.CustomerCode = customerById.Code;
+
+                    if (string.IsNullOrWhiteSpace(row.CustomerName))
+                        row.CustomerName = customerById.Name;
+                }
+                else
+                {
+                    row.Errors.Add("CustomerId không tồn tại trong danh mục Customer");
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(row.CustomerCode))
+            {
+                if (customerMap.TryGetValue(row.CustomerCode.Trim(), out var customer))
+                {
+                    row.CustomerId = customer.Id;
+                    if (string.IsNullOrWhiteSpace(row.CustomerName))
+                        row.CustomerName = customer.Name;
+                }
+                else
+                {
+                    row.Warnings.Add("Không tìm thấy mã đối tượng; vẫn import nhưng không gắn CustomerId");
+                }
+            }
+        }
+
+        ValidateImportVoucherBalance();
+
+        if (!_allowDuplicateImport)
+            await ValidateDuplicateVoucherAsync(db);
+    }
+
+    private void ValidateImportVoucherBalance()
+    {
+        foreach (var g in _importRows
+            .Where(x => string.IsNullOrWhiteSpace(x.Errors.FirstOrDefault(e => e.Contains("thiếu", StringComparison.OrdinalIgnoreCase))))
+            .GroupBy(x => new { Voucher = x.VoucherNo.Trim().ToUpperInvariant(), Book = x.Book.Trim().ToUpperInvariant() }))
+        {
+            var diff = Math.Round(g.Sum(x => x.Debit) - g.Sum(x => x.Credit), 2);
+            if (diff != 0)
+            {
+                foreach (var row in g)
+                    row.Errors.Add($"Chứng từ lệch Nợ/Có: {diff:N0}");
+            }
+        }
+    }
+
+    private async Task ValidateDuplicateVoucherAsync(AppDbContext db)
+    {
+        var voucherNos = _importRows
+            .Where(x => !string.IsNullOrWhiteSpace(x.VoucherNo))
+            .Select(x => x.VoucherNo.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (voucherNos.Count == 0)
+            return;
+
+        var existed = (await db.GeneralLedgerEntries.AsNoTracking()
+            .Where(x => x.VoucherNo != null)
+            .Select(x => x.VoucherNo!)
+            .Distinct()
+            .Take(200000)
+            .ToListAsync())
+            .Where(x => voucherNos.Contains(x, StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (existed.Count == 0)
+            return;
+
+        var existedSet = existed.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in _importRows.Where(x => existedSet.Contains(x.VoucherNo)))
+            row.Errors.Add("Số chứng từ đã tồn tại trong sổ cái");
+    }
+
+    private async Task ImportLedgerRowsAsync()
+    {
+        if (!_importRows.Any())
+        {
+            Snackbar.Add("Chưa có dữ liệu preview để import.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_importRows.Any(x => !x.IsValid))
+        {
+            Snackbar.Add("File còn dòng lỗi. Vui lòng sửa Excel rồi đọc thử lại trước khi import.", MudBlazor.Severity.Error);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var importBatchId = Guid.NewGuid();
+            var now = DateTime.Now;
+
+            var entities = _importRows.Select(row =>
+            {
+                var entity = new M_GeneralLedgerEntries
+                {
+                    Id = Guid.NewGuid(),
+                    VoucherId = Guid.NewGuid(),
+                    PostingDate = row.PostingDate!.Value.Date,
+                    VoucherNo = row.VoucherNo.Trim(),
+                    VoucherDate = (row.VoucherDate ?? row.PostingDate!.Value).Date,
+                    LedgerType = string.IsNullOrWhiteSpace(row.VoucherType) ? "IMPORT" : row.VoucherType.Trim(),
+                    SourceModule = string.IsNullOrWhiteSpace(row.SourceModule) ? "GL_IMPORT" : row.SourceModule.Trim(),
+                    SourceId = string.IsNullOrWhiteSpace(row.SourceId) ? importBatchId.ToString() : row.SourceId.Trim(),
+                    AccountCode = row.AccountCode.Trim(),
+                    CustomerId = row.CustomerId,
+                    Description = row.Description.Trim(),
+                    Debit = row.Debit,
+                    Credit = row.Credit,
+                    CurrencyCode = string.IsNullOrWhiteSpace(row.CurrencyCode) ? "VND" : row.CurrencyCode.Trim().ToUpperInvariant(),
+                    ExchangeRate = row.ExchangeRate <= 0 ? 1 : row.ExchangeRate,
+                    FiscalYear = row.PostingDate!.Value.Year,
+                    FiscalPeriod = row.PostingDate!.Value.Month,
+                    IsTaxBook = row.Book.Equals("TAX", StringComparison.OrdinalIgnoreCase) || row.Book.Equals("TAX/MGMT", StringComparison.OrdinalIgnoreCase),
+                    IsManagementBook = row.Book.Equals("MGMT", StringComparison.OrdinalIgnoreCase) || row.Book.Equals("TAX/MGMT", StringComparison.OrdinalIgnoreCase),
+                    CreatedAt = now,
+                    CreatedBy = string.IsNullOrWhiteSpace(_usr) ? "IMPORT" : _usr
+                };
+
+                SetLedgerImportExtraFields(entity, row);
+                return entity;
+            }).ToList();
+
+            db.GeneralLedgerEntries.AddRange(entities);
+            await db.SaveChangesAsync();
+
+            if (_importRebuildBalance)
+                await RebuildBalanceForImportedRowsAsync(entities);
+
+            Snackbar.Add($"Import thành công {entities.Count:N0} dòng sổ cái. Batch: {importBatchId}", MudBlazor.Severity.Success);
+
+            ClearImportPreview();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RebuildBalanceForImportedRowsAsync(List<M_GeneralLedgerEntries> entities)
+    {
+        var periods = entities
+            .SelectMany(x => GetBooksForLedgerLine(x).Select(book => new { x.FiscalYear, x.FiscalPeriod, Book = book }))
+            .Distinct()
+            .ToList();
+
+        if (periods.Count == 0)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var conn = db.Database.GetDbConnection();
+        var shouldClose = conn.State != System.Data.ConnectionState.Open;
+        if (shouldClose)
+            await conn.OpenAsync();
+
+        try
+        {
+            foreach (var p in periods)
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = "dbo.usp_CalculateAccountBalance_FromLedger";
+                cmd.CommandType = System.Data.CommandType.StoredProcedure;
+                cmd.CommandTimeout = 180;
+
+                AddSqlParameter(cmd, "@FiscalYear", p.FiscalYear);
+                AddSqlParameter(cmd, "@PeriodMonth", p.FiscalPeriod);
+                AddSqlParameter(cmd, "@BookCode", p.Book);
+                AddSqlParameter(cmd, "@CompanyId", DBNull.Value);
+
+                await cmd.ExecuteNonQueryAsync();
+            }
+        }
+        finally
+        {
+            if (shouldClose)
+                await conn.CloseAsync();
+        }
+    }
+
+    private static IEnumerable<string> GetBooksForLedgerLine(M_GeneralLedgerEntries line)
+    {
+        if (line.IsTaxBook == true)
+            yield return "TAX";
+
+        if (line.IsManagementBook == true)
+            yield return "MGMT";
+    }
+
+    private static void AddSqlParameter(System.Data.Common.DbCommand cmd, string name, object? value)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value = value ?? DBNull.Value;
+        cmd.Parameters.Add(p);
+    }
+
+    private async Task<Guid?> GetDefaultCompanyIdAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var companyId = await db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.CompanyId != Guid.Empty)
+                .Select(x => (Guid?)x.CompanyId)
+                .FirstOrDefaultAsync();
+
+            return companyId;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void SetLedgerImportExtraFields(M_GeneralLedgerEntries entity, LedgerImportRow row)
+    {
+        SetPropertyIfExists(entity, "CompanyId", row.CompanyId ?? Guid.Empty);
+        SetPropertyIfExists(entity, "VoucherLineId", row.VoucherLineId);
+        SetPropertyIfExists(entity, "DebitFC", row.DebitFC);
+        SetPropertyIfExists(entity, "CreditFC", row.CreditFC);
+        SetPropertyIfExists(entity, "SupplierId", row.SupplierId);
+        SetPropertyIfExists(entity, "EmployeeId", row.EmployeeId);
+        SetPropertyIfExists(entity, "ShipmentId", row.ShipmentId);
+        SetPropertyIfExists(entity, "ContractId", row.ContractId);
+        SetPropertyIfExists(entity, "BranchCode", row.BranchCode);
+        SetPropertyIfExists(entity, "HBLNo", row.HBLNo);
+        SetPropertyIfExists(entity, "MBLNo", row.MBLNo);
+        SetPropertyIfExists(entity, "ContainerNo", row.ContainerNo);
+        SetPropertyIfExists(entity, "BookingNo", row.BookingNo);
+        SetPropertyIfExists(entity, "ShipmentNo", row.ShipmentNo);
+        SetPropertyIfExists(entity, "POL", row.POL);
+        SetPropertyIfExists(entity, "POD", row.POD);
+        SetPropertyIfExists(entity, "RouteCode", row.RouteCode);
+        SetPropertyIfExists(entity, "TransportMode", row.TransportMode);
+        SetPropertyIfExists(entity, "HBLId", row.HBLId);
+        SetPropertyIfExists(entity, "MBLid", row.MBLid);
+        SetPropertyIfExists(entity, "AgentId", row.AgentId);
+        SetPropertyIfExists(entity, "POLCode", row.POLCode);
+        SetPropertyIfExists(entity, "POLName", row.POLName);
+        SetPropertyIfExists(entity, "PODCode", row.PODCode);
+        SetPropertyIfExists(entity, "PODName", row.PODName);
+        SetPropertyIfExists(entity, "ContainerId", row.ContainerId);
+        SetPropertyIfExists(entity, "ContainerSizeType", row.ContainerSizeType);
+        SetPropertyIfExists(entity, "SealNo", row.SealNo);
+        SetPropertyIfExists(entity, "Jobid", row.Jobid);
+        SetPropertyIfExists(entity, "SaleName", row.SaleName);
+        SetPropertyIfExists(entity, "OPS", row.OPS);
+        SetPropertyIfExists(entity, "DOC", row.DOC);
+        SetPropertyIfExists(entity, "DELCode", row.DELCode);
+        SetPropertyIfExists(entity, "DELName", row.DELName);
+        SetPropertyIfExists(entity, "PORCode", row.PORCode);
+        SetPropertyIfExists(entity, "PORName", row.PORName);
+        SetPropertyIfExists(entity, "Vessel", row.Vessel);
+        SetPropertyIfExists(entity, "Voyage", row.Voyage);
+    }
+
+    private static void SetPropertyIfExists(object target, string propertyName, object? value)
+    {
+        var prop = target.GetType().GetProperty(propertyName);
+        if (prop is null || !prop.CanWrite)
+            return;
+
+        if (value is null)
+        {
+            prop.SetValue(target, null);
+            return;
+        }
+
+        var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+
+        if (targetType == typeof(string))
+        {
+            prop.SetValue(target, value.ToString());
+            return;
+        }
+
+        if (targetType == typeof(Guid))
+        {
+            if (value is Guid guidValue)
+                prop.SetValue(target, guidValue);
+            else if (Guid.TryParse(value.ToString(), out var parsedGuid))
+                prop.SetValue(target, parsedGuid);
+            return;
+        }
+
+        if (targetType == typeof(decimal))
+        {
+            if (value is decimal decimalValue)
+                prop.SetValue(target, decimalValue);
+            else if (decimal.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var parsedDecimal))
+                prop.SetValue(target, parsedDecimal);
+            return;
+        }
+
+        prop.SetValue(target, value);
+    }
+
+
+    private async Task ExportLedgerStructureAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền export sổ cái.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+
+            ConfigureEpplusLicense();
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (IsPeriodMode)
+                UpdateDateRange();
+            else
+                EnsureDateRange();
+
+            // Export để import lại phải lấy đủ bút toán của chứng từ.
+            // Vì nếu đang lọc theo Customer/Tài khoản mà chỉ export dòng đang thấy trên grid,
+            // file import lại sẽ lệch Nợ/Có do thiếu dòng đối ứng.
+            var baseQuery = db.GeneralLedgerEntries.AsNoTracking().AsQueryable();
+
+            if (_fromDate.HasValue)
+                baseQuery = baseQuery.Where(x => x.PostingDate >= _fromDate.Value.Date);
+
+            if (_toDate.HasValue)
+            {
+                var toExclusive = _toDate.Value.Date.AddDays(1);
+                baseQuery = baseQuery.Where(x => x.PostingDate < toExclusive);
+            }
+
+            if (IsPeriodMode && _fiscalYear.HasValue)
+                baseQuery = baseQuery.Where(x => x.FiscalYear == _fiscalYear.Value);
+
+            if (IsPeriodMode && _periodMonth.HasValue)
+                baseQuery = baseQuery.Where(x => x.FiscalPeriod == _periodMonth.Value);
+
+            if (!string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase))
+            {
+                if (_book == "TAX")
+                    baseQuery = baseQuery.Where(x => x.IsTaxBook == true);
+
+                if (_book == "MGMT")
+                    baseQuery = baseQuery.Where(x => x.IsManagementBook == true);
+            }
+
+            // Không lọc CustomerId / AccountCode trực tiếp ở query export cuối,
+            // mà chỉ dùng chúng để xác định chứng từ gốc cần export.
+            // Như vậy file xuất ra luôn đủ dòng Nợ/Có của chứng từ và có thể import lại.
+            var baseData = await baseQuery
+                .OrderBy(x => x.PostingDate)
+                .ThenBy(x => x.VoucherNo)
+                .ThenBy(x => x.AccountCode)
+                .ThenBy(x => x.Id)
+                .Take(100000)
+                .ToListAsync();
+
+            var seedData = baseData.Where(MatchesExportSeedFilter).ToList();
+
+            if (seedData.Count == 0)
+            {
+                Snackbar.Add("Không có dữ liệu để export theo điều kiện lọc hiện tại.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var selectedVoucherIds = seedData
+                .Select(x => GetGuidPropertyValue(x, "VoucherId"))
+                .Where(x => x.HasValue && x.Value != Guid.Empty)
+                .Select(x => x!.Value)
+                .Distinct()
+                .ToHashSet();
+
+            var selectedSourceIds = seedData
+                .Where(x => !string.IsNullOrWhiteSpace(x.SourceId))
+                .Select(x => x.SourceId!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var selectedVoucherNos = seedData
+                .Where(x => !string.IsNullOrWhiteSpace(x.VoucherNo))
+                .Select(x => x.VoucherNo!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var data = baseData
+                .Where(x =>
+                {
+                    var voucherId = GetGuidPropertyValue(x, "VoucherId");
+                    if (voucherId.HasValue && voucherId.Value != Guid.Empty && selectedVoucherIds.Contains(voucherId.Value))
+                        return true;
+
+                    if (!string.IsNullOrWhiteSpace(x.SourceId) && selectedSourceIds.Contains(x.SourceId.Trim()))
+                        return true;
+
+                    if (!string.IsNullOrWhiteSpace(x.VoucherNo) && selectedVoucherNos.Contains(x.VoucherNo.Trim()))
+                        return true;
+
+                    return false;
+                })
+                .OrderBy(x => x.PostingDate)
+                .ThenBy(x => x.VoucherNo)
+                .ThenBy(x => x.AccountCode)
+                .ThenBy(x => x.Id)
+                .ToList();
+
+            if (data.Count == 0)
+            {
+                Snackbar.Add("Không có dữ liệu để export sau khi lấy đủ chứng từ.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var unbalancedVoucherCount = data
+                .GroupBy(x => new
+                {
+                    Voucher = (x.VoucherNo ?? string.Empty).Trim().ToUpperInvariant(),
+                    Book = GetBookForExport(x).Trim().ToUpperInvariant()
+                })
+                .Count(g => Math.Round(g.Sum(x => x.Debit) - g.Sum(x => x.Credit), 2) != 0);
+
+            var customerIds = data
+                .Where(x => x.CustomerId.HasValue && x.CustomerId.Value != Guid.Empty)
+                .Select(x => x.CustomerId!.Value)
+                .Distinct()
+                .ToHashSet();
+
+            var customerMap = new Dictionary<Guid, (string Code, string Name)>();
+            if (customerIds.Count > 0)
+            {
+                var customers = (await db.Customer.AsNoTracking()
+                    .Select(c => new
+                    {
+                        c.Customer_ID,
+                        c.Customer_Code,
+                        c.MainCode,
+                        c.COMPANY,
+                        c.EnglishName
+                    })
+                    .Take(50000)
+                    .ToListAsync())
+                    .Where(c => customerIds.Contains(c.Customer_ID))
+                    .ToList();
+
+                customerMap = customers.GroupBy(x => x.Customer_ID).ToDictionary(
+                    g => g.Key,
+                    g =>
+                    {
+                        var c = g.First();
+                        var code = !string.IsNullOrWhiteSpace(c.Customer_Code) ? c.Customer_Code.Trim() : c.MainCode?.Trim() ?? string.Empty;
+                        var name = !string.IsNullOrWhiteSpace(c.COMPANY) ? c.COMPANY.Trim() : c.EnglishName?.Trim() ?? string.Empty;
+                        return (code, name);
+                    });
+            }
+
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("GL Import");
+            var summary = package.Workbook.Worksheets.Add("Summary");
+            var guide = package.Workbook.Worksheets.Add("Guide");
+
+            var headers = LedgerImportExportHeaders();
+            for (var i = 0; i < headers.Length; i++)
+            {
+                ws.Cells[1, i + 1].Value = headers[i];
+                ws.Cells[1, i + 1].Style.Font.Bold = true;
+                ws.Cells[1, i + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                ws.Cells[1, i + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(31, 78, 121));
+                ws.Cells[1, i + 1].Style.Font.Color.SetColor(System.Drawing.Color.White);
+            }
+
+            var rowIndex = 2;
+            foreach (var line in data)
+            {
+                customerMap.TryGetValue(line.CustomerId ?? Guid.Empty, out var customer);
+
+                var values = new object?[]
+                {
+                    line.PostingDate,
+                    line.VoucherDate,
+                    line.VoucherNo ?? string.Empty,
+                    string.IsNullOrWhiteSpace(line.LedgerType) ? line.SourceModule ?? string.Empty : line.LedgerType,
+                    line.AccountCode ?? string.Empty,
+                    line.CustomerId?.ToString() ?? string.Empty,
+                    customer.Code,
+                    customer.Name,
+                    line.CompanyId.ToString(),
+                    GetPropertyText(line, "BranchCode"),
+                    line.Description ?? string.Empty,
+                    line.Debit,
+                    line.Credit,
+                    line.CurrencyCode ?? "VND",
+                    line.ExchangeRate,
+                    GetDecimalProperty(line, "DebitFC", line.Debit),
+                    GetDecimalProperty(line, "CreditFC", line.Credit),
+                    GetBookForExport(line),
+                    line.SourceModule ?? string.Empty,
+                    line.SourceId ?? string.Empty,
+                    GetPropertyText(line, "VoucherLineId"),
+                    GetPropertyText(line, "SupplierId"),
+                    GetPropertyText(line, "EmployeeId"),
+                    GetPropertyText(line, "ShipmentId"),
+                    GetPropertyText(line, "ContractId"),
+                    GetPropertyText(line, "HBLId"),
+                    GetPropertyText(line, "MBLid"),
+                    GetPropertyText(line, "AgentId"),
+                    GetPropertyText(line, "ContainerId"),
+                    GetPropertyText(line, "HBLNo"),
+                    GetPropertyText(line, "MBLNo"),
+                    GetPropertyText(line, "ContainerNo"),
+                    GetPropertyText(line, "BookingNo"),
+                    GetPropertyText(line, "ShipmentNo"),
+                    GetPropertyText(line, "POL"),
+                    GetPropertyText(line, "POD"),
+                    GetPropertyText(line, "RouteCode"),
+                    GetPropertyText(line, "TransportMode"),
+                    GetPropertyText(line, "POLCode"),
+                    GetPropertyText(line, "POLName"),
+                    GetPropertyText(line, "PODCode"),
+                    GetPropertyText(line, "PODName"),
+                    GetPropertyText(line, "ContainerSizeType"),
+                    GetPropertyText(line, "SealNo"),
+                    GetPropertyText(line, "Jobid"),
+                    GetPropertyText(line, "SaleName"),
+                    GetPropertyText(line, "OPS"),
+                    GetPropertyText(line, "DOC"),
+                    GetPropertyText(line, "DELCode"),
+                    GetPropertyText(line, "DELName"),
+                    GetPropertyText(line, "PORCode"),
+                    GetPropertyText(line, "PORName"),
+                    GetPropertyText(line, "Vessel"),
+                    GetPropertyText(line, "Voyage")
+                };
+
+                for (var col = 0; col < values.Length; col++)
+                {
+                    ws.Cells[rowIndex, col + 1].Value = values[col];
+
+                    if (values[col] is DateTime)
+                        ws.Cells[rowIndex, col + 1].Style.Numberformat.Format = "dd/mm/yyyy";
+
+                    if (values[col] is decimal or double or int or long)
+                        ws.Cells[rowIndex, col + 1].Style.Numberformat.Format = "#,##0.00";
+                }
+
+                rowIndex++;
+            }
+
+            if (ws.Dimension is not null)
+            {
+                ws.Cells[ws.Dimension.Address].AutoFitColumns();
+                ws.View.FreezePanes(2, 1);
+                ws.Cells[1, 1, 1, headers.Length].AutoFilter = true;
+            }
+
+            BuildExportSummarySheet(summary, data.Count, data.Sum(x => x.Debit), data.Sum(x => x.Credit));
+            BuildExportGuideSheet(guide);
+
+            var bytes = package.GetAsByteArray();
+            var fileName = $"GL_Export_FullVoucher_Reimport_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            await DownloadBytesAsync(bytes, fileName);
+
+            if (unbalancedVoucherCount > 0)
+            {
+                Snackbar.Add($"Đã export {data.Count:N0} dòng nhưng còn {unbalancedVoucherCount:N0} chứng từ lệch Nợ/Có trong dữ liệu gốc.", MudBlazor.Severity.Warning);
+            }
+            else
+            {
+                Snackbar.Add($"Đã export {data.Count:N0} dòng đủ chứng từ, file có thể import lại.", MudBlazor.Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add("Export Excel thất bại: " + root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private bool MatchesExportSeedFilter(M_GeneralLedgerEntries x)
+    {
+        if (!string.IsNullOrWhiteSpace(_accountCode)
+            && !string.Equals(_accountCode, "ALL", StringComparison.OrdinalIgnoreCase))
+        {
+            var acc = _accountCode.Trim();
+            if (string.IsNullOrWhiteSpace(x.AccountCode) || !x.AccountCode.StartsWith(acc, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        if (_customerIdFilter.HasValue && _customerIdFilter.Value != Guid.Empty)
+        {
+            if (x.CustomerId != _customerIdFilter.Value)
+                return false;
+        }
+
+        return true;
+    }
+
+    private static Guid? GetGuidPropertyValue(object target, string propertyName)
+    {
+        var prop = target.GetType().GetProperty(propertyName);
+        if (prop is null)
+            return null;
+
+        var value = prop.GetValue(target);
+        if (value is null)
+            return null;
+
+        if (value is Guid guidValue)
+            return guidValue;
+
+        if (Guid.TryParse(value.ToString(), out var parsed))
+            return parsed;
+
+        return null;
+    }
+
+    private string[] LedgerImportExportHeaders() => new[]
+    {
+        // Cấu trúc này dùng chung cho cả Export và Import lại.
+        // Không đưa các cột hệ thống Id/FiscalYear/FiscalPeriod/CreatedAt vào file import lại,
+        // vì khi import hệ thống sẽ tự tạo Id mới và tự tính kỳ theo PostingDate.
+        "PostingDate", "VoucherDate", "VoucherNo", "VoucherType", "AccountCode", "CustomerId", "CustomerCode", "CustomerName",
+        "CompanyId", "BranchCode", "Description", "Debit", "Credit", "CurrencyCode", "ExchangeRate", "DebitFC", "CreditFC",
+        "Book", "SourceModule", "SourceId", "VoucherLineId",
+        "SupplierId", "EmployeeId", "ShipmentId", "ContractId", "HBLId", "MBLid", "AgentId", "ContainerId",
+        "HBLNo", "MBLNo", "ContainerNo", "BookingNo", "ShipmentNo", "POL", "POD", "RouteCode", "TransportMode",
+        "POLCode", "POLName", "PODCode", "PODName", "ContainerSizeType", "SealNo", "Jobid", "SaleName", "OPS", "DOC",
+        "DELCode", "DELName", "PORCode", "PORName", "Vessel", "Voyage"
+    };
+
+    private void BuildExportSummarySheet(ExcelWorksheet ws, int rowCount, decimal totalDebit, decimal totalCredit)
+    {
+        ws.Cells[1, 1].Value = "GL EXPORT SUMMARY";
+        ws.Cells[1, 1].Style.Font.Bold = true;
+        ws.Cells[1, 1].Style.Font.Size = 16;
+
+        var lines = new (string Label, object? Value)[]
+        {
+            ("Export time", DateTime.Now),
+            ("User", string.IsNullOrWhiteSpace(_usr) ? "EXPORT" : _usr),
+            ("Filter mode", IsPeriodMode ? "Theo kỳ" : "Theo ngày"),
+            ("From date", _fromDate),
+            ("To date", _toDate),
+            ("Fiscal year", _fiscalYear),
+            ("Fiscal period", _periodMonth),
+            ("Book", _book),
+            ("Account", _accountCode),
+            ("Rows", rowCount),
+            ("Total debit", totalDebit),
+            ("Total credit", totalCredit),
+            ("Difference", totalDebit - totalCredit)
+        };
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            ws.Cells[i + 3, 1].Value = lines[i].Label;
+            ws.Cells[i + 3, 1].Style.Font.Bold = true;
+            ws.Cells[i + 3, 2].Value = lines[i].Value;
+
+            if (lines[i].Value is DateTime)
+                ws.Cells[i + 3, 2].Style.Numberformat.Format = "dd/mm/yyyy hh:mm";
+
+            if (lines[i].Value is decimal or double or int or long)
+                ws.Cells[i + 3, 2].Style.Numberformat.Format = "#,##0.00";
+        }
+
+        ws.Cells[ws.Dimension.Address].AutoFitColumns();
+    }
+
+    private static void BuildExportGuideSheet(ExcelWorksheet ws)
+    {
+        ws.Cells[1, 1].Value = "HƯỚNG DẪN EXPORT / IMPORT SỔ CÁI";
+        ws.Cells[1, 1].Style.Font.Bold = true;
+        ws.Cells[1, 1].Style.Font.Size = 15;
+
+        var notes = new[]
+        {
+            "Sheet GL Import dùng đúng cấu trúc cột của tool Import Excel, có thể import lại trực tiếp.",
+            "Có thể export, sửa dữ liệu rồi import lại. Nếu import vào cùng database đang có chứng từ cũ, bật Cho phép trùng số CT hoặc đổi VoucherNo.",
+            "Các cột bắt buộc khi import: PostingDate, VoucherNo, AccountCode, CompanyId, Debit/Credit.",
+            "CustomerId được ưu tiên. Nếu CustomerId trống, hệ thống dò theo CustomerCode.",
+            "Book nhận TAX, MGMT hoặc TAX/MGMT.",
+            "FiscalYear/FiscalPeriod trong file export chỉ để đối chiếu; khi import hệ thống tự tính lại theo PostingDate."
+        };
+
+        for (var i = 0; i < notes.Length; i++)
+            ws.Cells[i + 3, 1].Value = notes[i];
+
+        ws.Cells[ws.Dimension.Address].AutoFitColumns();
+    }
+
+    private async Task DownloadBytesAsync(byte[] bytes, string fileName)
+    {
+        var base64 = Convert.ToBase64String(bytes);
+        var safeFileName = fileName.Replace("'", string.Empty).Replace("\\", string.Empty).Replace("/", string.Empty);
+        var script = $"(() => {{ const a = document.createElement('a'); a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64}'; a.download = '{safeFileName}'; document.body.appendChild(a); a.click(); a.remove(); }})()";
+        await JS.InvokeVoidAsync("eval", script);
+    }
+
+    private static string GetBookForExport(M_GeneralLedgerEntries line)
+    {
+        if (line.IsTaxBook == true && line.IsManagementBook == true)
+            return "TAX/MGMT";
+
+        if (line.IsTaxBook == true)
+            return "TAX";
+
+        if (line.IsManagementBook == true)
+            return "MGMT";
+
+        return string.Empty;
+    }
+
+    private static string GetPropertyText(object target, string propertyName)
+    {
+        var value = target.GetType().GetProperty(propertyName)?.GetValue(target);
+        if (value is null)
+            return string.Empty;
+
+        return value switch
+        {
+            DateTime date => date.ToString("dd/MM/yyyy"),
+            decimal dec => dec.ToString(CultureInfo.InvariantCulture),
+            _ => value.ToString() ?? string.Empty
+        };
+    }
+
+    private static decimal GetDecimalProperty(object target, string propertyName, decimal fallback = 0m)
+    {
+        var value = target.GetType().GetProperty(propertyName)?.GetValue(target);
+        if (value is null)
+            return fallback;
+
+        if (value is decimal dec)
+            return dec;
+
+        if (value is double dbl)
+            return Convert.ToDecimal(dbl);
+
+        if (value is int i)
+            return i;
+
+        if (value is long l)
+            return l;
+
+        return decimal.TryParse(value.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : fallback;
+    }
+
+    private async Task DownloadImportTemplateAsync()
+    {
+        try
+        {
+            ConfigureEpplusLicense();
+
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("GL Import");
+
+            var headers = new[]
+            {
+                "PostingDate", "VoucherDate", "VoucherNo", "VoucherType", "AccountCode", "CustomerId", "CustomerCode", "CustomerName",
+                "CompanyId", "BranchCode", "Description", "Debit", "Credit", "CurrencyCode", "ExchangeRate", "DebitFC", "CreditFC",
+                "Book", "SourceModule", "SourceId", "HBLNo", "MBLNo", "ContainerNo", "BookingNo", "ShipmentNo",
+                "POL", "POD", "RouteCode", "TransportMode", "SaleName", "OPS", "DOC", "Vessel", "Voyage"
+            };
+
+            for (var i = 0; i < headers.Length; i++)
+            {
+                ws.Cells[1, i + 1].Value = headers[i];
+                ws.Cells[1, i + 1].Style.Font.Bold = true;
+            }
+
+            ws.Cells[2, 1].Value = DateTime.Today;
+            ws.Cells[2, 1].Style.Numberformat.Format = "dd/mm/yyyy";
+            ws.Cells[2, 2].Value = DateTime.Today;
+            ws.Cells[2, 2].Style.Numberformat.Format = "dd/mm/yyyy";
+            ws.Cells[2, 3].Value = "IMP-0001";
+            ws.Cells[2, 4].Value = "IMPORT";
+            ws.Cells[2, 5].Value = "131";
+            ws.Cells[2, 6].Value = ""; // CustomerId: để trống nếu dùng CustomerCode
+            ws.Cells[2, 7].Value = "C0001";
+            ws.Cells[2, 8].Value = "ABC LOGISTICS";
+            ws.Cells[2, 9].Value = _defaultCompanyId?.ToString() ?? "PASTE-COMPANY-GUID-HERE";
+            ws.Cells[2, 10].Value = "SGN";
+            ws.Cells[2, 11].Value = "Import số dư/phát sinh công nợ";
+            ws.Cells[2, 12].Value = 1000000;
+            ws.Cells[2, 13].Value = 0;
+            ws.Cells[2, 14].Value = "VND";
+            ws.Cells[2, 15].Value = 1;
+            ws.Cells[2, 16].Value = 1000000;
+            ws.Cells[2, 17].Value = 0;
+            ws.Cells[2, 18].Value = "TAX";
+            ws.Cells[2, 19].Value = "GL_IMPORT";
+            ws.Cells[2, 21].Value = "HBL-DEMO-001";
+            ws.Cells[2, 23].Value = "CONT-DEMO-001";
+            ws.Cells[2, 24].Value = "BOOKING-DEMO-001";
+
+            ws.Cells[3, 1].Value = DateTime.Today;
+            ws.Cells[3, 1].Style.Numberformat.Format = "dd/mm/yyyy";
+            ws.Cells[3, 2].Value = DateTime.Today;
+            ws.Cells[3, 2].Style.Numberformat.Format = "dd/mm/yyyy";
+            ws.Cells[3, 3].Value = "IMP-0001";
+            ws.Cells[3, 4].Value = "IMPORT";
+            ws.Cells[3, 5].Value = "5113";
+            ws.Cells[3, 6].Value = "";
+            ws.Cells[3, 7].Value = "C0001";
+            ws.Cells[3, 8].Value = "ABC LOGISTICS";
+            ws.Cells[3, 9].Value = _defaultCompanyId?.ToString() ?? "PASTE-COMPANY-GUID-HERE";
+            ws.Cells[3, 10].Value = "SGN";
+            ws.Cells[3, 11].Value = "Import doanh thu";
+            ws.Cells[3, 12].Value = 0;
+            ws.Cells[3, 13].Value = 1000000;
+            ws.Cells[3, 14].Value = "VND";
+            ws.Cells[3, 15].Value = 1;
+            ws.Cells[3, 16].Value = 0;
+            ws.Cells[3, 17].Value = 1000000;
+            ws.Cells[3, 18].Value = "TAX";
+            ws.Cells[3, 19].Value = "GL_IMPORT";
+
+            ws.Cells[ws.Dimension.Address].AutoFitColumns();
+
+            var bytes = package.GetAsByteArray();
+            var base64 = Convert.ToBase64String(bytes);
+            var fileName = $"GL_Import_Template_{DateTime.Today:yyyyMMdd}.xlsx";
+            var script = $"(() => {{ const a = document.createElement('a'); a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64}'; a.download = '{fileName}'; document.body.appendChild(a); a.click(); a.remove(); }})()";
+            await JS.InvokeVoidAsync("eval", script);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add("Không tạo được file mẫu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private static Dictionary<string, int> BuildImportHeaderMap(ExcelWorksheet ws)
+    {
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var aliases = ImportHeaderAliases();
+
+        for (var col = 1; col <= ws.Dimension.End.Column; col++)
+        {
+            var header = NormalizeHeader(ws.Cells[1, col].Text);
+            if (string.IsNullOrWhiteSpace(header))
+                continue;
+
+            if (aliases.TryGetValue(header, out var canonical) && !map.ContainsKey(canonical))
+                map[canonical] = col;
+        }
+
+        return map;
+    }
+
+    private static Dictionary<string, string> ImportHeaderAliases() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["postingdate"] = "PostingDate",
+        ["ngayht"] = "PostingDate",
+        ["ngayhachtoan"] = "PostingDate",
+        ["voucherdate"] = "VoucherDate",
+        ["ngayct"] = "VoucherDate",
+        ["ngaychungtu"] = "VoucherDate",
+        ["voucherno"] = "VoucherNo",
+        ["sochungtu"] = "VoucherNo",
+        ["soct"] = "VoucherNo",
+        ["voucher"] = "VoucherNo",
+        ["vouchertype"] = "VoucherType",
+        ["loaict"] = "VoucherType",
+        ["loaichungtu"] = "VoucherType",
+        ["accountcode"] = "AccountCode",
+        ["tk"] = "AccountCode",
+        ["taikhoan"] = "AccountCode",
+        ["sohieutk"] = "AccountCode",
+        ["customerid"] = "CustomerId",
+        ["khachhangid"] = "CustomerId",
+        ["doituongid"] = "CustomerId",
+        ["idkh"] = "CustomerId",
+        ["customercode"] = "CustomerCode",
+        ["makh"] = "CustomerCode",
+        ["madoituong"] = "CustomerCode",
+        ["customername"] = "CustomerName",
+        ["tenkh"] = "CustomerName",
+        ["doituong"] = "CustomerName",
+        ["description"] = "Description",
+        ["diengiai"] = "Description",
+        ["noidung"] = "Description",
+        ["debit"] = "Debit",
+        ["no"] = "Debit",
+        ["psno"] = "Debit",
+        ["phatsinhno"] = "Debit",
+        ["credit"] = "Credit",
+        ["co"] = "Credit",
+        ["psco"] = "Credit",
+        ["phatsinhco"] = "Credit",
+        ["currencycode"] = "CurrencyCode",
+        ["tiente"] = "CurrencyCode",
+        ["currency"] = "CurrencyCode",
+        ["exchangerate"] = "ExchangeRate",
+        ["tygia"] = "ExchangeRate",
+        ["book"] = "Book",
+        ["sobook"] = "Book",
+        ["debitfc"] = "DebitFC",
+        ["nofc"] = "DebitFC",
+        ["nguyentenno"] = "DebitFC",
+        ["creditfc"] = "CreditFC",
+        ["cofc"] = "CreditFC",
+        ["nguyentenco"] = "CreditFC",
+        ["sourceid"] = "SourceId",
+        ["nguonid"] = "SourceId",
+        ["companyid"] = "CompanyId",
+        ["company"] = "CompanyId",
+        ["congtyid"] = "CompanyId",
+        ["voucherlineid"] = "VoucherLineId",
+        ["supplierid"] = "SupplierId",
+        ["vendorid"] = "SupplierId",
+        ["employeeid"] = "EmployeeId",
+        ["shipmentid"] = "ShipmentId",
+        ["contractid"] = "ContractId",
+        ["hblid"] = "HBLId",
+        ["mblid"] = "MBLid",
+        ["agentid"] = "AgentId",
+        ["containerid"] = "ContainerId",
+        ["branchcode"] = "BranchCode",
+        ["branch"] = "BranchCode",
+        ["chinhanh"] = "BranchCode",
+        ["hblno"] = "HBLNo",
+        ["hbl"] = "HBLNo",
+        ["mblno"] = "MBLNo",
+        ["mbl"] = "MBLNo",
+        ["containerno"] = "ContainerNo",
+        ["container"] = "ContainerNo",
+        ["contno"] = "ContainerNo",
+        ["bookingno"] = "BookingNo",
+        ["booking"] = "BookingNo",
+        ["shipmentno"] = "ShipmentNo",
+        ["shipment"] = "ShipmentNo",
+        ["pol"] = "POL",
+        ["pod"] = "POD",
+        ["routecode"] = "RouteCode",
+        ["route"] = "RouteCode",
+        ["transportmode"] = "TransportMode",
+        ["transport"] = "TransportMode",
+        ["polcode"] = "POLCode",
+        ["polname"] = "POLName",
+        ["podcode"] = "PODCode",
+        ["podname"] = "PODName",
+        ["containersizetype"] = "ContainerSizeType",
+        ["sizetype"] = "ContainerSizeType",
+        ["sealno"] = "SealNo",
+        ["seal"] = "SealNo",
+        ["jobid"] = "Jobid",
+        ["job"] = "Jobid",
+        ["salename"] = "SaleName",
+        ["sales"] = "SaleName",
+        ["sale"] = "SaleName",
+        ["ops"] = "OPS",
+        ["doc"] = "DOC",
+        ["delcode"] = "DELCode",
+        ["delname"] = "DELName",
+        ["porcode"] = "PORCode",
+        ["porname"] = "PORName",
+        ["vessel"] = "Vessel",
+        ["voyage"] = "Voyage",
+        ["voy"] = "Voyage",
+        ["source"] = "SourceModule",
+        ["sourcemodule"] = "SourceModule",
+        ["nguon"] = "SourceModule"
+    };
+
+    private static bool IsExcelRowEmpty(ExcelWorksheet ws, int row, int endCol)
+    {
+        for (var col = 1; col <= endCol; col++)
+        {
+            if (!string.IsNullOrWhiteSpace(ws.Cells[row, col].Text))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static string GetTextCell(ExcelWorksheet ws, int row, Dictionary<string, int> map, string key)
+    {
+        if (!map.TryGetValue(key, out var col))
+            return string.Empty;
+
+        return ws.Cells[row, col].Text?.Trim() ?? string.Empty;
+    }
+
+    private static Guid? GetGuidCell(ExcelWorksheet ws, int row, Dictionary<string, int> map, string key)
+    {
+        var text = GetTextCell(ws, row, map, key);
+        if (Guid.TryParse(text, out var value))
+            return value;
+
+        return null;
+    }
+
+    private static decimal GetDecimalCell(ExcelWorksheet ws, int row, Dictionary<string, int> map, string key)
+    {
+        if (!map.TryGetValue(key, out var col))
+            return 0m;
+
+        var cell = ws.Cells[row, col];
+        if (cell.Value is decimal dec) return dec;
+        if (cell.Value is double d) return Convert.ToDecimal(d);
+        if (cell.Value is int i) return i;
+        if (cell.Value is long l) return l;
+
+        return ParseDecimal(cell.Text);
+    }
+
+    private static DateTime? GetDateCell(ExcelWorksheet ws, int row, Dictionary<string, int> map, string key)
+    {
+        if (!map.TryGetValue(key, out var col))
+            return null;
+
+        var cell = ws.Cells[row, col];
+        if (cell.Value is DateTime dt)
+            return dt.Date;
+
+        if (cell.Value is double oa && oa > 0)
+        {
+            try { return DateTime.FromOADate(oa).Date; } catch { }
+        }
+
+        return ParseDate(cell.Text);
+    }
+
+    private static decimal ParseDecimal(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return 0m;
+
+        var s = value.Trim()
+            .Replace("VND", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("USD", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("₫", string.Empty)
+            .Replace(" ", string.Empty);
+
+        if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var result))
+            return result;
+
+        if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.GetCultureInfo("vi-VN"), out result))
+            return result;
+
+        if (decimal.TryParse(s.Replace(",", string.Empty), NumberStyles.Any, CultureInfo.InvariantCulture, out result))
+            return result;
+
+        return 0m;
+    }
+
+    private static DateTime? ParseDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var formats = new[] { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "MM/dd/yyyy", "M/d/yyyy", "dd-MM-yyyy", "d-M-yyyy" };
+        if (DateTime.TryParseExact(value.Trim(), formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+            return date.Date;
+
+        if (DateTime.TryParse(value.Trim(), CultureInfo.GetCultureInfo("vi-VN"), DateTimeStyles.None, out date))
+            return date.Date;
+
+        return null;
+    }
+
+    private void NormalizeImportRow(LedgerImportRow row)
+    {
+        row.VoucherNo = row.VoucherNo.Trim();
+        row.VoucherType = string.IsNullOrWhiteSpace(row.VoucherType) ? "IMPORT" : row.VoucherType.Trim();
+        row.AccountCode = row.AccountCode.Trim();
+        row.CustomerCode = row.CustomerCode.Trim();
+        row.CustomerName = row.CustomerName.Trim();
+        row.Description = row.Description.Trim();
+        row.CurrencyCode = string.IsNullOrWhiteSpace(row.CurrencyCode) ? "VND" : row.CurrencyCode.Trim().ToUpperInvariant();
+        row.ExchangeRate = row.ExchangeRate <= 0 ? 1 : row.ExchangeRate;
+        row.DebitFC = row.DebitFC == 0 ? row.Debit : row.DebitFC;
+        row.CreditFC = row.CreditFC == 0 ? row.Credit : row.CreditFC;
+        row.Book = NormalizeImportBook(row.Book);
+        row.SourceModule = string.IsNullOrWhiteSpace(row.SourceModule) ? "GL_IMPORT" : row.SourceModule.Trim();
+
+        if (!row.VoucherDate.HasValue)
+            row.VoucherDate = row.PostingDate;
+    }
+
+    private string NormalizeImportBook(string? book)
+    {
+        var b = (book ?? string.Empty).Trim().ToUpperInvariant();
+        if (b is "TAX" or "MGMT" or "TAX/MGMT")
+            return b;
+
+        if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+            return "TAX";
+
+        if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+            return "MGMT";
+
+        return "TAX";
+    }
+
+    private static void ValidateImportRowBasic(LedgerImportRow row)
+    {
+        if (!row.PostingDate.HasValue)
+            row.Errors.Add("Thiếu/ngày HT không hợp lệ");
+
+        if (string.IsNullOrWhiteSpace(row.VoucherNo))
+            row.Errors.Add("Thiếu số chứng từ");
+
+        if (string.IsNullOrWhiteSpace(row.AccountCode))
+            row.Errors.Add("Thiếu tài khoản");
+
+        if (!row.CompanyId.HasValue || row.CompanyId.Value == Guid.Empty)
+            row.Errors.Add("Thiếu CompanyId");
+
+        if (row.Debit < 0 || row.Credit < 0)
+            row.Errors.Add("Nợ/Có không được âm");
+
+        if (row.Debit == 0 && row.Credit == 0)
+            row.Errors.Add("Dòng không có phát sinh Nợ/Có");
+
+        if (row.Debit > 0 && row.Credit > 0)
+            row.Errors.Add("Một dòng không nên vừa Nợ vừa Có");
+    }
+
+    private static string NormalizeHeader(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim().Normalize(NormalizationForm.FormD);
+        var builder = new StringBuilder();
+
+        foreach (var c in normalized)
+        {
+            var unicodeCategory = CharUnicodeInfo.GetUnicodeCategory(c);
+            if (unicodeCategory == UnicodeCategory.NonSpacingMark)
+                continue;
+
+            if (char.IsLetterOrDigit(c))
+                builder.Append(char.ToLowerInvariant(c));
+        }
+
+        return builder.ToString().Replace("đ", "d").Replace("Đ", "d");
+    }
+
+    private string ImportRowClass(LedgerImportRow row, int rowNumber)
+        => row.IsValid ? string.Empty : "import-row-error";
 
     private async Task LoadAsync()
     {
@@ -332,18 +2006,26 @@
 
             await using var db = await DbFactory.CreateDbContextAsync();
 
+            if (IsPeriodMode)
+                UpdateDateRange();
+            else
+                EnsureDateRange();
+
             var query = db.GeneralLedgerEntries.AsNoTracking().AsQueryable();
 
             if (_fromDate.HasValue)
                 query = query.Where(x => x.PostingDate >= _fromDate.Value.Date);
 
             if (_toDate.HasValue)
-                query = query.Where(x => x.PostingDate <= _toDate.Value.Date);
+            {
+                var toExclusive = _toDate.Value.Date.AddDays(1);
+                query = query.Where(x => x.PostingDate < toExclusive);
+            }
 
-            if (_fiscalYear.HasValue)
+            if (IsPeriodMode && _fiscalYear.HasValue)
                 query = query.Where(x => x.FiscalYear == _fiscalYear.Value);
 
-            if (_periodMonth.HasValue)
+            if (IsPeriodMode && _periodMonth.HasValue)
                 query = query.Where(x => x.FiscalPeriod == _periodMonth.Value);
 
             if (!string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase))
@@ -382,15 +2064,17 @@
             var customerMap = new Dictionary<Guid, string>();
             if (customerIds.Count > 0)
             {
-                var customers = await db.Customer.AsNoTracking()
-                    .Where(c => customerIds.Contains(c.Customer_ID))
+                var customers = (await db.Customer.AsNoTracking()
                     .Select(c => new
                     {
                         c.Customer_ID,
                         c.Customer_Code,
                         c.COMPANY
                     })
-                    .ToListAsync();
+                    .Take(50000)
+                    .ToListAsync())
+                    .Where(c => customerIds.Contains(c.Customer_ID))
+                    .ToList();
 
                 customerMap = customers
                     .GroupBy(x => x.Customer_ID)
@@ -414,14 +2098,16 @@
             var accountMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (accountCodes.Count > 0)
             {
-                var accounts = await db.DanhMucTaiKhoan.AsNoTracking()
-                    .Where(a => accountCodes.Contains(a.Taikhoan))
+                var accounts = (await db.DanhMucTaiKhoan.AsNoTracking()
+                    .Where(a => !string.IsNullOrWhiteSpace(a.Taikhoan))
                     .Select(a => new
                     {
                         Code = a.Taikhoan,
                         Name = a.Tentaikhoan
                     })
-                    .ToListAsync();
+                    .ToListAsync())
+                    .Where(a => !string.IsNullOrWhiteSpace(a.Code) && accountCodes.Contains(a.Code.Trim()))
+                    .ToList();
 
                 accountMap = accounts
                     .Where(x => !string.IsNullOrWhiteSpace(x.Code))
@@ -439,16 +2125,18 @@
 
             if (sourceIdsText.Count > 0)
             {
-                var sourceVouchers = await db.AccountingVouchers.AsNoTracking()
-                    .Where(v => !string.IsNullOrWhiteSpace(v.SourceId)
-                             && sourceIdsText.Contains(v.SourceId))
+                var sourceVouchers = (await db.AccountingVouchers.AsNoTracking()
+                    .Where(v => !string.IsNullOrWhiteSpace(v.SourceId))
                     .Select(v => new
                     {
                         v.SourceId,
                         v.VoucherNo,
                         v.Description
                     })
-                    .ToListAsync();
+                    .Take(100000)
+                    .ToListAsync())
+                    .Where(v => !string.IsNullOrWhiteSpace(v.SourceId) && sourceIdsText.Contains(v.SourceId.Trim()))
+                    .ToList();
 
                 foreach (var v in sourceVouchers)
                 {
@@ -468,15 +2156,17 @@
 
                 if (sourceIdsGuid.Count > 0)
                 {
-                    var receipts = await db.Phieuthu.AsNoTracking()
-                        .Where(p => sourceIdsGuid.Contains(p.PhieuthuID))
+                    var receipts = (await db.Phieuthu.AsNoTracking()
                         .Select(p => new
                         {
                             Id = p.PhieuthuID,
                             No = p.SoPhieuthu,
                             Description = p.Noidung
                         })
-                        .ToListAsync();
+                        .Take(100000)
+                        .ToListAsync())
+                        .Where(p => sourceIdsGuid.Contains(p.Id))
+                        .ToList();
 
                     foreach (var p in receipts)
                     {
@@ -583,6 +2273,71 @@
     private string RowClass(GeneralLedgerSummaryRow row, int rowNumber)
         => _selected is not null && _selected.Id == row.Id ? "selected-row-blue" : string.Empty;
 
+    private sealed class LedgerImportRow
+    {
+        public int RowNo { get; set; }
+        public DateTime? PostingDate { get; set; }
+        public DateTime? VoucherDate { get; set; }
+        public string VoucherNo { get; set; } = string.Empty;
+        public string VoucherType { get; set; } = string.Empty;
+        public string AccountCode { get; set; } = string.Empty;
+        public string AccountName { get; set; } = string.Empty;
+        public Guid? CustomerId { get; set; }
+        public string CustomerCode { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public Guid? CompanyId { get; set; }
+        public Guid? VoucherLineId { get; set; }
+        public Guid? SupplierId { get; set; }
+        public Guid? EmployeeId { get; set; }
+        public Guid? ShipmentId { get; set; }
+        public Guid? ContractId { get; set; }
+        public string BranchCode { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Debit { get; set; }
+        public decimal Credit { get; set; }
+        public decimal DebitFC { get; set; }
+        public decimal CreditFC { get; set; }
+        public string CurrencyCode { get; set; } = string.Empty;
+        public decimal ExchangeRate { get; set; }
+        public string Book { get; set; } = string.Empty;
+        public string SourceModule { get; set; } = string.Empty;
+        public string SourceId { get; set; } = string.Empty;
+        public string HBLNo { get; set; } = string.Empty;
+        public string MBLNo { get; set; } = string.Empty;
+        public string ContainerNo { get; set; } = string.Empty;
+        public string BookingNo { get; set; } = string.Empty;
+        public string ShipmentNo { get; set; } = string.Empty;
+        public string POL { get; set; } = string.Empty;
+        public string POD { get; set; } = string.Empty;
+        public string RouteCode { get; set; } = string.Empty;
+        public string TransportMode { get; set; } = string.Empty;
+        public Guid? HBLId { get; set; }
+        public Guid? MBLid { get; set; }
+        public Guid? AgentId { get; set; }
+        public string POLCode { get; set; } = string.Empty;
+        public string POLName { get; set; } = string.Empty;
+        public string PODCode { get; set; } = string.Empty;
+        public string PODName { get; set; } = string.Empty;
+        public Guid? ContainerId { get; set; }
+        public string ContainerSizeType { get; set; } = string.Empty;
+        public string SealNo { get; set; } = string.Empty;
+        public string Jobid { get; set; } = string.Empty;
+        public string SaleName { get; set; } = string.Empty;
+        public string OPS { get; set; } = string.Empty;
+        public string DOC { get; set; } = string.Empty;
+        public string DELCode { get; set; } = string.Empty;
+        public string DELName { get; set; } = string.Empty;
+        public string PORCode { get; set; } = string.Empty;
+        public string PORName { get; set; } = string.Empty;
+        public string Vessel { get; set; } = string.Empty;
+        public string Voyage { get; set; } = string.Empty;
+        public List<string> Errors { get; } = new();
+        public List<string> Warnings { get; } = new();
+        public bool IsValid => Errors.Count == 0;
+        public string StatusText => IsValid ? (Warnings.Count == 0 ? "OK" : "Warning") : "Error";
+        public string ValidationMessage => string.Join("; ", Errors.Concat(Warnings));
+    }
+
     private sealed class GeneralLedgerSummaryRow
     {
         public Guid Id { get; set; }
@@ -605,6 +2360,38 @@
 }
 
 <style>
+    .gl-summary-page .import-card {
+        background: linear-gradient(90deg, #ffffff, #fff7ed);
+        border-color: #fed7aa !important;
+    }
+
+    .gl-summary-page .import-title {
+        font-weight: 900;
+        color: #92400e;
+        letter-spacing: .2px;
+    }
+
+    .gl-summary-page .import-upload-box,
+    .gl-summary-page .import-stat {
+        border-radius: 12px;
+        background: #ffffff;
+    }
+
+    .gl-summary-page .import-preview-grid {
+        font-size: .80rem;
+    }
+
+        .gl-summary-page .import-preview-grid .mud-table-cell,
+        .gl-summary-page .import-preview-grid td,
+        .gl-summary-page .import-preview-grid th {
+            padding: 4px 8px !important;
+            white-space: nowrap;
+        }
+
+    .gl-summary-page .import-row-error {
+        background-color: #fff1f2 !important;
+    }
+
     .gl-summary-page {
         background: #f4fdf7;
     }

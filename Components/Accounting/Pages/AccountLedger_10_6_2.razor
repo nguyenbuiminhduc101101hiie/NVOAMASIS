@@ -42,19 +42,36 @@
     <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
         <MudGrid Spacing="2" AlignItems="Center">
             <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           Label="Chọn theo"
+                           Value="@_dateMode"
+                           ValueChanged="OnDateModeChanged"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("DATE_RANGE")">Theo ngày</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("PERIOD")">Theo kỳ</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="2">
                 <MudDatePicker Label="Từ ngày"
-                               @bind-Date="_fromDate"
+                               Date="@_fromDate"
+                               DateChanged="OnFromDateChanged"
                                Variant="Variant.Outlined"
                                Margin="Margin.Dense"
-                               DateFormat="dd/MM/yyyy" />
+                               DateFormat="dd/MM/yyyy"
+                               Disabled="@IsPeriodMode" />
             </MudItem>
 
             <MudItem xs="12" sm="2">
                 <MudDatePicker Label="Đến ngày"
-                               @bind-Date="_toDate"
+                               Date="@_toDate"
+                               DateChanged="OnToDateChanged"
                                Variant="Variant.Outlined"
                                Margin="Margin.Dense"
-                               DateFormat="dd/MM/yyyy" />
+                               DateFormat="dd/MM/yyyy"
+                               Disabled="@IsPeriodMode" />
             </MudItem>
 
             <MudItem xs="6" sm="1">
@@ -65,7 +82,8 @@
                                  Variant="Variant.Outlined"
                                  Margin="Margin.Dense"
                                  Min="2000"
-                                 Max="2100" />
+                                 Max="2100"
+                                 Disabled="@IsDateRangeMode" />
             </MudItem>
 
             <MudItem xs="6" sm="1">
@@ -76,7 +94,8 @@
                                  Variant="Variant.Outlined"
                                  Margin="Margin.Dense"
                                  Min="1"
-                                 Max="12" />
+                                 Max="12"
+                                 Disabled="@IsDateRangeMode" />
             </MudItem>
 
             <MudItem xs="12" sm="1">
@@ -91,7 +110,7 @@
                 </MudSelect>
             </MudItem>
 
-            <MudItem xs="12" sm="3">
+            <MudItem xs="12" sm="2">
                 <MudSelect T="string"
                            Label="Tài khoản"
                            @bind-Value="_accountCode"
@@ -119,6 +138,10 @@
                               AdornmentIcon="@Icons.Material.Filled.Search" />
             </MudItem>
         </MudGrid>
+
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+            @DateModeHelpText
+        </MudText>
     </MudPaper>
 
     <MudPaper Class="product-price-card pa-3 mb-2 account-title-card" Elevation="0">
@@ -131,7 +154,7 @@
                     @_accountName
                 </MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    Kỳ: @(_fromDate?.ToString("dd/MM/yyyy") ?? "...") - @(_toDate?.ToString("dd/MM/yyyy") ?? "...") | Book: @_book
+                    @DateModeCaption: @(_fromDate?.ToString("dd/MM/yyyy") ?? "...") - @(_toDate?.ToString("dd/MM/yyyy") ?? "...") | Book: @_book
                 </MudText>
             </MudStack>
 
@@ -219,6 +242,7 @@
     private bool _busy;
     private string _usr = string.Empty;
     private int _gridKey;
+    private string _dateMode = "DATE_RANGE";
 
     private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
     private DateTime? _toDate = DateTime.Today;
@@ -242,26 +266,71 @@
     private IEnumerable<AccountLedgerRow> VisibleItems =>
         _rows.Where(MatchesSearch);
 
+    private bool IsPeriodMode => string.Equals(_dateMode, "PERIOD", StringComparison.OrdinalIgnoreCase);
+    private bool IsDateRangeMode => string.Equals(_dateMode, "DATE_RANGE", StringComparison.OrdinalIgnoreCase);
+
+    private string DateModeCaption => IsPeriodMode ? "Theo kỳ" : "Theo ngày";
+
+    private string DateModeHelpText => IsPeriodMode
+        ? "Đang lọc theo kỳ kế toán: hệ thống dùng FiscalYear/FiscalPeriod và tự set Từ ngày - Đến ngày theo tháng."
+        : "Đang lọc theo ngày hạch toán PostingDate: chọn Từ ngày - Đến ngày, không ép FiscalYear/FiscalPeriod.";
+
     protected override async Task OnInitializedAsync()
     {
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
         await LoadAccountOptionsAsync();
-        UpdateDateRange();
+        EnsureDateRange();
         await LoadAsync();
+    }
+
+    private async Task OnDateModeChanged(string value)
+    {
+        _dateMode = string.IsNullOrWhiteSpace(value) ? "DATE_RANGE" : value;
+
+        if (IsPeriodMode)
+            UpdateDateRange();
+        else
+            EnsureDateRange();
+
+        await LoadAsync();
+    }
+
+    private async Task OnFromDateChanged(DateTime? date)
+    {
+        _fromDate = date;
+        EnsureDateRange();
+
+        if (IsDateRangeMode)
+            await LoadAsync();
+    }
+
+    private async Task OnToDateChanged(DateTime? date)
+    {
+        _toDate = date;
+        EnsureDateRange();
+
+        if (IsDateRangeMode)
+            await LoadAsync();
     }
 
     private async Task OnYearChanged(int? year)
     {
         _fiscalYear = year;
-        UpdateDateRange();
+
+        if (IsPeriodMode)
+            UpdateDateRange();
+
         await LoadAsync();
     }
 
     private async Task OnMonthChanged(int? month)
     {
         _periodMonth = month;
-        UpdateDateRange();
+
+        if (IsPeriodMode)
+            UpdateDateRange();
+
         await LoadAsync();
     }
 
@@ -277,8 +346,28 @@
         _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
     }
 
+    private void EnsureDateRange()
+    {
+        if (!_fromDate.HasValue)
+            _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+
+        if (!_toDate.HasValue)
+            _toDate = DateTime.Today;
+
+        if (_fromDate.Value.Date > _toDate.Value.Date)
+        {
+            var temp = _fromDate;
+            _fromDate = _toDate;
+            _toDate = temp;
+        }
+
+        _fromDate = _fromDate.Value.Date;
+        _toDate = _toDate.Value.Date;
+    }
+
     private async Task ResetFilterAsync()
     {
+        _dateMode = "DATE_RANGE";
         _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         _toDate = DateTime.Today;
         _fiscalYear = DateTime.Today.Year;
@@ -287,7 +376,7 @@
         _accountCode = _accountOptions.FirstOrDefault()?.Code ?? "131";
         _search = string.Empty;
 
-        UpdateDateRange();
+        EnsureDateRange();
 
         await LoadAsync();
     }
@@ -344,6 +433,14 @@
 
             await using var db = await DbFactory.CreateDbContextAsync();
 
+            if (IsPeriodMode)
+                UpdateDateRange();
+            else
+                EnsureDateRange();
+
+            var fromDate = _fromDate?.Date ?? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            var toExclusive = (_toDate?.Date ?? DateTime.Today).Date.AddDays(1);
+
             _accountName = await db.DanhMucTaiKhoan.AsNoTracking()
                 .Where(x => x.Taikhoan == _accountCode)
                 .Select(x => x.Tentaikhoan)
@@ -354,16 +451,12 @@
             var query = db.GeneralLedgerEntries.AsNoTracking()
                 .Where(x => x.AccountCode == _accountCode);
 
-            if (_fromDate.HasValue)
-                query = query.Where(x => x.PostingDate >= _fromDate.Value.Date);
+            query = query.Where(x => x.PostingDate >= fromDate && x.PostingDate < toExclusive);
 
-            if (_toDate.HasValue)
-                query = query.Where(x => x.PostingDate <= _toDate.Value.Date);
-
-            if (_fiscalYear.HasValue)
+            if (IsPeriodMode && _fiscalYear.HasValue)
                 query = query.Where(x => x.FiscalYear == _fiscalYear.Value);
 
-            if (_periodMonth.HasValue)
+            if (IsPeriodMode && _periodMonth.HasValue)
                 query = query.Where(x => x.FiscalPeriod == _periodMonth.Value);
 
             if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
@@ -439,7 +532,7 @@
 
             rows.Add(new AccountLedgerRow
             {
-                PostingDate = _fromDate ?? new DateTime(_fiscalYear ?? DateTime.Today.Year, _periodMonth ?? DateTime.Today.Month, 1),
+                PostingDate = fromDate,
                 VoucherNo = "OPENING",
                 VoucherDate = _fromDate ?? DateTime.Today,
                 Description = "Số dư đầu kỳ",
@@ -510,18 +603,37 @@
 
     private async Task<decimal> LoadOpeningBalanceAsync(AppDbContext db)
     {
-        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
-            return 0;
+        var fromDate = _fromDate?.Date ?? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
 
-        var balance = await db.AccountBalances.AsNoTracking()
-            .Where(x => x.PeriodYear == _fiscalYear.Value
-                     && x.PeriodMonth == _periodMonth.Value
+        var balanceYear = IsPeriodMode && _fiscalYear.HasValue ? _fiscalYear.Value : fromDate.Year;
+        var balanceMonth = IsPeriodMode && _periodMonth.HasValue ? _periodMonth.Value : fromDate.Month;
+        var periodStart = new DateTime(balanceYear, balanceMonth, 1);
+
+        var openingBalance = await db.AccountBalances.AsNoTracking()
+            .Where(x => x.PeriodYear == balanceYear
+                     && x.PeriodMonth == balanceMonth
                      && x.AccountCode == _accountCode
                      && x.BookCode == _book)
             .Select(x => (decimal?)x.OpeningBalance)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync() ?? 0;
 
-        return balance ?? 0;
+        if (IsPeriodMode || fromDate <= periodStart)
+            return openingBalance;
+
+        var movementQuery = db.GeneralLedgerEntries.AsNoTracking()
+            .Where(x => x.AccountCode == _accountCode)
+            .Where(x => x.PostingDate >= periodStart && x.PostingDate < fromDate);
+
+        if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+            movementQuery = movementQuery.Where(x => x.IsTaxBook == true);
+
+        if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+            movementQuery = movementQuery.Where(x => x.IsManagementBook == true);
+
+        var movementBeforeFromDate = await movementQuery
+            .SumAsync(x => (decimal?)(x.Debit - x.Credit)) ?? 0;
+
+        return openingBalance + movementBeforeFromDate;
     }
 
     private async Task<Dictionary<string, string>> LoadSourceMapAsync(AppDbContext db, List<M_GeneralLedgerEntries> data)
