@@ -62,6 +62,10 @@ window.downloadFileFromStream = (filename, base64Data) => {
     document.body.removeChild(link);
 }
 
+window.openUrlInNewTab = (url) => {
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+}
+
 window.getPublicIp = async function () {
     try {
         let response = await fetch("https://api.ipify.org?format=json");
@@ -120,16 +124,16 @@ window.copyToClipboard = function (text) {
 
 // Shipment grid/tab colors: apply globally via CSS variables.
 // Stored in localStorage so the color persists after refresh.
-window.nvoccShipmentColorStorageKey = "nvoccShipmentGridColors";
+window.JNLShipmentColorStorageKey = "JNLShipmentGridColors";
 
-window.nvoccApplyShipmentColorSettings = (headerBg, selectedBg, tabToolbarBg) => {
+window.JNLApplyShipmentColorSettings = (headerBg, selectedBg, tabToolbarBg) => {
     const resolvedHeaderBg = headerBg || "#0077b6";
     const resolvedSelectedBg = selectedBg || "#1E88E5";
     const resolvedTabToolbarBg = tabToolbarBg || "#ffffff";
 
-    document.documentElement.style.setProperty("--nvocc-table-header-bg", resolvedHeaderBg);
-    document.documentElement.style.setProperty("--nvocc-selected-row-bg", resolvedSelectedBg);
-    document.documentElement.style.setProperty("--nvocc-tab-toolbar-bg", resolvedTabToolbarBg);
+    document.documentElement.style.setProperty("--JNL-table-header-bg", resolvedHeaderBg);
+    document.documentElement.style.setProperty("--JNL-selected-row-bg", resolvedSelectedBg);
+    document.documentElement.style.setProperty("--JNL-tab-toolbar-bg", resolvedTabToolbarBg);
 
     try {
         const data = {
@@ -137,15 +141,15 @@ window.nvoccApplyShipmentColorSettings = (headerBg, selectedBg, tabToolbarBg) =>
             selectedBg: resolvedSelectedBg,
             tabToolbarBg: resolvedTabToolbarBg
         };
-        localStorage.setItem(window.nvoccShipmentColorStorageKey, JSON.stringify(data));
+        localStorage.setItem(window.JNLShipmentColorStorageKey, JSON.stringify(data));
     } catch (e) {
         // ignore localStorage errors
     }
 };
 
-window.nvoccGetShipmentColorSettings = () => {
+window.JNLGetShipmentColorSettings = () => {
     try {
-        const raw = localStorage.getItem(window.nvoccShipmentColorStorageKey);
+        const raw = localStorage.getItem(window.JNLShipmentColorStorageKey);
         if (!raw) return null;
         return JSON.parse(raw);
     } catch (e) {
@@ -153,10 +157,10 @@ window.nvoccGetShipmentColorSettings = () => {
     }
 };
 
-window.nvoccLoadShipmentColorSettings = () => {
-    const settings = window.nvoccGetShipmentColorSettings();
+window.JNLLoadShipmentColorSettings = () => {
+    const settings = window.JNLGetShipmentColorSettings();
     if (settings && typeof settings === "object") {
-        window.nvoccApplyShipmentColorSettings(
+        window.JNLApplyShipmentColorSettings(
             settings.headerBg,
             settings.selectedBg,
             settings.tabToolbarBg
@@ -164,36 +168,27 @@ window.nvoccLoadShipmentColorSettings = () => {
     }
 };
 
-window.nvoccBkavInvoiceCredentialStorageKey = "nvoamasis.bkavInvoice.credentials";
+// View Document: scroll tới row được highlight bằng class "shipment-selected-row" hoặc "vd-row-target"
+// Hỗ trợ MudDataGrid có Virtualize="true": scroll container tới đúng vị trí.
+window.JNLScrollToShipmentRow = function (jobId) {
+    setTimeout(function () {
+        try {
+            // Tìm row có class shipment-selected-row (được set khi user click hoặc khi mình set jobdetail)
+            var row =
+                document.querySelector('tr.shipment-selected-row') ||
+                document.querySelector('tr.selected') ||
+                document.querySelector('tr.mud-selected');
 
-window.nvoccGetBkavInvoiceCredentials = () => {
-    try {
-        const raw = localStorage.getItem(window.nvoccBkavInvoiceCredentialStorageKey);
-        if (!raw) return null;
+            if (!row) return;
 
-        const data = JSON.parse(raw);
-        if (!data || typeof data !== "object") return null;
+            // Thêm class flash để gây chú ý
+            row.classList.add('vd-row-flash');
+            setTimeout(function () { row.classList.remove('vd-row-flash'); }, 1800);
 
-        return {
-            partnerGuid: typeof data.partnerGuid === "string" ? data.partnerGuid : "",
-            partnerToken: typeof data.partnerToken === "string" ? data.partnerToken : "",
-            savedAt: typeof data.savedAt === "string" ? data.savedAt : ""
-        };
-    } catch (e) {
-        return null;
-    }
-};
-
-window.nvoccSetBkavInvoiceCredentials = (partnerGuid, partnerToken) => {
-    const data = {
-        partnerGuid: partnerGuid || "",
-        partnerToken: partnerToken || "",
-        savedAt: new Date().toISOString()
-    };
-    localStorage.setItem(window.nvoccBkavInvoiceCredentialStorageKey, JSON.stringify(data));
-    return data;
-};
-
-window.nvoccClearBkavInvoiceCredentials = () => {
-    localStorage.removeItem(window.nvoccBkavInvoiceCredentialStorageKey);
+            // scrollIntoView với behavior smooth, block center
+            row.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        } catch (e) {
+            // ignore
+        }
+    }, 50);
 };

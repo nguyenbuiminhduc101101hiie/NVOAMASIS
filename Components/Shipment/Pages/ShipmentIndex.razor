@@ -9,12 +9,34 @@
 @inject IStringLocalizer<SharedResource> Localizer
 @attribute [Authorize]
 @inject HistoryLogService HistoryLogService
+@inject IJSRuntime JS
 @using System.Text.Json;
 
 <PageTitle>@Localizer["Shipment"]</PageTitle>
 
 <div class="shipment-page shipment-main-page">
     <PpScreenHeader Title="@Localizer["Shipment"]" Subtitle="Payment &amp; charges" />
+
+    @if (HasViewDocFilter)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Filled" Dense="true" Class="mb-2"
+                  ShowCloseIcon="true" CloseIconClicked="ClearViewDocFilter">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                <MudIcon Icon="@Icons.Material.Filled.FindInPage" />
+                <MudText Typo="Typo.body2">
+                    <b>View Document:</b> @ViewDocFilterText()
+                </MudText>
+                <MudSpacer />
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Inherit"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Visibility"
+                           OnClick="ClearViewDocFilter">
+                    Hiện tất cả
+                </MudButton>
+            </MudStack>
+        </MudAlert>
+    }
 
     <MudPaper Class="shipment-shell" Elevation="0">
         <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="shipment-summary">
@@ -702,6 +724,17 @@
             width: 100%;
         }
     }
+
+    /* View Document: flash highlight cho row vừa scroll tới */
+    .shipment-grid tbody tr.vd-row-flash > td {
+        animation: vdRowFlash 1.6s ease-out;
+    }
+
+    @@keyframes vdRowFlash {
+        0% { background-color: #fde68a !important; box-shadow: inset 4px 0 0 #f59e0b; }
+        50% { background-color: #fef3c7 !important; }
+        100% { background-color: transparent; box-shadow: none; }
+    }
 </style>
 
 @code {
@@ -722,6 +755,53 @@
     List<M_Customer> Customers = new List<M_Customer>();
     bool isSale = false, chkSearchSales = false;
     string? _SaleName;
+
+    // ====== View Document feature ======
+    [Parameter] public string? InitialJobNo { get; set; }
+    [Parameter] public string? InitialMBL { get; set; }
+    [Parameter] public string? InitialHBL { get; set; }
+    [Parameter] public string? InitialBK { get; set; }
+    [Parameter] public string? InitialContainer { get; set; }
+
+    private string? SearchJobNo;
+    private string? SearchMBL;
+    private string? SearchBK;
+    private bool _viewDocAutoLoaded = false;
+
+    private bool HasViewDocFilter =>
+        !string.IsNullOrWhiteSpace(InitialJobNo)
+        || !string.IsNullOrWhiteSpace(InitialMBL)
+        || !string.IsNullOrWhiteSpace(InitialHBL)
+        || !string.IsNullOrWhiteSpace(InitialBK)
+        || !string.IsNullOrWhiteSpace(InitialContainer);
+
+    private string ViewDocFilterText()
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(InitialJobNo)) parts.Add($"Job: {InitialJobNo}");
+        if (!string.IsNullOrWhiteSpace(InitialMBL)) parts.Add($"MBL: {InitialMBL}");
+        if (!string.IsNullOrWhiteSpace(InitialHBL)) parts.Add($"HBL: {InitialHBL}");
+        if (!string.IsNullOrWhiteSpace(InitialBK)) parts.Add($"BK: {InitialBK}");
+        if (!string.IsNullOrWhiteSpace(InitialContainer)) parts.Add($"Container: {InitialContainer}");
+        return string.Join(" • ", parts);
+    }
+
+    private async Task ClearViewDocFilter()
+    {
+        InitialJobNo = InitialMBL = InitialHBL = InitialBK = InitialContainer = null;
+        SearchJobNo = SearchMBL = SearchBK = null;
+        SearchHBL = null;
+        SearchContNo = null;
+        chkSearchAd = false;
+        isExpand = false;
+        if (mudTable != null)
+        {
+            try { await mudTable.ClearFiltersAsync(); } catch { }
+        }
+        StateHasChanged();
+    }
+    // ====== end View Document feature ======
+
     protected async override Task OnInitializedAsync()
     {
         try
@@ -738,6 +818,17 @@
                 isSale = true;
                 _SaleName = userdetail.Usr;
             }
+
+            if (HasViewDocFilter)
+            {
+                SearchJobNo = InitialJobNo?.Trim();
+                SearchMBL = InitialMBL?.Trim();
+                SearchHBL = InitialHBL?.Trim();
+                SearchBK = InitialBK?.Trim();
+                SearchContNo = InitialContainer?.Trim();
+                chkSearchAd = true;
+                isExpand = true;
+            }
             //await Refresh();
         }
         catch (Exception ex)
@@ -745,6 +836,54 @@
             CallSnackBar("Please slow down!", MudBlazor.Severity.Error);
 
         }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && HasViewDocFilter && !_viewDocAutoLoaded)
+        {
+            _viewDocAutoLoaded = true;
+            await Refresh();
+            await ApplyViewDocFilterToGrid();
+            StateHasChanged();
+        }
+    }
+
+    // Áp filter vào MudDataGrid giống cơ chế OnRowDoubleClick — chỉ hiển thị lô đúng kết quả tìm.
+    private async Task ApplyViewDocFilterToGrid()
+    {
+        if (!HasViewDocFilter || mudTable == null) return;
+
+        var matches = (Listdata ?? new List<M_Job>())
+            .Where(j => MatchesViewDocFilter(j))
+            .ToList();
+
+        if (matches.Count == 0)
+        {
+            CallSnackBar($"Không tìm thấy lô khớp: {ViewDocFilterText()}", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var matchIds = matches.Select(j => j.JobID).ToHashSet();
+
+        // 1. Xóa filter cũ + tắt search panel
+        try { await mudTable.ClearFiltersAsync(); } catch { }
+        chkSearchAd = false;
+
+        // 2. Thêm filter mới: chỉ hiện các Job có JobID nằm trong matchIds
+        var filter = new FilterDefinition<M_Job>
+        {
+            FilterFunction = x => matchIds.Contains(x.JobID),
+            Title = nameof(M_Job.JobNo),
+            Operator = "equals",
+            Value = matches.First().JobNo,
+        };
+
+        try { await mudTable.AddFilterAsync(filter); } catch { }
+
+        // 3. Chọn dòng đầu tiên để khi bấm các nút thao tác mặc định có context
+        jobdetail = matches.First();
+        try { mudTable.SelectedItem = matches.First(); } catch { }
     }
 
     bool _loading = false;
@@ -1202,6 +1341,68 @@
 
         return matchLoai && matchSearch;
     };
+
+    // Khớp filter "View Document": tìm theo Job/MBL/HBL/BK/Container.
+    // Trả về true nếu Job thỏa tất cả tiêu chí được nhập.
+    private bool MatchesViewDocFilter(M_Job x)
+    {
+        if (!HasViewDocFilter) return true;
+
+        if (!string.IsNullOrWhiteSpace(SearchJobNo))
+        {
+            if (string.IsNullOrWhiteSpace(x.JobNo) ||
+                !x.JobNo.Contains(SearchJobNo, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        bool needCheckChildren = !string.IsNullOrWhiteSpace(SearchMBL)
+            || !string.IsNullOrWhiteSpace(SearchHBL)
+            || !string.IsNullOrWhiteSpace(SearchBK)
+            || !string.IsNullOrWhiteSpace(SearchContNo);
+
+        if (!needCheckChildren) return true;
+
+        var mbls = ListMBLs?.Where(m => m.Jobid == x.JobID).ToList() ?? new List<M_MBL>();
+        var mblIds = mbls.Select(m => m.MblID).ToHashSet();
+        var hbls = ListHBLs?
+            .Where(h => (h.mblid != Guid.Empty && mblIds.Contains(h.mblid)) || h.Jobid == x.JobID)
+            .ToList() ?? new List<M_HBL>();
+
+        if (!string.IsNullOrWhiteSpace(SearchMBL))
+        {
+            if (!mbls.Any(m => !string.IsNullOrWhiteSpace(m.Mbl)
+                && m.Mbl.Contains(SearchMBL, StringComparison.OrdinalIgnoreCase)))
+                return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(SearchHBL))
+        {
+            if (!hbls.Any(h => !string.IsNullOrWhiteSpace(h.hbl)
+                && h.hbl.Contains(SearchHBL, StringComparison.OrdinalIgnoreCase)))
+                return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(SearchBK))
+        {
+            bool mblBk = mbls.Any(m => !string.IsNullOrWhiteSpace(m.Bkno)
+                && m.Bkno.Contains(SearchBK, StringComparison.OrdinalIgnoreCase));
+            bool hblBk = hbls.Any(h => !string.IsNullOrWhiteSpace(h.bkno)
+                && h.bkno.Contains(SearchBK, StringComparison.OrdinalIgnoreCase));
+            if (!mblBk && !hblBk) return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(SearchContNo))
+        {
+            var hblIds = hbls.Select(h => h.hblID).ToHashSet();
+            if (!(ListConts?.Any(c => c.hblid.HasValue && hblIds.Contains(c.hblid.Value)
+                && !string.IsNullOrWhiteSpace(c.CONTAINER_NO)
+                && c.CONTAINER_NO.Contains(SearchContNo, StringComparison.OrdinalIgnoreCase)) ?? false))
+                return false;
+        }
+
+        return true;
+    }
+
     string joinmbl(Guid jobid)
     {
         var rs = ListMBLs.Where(x => x.Jobid == jobid).Select(x=>x.Mbl).ToList();
