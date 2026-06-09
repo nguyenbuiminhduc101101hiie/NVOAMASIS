@@ -1,4 +1,5 @@
 @using System.Globalization﻿
+@using Microsoft.AspNetCore.Components.Forms
 ﻿
 @inject CustomerService csv
 @inject SupportServices supsv
@@ -7,6 +8,7 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ShipmentService shipsv
+@inject InvoicePdfImportService invoicePdfImportService
 @inject IStringLocalizer<SharedResource> Localizer
 @inject HistoryLogService HistoryLogService
 @using System.Text.Json;
@@ -40,10 +42,22 @@
                                 Color="Color.Success"
                                 Size="Size.Small"
                                 OnClick="AddItem"
-                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Disabled="@(_importingPdf || (isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false)))"
                                 Variant="Variant.Filled"
                                 Class="btn-compact" />
                             </MudTooltip>
+
+                            <MudTooltip Text="@Localizer["Import PDF"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.UploadFile"
+                                               Color="Color.Success"
+                                               Size="Size.Small"
+                                               HtmlTag="label"
+                                               for="@_pdfInputId"
+                                               Disabled="@(_importingPdf || (isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false)))"
+                                               Variant="Variant.Filled"
+                                               Class="btn-compact" />
+                            </MudTooltip>
+                            <InputFile id="@_pdfInputId" OnChange="ImportInvoicePdfAsync" accept=".pdf,application/pdf" style="display:none" />
                         </MudStack>
                     </HeaderTemplate>
                     <CellTemplate>
@@ -205,6 +219,9 @@
         return rs == null ? string.Empty : (rs.shortname + " - " + rs.COMPANY);
     }
     bool _loading = false;
+    bool _importingPdf = false;
+    readonly string _pdfInputId = $"invoice-pdf-import-{Guid.NewGuid():N}";
+    const long MaxPdfFileSize = 15 * 1024 * 1024;
     List<M_HoaDonDauVao> Listdata = new List<M_HoaDonDauVao>();
     List<M_CongNoHoaDonDauVao> ListdataCongNo = new List<M_CongNoHoaDonDauVao>();
     M_HoaDonDauVao detail;
@@ -247,6 +264,134 @@
     item.sohoadonNoibo = detail?.sohoadonNoibo;
         Listdata.Add(item);
         await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task ImportInvoicePdfAsync(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            if (e.FileCount == 0)
+                return;
+
+            if (e.FileCount > 1)
+            {
+                CallSnackBar(Localizer["Only one PDF file can be imported at a time."], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var file = e.File;
+            if (file == null)
+            {
+                CallSnackBar(Localizer["No file found to import."], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (!file.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                CallSnackBar(Localizer["Invalid file format. Please select a PDF file."], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (file.Size <= 0)
+            {
+                CallSnackBar(Localizer["The PDF file is empty."], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (file.Size > MaxPdfFileSize)
+            {
+                CallSnackBar(Localizer["The PDF file exceeds the limit of {0}MB.", MaxPdfFileSize / 1024 / 1024], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _importingPdf = true;
+
+            await using var fileStream = file.OpenReadStream(MaxPdfFileSize);
+            var parsed = await invoicePdfImportService.ParseAsync(fileStream);
+            var errors = parsed.ValidationErrors();
+            if (errors.Count > 0)
+            {
+                CallSnackBar(string.Join(" ", errors.Select(x => Localizer[x])), MudBlazor.Severity.Error);
+                return;
+            }
+
+            var customerResult = await csv.GetOrCreateCustomerForInvoiceAsync(
+                parsed.BuyerTaxCode,
+                parsed.BuyerName,
+                parsed.BuyerAddress,
+                usr);
+
+            if (!customerResult.Response.Flag || customerResult.Customer == null)
+            {
+                CallSnackBar(Localizer[customerResult.Response.Message], MudBlazor.Severity.Error);
+                return;
+            }
+
+            if (!Customers.Any(x => x.Customer_ID == customerResult.Customer.Customer_ID))
+            {
+                Customers.Add(customerResult.Customer);
+            }
+
+            if (customerResult.IsCreated)
+            {
+                CallSnackBar(Localizer["New customer created: {0}", customerResult.Customer.COMPANY], MudBlazor.Severity.Info);
+            }
+
+            if (IsDuplicateImportedInvoice(parsed.Serial!, parsed.InvoiceIssueDate!.Value, parsed.TotalPayment!.Value))
+            {
+                CallSnackBar(Localizer["This invoice already exists in the current MBL/HBL. Skipped."], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var item = new M_HoaDonDauVao
+            {
+                mblid = isMBL ? MBLDetail!.MblID : Guid.Empty,
+                hblid = isMBL ? Guid.Empty : HBLDetail!.hblID,
+                customerid = customerResult.Customer.Customer_ID,
+                dongia = parsed.TotalAmount,
+                soluong = 1,
+                thanhtien = parsed.TotalAmount,
+                tiente = "VND",
+                tigia = 1,
+                thue = parsed.VatRate,
+                thanhtiensauthue = parsed.TotalPayment,
+                sohoadonNoibo = parsed.Serial,
+                sohoadonDientu = parsed.Serial,
+                ngayphathanhhoadonDientu = parsed.InvoiceIssueDate,
+                userupdate = usr,
+                dateupdate = DateTime.Now.ToString(),
+                continued = true,
+                editable = true,
+                approve = false
+            };
+
+            var createResult = await shipsv.CreateHoaDonDauVaoMBL(item);
+            CallSnackBar(Localizer[createResult.Message], createResult.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+            if (createResult.Flag)
+                await Refresh();
+        }
+        catch (IOException ex)
+        {
+            CallSnackBar(Localizer["Cannot read PDF file: {0}", ex.Message], MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(Localizer["PDF import failed: {0}", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _importingPdf = false;
+        }
+    }
+
+    bool IsDuplicateImportedInvoice(string serial, DateTime issueDate, double totalPayment)
+    {
+        return Listdata.Any(x =>
+            string.Equals(x.sohoadonDientu?.Trim(), serial.Trim(), StringComparison.OrdinalIgnoreCase)
+            && x.ngayphathanhhoadonDientu.HasValue
+            && x.ngayphathanhhoadonDientu.Value.Date == issueDate.Date
+            && Math.Abs((x.thanhtiensauthue ?? 0) - totalPayment) < 0.01);
     }
 
     async Task DeleteItem(M_HoaDonDauVao item)

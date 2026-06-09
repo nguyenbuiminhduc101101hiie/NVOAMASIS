@@ -13,6 +13,7 @@ using System.Data;
 using System.Net;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using NVOAMASIS.Components.Charge.Pages;
 using NVOAMASIS.Components.Quotation.Pages;
 using NVOAMASIS.Data;
@@ -815,6 +816,95 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
         {
             return (new BoolandMessReponse(false, $"Xãy ra lỗi khi lấy customer code mã: {ex.Message}, vui lòng liên hệ admin hoặc nhập thủ công!"), null)!;
         }
+    }
+
+    public async Task<(BoolandMessReponse Response, M_Customer? Customer, bool IsCreated)> GetOrCreateCustomerForInvoiceAsync(
+        string? buyerTaxCode,
+        string? buyerName,
+        string? buyerAddress,
+        string userName)
+    {
+        try
+        {
+            var normalizedTaxCode = NormalizeTaxCodeForCompare(buyerTaxCode);
+            if (string.IsNullOrWhiteSpace(normalizedTaxCode))
+            {
+                return (new BoolandMessReponse(false, "Buyer tax code is missing to find/create customer."), null, false);
+            }
+
+            _context.ChangeTracker.Clear();
+            var existingCustomers = await _context.Customer
+                .Where(x => x.Continued != false && !string.IsNullOrWhiteSpace(x.TaxCode))
+                .AsNoTracking()
+                .ToListAsync();
+
+            var matchedCustomer = existingCustomers
+                .FirstOrDefault(x =>
+                    !string.IsNullOrWhiteSpace(x.MainCode)
+                    && x.MainCode.Contains("Customer", StringComparison.OrdinalIgnoreCase)
+                    && NormalizeTaxCodeForCompare(x.TaxCode) == normalizedTaxCode);
+
+            if (matchedCustomer != null)
+            {
+                return (new BoolandMessReponse(true, "Customer found by tax code."), matchedCustomer, false);
+            }
+
+            var customerCodeResult = await GetCustomerCode();
+            if (!customerCodeResult.Item1.Flag || customerCodeResult.Item2 == null)
+            {
+                return (new BoolandMessReponse(false, "Cannot allocate a new customer code. Please contact admin or enter manually."), null, false);
+            }
+
+            var userDetail = asv.GetUserDetail();
+            var saleNameForCustomer = string.IsNullOrWhiteSpace(userDetail?.Usr) ? userName : userDetail.Usr;
+
+            var companyName = string.IsNullOrWhiteSpace(buyerName) ? $"CUSTOMER_{normalizedTaxCode}" : buyerName.Trim();
+            var address = buyerAddress?.Trim() ?? string.Empty;
+            var now = DateTime.Now;
+
+            var customer = new M_Customer
+            {
+                Customer_ID = Guid.NewGuid(),
+                Customer_Code = customerCodeResult.Item2.CustomerCode_Ref,
+                MainCode = "Customer",
+                SaleName = saleNameForCustomer,
+                COMPANY = companyName,
+                shortname = companyName,
+                EnglishName = companyName,
+                Address = address,
+                addresstiengviet = address,
+                TaxCode = normalizedTaxCode,
+                Continued = true,
+                Approve = false,
+                Editable = false,
+                UserID = userName,
+                strUser = userName,
+                Updatetime = now,
+                ngaythem = now,
+                Type = "HQ"
+            };
+
+            _context.ChangeTracker.Clear();
+            _context.Customer.Add(customer);
+            await _context.SaveChangesAsync();
+            await HistoryLogService.LogAsync(userName, "ADD", "System-Customer", customer.Customer_ID, customer.Customer_Code, customer);
+
+            return (new BoolandMessReponse(true, "New customer created from invoice successfully."), customer, true);
+        }
+        catch (Exception)
+        {
+            return (new BoolandMessReponse(false, "Error creating customer from invoice."), null, false);
+        }
+    }
+
+    private static string NormalizeTaxCodeForCompare(string? taxCode)
+    {
+        if (string.IsNullOrWhiteSpace(taxCode))
+            return string.Empty;
+
+        var noSpace = Regex.Replace(taxCode, @"\s+", string.Empty);
+        noSpace = noSpace.Replace(".", string.Empty);
+        return noSpace.Trim().ToUpperInvariant();
     }
 
     public async Task<BoolandMessReponse> UpdateCustomerCode(CustomerCode c)
