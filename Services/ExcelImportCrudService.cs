@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
 
-namespace JNL.Services;
+namespace NVOAMASIS.Services;
 
 public enum ExcelCrudTab
 {

@@ -1,0 +1,1067 @@
+@page "/accounting/ar-ap/statement-of-account"
+@page "/StatementOfAccount"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>10.14.2 SOA - Statement of Account</PageTitle>
+
+<div class="product-price-page soa-page">
+    <PpScreenHeader Title="10.14.2 SOA - Statement of Account"
+                    Subtitle="Đối chiếu công nợ khách hàng / vendor theo sổ cái đã ghi sổ">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">
+                    Load
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="ResetFilterAsync" Disabled="_busy">
+                    Reset
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Visibility" OnClick="TogglePrintPreview" Disabled="_busy">
+                    Simulator
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PictureAsPdf" OnClick="PrintAsync" Disabled="_busy">
+                    Print / PDF
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2 filter-card" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           Label="Chọn theo"
+                           Value="@_dateMode"
+                           ValueChanged="@OnDateModeChangedAsync"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@DateModeByDate">Theo ngày</MudSelectItem>
+                    <MudSelectItem T="string" Value="@DateModeByPeriod">Theo kỳ</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày"
+                               Date="@_fromDate"
+                               DateChanged="@OnFromDateChangedAsync"
+                               ReadOnly="@IsPeriodMode"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày"
+                               Date="@_toDate"
+                               DateChanged="@OnToDateChangedAsync"
+                               ReadOnly="@IsPeriodMode"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?"
+                                 Label="Year"
+                                 Value="@_fiscalYear"
+                                 ValueChanged="@OnYearChanged"
+                                 Disabled="@IsDateRangeMode"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="2000"
+                                 Max="2100" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?"
+                                 Label="Month"
+                                 Value="@_periodMonth"
+                                 ValueChanged="@OnMonthChanged"
+                                 Disabled="@IsDateRangeMode"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="1"
+                                 Max="12" />
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudSelect T="string" Label="Book" @bind-Value="_book"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string" Label="Loại SOA" @bind-Value="_soaType"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("AR")">AR - Customer 131</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("AP")">AP - Vendor 331</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL - Cả 131 + 331</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudAutocomplete T="Guid?"
+                                 Label="Customer / Vendor"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 @bind-Value="_selectedCustomerId"
+                                 SearchFunc="SearchCustomerAsync"
+                                 ToStringFunc="CustomerToString"
+                                 Clearable="true"
+                                 CoerceText="true"
+                                 CoerceValue="true"
+                                 ResetValueOnEmptyText="true" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_search" Label="Search"
+                              Placeholder="Voucher, diễn giải, nguồn..."
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Immediate="true" Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2" Class="mb-2">
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card opening-card" Elevation="0">
+                <MudText Typo="Typo.caption">Opening Balance</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@_openingBalance.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Số dư đầu kỳ</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card debit-card" Elevation="0">
+                <MudText Typo="Typo.caption">Debit Movement</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@_periodDebit.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Phát sinh Nợ</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card credit-card" Elevation="0">
+                <MudText Typo="Typo.caption">Credit Movement</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@_periodCredit.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Phát sinh Có</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="3">
+            <MudPaper Class="kpi-card closing-card" Elevation="0">
+                <MudText Typo="Typo.caption">Closing Balance</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold" Color="@(_closingBalance >= 0 ? Color.Success : Color.Error)">
+                    @_closingBalance.ToString("N0")
+                </MudText>
+                <MudText Typo="Typo.caption">Số dư cuối kỳ</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Class="product-price-card pa-3 mb-2 soa-header-card" Elevation="0">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="8">
+                <MudText Typo="Typo.h6" Class="report-title">STATEMENT OF ACCOUNT</MudText>
+                <MudText Typo="Typo.body2"><b>Đối tượng:</b> @SelectedCustomerLabel</MudText>
+                <MudText Typo="Typo.body2">
+                    <b>@DateModeDisplay:</b> @_fromDate?.ToString("dd/MM/yyyy") - @_toDate?.ToString("dd/MM/yyyy")
+                    · <b>Book:</b> @_book · <b>Loại:</b> @SoaTypeDisplay · <b>TK:</b> @SoaAccountDisplay
+                </MudText>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudStack Row="true" Spacing="1" Justify="Justify.FlexEnd" Class="flex-wrap">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.MenuBook"
+                               OnClick="OpenLedgerSummary">
+                        Link sổ cái 10.6.1
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Visibility"
+                               OnClick="TogglePrintPreview">
+                        Xem mẫu in
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.PictureAsPdf"
+                               OnClick="PrintAsync">
+                        In / PDF
+                    </MudButton>
+                </MudStack>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <div>
+                <MudText Typo="Typo.h6" Class="report-title">CHI TIẾT PHÁT SINH CÔNG NỢ</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Dòng: @VisibleRows.Count().ToString("N0")</MudText>
+            </div>
+        </MudStack>
+
+        <MudDataGrid @key="_gridKey"
+                     T="SoaLineRow"
+                     Items="VisibleRows.ToList()"
+                     Dense="true"
+                     Striped="true"
+                     Hover="true"
+                     Bordered="true"
+                     Filterable="true"
+                     FilterMode="@DataGridFilterMode.ColumnFilterRow"
+                     FixedHeader="true"
+                     Height="calc(100vh - 470px)"
+                     Class="soa-grid"
+                     Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.PostingDate" Title="Ngày HT" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.VoucherNo" Title="Số chứng từ" />
+                <PropertyColumn Property="x => x.VoucherDate" Title="Ngày CT" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.AccountCode" Title="TK" />
+                <PropertyColumn Property="x => x.SoaTypeLabel" Title="Loại" />
+                <PropertyColumn Property="x => x.Description" Title="Diễn giải" />
+                <PropertyColumn Property="x => x.Debit" Title="Nợ" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Credit" Title="Có" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.RunningBalance" Title="Số dư" Format="N0" CellClass="text-end fw-bold balance-cell" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Book" Title="Book" />
+                <PropertyColumn Property="x => x.SourceModule" Title="Nguồn" />
+                <TemplateColumn Title="Link" Filterable="false" Sortable="false">
+                    <CellTemplate>
+                        <MudButton Size="Size.Small"
+                                   Variant="Variant.Outlined"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.MenuBook"
+                                   OnClick="@(() => OpenLedgerSummaryFromRow(context.Item))">
+                            Sổ cái
+                        </MudButton>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="SoaLineRow" PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">
+                    Không có phát sinh công nợ theo điều kiện lọc hiện tại.
+                </MudText>
+            </NoRecordsContent>
+        </MudDataGrid>
+    </MudPaper>
+
+    @if (_showPrintPreview)
+    {
+        <MudPaper Class="product-price-card pa-4 mb-2 soa-print-preview soa-no-print" Elevation="0">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-3 flex-wrap">
+                <MudText Typo="Typo.h6" Class="report-title">SIMULATOR / PDF PREVIEW</MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PictureAsPdf" OnClick="PrintAsync">
+                    In / Save as PDF
+                </MudButton>
+            </MudStack>
+
+            <div class="print-sheet">
+                <div class="print-header">
+                    <div>
+                        <div class="print-company">NVOAMASIS</div>
+                        <div class="print-title">STATEMENT OF ACCOUNT</div>
+                    </div>
+                    <div class="print-meta">
+                        <div><b>Book:</b> @_book</div>
+                        <div><b>Type:</b> @SoaTypeDisplay</div>
+                        <div><b>Account:</b> @SoaAccountDisplay</div>
+                    </div>
+                </div>
+
+                <div class="print-info-grid">
+                    <div><b>Customer / Vendor:</b> @SelectedCustomerLabel</div>
+                    <div><b>Period:</b> @_fromDate?.ToString("dd/MM/yyyy") - @_toDate?.ToString("dd/MM/yyyy")</div>
+                    <div><b>Opening:</b> @_openingBalance.ToString("N0")</div>
+                    <div><b>Debit:</b> @_periodDebit.ToString("N0")</div>
+                    <div><b>Credit:</b> @_periodCredit.ToString("N0")</div>
+                    <div><b>Closing:</b> @_closingBalance.ToString("N0")</div>
+                </div>
+
+                <table class="print-table">
+                    <thead>
+                        <tr>
+                            <th>Posting Date</th>
+                            <th>Voucher No</th>
+                            <th>Voucher Date</th>
+                            <th>Account</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                            <th class="num">Debit</th>
+                            <th class="num">Credit</th>
+                            <th class="num">Balance</th>
+                            <th>Book</th>
+                            <th>Source</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in VisibleRows.ToList())
+                        {
+                            <tr>
+                                <td>@row.PostingDate.ToString("dd/MM/yyyy")</td>
+                                <td>@row.VoucherNo</td>
+                                <td>@row.VoucherDate.ToString("dd/MM/yyyy")</td>
+                                <td>@row.AccountCode</td>
+                                <td>@row.SoaTypeLabel</td>
+                                <td>@row.Description</td>
+                                <td class="num">@row.Debit.ToString("N0")</td>
+                                <td class="num">@row.Credit.ToString("N0")</td>
+                                <td class="num">@row.RunningBalance.ToString("N0")</td>
+                                <td>@row.Book</td>
+                                <td>@row.SourceModule</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                <div class="print-footer">
+                    <div>Prepared by: ____________________</div>
+                    <div>Confirmed by: ____________________</div>
+                    <div>Printed: @DateTime.Now.ToString("dd/MM/yyyy HH:mm")</div>
+                </div>
+            </div>
+        </MudPaper>
+    }
+
+    <div class="soa-print-area">
+        <div class="print-sheet">
+            <div class="print-header">
+                <div>
+                    <div class="print-company">NVOAMASIS</div>
+                    <div class="print-title">STATEMENT OF ACCOUNT</div>
+                </div>
+                <div class="print-meta">
+                    <div><b>Book:</b> @_book</div>
+                    <div><b>Type:</b> @SoaTypeDisplay</div>
+                    <div><b>Account:</b> @SoaAccountDisplay</div>
+                </div>
+            </div>
+
+            <div class="print-info-grid">
+                <div><b>Customer / Vendor:</b> @SelectedCustomerLabel</div>
+                <div><b>Period:</b> @_fromDate?.ToString("dd/MM/yyyy") - @_toDate?.ToString("dd/MM/yyyy")</div>
+                <div><b>Opening:</b> @_openingBalance.ToString("N0")</div>
+                <div><b>Debit:</b> @_periodDebit.ToString("N0")</div>
+                <div><b>Credit:</b> @_periodCredit.ToString("N0")</div>
+                <div><b>Closing:</b> @_closingBalance.ToString("N0")</div>
+            </div>
+
+            <table class="print-table">
+                <thead>
+                    <tr>
+                        <th>Posting Date</th>
+                        <th>Voucher No</th>
+                        <th>Voucher Date</th>
+                        <th>Account</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                        <th class="num">Debit</th>
+                        <th class="num">Credit</th>
+                        <th class="num">Balance</th>
+                        <th>Book</th>
+                        <th>Source</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in VisibleRows.ToList())
+                    {
+                        <tr>
+                            <td>@row.PostingDate.ToString("dd/MM/yyyy")</td>
+                            <td>@row.VoucherNo</td>
+                            <td>@row.VoucherDate.ToString("dd/MM/yyyy")</td>
+                            <td>@row.AccountCode</td>
+                            <td>@row.SoaTypeLabel</td>
+                            <td>@row.Description</td>
+                            <td class="num">@row.Debit.ToString("N0")</td>
+                            <td class="num">@row.Credit.ToString("N0")</td>
+                            <td class="num">@row.RunningBalance.ToString("N0")</td>
+                            <td>@row.Book</td>
+                            <td>@row.SourceModule</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div class="print-footer">
+                <div>Prepared by: ____________________</div>
+                <div>Confirmed by: ____________________</div>
+                <div>Printed: @DateTime.Now.ToString("dd/MM/yyyy HH:mm")</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const string PermissionMenuName = "GeneralLedgerEntries";
+    private const string DateModeByDate = "DATE_RANGE";
+    private const string DateModeByPeriod = "PERIOD";
+
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private string _dateMode = DateModeByDate;
+    private bool IsPeriodMode => string.Equals(_dateMode, DateModeByPeriod, StringComparison.OrdinalIgnoreCase);
+    private bool IsDateRangeMode => string.Equals(_dateMode, DateModeByDate, StringComparison.OrdinalIgnoreCase);
+    private string DateModeDisplay => IsDateRangeMode ? "Theo ngày" : "Theo kỳ";
+
+    private bool _busy;
+    private string _usr = string.Empty;
+    private int _gridKey;
+    private bool _showPrintPreview;
+
+    private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _toDate = DateTime.Today;
+    private int? _fiscalYear = DateTime.Today.Year;
+    private int? _periodMonth = DateTime.Today.Month;
+    private string _book = "TAX";
+    private string _soaType = "AR";
+    private string _search = string.Empty;
+    private Guid? _selectedCustomerId;
+
+    private bool IsAllSoa => string.Equals(_soaType, "ALL", StringComparison.OrdinalIgnoreCase);
+    private string _soaAccountCode => string.Equals(_soaType, "AP", StringComparison.OrdinalIgnoreCase) ? "331" : "131";
+    private string SoaAccountDisplay => IsAllSoa ? "131 + 331" : _soaAccountCode;
+    private string SoaTypeDisplay => _soaType switch
+    {
+        "AP" => "AP - Vendor 331",
+        "ALL" => "ALL - Cả 131 + 331",
+        _ => "AR - Customer 131"
+    };
+
+    private decimal _openingBalance;
+    private decimal _periodDebit;
+    private decimal _periodCredit;
+    private decimal _closingBalance;
+
+    private List<M_Customer> _customers = new();
+    private List<SoaLineRow> _rows = new();
+
+    private IEnumerable<SoaLineRow> VisibleRows => _rows.Where(MatchesFilter);
+
+    private string SelectedCustomerLabel =>
+        _selectedCustomerId.HasValue
+            ? CustomerToString(_selectedCustomerId)
+            : "Tất cả khách hàng / vendor";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        EnsureDateRange();
+        SyncPeriodFromDateRange();
+        await LoadCustomerOptionsAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnDateModeChangedAsync(string value)
+    {
+        _dateMode = string.Equals(value, DateModeByPeriod, StringComparison.OrdinalIgnoreCase)
+            ? DateModeByPeriod
+            : DateModeByDate;
+
+        if (IsPeriodMode)
+            UpdateDateRangeFromPeriod();
+        else
+        {
+            EnsureDateRange();
+            SyncPeriodFromDateRange();
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task OnFromDateChangedAsync(DateTime? value)
+    {
+        _fromDate = value?.Date;
+        EnsureDateRange();
+        SyncPeriodFromDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnToDateChangedAsync(DateTime? value)
+    {
+        _toDate = value?.Date;
+        EnsureDateRange();
+        SyncPeriodFromDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnYearChanged(int? year)
+    {
+        _fiscalYear = year;
+
+        if (IsPeriodMode)
+            UpdateDateRangeFromPeriod();
+
+        await LoadAsync();
+    }
+
+    private async Task OnMonthChanged(int? month)
+    {
+        _periodMonth = month;
+
+        if (IsPeriodMode)
+            UpdateDateRangeFromPeriod();
+
+        await LoadAsync();
+    }
+
+    private void UpdateDateRangeFromPeriod()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            return;
+
+        if (_periodMonth.Value < 1 || _periodMonth.Value > 12)
+            return;
+
+        _fromDate = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+        _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
+    }
+
+    private void EnsureDateRange()
+    {
+        _fromDate ??= new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDate ??= DateTime.Today;
+
+        if (_fromDate.Value.Date > _toDate.Value.Date)
+            _toDate = _fromDate.Value.Date;
+    }
+
+    private void SyncPeriodFromDateRange()
+    {
+        var baseDate = (_fromDate ?? DateTime.Today).Date;
+        _fiscalYear = baseDate.Year;
+        _periodMonth = baseDate.Month;
+    }
+
+    private async Task ResetFilterAsync()
+    {
+        _dateMode = DateModeByDate;
+        _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDate = DateTime.Today;
+        _fiscalYear = DateTime.Today.Year;
+        _periodMonth = DateTime.Today.Month;
+        _book = "TAX";
+        _soaType = "AR";
+        _selectedCustomerId = null;
+        _search = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadCustomerOptionsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        _customers = await db.Customer.AsNoTracking()
+            .Where(x => x.Customer_ID != Guid.Empty)
+            .OrderBy(x => x.Customer_Code)
+            .ThenBy(x => x.COMPANY)
+            .Take(5000)
+            .ToListAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem SOA.", MudBlazor.Severity.Warning);
+            _rows.Clear();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var baseQuery = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.AccountCode != null
+                    && (IsAllSoa
+                        ? (x.AccountCode.StartsWith("131") || x.AccountCode.StartsWith("331"))
+                        : x.AccountCode.StartsWith(_soaAccountCode)));
+
+            if (_selectedCustomerId.HasValue && _selectedCustomerId.Value != Guid.Empty)
+                baseQuery = baseQuery.Where(x => x.CustomerId == _selectedCustomerId.Value);
+
+            if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+                baseQuery = baseQuery.Where(x => x.IsTaxBook == true);
+
+            if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+                baseQuery = baseQuery.Where(x => x.IsManagementBook == true);
+
+            EnsureDateRange();
+            if (IsPeriodMode)
+                UpdateDateRangeFromPeriod();
+            else
+                SyncPeriodFromDateRange();
+
+            var fromDate = (_fromDate ?? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1)).Date;
+            var toDate = (_toDate ?? DateTime.Today).Date;
+            if (fromDate > toDate)
+                (fromDate, toDate) = (toDate, fromDate);
+
+            var toExclusive = toDate.AddDays(1);
+
+            var openingItems = await baseQuery
+                .Where(x => x.PostingDate < fromDate)
+                .Select(x => new { x.AccountCode, x.Debit, x.Credit })
+                .ToListAsync();
+
+            var periodItems = await baseQuery
+                .Where(x => x.PostingDate >= fromDate && x.PostingDate < toExclusive)
+                .OrderBy(x => x.PostingDate)
+                .ThenBy(x => x.VoucherNo)
+                .ThenBy(x => x.VoucherDate)
+                .ThenBy(x => x.Id)
+                .Take(20000)
+                .ToListAsync();
+
+            _openingBalance = openingItems.Sum(x => SignedMovement(x.AccountCode, x.Debit, x.Credit));
+            _periodDebit = periodItems.Sum(x => x.Debit);
+            _periodCredit = periodItems.Sum(x => x.Credit);
+            _closingBalance = _openingBalance + periodItems.Sum(x => SignedMovement(x.AccountCode, x.Debit, x.Credit));
+
+            var running = _openingBalance;
+
+            _rows = periodItems.Select(x =>
+            {
+                var accountCode = x.AccountCode ?? string.Empty;
+                var movement = SignedMovement(accountCode, x.Debit, x.Credit);
+
+                running += movement;
+
+                return new SoaLineRow
+                {
+                    Id = x.Id,
+                    PostingDate = x.PostingDate,
+                    VoucherNo = x.VoucherNo ?? string.Empty,
+                    VoucherDate = x.VoucherDate,
+                    AccountCode = accountCode,
+                    SoaTypeLabel = GetSoaTypeLabel(accountCode),
+                    Description = x.Description ?? string.Empty,
+                    Debit = x.Debit,
+                    Credit = x.Credit,
+                    RunningBalance = running,
+                    Book = (x.IsTaxBook == true && x.IsManagementBook == true) ? "TAX/MGMT" :
+                           (x.IsTaxBook == true) ? "TAX" :
+                           (x.IsManagementBook == true) ? "MGMT" : string.Empty,
+                    SourceModule = x.SourceModule ?? string.Empty,
+                    CustomerId = x.CustomerId
+                };
+            }).ToList();
+
+            _gridKey++;
+            Snackbar.Add($"Loaded {_rows.Count:N0} SOA lines.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static decimal SignedMovement(string? accountCode, decimal debit, decimal credit)
+    {
+        var code = accountCode ?? string.Empty;
+        if (code.StartsWith("331", StringComparison.OrdinalIgnoreCase))
+            return credit - debit;
+
+        return debit - credit;
+    }
+
+    private static string GetSoaTypeLabel(string? accountCode)
+    {
+        var code = accountCode ?? string.Empty;
+        if (code.StartsWith("331", StringComparison.OrdinalIgnoreCase))
+            return "AP - Vendor 331";
+
+        if (code.StartsWith("131", StringComparison.OrdinalIgnoreCase))
+            return "AR - Customer 131";
+
+        return string.Empty;
+    }
+
+    private async Task OpenLedgerSummary()
+    {
+        var accountCode = IsAllSoa ? "131" : _soaAccountCode;
+        if (IsAllSoa)
+            Snackbar.Add("Đang mở sổ cái TK 131. Với dòng 331, bấm nút Sổ cái trên từng dòng.", MudBlazor.Severity.Info);
+
+        await OpenLedgerSummaryInternal(accountCode, _selectedCustomerId);
+    }
+
+    private async Task OpenLedgerSummaryFromRow(SoaLineRow row)
+    {
+        var accountCode = !string.IsNullOrWhiteSpace(row.AccountCode)
+            ? row.AccountCode
+            : _soaAccountCode;
+
+        var customerId = row.CustomerId.HasValue && row.CustomerId.Value != Guid.Empty
+            ? row.CustomerId
+            : _selectedCustomerId;
+
+        await OpenLedgerSummaryInternal(accountCode, customerId);
+    }
+
+    private async Task OpenLedgerSummaryInternal(string accountCode, Guid? customerId)
+    {
+        if (!OnTabRequest.HasDelegate)
+        {
+            Snackbar.Add("Không mở được tab 10.6.1 vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var book = string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase)
+            ? "TAX"
+            : _book.Trim().ToUpperInvariant();
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
+            builder.AddAttribute(1, "InitialAccountCode", accountCode);
+            builder.AddAttribute(2, "InitialFiscalYear", _fiscalYear);
+            builder.AddAttribute(3, "InitialPeriodMonth", _periodMonth);
+            builder.AddAttribute(4, "InitialBook", book);
+
+            if (customerId.HasValue && customerId.Value != Guid.Empty)
+                builder.AddAttribute(5, "InitialCustomerId", customerId);
+
+            builder.CloseComponent();
+        };
+
+        var customerText = customerId.HasValue ? CustomerToString(customerId) : "ALL";
+        await OnTabRequest.InvokeAsync((
+            $"GeneralLedgerSummary_{accountCode}_{customerId}_{_fiscalYear}_{_periodMonth}_{book}",
+            $"10.6.1 Sổ cái - TK {accountCode} - {customerText}",
+            content
+        ));
+    }
+
+    private void TogglePrintPreview()
+    {
+        _showPrintPreview = !_showPrintPreview;
+    }
+
+    private async Task PrintAsync()
+    {
+        if (!VisibleRows.Any())
+        {
+            Snackbar.Add("Không có dữ liệu để in SOA.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _showPrintPreview = true;
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(150);
+        await JS.InvokeVoidAsync("window.print");
+    }
+
+    private Task<IEnumerable<Guid?>> SearchCustomerAsync(string value)
+    {
+        IEnumerable<M_Customer> query = _customers;
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var k = value.Trim();
+            query = query.Where(x =>
+                (x.Customer_Code?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (x.COMPANY?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (x.EnglishName?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (x.BIZName?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+
+        return Task.FromResult(query.Select(x => (Guid?)x.Customer_ID).Take(50));
+    }
+
+    private string CustomerToString(Guid? id)
+    {
+        if (!id.HasValue || id.Value == Guid.Empty)
+            return string.Empty;
+
+        var c = _customers.FirstOrDefault(x => x.Customer_ID == id.Value);
+        if (c is null)
+            return id.Value.ToString();
+
+        var code = !string.IsNullOrWhiteSpace(c.Customer_Code)
+            ? c.Customer_Code.Trim()
+            : !string.IsNullOrWhiteSpace(c.MainCode)
+                ? c.MainCode.Trim()
+                : string.Empty;
+
+        var name = !string.IsNullOrWhiteSpace(c.COMPANY)
+            ? c.COMPANY.Trim()
+            : !string.IsNullOrWhiteSpace(c.EnglishName)
+                ? c.EnglishName.Trim()
+                : !string.IsNullOrWhiteSpace(c.BIZName)
+                    ? c.BIZName.Trim()
+                    : string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(name))
+            return $"{code} - {name}";
+
+        return !string.IsNullOrWhiteSpace(name) ? name : code;
+    }
+
+    private bool MatchesFilter(SoaLineRow x)
+    {
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var key = _search.Trim();
+
+        return x.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.AccountCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.SoaTypeLabel.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Description.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.SourceModule.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Book.Contains(key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class SoaLineRow
+    {
+        public Guid Id { get; set; }
+        public Guid? CustomerId { get; set; }
+        public DateTime PostingDate { get; set; }
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime VoucherDate { get; set; }
+        public string AccountCode { get; set; } = string.Empty;
+        public string SoaTypeLabel { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Debit { get; set; }
+        public decimal Credit { get; set; }
+        public decimal RunningBalance { get; set; }
+        public string Book { get; set; } = string.Empty;
+        public string SourceModule { get; set; } = string.Empty;
+    }
+}
+
+<style>
+    .soa-page {
+        background: #f4fdf7;
+    }
+
+        .soa-page .product-price-card {
+            border: 1px solid #d1fae5;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(22,101,52,.06);
+        }
+
+        .soa-page .filter-card {
+            background: linear-gradient(90deg, #ffffff, #ecfdf5);
+        }
+
+        .soa-page .kpi-card {
+            min-height: 96px;
+            padding: 14px;
+            border-radius: 16px;
+            border: 1px solid #d1fae5;
+            box-shadow: 0 8px 20px rgba(22,101,52,.05);
+        }
+
+        .soa-page .opening-card {
+            background: #f8fafc;
+            border-color: #cbd5e1 !important;
+        }
+
+        .soa-page .debit-card {
+            background: #eff6ff;
+            border-color: #bfdbfe !important;
+        }
+
+        .soa-page .credit-card {
+            background: #fff7ed;
+            border-color: #fed7aa !important;
+        }
+
+        .soa-page .closing-card {
+            background: #ecfdf5;
+        }
+
+        .soa-page .soa-header-card {
+            background: linear-gradient(90deg, #ffffff, #f8fafc);
+        }
+
+        .soa-page .report-title {
+            font-weight: 800;
+            letter-spacing: .2px;
+            color: #063970;
+        }
+
+        .soa-page .soa-grid {
+            font-size: .82rem;
+        }
+
+            .soa-page .soa-grid .mud-table-container {
+                overflow-x: auto;
+            }
+
+            .soa-page .soa-grid .mud-table-root .mud-table {
+                width: max-content !important;
+                min-width: 100%;
+            }
+
+            .soa-page .soa-grid .mud-table-cell,
+            .soa-page .soa-grid td,
+            .soa-page .soa-grid th {
+                padding: 4px 8px !important;
+                white-space: nowrap;
+            }
+
+        .soa-page .balance-cell {
+            color: #0369a1;
+        }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .text-end {
+        text-align: right !important;
+    }
+
+    .soa-print-area {
+        display: none;
+    }
+
+    .soa-print-preview {
+        background: #f8fafc;
+    }
+
+    .print-sheet {
+        background: #ffffff;
+        color: #111827;
+        padding: 18px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 11px;
+    }
+
+    .print-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        border-bottom: 2px solid #111827;
+        padding-bottom: 8px;
+        margin-bottom: 10px;
+    }
+
+    .print-company {
+        font-size: 15px;
+        font-weight: 800;
+    }
+
+    .print-title {
+        font-size: 20px;
+        font-weight: 900;
+        letter-spacing: .6px;
+        margin-top: 2px;
+    }
+
+    .print-meta {
+        text-align: right;
+        line-height: 1.6;
+    }
+
+    .print-info-grid {
+        display: grid;
+        grid-template-columns: 2fr 2fr 1fr 1fr 1fr 1fr;
+        gap: 6px 10px;
+        margin-bottom: 10px;
+        padding: 8px;
+        border: 1px solid #d1d5db;
+        background: #f9fafb;
+    }
+
+    .print-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 10px;
+    }
+
+        .print-table th,
+        .print-table td {
+            border: 1px solid #d1d5db;
+            padding: 4px 5px;
+            vertical-align: top;
+        }
+
+        .print-table th {
+            background: #e5e7eb;
+            font-weight: 800;
+            text-align: left;
+        }
+
+        .print-table .num {
+            text-align: right;
+            white-space: nowrap;
+        }
+
+    .print-footer {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 18px;
+        font-size: 10px;
+    }
+
+    @@media print {
+        @@page {
+            size: A4 landscape;
+            margin: 10mm;
+        }
+
+        body * {
+            visibility: hidden !important;
+        }
+
+        .soa-print-area,
+        .soa-print-area * {
+            visibility: visible !important;
+        }
+
+        .soa-print-area {
+            display: block !important;
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            background: #ffffff;
+        }
+
+        .soa-no-print {
+            display: none !important;
+        }
+
+        .print-sheet {
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            font-size: 10px;
+        }
+
+        .print-table {
+            page-break-inside: auto;
+        }
+
+            .print-table tr {
+                page-break-inside: avoid;
+                page-break-after: auto;
+            }
+    }
+</style>

@@ -1,6 +1,7 @@
 @page "/account-balance"
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Configuration
 @using Microsoft.JSInterop
 @using MudBlazor
 @using OfficeOpenXml
@@ -14,11 +15,12 @@
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<SharedResource> Localizer
 @inject IJSRuntime JS
+@inject IConfiguration Configuration
 
 <PageTitle>@Localizer["AccountBalance.Title"]</PageTitle>
 
 <div class="product-price-page">
-    <PpScreenHeader Title="@($"10.9 {Localizer["AccountBalance.Title"]}")" Subtitle="Period balances · calculate / refresh" />
+    <PpScreenHeader Title="@($"10.9.0 {Localizer["AccountBalance.Title"]}")" Subtitle="Period balances · chọn theo ngày hoặc theo kỳ" />
 
     <InputFile id="accountBalanceExcelInput"
                OnChange="ImportAccountBalanceExcelToStageAsync"
@@ -26,44 +28,64 @@
                style="display:none" />
 
     <MudPaper Class="product-price-card pa-3 mb-3" Elevation="0">
-        <MudGrid>
+        <MudGrid Spacing="2" AlignItems="AlignItems.Center">
             <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           Label="Chọn theo"
+                           Value="@_dateMode"
+                           ValueChanged="OnDateModeChangedAsync"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("DATE_RANGE")">Theo ngày</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("PERIOD")">Theo kỳ</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày"
+                               Date="_periodStartDate"
+                               DateChanged="OnPeriodStartDateChangedAsync"
+                               ReadOnly="@IsPeriodMode"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày"
+                               Date="_periodEndDate"
+                               DateChanged="OnPeriodEndDateChangedAsync"
+                               ReadOnly="@IsPeriodMode"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+
+            <MudItem xs="6" sm="1">
                 <MudNumericField T="int"
                                  Value="_fiscalYear"
                                  ValueChanged="OnFiscalYearChangedAsync"
                                  Label="@Localizer["AccountBalance.FiscalYear"]"
                                  Min="2000"
                                  Max="2100"
+                                 Disabled="@IsDateRangeMode"
                                  Variant="Variant.Outlined"
                                  Margin="Margin.Dense" />
             </MudItem>
-            <MudItem xs="12" sm="2">
+            <MudItem xs="6" sm="1">
                 <MudNumericField T="int"
                                  Value="_periodMonth"
                                  ValueChanged="OnPeriodMonthChangedAsync"
                                  Label="@Localizer["AccountBalance.PeriodMonth"]"
                                  Min="1"
                                  Max="12"
+                                 Disabled="@IsDateRangeMode"
                                  Variant="Variant.Outlined"
                                  Margin="Margin.Dense" />
             </MudItem>
-            <MudItem xs="12" sm="2">
-                <MudDatePicker Label="Từ ngày"
-                               Date="_periodStartDate"
-                               ReadOnly="true"
-                               Variant="Variant.Outlined"
-                               Margin="Margin.Dense"
-                               DateFormat="dd/MM/yyyy" />
-            </MudItem>
-            <MudItem xs="12" sm="2">
-                <MudDatePicker Label="Đến ngày"
-                               Date="_periodEndDate"
-                               ReadOnly="true"
-                               Variant="Variant.Outlined"
-                               Margin="Margin.Dense"
-                               DateFormat="dd/MM/yyyy" />
-            </MudItem>
-            <MudItem xs="12" sm="2">
+
+            <MudItem xs="12" sm="1">
                 <MudSelect T="string"
                            @bind-Value="_bookFilter"
                            Label="Book"
@@ -75,7 +97,19 @@
                     <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
                 </MudSelect>
             </MudItem>
-            <MudItem xs="12" sm="12" Class="d-flex align-center ga-2 flex-wrap">
+
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           @bind-Value="_balanceDuplicateMode"
+                           Label="Nếu trùng Balance"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("OVERWRITE")">Xóa cũ / ghi mới</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ADD")">Cộng dồn</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" Class="d-flex align-center ga-2 flex-wrap">
                 <MudButton Variant="Variant.Filled"
                            Color="Color.Primary"
                            Size="Size.Small"
@@ -130,10 +164,23 @@
                            StartIcon="@Icons.Material.Filled.FileDownload"
                            Disabled="_busy || !_items.Any()"
                            OnClick="ExportAccountBalanceToExcelAsync">
-                    Export Excel
+                    Export file import lại
+                </MudButton>
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Description"
+                           Disabled="_busy"
+                           OnClick="DownloadAccountBalanceTemplateAsync">
+                    Mẫu Balance
                 </MudButton>
             </MudItem>
         </MudGrid>
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+            @DateModeHelpText
+            <br />
+            @BalanceDuplicateModeHelpText
+        </MudText>
     </MudPaper>
 
 
@@ -183,8 +230,8 @@
         </MudGrid>
     </MudPaper>
 
-    <MudPaper Class="product-price-card pa-3 mb-3" Elevation="0">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2 flex-wrap">
+    <MudPaper Class="product-price-card pa-2 mb-2 collapsible-card" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="flex-wrap">
             <MudStack Spacing="0">
                 <MudText Typo="Typo.subtitle2" Class="fw-bold">Account Balance Import Stage</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
@@ -194,35 +241,51 @@
 
             <MudStack Row="true" Spacing="1" Class="flex-wrap">
                 <MudButton Variant="Variant.Outlined"
-                           Color="@(_showStageGrid ? Color.Error : Color.Success)"
+                           Color="@(_showStageSection ? Color.Error : Color.Success)"
                            Size="Size.Small"
-                           StartIcon="@(_showStageGrid ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
-                           OnClick="@(() => _showStageGrid = !_showStageGrid)">
-                    @(_showStageGrid ? "Hide Stage" : "Show Stage")
+                           StartIcon="@(_showStageSection ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                           OnClick="@(() => _showStageSection = !_showStageSection)">
+                    @(_showStageSection ? "Ẩn Stage" : "Hiện Stage")
                 </MudButton>
 
-                <MudButton Variant="Variant.Outlined"
-                           Color="Color.Info"
-                           Size="Size.Small"
-                           StartIcon="@Icons.Material.Filled.Refresh"
-                           Disabled="_busy"
-                           OnClick="LoadStageAsync">
-                    Load Stage
-                </MudButton>
+                @if (_showStageSection)
+                {
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Info"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Refresh"
+                               Disabled="_busy"
+                               OnClick="LoadStageAsync">
+                        Load Stage
+                    </MudButton>
 
-                <MudButton Variant="Variant.Filled"
-                           Color="Color.Success"
-                           Size="Size.Small"
-                           StartIcon="@Icons.Material.Filled.DoneAll"
-                           Disabled="_busy || !_selectedStageBatchId.HasValue"
-                           OnClick="ApplySelectedStageBatchToAccountBalanceAsync">
-                    Đưa batch đang chọn vào Balance
-                </MudButton>
+                    <MudSelect T="string"
+                               @bind-Value="_balanceDuplicateMode"
+                               Label="Nếu trùng"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Dense="true"
+                               Style="width:180px">
+                        <MudSelectItem T="string" Value="@("OVERWRITE")">Xóa cũ / ghi mới</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("ADD")">Cộng dồn</MudSelectItem>
+                    </MudSelect>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.DoneAll"
+                               Disabled="_busy || !_selectedStageBatchId.HasValue"
+                               OnClick="ApplySelectedStageBatchToAccountBalanceAsync">
+                        Đưa batch đang chọn vào Balance
+                    </MudButton>
+                }
             </MudStack>
         </MudStack>
 
-        @if (_showStageGrid)
+        @if (_showStageSection)
         {
+            <MudDivider Class="my-2" />
+
             <MudGrid Class="mb-2" AlignItems="AlignItems.Center">
                 <MudItem xs="12" sm="8" md="9">
                     <MudTextField @bind-Value="_stageSearch"
@@ -280,44 +343,61 @@
     </MudPaper>
 
 
-    <MudPaper Class="product-price-card pa-3 mb-3" Elevation="0">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2 flex-wrap">
+    <MudPaper Class="product-price-card pa-2 mb-2 collapsible-card" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="flex-wrap">
             <MudStack Spacing="0">
                 <MudText Typo="Typo.subtitle2" Class="fw-bold">Trial Balance Check</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
                     Kiểm tra cân đối: Assets = Liabilities + Equity.
                 </MudText>
             </MudStack>
+
             <MudStack Row="true" Spacing="1" Class="flex-wrap">
-                <MudSelect T="string" @bind-Value="_trialBookCode" Label="Book" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Style="width:130px">
-                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
-                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
-                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
-                </MudSelect>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.FactCheck" Disabled="_busy" OnClick="LoadTrialBalanceCheckAsync">
-                    Check
+                <MudButton Variant="Variant.Outlined"
+                           Color="@(_showTrialBalanceSection ? Color.Error : Color.Success)"
+                           Size="Size.Small"
+                           StartIcon="@(_showTrialBalanceSection ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                           OnClick="@(() => _showTrialBalanceSection = !_showTrialBalanceSection)">
+                    @(_showTrialBalanceSection ? "Ẩn Trial Check" : "Hiện Trial Check")
                 </MudButton>
+
+                @if (_showTrialBalanceSection)
+                {
+                    <MudSelect T="string" @bind-Value="_trialBookCode" Label="Book" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Style="width:130px">
+                        <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    </MudSelect>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.FactCheck" Disabled="_busy" OnClick="LoadTrialBalanceCheckAsync">
+                        Check
+                    </MudButton>
+                }
             </MudStack>
         </MudStack>
 
-        <MudGrid Spacing="2" Class="mb-2">
-            <MudItem xs="12" sm="3"><MudPaper Class="pa-2 text-center" Outlined="true" Elevation="0"><MudText Typo="Typo.caption">Assets</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_trialAssets.ToString("N0")</MudText></MudPaper></MudItem>
-            <MudItem xs="12" sm="3"><MudPaper Class="pa-2 text-center" Outlined="true" Elevation="0"><MudText Typo="Typo.caption">Liabilities</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_trialLiabilities.ToString("N0")</MudText></MudPaper></MudItem>
-            <MudItem xs="12" sm="3"><MudPaper Class="pa-2 text-center" Outlined="true" Elevation="0"><MudText Typo="Typo.caption">Equity</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_trialEquity.ToString("N0")</MudText></MudPaper></MudItem>
-            <MudItem xs="12" sm="3"><MudPaper Class="pa-2 text-center" Outlined="true" Elevation="0"><MudText Typo="Typo.caption">Difference</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold" Color="@(_trialDifference == 0 ? Color.Success : Color.Error)">@_trialDifference.ToString("N0")</MudText></MudPaper></MudItem>
-        </MudGrid>
-
-        @if (_trialBalanceItems.Count > 0)
+        @if (_showTrialBalanceSection)
         {
-            <MudDataGrid T="TrialBalanceCheckRow" Items="_trialBalanceItems" Dense="true" Striped="true" Bordered="true" Hover="true" Height="240px" FixedHeader="true">
-                <Columns>
-                    <PropertyColumn Property="x => x.BookCode" Title="Book" />
-                    <PropertyColumn Property="x => x.AccountCode" Title="Account" />
-                    <PropertyColumn Property="x => x.AccountType" Title="Type" />
-                    <PropertyColumn Property="x => x.ClosingBalance" Title="Closing" Format="#,##0.00" CellClass="text-end" HeaderClass="text-end" />
-                    <PropertyColumn Property="x => x.GroupName" Title="Group" />
-                </Columns>
-            </MudDataGrid>
+            <MudDivider Class="my-2" />
+
+            <MudGrid Spacing="2" Class="mb-2">
+                <MudItem xs="12" sm="3"><MudPaper Class="pa-2 text-center" Outlined="true" Elevation="0"><MudText Typo="Typo.caption">Assets</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_trialAssets.ToString("N0")</MudText></MudPaper></MudItem>
+                <MudItem xs="12" sm="3"><MudPaper Class="pa-2 text-center" Outlined="true" Elevation="0"><MudText Typo="Typo.caption">Liabilities</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_trialLiabilities.ToString("N0")</MudText></MudPaper></MudItem>
+                <MudItem xs="12" sm="3"><MudPaper Class="pa-2 text-center" Outlined="true" Elevation="0"><MudText Typo="Typo.caption">Equity</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold">@_trialEquity.ToString("N0")</MudText></MudPaper></MudItem>
+                <MudItem xs="12" sm="3"><MudPaper Class="pa-2 text-center" Outlined="true" Elevation="0"><MudText Typo="Typo.caption">Difference</MudText><MudText Typo="Typo.subtitle2" Class="fw-bold" Color="@(_trialDifference == 0 ? Color.Success : Color.Error)">@_trialDifference.ToString("N0")</MudText></MudPaper></MudItem>
+            </MudGrid>
+
+            @if (_trialBalanceItems.Count > 0)
+            {
+                <MudDataGrid T="TrialBalanceCheckRow" Items="_trialBalanceItems" Dense="true" Striped="true" Bordered="true" Hover="true" Height="240px" FixedHeader="true">
+                    <Columns>
+                        <PropertyColumn Property="x => x.BookCode" Title="Book" />
+                        <PropertyColumn Property="x => x.AccountCode" Title="Account" />
+                        <PropertyColumn Property="x => x.AccountType" Title="Type" />
+                        <PropertyColumn Property="x => x.ClosingBalance" Title="Closing" Format="#,##0.00" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.GroupName" Title="Group" />
+                    </Columns>
+                </MudDataGrid>
+            }
         }
     </MudPaper>
 
@@ -409,22 +489,51 @@
     </MudPaper>
 </div>
 
+<style>
+    .collapsible-card {
+        transition: box-shadow .18s ease, border-color .18s ease;
+    }
+
+        .collapsible-card .mud-button-root {
+            white-space: nowrap;
+        }
+</style>
+
+
 @code {
     private const string PermissionMenuName = "account_balance";
+    private static bool _epplusLicenseConfigured;
+
+    private void ConfigureEpplusLicense()
+    {
+        if (_epplusLicenseConfigured)
+            return;
+
+        var commercialLicenseKey = Configuration["EPPlus:LicenseKey"];
+        ExcelPackage.LicenseContext = string.IsNullOrWhiteSpace(commercialLicenseKey)
+            ? LicenseContext.NonCommercial
+            : LicenseContext.Commercial;
+
+        _epplusLicenseConfigured = true;
+    }
+
     /// <summary>Must match CK_account_mapping_statement_type in SQL.</summary>
     private const string BalanceSheetStatementType = "Balance Sheet";
 
     private bool _busy;
     private bool _importingBalance;
-    private bool _showStageGrid = true;
+    private bool _showStageSection;
+    private bool _showTrialBalanceSection;
     private Guid? _lastImportBatchId;
     private string _usr = string.Empty;
     private string _search = string.Empty;
     private string _bookFilter = "ALL";
-    private int _fiscalYear = DateTime.UtcNow.Year;
-    private int _periodMonth = DateTime.UtcNow.Month;
-    private DateTime? _periodStartDate;
-    private DateTime? _periodEndDate;
+    private string _balanceDuplicateMode = "OVERWRITE";
+    private string _dateMode = "DATE_RANGE";
+    private int _fiscalYear = DateTime.Today.Year;
+    private int _periodMonth = DateTime.Today.Month;
+    private DateTime? _periodStartDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _periodEndDate = DateTime.Today;
 
 
     private int _carryFromYear = DateTime.UtcNow.AddMonths(-1).Year;
@@ -445,6 +554,18 @@
     private List<Guid> _stageBatchIds = new();
     private Guid? _selectedStageBatchId;
     private string _stageSearch = string.Empty;
+
+    private bool IsPeriodMode => string.Equals(_dateMode, "PERIOD", StringComparison.OrdinalIgnoreCase);
+    private bool IsDateRangeMode => string.Equals(_dateMode, "DATE_RANGE", StringComparison.OrdinalIgnoreCase);
+    private string DateModeHelpText => IsDateRangeMode
+        ? "Đang lọc theo ngày: hệ thống lấy các kỳ account_balance nằm trong khoảng Từ ngày - Đến ngày. Calculate/Import/Kết chuyển vẫn theo kỳ kế toán."
+        : "Đang lọc theo kỳ: hệ thống dùng FiscalYear/FiscalPeriod và tự lấy ngày bắt đầu - kết thúc kỳ.";
+
+    private bool IsBalanceImportAddMode => string.Equals(_balanceDuplicateMode, "ADD", StringComparison.OrdinalIgnoreCase);
+
+    private string BalanceDuplicateModeHelpText => IsBalanceImportAddMode
+        ? "Nếu trùng TK/Kỳ/Book khi đưa Stage vào Balance: cộng dồn Opening/Debit/Credit/Closing vào số đang có."
+        : "Nếu trùng TK/Kỳ/Book khi đưa Stage vào Balance: xóa số cũ rồi ghi số mới từ file import.";
 
     private IEnumerable<M_account_balance> VisibleItems
     {
@@ -483,7 +604,7 @@
         public decimal CreditTotal { get; set; }
         public decimal ClosingBalance { get; set; }
         public string? AccountType { get; set; }
-        public Guid CompanyId { get; set; }
+        public Guid? CompanyId { get; set; }
         public string? BookCode { get; set; }
         public string? ImportNote { get; set; }
         public DateTime CreatedAt { get; set; }
@@ -533,9 +654,12 @@
         public decimal CreditTotal { get; set; }
         public decimal ClosingBalance { get; set; }
         public string? AccountType { get; set; }
-        public Guid CompanyId { get; set; }
+        public Guid? CompanyId { get; set; }
         public string BookCode { get; set; } = "TAX";
     }
+
+    private static string BuildBalanceStageKey(AccountBalanceStageRow item)
+        => $"{item.AccountCode?.Trim().ToUpperInvariant()}|{item.PeriodYear}|{item.PeriodMonth}|{NormalizeBookCode(item.BookCode)}";
 
     private async Task ImportAccountBalanceExcelToStageAsync(InputFileChangeEventArgs e)
     {
@@ -559,7 +683,7 @@
             var importBatchId = Guid.NewGuid();
             _lastImportBatchId = importBatchId;
 
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            ConfigureEpplusLicense();
 
             await using var uploadStream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
 
@@ -590,14 +714,11 @@
 
                 var periodYear = ReadExcelInt(ws, row, headerMap, "period_year", "periodyear", "year", "fiscalyear", "nam");
                 var periodMonth = ReadExcelInt(ws, row, headerMap, "period_month", "periodmonth", "month", "fiscalperiod", "ky", "thang");
-                var companyIdText = ReadExcelText(ws, row, headerMap, "company_id", "companyid");
+                // Không quan tâm CompanyId khi import Balance: bỏ qua cột company_id dù file có hoặc không có.
                 var bookCode = ReadExcelText(ws, row, headerMap, "book_code", "bookcode", "book") ?? "TAX";
 
                 if (periodYear <= 0 || periodMonth <= 0 || periodMonth > 12)
                     throw new InvalidOperationException($"Dòng {row}: period_year / period_month không hợp lệ.");
-
-                if (!Guid.TryParse(companyIdText, out var companyId))
-                    throw new InvalidOperationException($"Dòng {row}: company_id không hợp lệ hoặc đang trống.");
 
                 var item = new AccountBalanceStageRow
                 {
@@ -609,15 +730,33 @@
                     CreditTotal = ReadExcelDecimal(ws, row, headerMap, "credit_total", "credittotal", "phatsinhco", "ps_co", "co"),
                     ClosingBalance = ReadExcelDecimal(ws, row, headerMap, "closing_balance", "closingbalance", "ducuoi", "so_du_cuoi_ky"),
                     AccountType = ReadExcelText(ws, row, headerMap, "account_type", "accounttype", "loai_tk"),
-                    CompanyId = companyId,
+                    CompanyId = null,
                     BookCode = string.IsNullOrWhiteSpace(bookCode) ? "TAX" : bookCode.Trim().ToUpperInvariant()
                 };
 
-                var key = $"{item.AccountCode}|{item.PeriodYear}|{item.PeriodMonth}|{item.CompanyId}|{item.BookCode}";
+                var key = BuildBalanceStageKey(item);
 
                 if (!rowKeys.Add(key))
                 {
                     duplicateInFile++;
+                    var existing = rows.FirstOrDefault(x => string.Equals(BuildBalanceStageKey(x), key, StringComparison.OrdinalIgnoreCase));
+
+                    if (existing is not null && IsBalanceImportAddMode)
+                    {
+                        existing.OpeningBalance += item.OpeningBalance;
+                        existing.DebitTotal += item.DebitTotal;
+                        existing.CreditTotal += item.CreditTotal;
+                        existing.ClosingBalance += item.ClosingBalance;
+
+                        if (string.IsNullOrWhiteSpace(existing.AccountType))
+                            existing.AccountType = item.AccountType;
+                    }
+                    else if (existing is not null)
+                    {
+                        rows.Remove(existing);
+                        rows.Add(item);
+                    }
+
                     continue;
                 }
 
@@ -746,14 +885,28 @@
             {
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
+DECLARE @ignored_company_id UNIQUEIDENTIFIER = NULL;
+
+IF EXISTS
+(
+    SELECT 1
+    FROM sys.columns
+    WHERE object_id = OBJECT_ID(N'dbo.AccountBalanceImportStaging')
+      AND name = N'company_id'
+      AND is_nullable = 0
+)
+BEGIN
+    SET @ignored_company_id = '00000000-0000-0000-0000-000000000000';
+END;
+
 IF NOT EXISTS
 (
     SELECT 1
     FROM dbo.AccountBalanceImportStaging
-    WHERE account_code = @account_code
+    WHERE import_batch_id = @import_batch_id
+      AND account_code = @account_code
       AND period_year = @period_year
       AND period_month = @period_month
-      AND company_id = @company_id
       AND ISNULL(book_code, '') = ISNULL(@book_code, '')
 )
 BEGIN
@@ -767,7 +920,7 @@ BEGIN
     (
         NEWID(), @import_batch_id, @account_code, @period_year, @period_month,
         @opening_balance, @debit_total, @credit_total, @closing_balance,
-        @account_type, @company_id, @book_code, @import_note, SYSDATETIME()
+        @account_type, @ignored_company_id, @book_code, @import_note, SYSDATETIME()
     );
 
     SELECT 1;
@@ -787,7 +940,6 @@ END";
                 AddSqlParameter(cmd, "@credit_total", row.CreditTotal);
                 AddSqlParameter(cmd, "@closing_balance", row.ClosingBalance);
                 AddSqlParameter(cmd, "@account_type", (object?)row.AccountType ?? DBNull.Value);
-                AddSqlParameter(cmd, "@company_id", row.CompanyId);
                 AddSqlParameter(cmd, "@book_code", row.BookCode);
                 AddSqlParameter(cmd, "@import_note", $"Imported from Excel by {_usr} at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
 
@@ -832,8 +984,18 @@ END";
 
             await using var db = await DbFactory.CreateDbContextAsync();
 
-            var query = db.AccountBalances.AsNoTracking()
-                .Where(x => x.PeriodYear == _fiscalYear && x.PeriodMonth == _periodMonth);
+            var query = db.AccountBalances.AsNoTracking().AsQueryable();
+
+            if (IsPeriodMode)
+            {
+                query = query.Where(x => x.PeriodYear == _fiscalYear && x.PeriodMonth == _periodMonth);
+            }
+            else
+            {
+                var periodRange = GetSelectedPeriodRange();
+                query = query.Where(x => (x.PeriodYear * 100 + x.PeriodMonth) >= periodRange.StartPeriod
+                                      && (x.PeriodYear * 100 + x.PeriodMonth) <= periodRange.EndPeriod);
+            }
 
             if (!string.Equals(_trialBookCode, "ALL", StringComparison.OrdinalIgnoreCase))
                 query = query.Where(x => x.BookCode == _trialBookCode);
@@ -892,22 +1054,110 @@ END";
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
 
-        await LoadAccountingPeriodDatesAsync();
+        if (IsPeriodMode)
+            await LoadAccountingPeriodDatesAsync();
+        else
+        {
+            EnsureDateRange();
+            SyncPeriodFromSelectedDate();
+        }
+
         await LoadAsync();
     }
 
 
+    private async Task OnDateModeChangedAsync(string value)
+    {
+        _dateMode = string.IsNullOrWhiteSpace(value) ? "DATE_RANGE" : value;
+
+        if (IsPeriodMode)
+            await LoadAccountingPeriodDatesAsync();
+        else
+        {
+            EnsureDateRange();
+            SyncPeriodFromSelectedDate();
+        }
+
+        await LoadAsync();
+    }
+
+    private async Task OnPeriodStartDateChangedAsync(DateTime? value)
+    {
+        _periodStartDate = value?.Date;
+        EnsureDateRange();
+
+        if (IsDateRangeMode)
+        {
+            SyncPeriodFromSelectedDate();
+            await LoadAsync();
+        }
+    }
+
+    private async Task OnPeriodEndDateChangedAsync(DateTime? value)
+    {
+        _periodEndDate = value?.Date;
+        EnsureDateRange();
+
+        if (IsDateRangeMode)
+        {
+            SyncPeriodFromSelectedDate();
+            await LoadAsync();
+        }
+    }
+
+    private void EnsureDateRange()
+    {
+        if (!_periodStartDate.HasValue)
+            _periodStartDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+
+        if (!_periodEndDate.HasValue)
+            _periodEndDate = DateTime.Today;
+
+        _periodStartDate = _periodStartDate.Value.Date;
+        _periodEndDate = _periodEndDate.Value.Date;
+
+        if (_periodStartDate.Value > _periodEndDate.Value)
+        {
+            var temp = _periodStartDate;
+            _periodStartDate = _periodEndDate;
+            _periodEndDate = temp;
+        }
+    }
+
+    private void SyncPeriodFromSelectedDate()
+    {
+        if (!_periodStartDate.HasValue)
+            return;
+
+        _fiscalYear = _periodStartDate.Value.Year;
+        _periodMonth = _periodStartDate.Value.Month;
+    }
+
+    private (int StartPeriod, int EndPeriod) GetSelectedPeriodRange()
+    {
+        EnsureDateRange();
+        var from = _periodStartDate!.Value;
+        var to = _periodEndDate!.Value;
+        return (from.Year * 100 + from.Month, to.Year * 100 + to.Month);
+    }
+
     private async Task OnFiscalYearChangedAsync(int value)
     {
         _fiscalYear = value;
-        await LoadAccountingPeriodDatesAsync();
+
+        if (IsPeriodMode)
+            await LoadAccountingPeriodDatesAsync();
+
         await LoadAsync();
     }
 
     private async Task OnPeriodMonthChangedAsync(int value)
     {
         _periodMonth = value;
-        await LoadAccountingPeriodDatesAsync();
+
+        if (IsPeriodMode)
+            await LoadAccountingPeriodDatesAsync();
+
         await LoadAsync();
     }
 
@@ -984,8 +1234,19 @@ ORDER BY start_date;";
 
             var query = db.AccountBalances.AsNoTracking()
                 .Include(x => x.GlSnapshotLines)
-                .Where(x => x.PeriodYear == _fiscalYear
-                         && x.PeriodMonth == _periodMonth);
+                .AsQueryable();
+
+            if (IsPeriodMode)
+            {
+                query = query.Where(x => x.PeriodYear == _fiscalYear
+                                      && x.PeriodMonth == _periodMonth);
+            }
+            else
+            {
+                var periodRange = GetSelectedPeriodRange();
+                query = query.Where(x => (x.PeriodYear * 100 + x.PeriodMonth) >= periodRange.StartPeriod
+                                      && (x.PeriodYear * 100 + x.PeriodMonth) <= periodRange.EndPeriod);
+            }
 
             if (!string.Equals(_bookFilter, "ALL", StringComparison.OrdinalIgnoreCase))
             {
@@ -1062,13 +1323,22 @@ SELECT TOP (1000)
     import_note,
     created_at
 FROM dbo.AccountBalanceImportStaging
-WHERE (@period_year IS NULL OR period_year = @period_year)
-  AND (@period_month IS NULL OR period_month = @period_month)
+WHERE
+(
+    (@use_period = 1 AND period_year = @period_year AND period_month = @period_month)
+    OR
+    (@use_period = 0 AND (period_year * 100 + period_month) BETWEEN @start_period AND @end_period)
+)
 ORDER BY created_at DESC, book_code, account_code;";
                 cmd.CommandType = System.Data.CommandType.Text;
 
+                var periodRange = GetSelectedPeriodRange();
+
+                AddSqlParameter(cmd, "@use_period", IsPeriodMode ? 1 : 0);
                 AddSqlParameter(cmd, "@period_year", _fiscalYear);
                 AddSqlParameter(cmd, "@period_month", _periodMonth);
+                AddSqlParameter(cmd, "@start_period", periodRange.StartPeriod);
+                AddSqlParameter(cmd, "@end_period", periodRange.EndPeriod);
 
                 await using var reader = await cmd.ExecuteReaderAsync();
 
@@ -1086,7 +1356,7 @@ ORDER BY created_at DESC, book_code, account_code;";
                         CreditTotal = reader.IsDBNull(7) ? 0 : Convert.ToDecimal(reader.GetValue(7)),
                         ClosingBalance = reader.IsDBNull(8) ? 0 : Convert.ToDecimal(reader.GetValue(8)),
                         AccountType = reader.IsDBNull(9) ? null : Convert.ToString(reader.GetValue(9)),
-                        CompanyId = reader.IsDBNull(10) ? Guid.Empty : reader.GetGuid(10),
+                        CompanyId = reader.IsDBNull(10) ? null : reader.GetGuid(10),
                         BookCode = reader.IsDBNull(11) ? null : Convert.ToString(reader.GetValue(11)),
                         ImportNote = reader.IsDBNull(12) ? null : Convert.ToString(reader.GetValue(12)),
                         CreatedAt = reader.IsDBNull(13) ? DateTime.MinValue : Convert.ToDateTime(reader.GetValue(13))
@@ -1155,14 +1425,25 @@ ORDER BY created_at DESC, book_code, account_code;";
 
             try
             {
-                await using var cmd = conn.CreateCommand();
-                cmd.CommandText = "dbo.usp_ImportAccountBalanceStage_ToAccountBalance";
-                cmd.CommandType = System.Data.CommandType.StoredProcedure;
-                cmd.CommandTimeout = 180;
+                if (IsBalanceImportAddMode)
+                {
+                    await AddStageBatchToExistingAccountBalanceAsync(conn, _lastImportBatchId.Value);
+                }
+                else
+                {
+                    // Import Balance kiểu MISA: nếu kỳ/TK/Book đã tồn tại thì xóa số cũ rồi ghi batch mới.
+                    // Tránh lỗi unique index UQ_account_balance_account_period_book khi import lại file đã export.
+                    await ClearExistingAccountBalanceForStageBatchAsync(conn, _lastImportBatchId.Value);
 
-                AddSqlParameter(cmd, "@ImportBatchId", _lastImportBatchId.Value);
+                    await using var cmd = conn.CreateCommand();
+                    cmd.CommandText = "dbo.usp_ImportAccountBalanceStage_ToAccountBalance";
+                    cmd.CommandType = System.Data.CommandType.StoredProcedure;
+                    cmd.CommandTimeout = 180;
 
-                await cmd.ExecuteNonQueryAsync();
+                    AddSqlParameter(cmd, "@ImportBatchId", _lastImportBatchId.Value);
+
+                    await cmd.ExecuteNonQueryAsync();
+                }
             }
             finally
             {
@@ -1170,18 +1451,197 @@ ORDER BY created_at DESC, book_code, account_code;";
                     await conn.CloseAsync();
             }
 
-            CallSnack($"Đã đưa batch {_lastImportBatchId} từ stage vào account_balance.", MudBlazor.Severity.Success);
+            var modeText = IsBalanceImportAddMode ? "cộng dồn vào số đang có" : "xóa số cũ và ghi số mới";
+            CallSnack($"Đã đưa batch {_lastImportBatchId} từ stage vào account_balance theo chế độ {modeText}.", MudBlazor.Severity.Success);
 
             await LoadAsync();
         }
         catch (Exception ex)
         {
-            CallSnack(ex.Message, MudBlazor.Severity.Error);
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            CallSnack(root.Message, MudBlazor.Severity.Error);
         }
         finally
         {
             _busy = false;
         }
+    }
+
+    private async Task AddStageBatchToExistingAccountBalanceAsync(System.Data.Common.DbConnection conn, Guid importBatchId)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+;WITH StageAgg AS
+(
+    SELECT
+        account_code = LTRIM(RTRIM(account_code)),
+        period_year,
+        period_month,
+        book_code = UPPER(LTRIM(RTRIM(ISNULL(book_code, N'TAX')))),
+        opening_balance = SUM(ISNULL(opening_balance, 0)),
+        debit_total = SUM(ISNULL(debit_total, 0)),
+        credit_total = SUM(ISNULL(credit_total, 0)),
+        closing_balance = SUM(ISNULL(closing_balance, 0)),
+        account_type = MAX(NULLIF(LTRIM(RTRIM(ISNULL(account_type, N''))), N'')),
+        calculated_from = MIN(created_at),
+        calculated_to = MAX(created_at)
+    FROM dbo.AccountBalanceImportStaging
+    WHERE import_batch_id = @ImportBatchId
+    GROUP BY
+        LTRIM(RTRIM(account_code)),
+        period_year,
+        period_month,
+        UPPER(LTRIM(RTRIM(ISNULL(book_code, N'TAX'))))
+)
+UPDATE AB
+SET
+    AB.opening_balance = ISNULL(AB.opening_balance, 0) + S.opening_balance,
+    AB.debit_total = ISNULL(AB.debit_total, 0) + S.debit_total,
+    AB.credit_total = ISNULL(AB.credit_total, 0) + S.credit_total,
+    AB.closing_balance = ISNULL(AB.closing_balance, 0) + S.closing_balance,
+    AB.account_type = COALESCE(S.account_type, AB.account_type),
+    AB.calculated_from = COALESCE(AB.calculated_from, S.calculated_from),
+    AB.calculated_to = COALESCE(S.calculated_to, AB.calculated_to),
+    AB.last_calculated_at = SYSDATETIME(),
+    AB.updated_at = SYSDATETIME()
+FROM dbo.account_balance AS AB
+INNER JOIN StageAgg AS S
+    ON UPPER(LTRIM(RTRIM(ISNULL(AB.account_code, N'')))) = UPPER(LTRIM(RTRIM(ISNULL(S.account_code, N''))))
+   AND AB.period_year = S.period_year
+   AND AB.period_month = S.period_month
+   AND UPPER(LTRIM(RTRIM(ISNULL(AB.book_code, N'TAX')))) = S.book_code;
+
+;WITH StageAgg AS
+(
+    SELECT
+        account_code = LTRIM(RTRIM(account_code)),
+        period_year,
+        period_month,
+        book_code = UPPER(LTRIM(RTRIM(ISNULL(book_code, N'TAX')))),
+        opening_balance = SUM(ISNULL(opening_balance, 0)),
+        debit_total = SUM(ISNULL(debit_total, 0)),
+        credit_total = SUM(ISNULL(credit_total, 0)),
+        closing_balance = SUM(ISNULL(closing_balance, 0)),
+        account_type = MAX(NULLIF(LTRIM(RTRIM(ISNULL(account_type, N''))), N'')),
+        calculated_from = MIN(created_at),
+        calculated_to = MAX(created_at)
+    FROM dbo.AccountBalanceImportStaging
+    WHERE import_batch_id = @ImportBatchId
+    GROUP BY
+        LTRIM(RTRIM(account_code)),
+        period_year,
+        period_month,
+        UPPER(LTRIM(RTRIM(ISNULL(book_code, N'TAX'))))
+)
+INSERT INTO dbo.account_balance
+(
+    id,
+    account_code,
+    period_year,
+    period_month,
+    opening_balance,
+    debit_total,
+    credit_total,
+    closing_balance,
+    account_type,
+    company_id,
+    book_code,
+    calculated_from,
+    calculated_to,
+    last_calculated_at,
+    created_at,
+    updated_at
+)
+SELECT
+    NEWID(),
+    S.account_code,
+    S.period_year,
+    S.period_month,
+    S.opening_balance,
+    S.debit_total,
+    S.credit_total,
+    S.closing_balance,
+    S.account_type,
+    NULL,
+    S.book_code,
+    S.calculated_from,
+    S.calculated_to,
+    SYSDATETIME(),
+    SYSDATETIME(),
+    SYSDATETIME()
+FROM StageAgg AS S
+WHERE NOT EXISTS
+(
+    SELECT 1
+    FROM dbo.account_balance AS AB
+    WHERE UPPER(LTRIM(RTRIM(ISNULL(AB.account_code, N'')))) = UPPER(LTRIM(RTRIM(ISNULL(S.account_code, N''))))
+      AND AB.period_year = S.period_year
+      AND AB.period_month = S.period_month
+      AND UPPER(LTRIM(RTRIM(ISNULL(AB.book_code, N'TAX')))) = S.book_code
+);
+";
+        cmd.CommandType = System.Data.CommandType.Text;
+        cmd.CommandTimeout = 180;
+
+        AddSqlParameter(cmd, "@ImportBatchId", importBatchId);
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    private async Task ClearExistingAccountBalanceForStageBatchAsync(System.Data.Common.DbConnection conn, Guid importBatchId)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+CREATE TABLE #BalanceIds
+(
+    Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY
+);
+
+INSERT INTO #BalanceIds(Id)
+SELECT DISTINCT AB.Id
+FROM dbo.account_balance AS AB
+INNER JOIN dbo.AccountBalanceImportStaging AS S
+    ON UPPER(LTRIM(RTRIM(ISNULL(AB.account_code, N'')))) = UPPER(LTRIM(RTRIM(ISNULL(S.account_code, N''))))
+   AND AB.period_year = S.period_year
+   AND AB.period_month = S.period_month
+   AND UPPER(LTRIM(RTRIM(ISNULL(AB.book_code, N'TAX')))) = UPPER(LTRIM(RTRIM(ISNULL(S.book_code, N'TAX'))))
+WHERE S.import_batch_id = @ImportBatchId;
+
+-- Xóa bảng con đang FK về dbo.account_balance trước, nếu có.
+DECLARE @Sql NVARCHAR(MAX) = N'';
+
+SELECT @Sql = @Sql + N'
+DELETE C
+FROM ' + QUOTENAME(OBJECT_SCHEMA_NAME(fk.parent_object_id)) + N'.' + QUOTENAME(OBJECT_NAME(fk.parent_object_id)) + N' AS C
+INNER JOIN #BalanceIds AS B ON C.' + QUOTENAME(pc.name) + N' = B.Id;'
+FROM sys.foreign_key_columns fkc
+INNER JOIN sys.foreign_keys fk
+    ON fk.object_id = fkc.constraint_object_id
+INNER JOIN sys.columns pc
+    ON pc.object_id = fkc.parent_object_id
+   AND pc.column_id = fkc.parent_column_id
+INNER JOIN sys.columns rc
+    ON rc.object_id = fkc.referenced_object_id
+   AND rc.column_id = fkc.referenced_column_id
+WHERE fkc.referenced_object_id = OBJECT_ID(N'dbo.account_balance')
+  AND rc.name IN (N'Id', N'id');
+
+IF LEN(@Sql) > 0
+    EXEC sys.sp_executesql @Sql;
+
+DELETE AB
+FROM dbo.account_balance AS AB
+INNER JOIN #BalanceIds AS B ON AB.Id = B.Id;
+";
+        cmd.CommandType = System.Data.CommandType.Text;
+        cmd.CommandTimeout = 180;
+
+        AddSqlParameter(cmd, "@ImportBatchId", importBatchId);
+
+        await cmd.ExecuteNonQueryAsync();
     }
 
 
@@ -1196,39 +1656,20 @@ ORDER BY created_at DESC, book_code, account_code;";
         try
         {
             _busy = true;
-
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            ConfigureEpplusLicense();
 
             using var package = new ExcelPackage();
-            var ws = package.Workbook.Worksheets.Add("AccountBalance");
+            var ws = package.Workbook.Worksheets.Add("AccountBalanceImport");
+            var summary = package.Workbook.Worksheets.Add("Summary");
+            var guide = package.Workbook.Worksheets.Add("Guide");
 
-            var headers = new[]
-            {
-                "account_code",
-                "book_code",
-                "account_type",
-                "period_year",
-                "period_month",
-                "opening_balance",
-                "debit_total",
-                "credit_total",
-                "closing_balance",
-                "company_id",
-                "calculated_from",
-                "calculated_to",
-                "last_calculated_at"
-            };
-
-            for (var col = 0; col < headers.Length; col++)
-            {
-                ws.Cells[1, col + 1].Value = headers[col];
-                ws.Cells[1, col + 1].Style.Font.Bold = true;
-                ws.Cells[1, col + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
-                ws.Cells[1, col + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightGray);
-            }
+            var headers = GetAccountBalanceImportHeaders();
+            WriteAccountBalanceHeaders(ws, headers);
 
             var exportRows = VisibleItems
                 .OrderBy(x => NormalizeBookCode(x.BookCode))
+                .ThenBy(x => x.PeriodYear)
+                .ThenBy(x => x.PeriodMonth)
                 .ThenBy(x => x.AccountCode)
                 .ToList();
 
@@ -1238,46 +1679,31 @@ ORDER BY created_at DESC, book_code, account_code;";
                 var row = i + 2;
 
                 ws.Cells[row, 1].Value = r.AccountCode;
-                ws.Cells[row, 2].Value = NormalizeBookCode(r.BookCode);
-                ws.Cells[row, 3].Value = r.AccountType;
-                ws.Cells[row, 4].Value = r.PeriodYear;
-                ws.Cells[row, 5].Value = r.PeriodMonth;
-                ws.Cells[row, 6].Value = r.OpeningBalance;
-                ws.Cells[row, 7].Value = r.DebitTotal;
-                ws.Cells[row, 8].Value = r.CreditTotal;
-                ws.Cells[row, 9].Value = r.ClosingBalance;
-                ws.Cells[row, 10].Value = r.CompanyId?.ToString();
-                ws.Cells[row, 11].Value = r.CalculatedFrom;
-                ws.Cells[row, 12].Value = r.CalculatedTo;
-                ws.Cells[row, 13].Value = r.LastCalculatedAt;
+                ws.Cells[row, 2].Value = r.PeriodYear;
+                ws.Cells[row, 3].Value = r.PeriodMonth;
+                ws.Cells[row, 4].Value = r.OpeningBalance;
+                ws.Cells[row, 5].Value = r.DebitTotal;
+                ws.Cells[row, 6].Value = r.CreditTotal;
+                ws.Cells[row, 7].Value = r.ClosingBalance;
+                ws.Cells[row, 8].Value = string.IsNullOrWhiteSpace(r.AccountType) ? AccountTypeFromAccountCode(r.AccountCode) : r.AccountType;
+                ws.Cells[row, 9].Value = NormalizeBookCode(r.BookCode);
+                ws.Cells[row, 10].Value = r.CalculatedFrom;
+                ws.Cells[row, 11].Value = r.CalculatedTo;
+                ws.Cells[row, 12].Value = r.LastCalculatedAt;
+                ws.Cells[row, 13].Value = GetDateTimePropertyValue(r, "CreatedAt", "created_at");
+                ws.Cells[row, 14].Value = GetDateTimePropertyValue(r, "UpdatedAt", "updated_at");
             }
 
-            ws.Cells[ws.Dimension.Address].AutoFitColumns();
-
-            ws.Column(6).Style.Numberformat.Format = "#,##0.00";
-            ws.Column(7).Style.Numberformat.Format = "#,##0.00";
-            ws.Column(8).Style.Numberformat.Format = "#,##0.00";
-            ws.Column(9).Style.Numberformat.Format = "#,##0.00";
-            ws.Column(11).Style.Numberformat.Format = "dd/mm/yyyy hh:mm";
-            ws.Column(12).Style.Numberformat.Format = "dd/mm/yyyy hh:mm";
-            ws.Column(13).Style.Numberformat.Format = "dd/mm/yyyy hh:mm";
+            FormatAccountBalanceImportSheet(ws, exportRows.Count + 1);
+            BuildAccountBalanceExportSummary(summary, exportRows);
+            BuildAccountBalanceImportGuide(guide);
 
             var bytes = await package.GetAsByteArrayAsync();
             var base64 = Convert.ToBase64String(bytes);
-            var fileName = $"AccountBalance_{_fiscalYear}_{_periodMonth:00}_{DateTime.Now:yyyyMMddHHmmss}.xlsx";
+            var fileName = $"AccountBalance_ImportReady_{_bookFilter}_{DateTime.Now:yyyyMMddHHmmss}.xlsx";
+            await DownloadExcelByBase64Async(fileName, base64);
 
-            await JS.InvokeVoidAsync("eval", $@"
-                (function() {{
-                    const link = document.createElement('a');
-                    link.download = '{fileName}';
-                    link.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64}';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                }})();
-            ");
-
-            CallSnack($"Export Excel thành công: {exportRows.Count:N0} dòng.", MudBlazor.Severity.Success);
+            CallSnack($"Export file import lại thành công: {exportRows.Count:N0} dòng.", MudBlazor.Severity.Success);
         }
         catch (Exception ex)
         {
@@ -1289,7 +1715,194 @@ ORDER BY created_at DESC, book_code, account_code;";
         }
     }
 
+    private async Task DownloadAccountBalanceTemplateAsync()
+    {
+        try
+        {
+            _busy = true;
+            ConfigureEpplusLicense();
 
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("AccountBalanceImport");
+            var guide = package.Workbook.Worksheets.Add("Guide");
+
+            var headers = GetAccountBalanceImportHeaders();
+            WriteAccountBalanceHeaders(ws, headers);
+
+            ws.Cells[2, 1].Value = "111";
+            ws.Cells[2, 2].Value = _fiscalYear;
+            ws.Cells[2, 3].Value = _periodMonth;
+            ws.Cells[2, 4].Value = 1000000;
+            ws.Cells[2, 5].Value = 500000;
+            ws.Cells[2, 6].Value = 200000;
+            ws.Cells[2, 7].Value = 1300000;
+            ws.Cells[2, 8].Value = "ASSET";
+            ws.Cells[2, 9].Value = string.Equals(_bookFilter, "ALL", StringComparison.OrdinalIgnoreCase) ? "TAX" : NormalizeBookCode(_bookFilter);
+
+            ws.Cells[3, 1].Value = "331";
+            ws.Cells[3, 2].Value = _fiscalYear;
+            ws.Cells[3, 3].Value = _periodMonth;
+            ws.Cells[3, 4].Value = 300000;
+            ws.Cells[3, 5].Value = 100000;
+            ws.Cells[3, 6].Value = 50000;
+            ws.Cells[3, 7].Value = 350000;
+            ws.Cells[3, 8].Value = "LIABILITY";
+            ws.Cells[3, 9].Value = string.Equals(_bookFilter, "ALL", StringComparison.OrdinalIgnoreCase) ? "TAX" : NormalizeBookCode(_bookFilter);
+
+            FormatAccountBalanceImportSheet(ws, 3);
+            BuildAccountBalanceImportGuide(guide);
+
+            var bytes = await package.GetAsByteArrayAsync();
+            var base64 = Convert.ToBase64String(bytes);
+            var fileName = $"AccountBalance_Import_Template_{DateTime.Today:yyyyMMdd}.xlsx";
+            await DownloadExcelByBase64Async(fileName, base64);
+
+            CallSnack("Tải mẫu import Account Balance thành công.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnack("Không tạo được mẫu import: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string[] GetAccountBalanceImportHeaders() => new[]
+    {
+        "account_code",
+        "period_year",
+        "period_month",
+        "opening_balance",
+        "debit_total",
+        "credit_total",
+        "closing_balance",
+        "account_type",
+        "book_code",
+        "calculated_from",
+        "calculated_to",
+        "last_calculated_at",
+        "created_at",
+        "updated_at"
+    };
+
+    private static void WriteAccountBalanceHeaders(ExcelWorksheet ws, string[] headers)
+    {
+        for (var col = 0; col < headers.Length; col++)
+        {
+            ws.Cells[1, col + 1].Value = headers[col];
+            ws.Cells[1, col + 1].Style.Font.Bold = true;
+            ws.Cells[1, col + 1].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+            ws.Cells[1, col + 1].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.FromArgb(31, 78, 121));
+            ws.Cells[1, col + 1].Style.Font.Color.SetColor(System.Drawing.Color.White);
+        }
+    }
+
+    private static void FormatAccountBalanceImportSheet(ExcelWorksheet ws, int lastRow)
+    {
+        if (lastRow < 1)
+            lastRow = 1;
+
+        ws.View.FreezePanes(2, 1);
+        ws.Cells[1, 1, lastRow, GetAccountBalanceImportHeaders().Length].AutoFilter = true;
+        ws.Cells[ws.Dimension.Address].AutoFitColumns();
+
+        foreach (var col in new[] { 4, 5, 6, 7 })
+            ws.Column(col).Style.Numberformat.Format = "#,##0.00";
+
+        foreach (var col in new[] { 10, 11, 12, 13, 14 })
+            ws.Column(col).Style.Numberformat.Format = "dd/mm/yyyy hh:mm";
+    }
+
+    private static void BuildAccountBalanceExportSummary(ExcelWorksheet ws, List<M_account_balance> rows)
+    {
+        ws.Cells[1, 1].Value = "ACCOUNT BALANCE EXPORT SUMMARY";
+        ws.Cells[1, 1].Style.Font.Bold = true;
+        ws.Cells[1, 1].Style.Font.Size = 14;
+
+        ws.Cells[3, 1].Value = "Rows";
+        ws.Cells[3, 2].Value = rows.Count;
+        ws.Cells[4, 1].Value = "Opening total";
+        ws.Cells[4, 2].Value = rows.Sum(x => x.OpeningBalance);
+        ws.Cells[5, 1].Value = "Debit total";
+        ws.Cells[5, 2].Value = rows.Sum(x => x.DebitTotal);
+        ws.Cells[6, 1].Value = "Credit total";
+        ws.Cells[6, 2].Value = rows.Sum(x => x.CreditTotal);
+        ws.Cells[7, 1].Value = "Closing total";
+        ws.Cells[7, 2].Value = rows.Sum(x => x.ClosingBalance);
+        ws.Cells[8, 1].Value = "Exported at";
+        ws.Cells[8, 2].Value = DateTime.Now;
+        ws.Cells[4, 2, 7, 2].Style.Numberformat.Format = "#,##0.00";
+        ws.Cells[8, 2].Style.Numberformat.Format = "dd/mm/yyyy hh:mm";
+        ws.Cells[ws.Dimension.Address].AutoFitColumns();
+    }
+
+    private static DateTime? GetDateTimePropertyValue(object target, params string[] propertyNames)
+    {
+        if (target is null)
+            return null;
+
+        var type = target.GetType();
+        foreach (var name in propertyNames)
+        {
+            var prop = type.GetProperty(name);
+            if (prop is null)
+                continue;
+
+            var value = prop.GetValue(target);
+            if (value is DateTime dt)
+                return dt;
+
+            if (value is DateTimeOffset dto)
+                return dto.DateTime;
+
+            if (value is not null && DateTime.TryParse(value.ToString(), out var parsed))
+                return parsed;
+        }
+
+        return null;
+    }
+
+    private static void BuildAccountBalanceImportGuide(ExcelWorksheet ws)
+    {
+        var lines = new[]
+        {
+            "HƯỚNG DẪN IMPORT ACCOUNT BALANCE",
+            "1. Sheet import bắt buộc nằm đầu tiên và tên nên là AccountBalanceImport.",
+            "2. Cột bắt buộc: account_code, period_year, period_month, opening_balance, debit_total, credit_total, closing_balance, book_code.",
+            "3. Không cần nhập company_id. Hệ thống bỏ qua company_id khi import/export Balance.",
+            "4. Nếu một dòng đã tồn tại cùng account_code + period_year + period_month + book_code, hệ thống sẽ bỏ qua ở stage.",
+            "5. account_type hợp lệ nên là ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE hoặc OTHER.",
+            "6. Không sửa tên cột nếu muốn import lại nhanh như MISA."
+        };
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            ws.Cells[i + 1, 1].Value = lines[i];
+            if (i == 0)
+            {
+                ws.Cells[i + 1, 1].Style.Font.Bold = true;
+                ws.Cells[i + 1, 1].Style.Font.Size = 14;
+            }
+        }
+
+        ws.Cells[ws.Dimension.Address].AutoFitColumns();
+    }
+
+    private async Task DownloadExcelByBase64Async(string fileName, string base64)
+    {
+        await JS.InvokeVoidAsync("eval", $@"
+            (function() {{
+                const link = document.createElement('a');
+                link.download = '{fileName}';
+                link.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64}';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }})();
+        ");
+    }
 
     private async Task CarryForwardAccountBalanceAsync()
     {
@@ -1364,6 +1977,59 @@ ORDER BY created_at DESC, book_code, account_code;";
     }
 
 
+    private async Task ClearExistingAccountBalanceForRebuildAsync(System.Data.Common.DbConnection conn, string bookCode)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+CREATE TABLE #BalanceIds
+(
+    Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY
+);
+
+INSERT INTO #BalanceIds(Id)
+SELECT Id
+FROM dbo.account_balance
+WHERE period_year = @FiscalYear
+  AND period_month = @PeriodMonth
+  AND UPPER(ISNULL(book_code, N'TAX')) = UPPER(@BookCode);
+
+-- Xóa tất cả bảng con đang FK về dbo.account_balance.Id trước khi xóa account_balance.
+-- Cách này an toàn hơn vì không cần biết tên bảng con là account_balance_gl_line hay tên khác.
+DECLARE @Sql NVARCHAR(MAX) = N'';
+
+SELECT @Sql = @Sql + N'
+DELETE C
+FROM ' + QUOTENAME(OBJECT_SCHEMA_NAME(fk.parent_object_id)) + N'.' + QUOTENAME(OBJECT_NAME(fk.parent_object_id)) + N' AS C
+INNER JOIN #BalanceIds AS B ON C.' + QUOTENAME(pc.name) + N' = B.Id;'
+FROM sys.foreign_key_columns fkc
+INNER JOIN sys.foreign_keys fk
+    ON fk.object_id = fkc.constraint_object_id
+INNER JOIN sys.columns pc
+    ON pc.object_id = fkc.parent_object_id
+   AND pc.column_id = fkc.parent_column_id
+INNER JOIN sys.columns rc
+    ON rc.object_id = fkc.referenced_object_id
+   AND rc.column_id = fkc.referenced_column_id
+WHERE fkc.referenced_object_id = OBJECT_ID(N'dbo.account_balance')
+  AND rc.name IN (N'Id', N'id');
+
+IF LEN(@Sql) > 0
+    EXEC sys.sp_executesql @Sql;
+
+DELETE AB
+FROM dbo.account_balance AS AB
+INNER JOIN #BalanceIds AS B ON AB.Id = B.Id;
+";
+        cmd.CommandType = System.Data.CommandType.Text;
+        cmd.CommandTimeout = 180;
+
+        AddSqlParameter(cmd, "@FiscalYear", _fiscalYear);
+        AddSqlParameter(cmd, "@PeriodMonth", _periodMonth);
+        AddSqlParameter(cmd, "@BookCode", NormalizeBookCode(bookCode));
+
+        await cmd.ExecuteNonQueryAsync();
+    }
+
     private async Task CalculateAndUpsertAsync()
     {
         if (!await ssv.CheckPermission(_usr, "Add", PermissionMenuName))
@@ -1376,6 +2042,13 @@ ORDER BY created_at DESC, book_code, account_code;";
         {
             CallSnack(Localizer["AccountBalance.InvalidPeriodMonth"], MudBlazor.Severity.Warning);
             return;
+        }
+
+        if (IsDateRangeMode)
+        {
+            EnsureDateRange();
+            SyncPeriodFromSelectedDate();
+            CallSnack($"Account Balance tính theo kỳ; hệ thống sẽ calculate tháng {_periodMonth:00}/{_fiscalYear} theo ngày bắt đầu đã chọn.", MudBlazor.Severity.Info);
         }
 
         try
@@ -1397,6 +2070,11 @@ ORDER BY created_at DESC, book_code, account_code;";
 
                 foreach (var bookCode in booksToCalculate)
                 {
+                    // Fix duplicate key UQ_account_balance_account_period_book:
+                    // trước khi rebuild kỳ/book thì xóa balance cũ và các bảng con đang tham chiếu account_balance.
+                    // Sau đó mới chạy stored procedure tính lại từ GeneralLedgerEntries.
+                    await ClearExistingAccountBalanceForRebuildAsync(conn, bookCode);
+
                     await using var cmd = conn.CreateCommand();
                     cmd.CommandText = "dbo.usp_CalculateAccountBalance_FromLedger";
                     cmd.CommandType = System.Data.CommandType.StoredProcedure;

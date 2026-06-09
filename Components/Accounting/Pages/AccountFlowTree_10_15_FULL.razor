@@ -1,0 +1,1642 @@
+@page "/accounting/account-flow-tree"
+@page "/AccountFlowTree"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>10.15 Cây T chu trình logistics</PageTitle>
+
+<div class="product-price-page account-flow-page">
+    <PpScreenHeader Title="10.15 Cây T chu trình logistics"
+                    Subtitle="Theo dõi nối tiếp một job logistics: RFQ → Shipment/HBL → Debit/Credit → Voucher → Sổ cái → SOA/Aging/Profit">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">
+                    Load
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PlayCircle" OnClick="LoadSimulatorAsync" Disabled="_busy">
+                    Simulator
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.AccountBalance" OnClick="OpenAccountBalanceSnapshot" Disabled="_busy">
+                    10.9.1 Balance
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PictureAsPdf" OnClick="PrintAsync" Disabled="_busy">
+                    Print / PDF
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.RestartAlt" OnClick="ResetAsync" Disabled="_busy">
+                    Reset
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="flow-filter-card pa-3 mb-2" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="AlignItems.Center">
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           Label="Chọn theo"
+                           Value="@_dateMode"
+                           ValueChanged="OnDateModeChanged"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("PERIOD")">Theo kỳ</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("DATE_RANGE")">Từ ngày - đến ngày</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Year" Value="_fiscalYear" ValueChanged="OnYearChanged"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="2000" Max="2100"
+                                 Disabled="@IsDateRangeMode" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Month" Value="_periodMonth" ValueChanged="OnMonthChanged"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="12"
+                                 Disabled="@IsDateRangeMode" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày" @bind-Date="_fromDate"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy"
+                               Disabled="@IsPeriodMode" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày" @bind-Date="_toDate"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy"
+                               Disabled="@IsPeriodMode" />
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudSelect T="string" Label="Book" @bind-Value="_book"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudTextField @bind-Value="_accountFilter" Label="Account"
+                              Placeholder="131, 331..."
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Immediate="true" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_voucherFilter" Label="Voucher / Search"
+                              Placeholder="Số CT, mô tả, module..."
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Immediate="true" Clearable="true"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+        </MudGrid>
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+            @DateModeHelpText
+        </MudText>
+    </MudPaper>
+
+    <div id="accountFlowPrintArea">
+        <MudGrid Spacing="2" Class="mb-2">
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="flow-stat-card voucher-stat" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.ReceiptLong" Class="flow-stat-icon" />
+                    <MudText Typo="Typo.caption">Voucher</MudText>
+                    <MudText Typo="Typo.h6" Class="fw-bold">@_voucherNodes.Count.ToString("N0")</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Số chứng từ đang xem</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="flow-stat-card line-stat" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.FormatListNumbered" Class="flow-stat-icon" />
+                    <MudText Typo="Typo.caption">Dòng định khoản</MudText>
+                    <MudText Typo="Typo.h6" Class="fw-bold">@_ledgerRows.Count.ToString("N0")</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng Nợ = Tổng Có theo voucher</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="flow-stat-card debit-stat" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.SouthWest" Class="flow-stat-icon" />
+                    <MudText Typo="Typo.caption">Tổng Nợ</MudText>
+                    <MudText Typo="Typo.h6" Class="fw-bold">@TotalDebit.ToString("N0")</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Debit movement</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Class="flow-stat-card credit-stat" Elevation="0">
+                    <MudIcon Icon="@Icons.Material.Filled.NorthEast" Class="flow-stat-icon" />
+                    <MudText Typo="Typo.caption">Tổng Có</MudText>
+                    <MudText Typo="Typo.h6" Class="fw-bold">@TotalCredit.ToString("N0")</MudText>
+                    <MudText Typo="Typo.caption" Color="@(IsBalanced? Color.Success: Color.Error)">
+                        @(IsBalanced ? "Đang cân" : $"Lệch {(TotalDebit - TotalCredit):N0}")
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="flow-process-card pa-3 mb-2" Elevation="0">
+            <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Luồng xử lý từ voucher đến báo cáo cuối cùng</MudText>
+            <div class="flow-steps">
+                @foreach (var step in _steps)
+                {
+                    <div class="flow-step">
+                        <div class="step-number">@step.No</div>
+                        <div class="step-body">
+                            <div class="step-title">@step.Title</div>
+                            <div class="step-text">@step.Text</div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </MudPaper>
+
+        <MudPaper Class="logistics-cycle-card pa-3 mb-2" Elevation="0">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold">Chu trình logistics nối tiếp theo Job / HBL</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Mỗi bước bên dưới nhận dữ liệu từ bước trước và đẩy tiếp sang kế toán, công nợ, SOA, Aging và Profit.
+                    </MudText>
+                </MudStack>
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">
+                    @CycleProgressText
+                </MudChip>
+            </MudStack>
+
+            <div class="cycle-timeline">
+                @foreach (var stage in _logisticsCycle)
+                {
+                    var rows = GetCycleStageRows(stage.Code).ToList();
+                    <div class="cycle-stage @GetCycleStageClass(stage.Code)">
+                        <div class="cycle-stage-number">@stage.No</div>
+                        <div class="cycle-stage-main">
+                            <div class="cycle-stage-title">@stage.Title</div>
+                            <div class="cycle-stage-desc">@stage.Description</div>
+                            <div class="cycle-stage-meta">
+                                <span>@stage.AccountImpact</span>
+                                <b>@GetCycleStageAmount(stage.Code).ToString("N0")</b>
+                            </div>
+                            @if (rows.Count > 0)
+                            {
+                                <div class="cycle-stage-lines">
+                                    @foreach (var row in rows)
+                                    {
+                                        <div class="cycle-mini-line">
+                                            <span class="voucher-no-full" title="@row.VoucherNo">@row.VoucherNo</span>
+                                            <span>@row.AccountCode</span>
+                                            <b>@GetStageLineAmount(row).ToString("N0")</b>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="cycle-empty">Chưa có bút toán ở bước này trong dữ liệu đang lọc.</div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <div class="cycle-note">
+                <b>Cách đọc:</b> Job logistics bắt đầu từ báo giá/booking, sau đó phát sinh doanh thu khách hàng và chi phí vendor. Khi tạo voucher, các dòng Nợ/Có đi vào sổ cái. Từ sổ cái hệ thống tính công nợ 131/331, SOA, Aging, balance và lợi nhuận theo HBL/job.
+            </div>
+        </MudPaper>
+
+        @if (_usingSimulator)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info" Class="mb-2" Variant="Variant.Outlined">
+                Đang xem dữ liệu Simulator: mô phỏng nghiệp vụ logistics đầy đủ gồm xuất hóa đơn, ghi nhận chi phí hãng tàu, thu tiền khách hàng và trả vendor.
+            </MudAlert>
+        }
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" lg="5">
+                <MudPaper Class="flow-tree-card pa-3" Elevation="0">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2 flex-wrap">
+                        <MudText Typo="Typo.subtitle2" Class="fw-bold">Cây nghiệp vụ theo Voucher</MudText>
+                        <MudChip T="string" Size="Size.Small" Color="@(IsBalanced? Color.Success: Color.Error)" Variant="Variant.Filled">
+                            @(IsBalanced ? "Balanced" : "Unbalanced")
+                        </MudChip>
+                    </MudStack>
+
+                    @if (_voucherNodes.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            Chưa có dữ liệu. Bấm Load để lấy từ sổ cái hoặc Simulator để xem mẫu.
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudExpansionPanels MultiExpansion="true" Elevation="0" Class="flow-expansion">
+                            @foreach (var node in _voucherNodes)
+                            {
+                                <MudExpansionPanel Text="@node.Title" Expanded="@(_voucherNodes.Count <= 3)">
+                                    <div class="voucher-node">
+                                        <div class="voucher-summary">
+                                            <span><b>Ngày:</b> @node.PostingDate.ToString("dd/MM/yyyy")</span>
+                                            <span><b>Dòng:</b> @node.Lines.Count</span>
+                                            <span><b>Nợ:</b> @node.TotalDebit.ToString("N0")</span>
+                                            <span><b>Có:</b> @node.TotalCredit.ToString("N0")</span>
+                                        </div>
+
+                                        @foreach (var acc in node.AccountNodes)
+                                        {
+                                            <div class="account-branch">
+                                                <div class="branch-line"></div>
+                                                <div class="account-branch-body">
+                                                    <div class="account-branch-title">
+                                                        TK @acc.AccountCode - @GetAccountName(acc.AccountCode)
+                                                    </div>
+                                                    <div class="account-branch-desc">
+                                                        @GetReportDestination(acc.AccountCode)
+                                                    </div>
+                                                    @foreach (var line in acc.Lines)
+                                                    {
+                                                        <div class="line-leaf @(line.Debit > 0 ? "debit-leaf" : "credit-leaf")">
+                                                            <span class="leaf-type">@(line.Debit > 0 ? "Nợ" : "Có")</span>
+                                                            <span class="leaf-amount">@((line.Debit > 0 ? line.Debit : line.Credit).ToString("N0"))</span>
+                                                            <span class="leaf-text">@GetLineExplanation(line)</span>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                </MudExpansionPanel>
+                            }
+                        </MudExpansionPanels>
+                    }
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" lg="7">
+                <MudPaper Class="flow-t-card pa-3 mb-2" Elevation="0">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Sổ cái chữ T theo tài khoản</MudText>
+                    @if (_accountTNodes.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Chưa có tài khoản để hiển thị.</MudText>
+                    }
+                    else
+                    {
+                        <div class="t-account-grid">
+                            @foreach (var acc in _accountTNodes)
+                            {
+                                <div class="t-account-box">
+                                    <div class="t-account-title">
+                                        <span>TK @acc.AccountCode</span>
+                                        <small>@GetAccountName(acc.AccountCode)</small>
+                                    </div>
+                                    <div class="t-account-body">
+                                        <div class="t-side debit-side">
+                                            <div class="t-side-title">NỢ</div>
+                                            @foreach (var line in acc.DebitLines)
+                                            {
+                                                <div class="t-row">
+                                                    <span class="voucher-no-full" title="@line.VoucherNo">@line.VoucherNo</span>
+                                                    <b>@line.Debit.ToString("N0")</b>
+                                                </div>
+                                            }
+                                            <div class="t-total">@acc.TotalDebit.ToString("N0")</div>
+                                        </div>
+                                        <div class="t-side credit-side">
+                                            <div class="t-side-title">CÓ</div>
+                                            @foreach (var line in acc.CreditLines)
+                                            {
+                                                <div class="t-row">
+                                                    <span class="voucher-no-full" title="@line.VoucherNo">@line.VoucherNo</span>
+                                                    <b>@line.Credit.ToString("N0")</b>
+                                                </div>
+                                            }
+                                            <div class="t-total">@acc.TotalCredit.ToString("N0")</div>
+                                        </div>
+                                    </div>
+                                    <div class="t-ending">
+                                        <b>Tác động cuối:</b> @GetAccountEndingText(acc)
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </MudPaper>
+
+                <MudPaper Class="flow-summary-card pa-3" Elevation="0">
+                    <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Kết quả cuối cùng theo tài khoản</MudText>
+                    <MudTable Items="_accountTNodes" Dense="true" Hover="true" Striped="true" Bordered="true" Elevation="0">
+                        <HeaderContent>
+                            <MudTh>TK</MudTh>
+                            <MudTh>Tên tài khoản</MudTh>
+                            <MudTh Class="text-end">Nợ</MudTh>
+                            <MudTh Class="text-end">Có</MudTh>
+                            <MudTh>Ý nghĩa</MudTh>
+                            <MudTh>Báo cáo nhận số liệu</MudTh>
+                            <MudTh>Link</MudTh>
+                        </HeaderContent>
+                        <RowTemplate Context="acc">
+                            <MudTd DataLabel="TK">@acc.AccountCode</MudTd>
+                            <MudTd DataLabel="Tên tài khoản">@GetAccountName(acc.AccountCode)</MudTd>
+                            <MudTd DataLabel="Nợ" Class="text-end">@acc.TotalDebit.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Có" Class="text-end">@acc.TotalCredit.ToString("N0")</MudTd>
+                            <MudTd DataLabel="Ý nghĩa">@GetAccountEndingText(acc)</MudTd>
+                            <MudTd DataLabel="Báo cáo">@GetReportDestination(acc.AccountCode)</MudTd>
+                            <MudTd DataLabel="Link">
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.MenuBook"
+                                           OnClick="@(() => OpenLedgerSummary(acc.AccountCode))">
+                                    Sổ cái
+                                </MudButton>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="flow-detail-card pa-3 mt-2" Elevation="0">
+            <MudText Typo="Typo.subtitle2" Class="fw-bold mb-2">Chi tiết dòng định khoản từ sổ cái</MudText>
+            <MudTable Items="VisibleLedgerRows" Dense="true" Hover="true" Striped="true" Bordered="true" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Ngày</MudTh>
+                    <MudTh>Voucher</MudTh>
+                    <MudTh>TK</MudTh>
+                    <MudTh>Tên TK</MudTh>
+                    <MudTh Class="text-end">Nợ</MudTh>
+                    <MudTh Class="text-end">Có</MudTh>
+                    <MudTh>Giải thích dòng</MudTh>
+                    <MudTh>Chu trình</MudTh>
+                    <MudTh>Kết quả cuối</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="row">
+                    <MudTd DataLabel="Ngày">@row.PostingDate.ToString("dd/MM/yyyy")</MudTd>
+                    <MudTd DataLabel="Voucher" Class="voucher-no-cell"><span class="voucher-no-full" title="@row.VoucherNo">@row.VoucherNo</span></MudTd>
+                    <MudTd DataLabel="TK">@row.AccountCode</MudTd>
+                    <MudTd DataLabel="Tên TK">@GetAccountName(row.AccountCode)</MudTd>
+                    <MudTd DataLabel="Nợ" Class="text-end">@(row.Debit == 0 ? "" : row.Debit.ToString("N0"))</MudTd>
+                    <MudTd DataLabel="Có" Class="text-end">@(row.Credit == 0 ? "" : row.Credit.ToString("N0"))</MudTd>
+                    <MudTd DataLabel="Giải thích">@GetLineExplanation(row)</MudTd>
+                    <MudTd DataLabel="Chu trình">@GetCycleStageName(row)</MudTd>
+                    <MudTd DataLabel="Kết quả">@GetReportDestination(row.AccountCode)</MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudPaper>
+    </div>
+</div>
+
+@code {
+    private const string PermissionMenuName = "GeneralLedgerEntries";
+
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private bool _busy;
+    private bool _usingSimulator;
+    private string _usr = string.Empty;
+    private string _dateMode = "PERIOD";
+    private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _toDate = DateTime.Today;
+    private int? _fiscalYear = DateTime.Today.Year;
+    private int? _periodMonth = DateTime.Today.Month;
+    private string _book = "TAX";
+    private string _accountFilter = string.Empty;
+    private string _voucherFilter = string.Empty;
+
+    private List<LedgerFlowRow> _ledgerRows = new();
+    private List<VoucherNode> _voucherNodes = new();
+    private List<AccountTNode> _accountTNodes = new();
+    private Dictionary<string, string> _accountNames = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string> _voucherCycleStageByVoucherNo = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly List<FlowStep> _steps = new()
+    {
+        new FlowStep(1, "Sales / RFQ", "Nhận yêu cầu báo giá, tạo quotation và xác định khách hàng, route, dịch vụ, giá bán dự kiến."),
+        new FlowStep(2, "Shipment / HBL", "Khi job chạy thật, hệ thống gắn HBL/MBL/Booking, POL/POD, customer, vendor, sales, OPS/DOC."),
+        new FlowStep(3, "Debit / Credit", "Tạo debit cho khách hàng và credit/chi phí cho vendor. Đây là nguồn tạo phiếu kế toán."),
+        new FlowStep(4, "Voucher → GL", "Voucher sinh dòng Nợ/Có và post vào GeneralLedgerEntries. Tổng Nợ phải bằng Tổng Có."),
+        new FlowStep(5, "Báo cáo cuối", "Từ sổ cái ra 131/331, SOA, Aging, Account Balance, TT99 và Profit theo HBL/job.")
+    };
+
+    private readonly List<LogisticsCycleStage> _logisticsCycle = new()
+    {
+        new LogisticsCycleStage("RFQ", 1, "RFQ / Quotation", "Khởi tạo nhu cầu, giá bán, customer và route.", "Chưa ghi sổ kế toán"),
+        new LogisticsCycleStage("SHIPMENT", 2, "Shipment / HBL / Booking", "Job logistics được mở và gắn HBL, MBL, container, POL/POD.", "Là khóa nối dữ liệu kế toán"),
+        new LogisticsCycleStage("AR", 3, "Debit khách hàng", "Ghi nhận doanh thu và công nợ phải thu khách hàng.", "Nợ 131 / Có 511, 33311"),
+        new LogisticsCycleStage("AP", 4, "Credit vendor / chi phí", "Ghi nhận chi phí hãng tàu, trucking, kho bãi, customs và công nợ vendor.", "Nợ 632, 1331 / Có 331"),
+        new LogisticsCycleStage("GL", 5, "Voucher → Sổ cái", "Tất cả dòng Nợ/Có được post vào GeneralLedgerEntries.", "Nguồn chính của báo cáo"),
+        new LogisticsCycleStage("COLLECT", 6, "Thu tiền khách", "Khách hàng thanh toán công nợ.", "Nợ 1121 / Có 131"),
+        new LogisticsCycleStage("PAY", 7, "Trả vendor", "Thanh toán nhà cung cấp, hãng tàu, trucking.", "Nợ 331 / Có 1121"),
+        new LogisticsCycleStage("REPORT", 8, "SOA / Aging / Profit", "Kết thúc chu trình: công nợ còn lại, lợi nhuận job/HBL và báo cáo TT99.", "Account Balance + báo cáo cuối")
+    };
+
+    private IEnumerable<LedgerFlowRow> VisibleLedgerRows => string.IsNullOrWhiteSpace(_voucherFilter)
+        ? _ledgerRows
+        : _ledgerRows.Where(MatchesSearch);
+
+    private decimal TotalDebit => _ledgerRows.Sum(x => x.Debit);
+    private decimal TotalCredit => _ledgerRows.Sum(x => x.Credit);
+    private bool IsBalanced => Math.Abs(TotalDebit - TotalCredit) < 1;
+    private bool IsPeriodMode => string.Equals(_dateMode, "PERIOD", StringComparison.OrdinalIgnoreCase);
+    private bool IsDateRangeMode => string.Equals(_dateMode, "DATE_RANGE", StringComparison.OrdinalIgnoreCase);
+    private string DateModeHelpText => IsPeriodMode
+        ? "Đang lọc theo kỳ kế toán: hệ thống dùng FiscalYear/FiscalPeriod và tự lấy từ ngày - đến ngày theo tháng."
+        : "Đang lọc theo khoảng ngày: hệ thống dùng PostingDate từ ngày - đến ngày, không ép theo FiscalYear/FiscalPeriod.";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        UpdateDateRange();
+        await LoadAccountNamesAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnDateModeChanged(string value)
+    {
+        _dateMode = string.IsNullOrWhiteSpace(value) ? "PERIOD" : value;
+
+        if (IsPeriodMode)
+            UpdateDateRange();
+        else
+            EnsureDateRange();
+
+        await LoadAsync();
+    }
+
+    private async Task OnYearChanged(int? year)
+    {
+        _fiscalYear = year;
+        if (IsPeriodMode)
+            UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnMonthChanged(int? month)
+    {
+        _periodMonth = month;
+        if (IsPeriodMode)
+            UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private void UpdateDateRange()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            return;
+
+        if (_periodMonth.Value < 1 || _periodMonth.Value > 12)
+            return;
+
+        _fromDate = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+        _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
+    }
+
+    private void EnsureDateRange()
+    {
+        if (!_fromDate.HasValue)
+            _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+
+        if (!_toDate.HasValue)
+            _toDate = DateTime.Today;
+
+        if (_fromDate.Value.Date > _toDate.Value.Date)
+        {
+            var temp = _fromDate;
+            _fromDate = _toDate;
+            _toDate = temp;
+        }
+    }
+
+    private async Task ResetAsync()
+    {
+        _usingSimulator = false;
+        _dateMode = "PERIOD";
+        _fiscalYear = DateTime.Today.Year;
+        _periodMonth = DateTime.Today.Month;
+        _book = "TAX";
+        _accountFilter = string.Empty;
+        _voucherFilter = string.Empty;
+        UpdateDateRange();
+        await LoadAsync();
+    }
+
+    private async Task LoadAccountNamesAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var accounts = await db.DanhMucTaiKhoan.AsNoTracking().ToListAsync();
+
+            _accountNames = accounts
+                .Where(x => !string.IsNullOrWhiteSpace(x.Taikhoan))
+                .GroupBy(x => x.Taikhoan!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g =>
+                    {
+                        var item = g.First();
+                        return !string.IsNullOrWhiteSpace(item.Accountname)
+                            ? item.Accountname!
+                            : (!string.IsNullOrWhiteSpace(item.Tentaikhoan) ? item.Tentaikhoan! : g.Key);
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            _accountNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _usingSimulator = false;
+
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem sổ cái.", MudBlazor.Severity.Warning);
+            ClearData();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (IsPeriodMode)
+                UpdateDateRange();
+            else
+                EnsureDateRange();
+
+            var fromDate = _fromDate?.Date ?? new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+            var toExclusive = (_toDate?.Date ?? DateTime.Today).Date.AddDays(1);
+
+            var query = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.AccountCode != null);
+
+            // Theo kỳ: ưu tiên FiscalYear/FiscalPeriod. Không ép thêm PostingDate,
+            // vì chứng từ tháng 4 có thể được post/cập nhật sau nhưng vẫn thuộc FiscalPeriod 4.
+            if (IsPeriodMode)
+            {
+                if (_fiscalYear.HasValue)
+                    query = query.Where(x => x.FiscalYear == _fiscalYear.Value);
+
+                if (_periodMonth.HasValue)
+                    query = query.Where(x => x.FiscalPeriod == _periodMonth.Value);
+            }
+            else
+            {
+                query = query.Where(x => x.PostingDate >= fromDate && x.PostingDate < toExclusive);
+            }
+
+            if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.IsTaxBook == true || x.LedgerType == "TAX");
+
+            if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.IsManagementBook == true || x.LedgerType == "MGMT");
+
+            if (!string.IsNullOrWhiteSpace(_accountFilter))
+            {
+                var acc = _accountFilter.Trim();
+                query = query.Where(x => x.AccountCode != null && x.AccountCode.StartsWith(acc));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_voucherFilter))
+            {
+                var key = _voucherFilter.Trim();
+                query = query.Where(x =>
+                    (x.VoucherNo != null && x.VoucherNo.Contains(key)) ||
+                    (x.AccountCode != null && x.AccountCode.Contains(key)) ||
+                    (x.Description != null && x.Description.Contains(key)) ||
+                    (x.SourceModule != null && x.SourceModule.Contains(key)));
+            }
+
+            var data = await query
+                .OrderBy(x => x.PostingDate)
+                .ThenBy(x => x.VoucherNo)
+                .ThenBy(x => x.VoucherDate)
+                .ThenBy(x => x.Id)
+                .ToListAsync();
+
+            _ledgerRows = data.Select(x => new LedgerFlowRow
+            {
+                Id = x.Id,
+                VoucherNo = string.IsNullOrWhiteSpace(x.VoucherNo) ? "NO-VOUCHER" : x.VoucherNo!,
+                PostingDate = x.PostingDate,
+                VoucherDate = x.VoucherDate,
+                AccountCode = x.AccountCode ?? string.Empty,
+                Description = x.Description ?? string.Empty,
+                Debit = x.Debit,
+                Credit = x.Credit,
+                Book = (x.IsTaxBook == true && x.IsManagementBook == true) ? "TAX/MGMT" :
+                       (x.IsTaxBook == true) ? "TAX" :
+                       (x.IsManagementBook == true) ? "MGMT" :
+                       (!string.IsNullOrWhiteSpace(x.LedgerType) ? x.LedgerType! : ""),
+                SourceModule = x.SourceModule ?? string.Empty,
+                CustomerId = x.CustomerId
+            }).ToList();
+
+            BuildNodes();
+            Snackbar.Add($"Loaded {_ledgerRows.Count:N0} dòng sổ cái.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(GetRootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private Task LoadSimulatorAsync()
+    {
+        _usingSimulator = true;
+        _ledgerRows = new List<LedgerFlowRow>
+        {
+            NewSim("SIM-LOG-SALE-001", "LOG_SALE_AR", "Xuất hóa đơn dịch vụ logistics cho AMASIS", "131", 13200000, 0),
+            NewSim("SIM-LOG-SALE-001", "LOG_SALE_AR", "Ghi nhận doanh thu dịch vụ logistics", "5113", 0, 12000000),
+            NewSim("SIM-LOG-SALE-001", "LOG_SALE_AR", "Thuế GTGT đầu ra", "33311", 0, 1200000),
+
+            NewSim("SIM-CARRIER-COST-001", "CARRIER_COST_AP", "Ghi nhận chi phí hãng tàu COSCO", "632", 10000000, 0),
+            NewSim("SIM-CARRIER-COST-001", "CARRIER_COST_AP", "VAT đầu vào được khấu trừ", "1331", 526300, 0),
+            NewSim("SIM-CARRIER-COST-001", "CARRIER_COST_AP", "Công nợ phải trả COSCO", "331", 0, 10526300),
+
+            NewSim("SIM-RECEIVE-AR-001", "RECEIVE_AR_BANK", "Khách hàng thanh toán công nợ", "1121", 13200000, 0),
+            NewSim("SIM-RECEIVE-AR-001", "RECEIVE_AR_BANK", "Giảm công nợ phải thu khách hàng", "131", 0, 13200000),
+
+            NewSim("SIM-PAY-VENDOR-001", "PAY_SUPPLIER_BANK", "Thanh toán công nợ COSCO", "331", 10526300, 0),
+            NewSim("SIM-PAY-VENDOR-001", "PAY_SUPPLIER_BANK", "Giảm tiền ngân hàng", "1121", 0, 10526300)
+        };
+
+        BuildNodes();
+        Snackbar.Add("Đã load simulator cây T nghiệp vụ logistics.", MudBlazor.Severity.Info);
+        return Task.CompletedTask;
+    }
+
+    private LedgerFlowRow NewSim(string voucherNo, string module, string description, string accountCode, decimal debit, decimal credit)
+    {
+        return new LedgerFlowRow
+        {
+            Id = Guid.NewGuid(),
+            VoucherNo = voucherNo,
+            PostingDate = DateTime.Today,
+            VoucherDate = DateTime.Today,
+            AccountCode = accountCode,
+            Description = description,
+            Debit = debit,
+            Credit = credit,
+            Book = "TAX",
+            SourceModule = module
+        };
+    }
+
+    private void BuildVoucherCycleStageMap()
+    {
+        _voucherCycleStageByVoucherNo = _ledgerRows
+            .Where(x => !string.IsNullOrWhiteSpace(x.VoucherNo))
+            .GroupBy(x => x.VoucherNo, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                {
+                    var lines = g.ToList();
+
+                    var hasCashIn = lines.Any(IsCashDebit);
+                    var hasReceivableDecrease = lines.Any(IsReceivableCredit);
+                    if (hasCashIn && hasReceivableDecrease)
+                        return "COLLECT";
+
+                    var hasPayableDecrease = lines.Any(IsPayableDebit);
+                    var hasCashOut = lines.Any(IsCashCredit);
+                    if (hasPayableDecrease && hasCashOut)
+                        return "PAY";
+
+                    var hasReceivableIncrease = lines.Any(IsReceivableDebit);
+                    var hasRevenueOrOutputTax = lines.Any(x => Starts(x.AccountCode, "511") || Starts(x.AccountCode, "515") || Starts(x.AccountCode, "711") || Starts(x.AccountCode, "33311"));
+                    if (hasReceivableIncrease && hasRevenueOrOutputTax)
+                        return "AR";
+
+                    var hasCostOrInputTax = lines.Any(x => Starts(x.AccountCode, "632") || Starts(x.AccountCode, "641") || Starts(x.AccountCode, "642") || Starts(x.AccountCode, "1331"));
+                    var hasPayableIncrease = lines.Any(IsPayableCredit);
+                    if (hasCostOrInputTax && hasPayableIncrease)
+                        return "AP";
+
+                    return "GL";
+                },
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool Starts(string? value, string prefix)
+        => !string.IsNullOrWhiteSpace(value) && value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCashDebit(LedgerFlowRow row)
+        => (Starts(row.AccountCode, "111") || Starts(row.AccountCode, "112")) && row.Debit > 0;
+
+    private static bool IsCashCredit(LedgerFlowRow row)
+        => (Starts(row.AccountCode, "111") || Starts(row.AccountCode, "112")) && row.Credit > 0;
+
+    private static bool IsReceivableDebit(LedgerFlowRow row)
+        => Starts(row.AccountCode, "131") && row.Debit > 0;
+
+    private static bool IsReceivableCredit(LedgerFlowRow row)
+        => Starts(row.AccountCode, "131") && row.Credit > 0;
+
+    private static bool IsPayableDebit(LedgerFlowRow row)
+        => Starts(row.AccountCode, "331") && row.Debit > 0;
+
+    private static bool IsPayableCredit(LedgerFlowRow row)
+        => Starts(row.AccountCode, "331") && row.Credit > 0;
+
+    private void BuildNodes()
+    {
+        BuildVoucherCycleStageMap();
+
+        _voucherNodes = _ledgerRows
+            .GroupBy(x => x.VoucherNo)
+            .Select(g => new VoucherNode
+            {
+                VoucherNo = g.Key,
+                PostingDate = g.Min(x => x.PostingDate),
+                Lines = g.OrderBy(x => x.AccountCode).ThenByDescending(x => x.Debit).ToList(),
+                TotalDebit = g.Sum(x => x.Debit),
+                TotalCredit = g.Sum(x => x.Credit),
+                AccountNodes = g.GroupBy(x => x.AccountCode)
+                    .OrderBy(a => a.Key)
+                    .Select(a => new AccountBranchNode
+                    {
+                        AccountCode = a.Key,
+                        Lines = a.OrderByDescending(x => x.Debit).ThenBy(x => x.Credit).ToList()
+                    })
+                    .ToList()
+            })
+            .OrderBy(x => x.PostingDate)
+            .ThenBy(x => x.VoucherNo)
+            .ToList();
+
+        _accountTNodes = _ledgerRows
+            .GroupBy(x => x.AccountCode)
+            .OrderBy(g => g.Key)
+            .Select(g => new AccountTNode
+            {
+                AccountCode = g.Key,
+                DebitLines = g.Where(x => x.Debit > 0).OrderBy(x => x.PostingDate).ThenBy(x => x.VoucherNo).ToList(),
+                CreditLines = g.Where(x => x.Credit > 0).OrderBy(x => x.PostingDate).ThenBy(x => x.VoucherNo).ToList()
+            })
+            .ToList();
+    }
+
+    private bool MatchesSearch(LedgerFlowRow row)
+    {
+        if (string.IsNullOrWhiteSpace(_voucherFilter))
+            return true;
+
+        var key = _voucherFilter.Trim();
+        return row.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || row.AccountCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || row.Description.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || row.SourceModule.Contains(key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private IEnumerable<LedgerFlowRow> GetCycleStageRows(string stageCode)
+    {
+        if (string.Equals(stageCode, "REPORT", StringComparison.OrdinalIgnoreCase))
+            return _ledgerRows;
+
+        if (string.Equals(stageCode, "GL", StringComparison.OrdinalIgnoreCase))
+            return _ledgerRows.Where(x => !string.IsNullOrWhiteSpace(x.VoucherNo));
+
+        return _ledgerRows.Where(x => string.Equals(ClassifyCycleStage(x), stageCode, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private decimal GetCycleStageAmount(string stageCode)
+    {
+        var rows = GetCycleStageRows(stageCode);
+
+        if (string.Equals(stageCode, "REPORT", StringComparison.OrdinalIgnoreCase))
+            return _accountTNodes.Sum(x => Math.Abs(x.TotalDebit - x.TotalCredit));
+
+        return rows.Sum(GetStageLineAmount);
+    }
+
+    private decimal GetStageLineAmount(LedgerFlowRow row)
+    {
+        return row.Debit > 0 ? row.Debit : row.Credit;
+    }
+
+    private string CycleProgressText
+    {
+        get
+        {
+            var active = _logisticsCycle.Count(x => GetCycleStageRows(x.Code).Any());
+            return $"{active}/{_logisticsCycle.Count} bước có dữ liệu";
+        }
+    }
+
+    private string GetCycleStageClass(string stageCode)
+    {
+        return GetCycleStageRows(stageCode).Any() ? "cycle-stage-active" : "cycle-stage-empty";
+    }
+
+    private string GetCycleStageName(LedgerFlowRow row)
+    {
+        var code = ClassifyCycleStage(row);
+        return _logisticsCycle.FirstOrDefault(x => string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase))?.Title ?? "Voucher / GL";
+    }
+
+    private string ClassifyCycleStage(LedgerFlowRow row)
+    {
+        var source = (row.SourceModule ?? string.Empty).ToUpperInvariant();
+        var voucher = (row.VoucherNo ?? string.Empty).ToUpperInvariant();
+        var desc = (row.Description ?? string.Empty).ToUpperInvariant();
+        var text = source + " " + voucher + " " + desc;
+        var acc = row.AccountCode ?? string.Empty;
+
+        if (text.Contains("RFQ") || text.Contains("QUOT"))
+            return "RFQ";
+
+        if (text.Contains("SHIPMENT") || text.Contains("BOOKING") || text.Contains("HBL") || text.Contains("MBL"))
+            return "SHIPMENT";
+
+        if (text.Contains("RECEIVE") || text.Contains("RECEIPT") || text.Contains("THU TIEN") || text.Contains("THU TIỀN"))
+            return "COLLECT";
+
+        if (text.Contains("PAY_SUPPLIER") || text.Contains("PAYMENT") || text.Contains("THANH TOAN") || text.Contains("THANH TOÁN") || text.Contains("TRA VENDOR") || text.Contains("TRẢ VENDOR"))
+            return "PAY";
+
+        // Account-based rule: Có 131 là giảm phải thu, thường là thu tiền/cấn trừ khách hàng.
+        // Nếu không bắt rule này thì Có 131 bị gom về Debit khách hàng do chỉ nhìn acc.StartsWith("131").
+        if (IsReceivableCredit(row))
+            return "COLLECT";
+
+        // Nợ 331 là giảm phải trả, thường là trả vendor.
+        if (IsPayableDebit(row))
+            return "PAY";
+
+        // Với dòng tiền 111/112, xác định theo cặp tài khoản trong cùng voucher.
+        if ((Starts(acc, "111") || Starts(acc, "112"))
+            && _voucherCycleStageByVoucherNo.TryGetValue(row.VoucherNo, out var voucherStage)
+            && (voucherStage == "COLLECT" || voucherStage == "PAY"))
+        {
+            return voucherStage;
+        }
+
+        if (source.Contains("LOG_SALE") || source.Contains("SALE_AR") || IsReceivableDebit(row) || acc.StartsWith("511") || acc.StartsWith("33311"))
+            return "AR";
+
+        if (source.Contains("CARRIER") || source.Contains("TRUCKING") || source.Contains("COST_AP") || source.Contains("PURCHASE") || IsPayableCredit(row) || acc.StartsWith("632") || acc.StartsWith("1331"))
+            return "AP";
+
+        return "GL";
+    }
+
+    private string GetAccountName(string accountCode)
+    {
+        if (_accountNames.TryGetValue(accountCode, out var name))
+            return name;
+
+        return accountCode switch
+        {
+            "1111" => "Tiền mặt",
+            "1121" => "Tiền gửi ngân hàng",
+            "131" => "Phải thu khách hàng",
+            "1331" => "Thuế GTGT đầu vào",
+            "331" => "Phải trả người bán",
+            "33311" => "Thuế GTGT đầu ra",
+            "511" => "Doanh thu",
+            "5113" => "Doanh thu dịch vụ",
+            "632" => "Giá vốn / chi phí trực tiếp",
+            "642" => "Chi phí quản lý",
+            _ => "Tài khoản " + accountCode
+        };
+    }
+
+    private string GetLineExplanation(LedgerFlowRow row)
+    {
+        var side = row.Debit > 0 ? "Nợ" : "Có";
+        var acc = row.AccountCode;
+
+        return acc switch
+        {
+            "1111" when row.Debit > 0 => "Nợ 1111: tiền mặt tăng.",
+            "1111" => "Có 1111: tiền mặt giảm do chi tiền.",
+            "1121" when row.Debit > 0 => "Nợ 1121: tiền ngân hàng tăng.",
+            "1121" => "Có 1121: tiền ngân hàng giảm do thanh toán.",
+            "131" when row.Debit > 0 => "Nợ 131: tăng công nợ phải thu khách hàng.",
+            "131" => "Có 131: giảm công nợ phải thu vì khách đã trả hoặc cấn trừ.",
+            "331" when row.Debit > 0 => "Nợ 331: giảm công nợ phải trả vendor/nhà cung cấp.",
+            "331" => "Có 331: tăng công nợ phải trả vendor/nhà cung cấp.",
+            "1331" when row.Debit > 0 => "Nợ 1331: ghi nhận VAT đầu vào được khấu trừ.",
+            "33311" => "Có 33311: ghi nhận VAT đầu ra phải nộp.",
+            "511" or "5113" => "Có doanh thu: ghi nhận doanh thu bán hàng/dịch vụ.",
+            "632" when row.Debit > 0 => "Nợ 632: ghi nhận giá vốn hoặc chi phí trực tiếp theo shipment/job.",
+            "642" when row.Debit > 0 => "Nợ 642: ghi nhận chi phí quản lý doanh nghiệp.",
+            _ => $"{side} {acc}: phát sinh theo bản chất tài khoản {GetAccountName(acc)}."
+        };
+    }
+
+    private string GetReportDestination(string accountCode)
+    {
+        if (accountCode.StartsWith("131"))
+            return "SOA/Aging phải thu 10.14 + Bảng cân đối TT99";
+        if (accountCode.StartsWith("331"))
+            return "SOA/Aging phải trả 10.14 + Bảng cân đối TT99";
+        if (accountCode.StartsWith("1331"))
+            return "Báo cáo VAT đầu vào 10.12.1 + Bảng cân đối";
+        if (accountCode.StartsWith("33311"))
+            return "Báo cáo VAT đầu ra 10.12.2 + Bảng cân đối";
+        if (accountCode.StartsWith("111") || accountCode.StartsWith("112"))
+            return "Báo cáo quỹ/ngân hàng + Bảng cân đối";
+        if (accountCode.StartsWith("511") || accountCode.StartsWith("711"))
+            return "Báo cáo kết quả kinh doanh / Profit";
+        if (accountCode.StartsWith("632") || accountCode.StartsWith("641") || accountCode.StartsWith("642") || accountCode.StartsWith("635") || accountCode.StartsWith("821"))
+            return "Báo cáo kết quả kinh doanh / Profit";
+        if (accountCode.StartsWith("1") || accountCode.StartsWith("2") || accountCode.StartsWith("3") || accountCode.StartsWith("4"))
+            return "Bảng cân đối kế toán TT99";
+
+        return "Sổ cái tổng hợp và báo cáo liên quan";
+    }
+
+    private string GetAccountEndingText(AccountTNode acc)
+    {
+        var net = acc.TotalDebit - acc.TotalCredit;
+        var code = acc.AccountCode;
+
+        if (code.StartsWith("331") || code.StartsWith("333") || code.StartsWith("334") || code.StartsWith("338") || code.StartsWith("341") || code.StartsWith("411") || code.StartsWith("511") || code.StartsWith("711"))
+        {
+            if (net < 0) return $"Dư Có / tăng bên Có {Math.Abs(net):N0}.";
+            if (net > 0) return $"Giảm bên Có hoặc phát sinh Nợ {net:N0}.";
+            return "Không còn số dư/tác động ròng = 0.";
+        }
+
+        if (net > 0) return $"Dư Nợ / tăng bên Nợ {net:N0}.";
+        if (net < 0) return $"Giảm bên Nợ hoặc phát sinh Có {Math.Abs(net):N0}.";
+        return "Không còn số dư/tác động ròng = 0.";
+    }
+
+    private string ShortVoucher(string voucherNo)
+    {
+        // Giữ lại hàm này để không lỗi nếu còn chỗ khác gọi,
+        // nhưng không còn cắt ngắn Voucher No nữa.
+        if (string.IsNullOrWhiteSpace(voucherNo))
+            return "—";
+
+        return voucherNo;
+    }
+
+    private async Task OpenLedgerSummary(string accountCode)
+    {
+        if (!OnTabRequest.HasDelegate)
+        {
+            Snackbar.Add("Không mở được tab 10.6.1 vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var book = string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase) ? "TAX" : _book;
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
+            builder.AddAttribute(1, "InitialAccountCode", accountCode);
+            builder.AddAttribute(2, "InitialFiscalYear", _fiscalYear);
+            builder.AddAttribute(3, "InitialPeriodMonth", _periodMonth);
+            builder.AddAttribute(4, "InitialBook", book);
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync(($"GeneralLedgerSummary_{accountCode}_{_fiscalYear}_{_periodMonth}_{book}",
+            $"10.6.1 Sổ cái - TK {accountCode}", content));
+    }
+
+    private async Task OpenAccountBalanceSnapshot()
+    {
+        if (!OnTabRequest.HasDelegate)
+        {
+            Snackbar.Add("Không mở được tab 10.9.1 vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.AccountBalanceSnapshot_10_9_1>(0);
+            builder.AddAttribute(1, nameof(Components.Accounting.Pages.AccountBalanceSnapshot_10_9_1.OnTabRequest), OnTabRequest);
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync(("AccountBalanceSnapshot", "10.9.1 Account Balance Snapshot", content));
+    }
+
+    private async Task PrintAsync()
+    {
+        await JS.InvokeVoidAsync("eval", "window.print();");
+    }
+
+    private void ClearData()
+    {
+        _ledgerRows.Clear();
+        _voucherNodes.Clear();
+        _accountTNodes.Clear();
+        _voucherCycleStageByVoucherNo.Clear();
+    }
+
+    private static string GetRootMessage(Exception ex)
+    {
+        var root = ex;
+        while (root.InnerException is not null)
+            root = root.InnerException;
+        return root.Message;
+    }
+
+    private sealed record FlowStep(int No, string Title, string Text);
+    private sealed record LogisticsCycleStage(string Code, int No, string Title, string Description, string AccountImpact);
+
+    private sealed class LedgerFlowRow
+    {
+        public Guid Id { get; set; }
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime PostingDate { get; set; }
+        public DateTime? VoucherDate { get; set; }
+        public string AccountCode { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal Debit { get; set; }
+        public decimal Credit { get; set; }
+        public string Book { get; set; } = string.Empty;
+        public string SourceModule { get; set; } = string.Empty;
+        public Guid? CustomerId { get; set; }
+    }
+
+    private sealed class VoucherNode
+    {
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime PostingDate { get; set; }
+        public List<LedgerFlowRow> Lines { get; set; } = new();
+        public List<AccountBranchNode> AccountNodes { get; set; } = new();
+        public decimal TotalDebit { get; set; }
+        public decimal TotalCredit { get; set; }
+        public string Title => $"Voucher {VoucherNo} | Nợ {TotalDebit:N0} / Có {TotalCredit:N0}";
+    }
+
+    private sealed class AccountBranchNode
+    {
+        public string AccountCode { get; set; } = string.Empty;
+        public List<LedgerFlowRow> Lines { get; set; } = new();
+    }
+
+    private sealed class AccountTNode
+    {
+        public string AccountCode { get; set; } = string.Empty;
+        public List<LedgerFlowRow> DebitLines { get; set; } = new();
+        public List<LedgerFlowRow> CreditLines { get; set; } = new();
+        public decimal TotalDebit => DebitLines.Sum(x => x.Debit);
+        public decimal TotalCredit => CreditLines.Sum(x => x.Credit);
+    }
+}
+
+<style>
+    .account-flow-page {
+        background: #f8fafc;
+    }
+
+    .flow-filter-card,
+    .flow-process-card,
+    .flow-tree-card,
+    .flow-t-card,
+    .flow-summary-card,
+    .flow-detail-card {
+        border: 1px solid #dbeafe;
+        border-radius: 16px;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, .05);
+        background: #ffffff;
+    }
+
+    .flow-stat-card {
+        position: relative;
+        min-height: 94px;
+        border-radius: 16px;
+        padding: 14px;
+        border: 1px solid #dbeafe;
+        overflow: hidden;
+    }
+
+    .flow-stat-icon {
+        position: absolute;
+        right: 14px;
+        top: 12px;
+        opacity: .16;
+        font-size: 42px;
+    }
+
+    .voucher-stat {
+        background: #eff6ff;
+    }
+
+    .line-stat {
+        background: #f5f3ff;
+        border-color: #ddd6fe;
+    }
+
+    .debit-stat {
+        background: #ecfdf5;
+        border-color: #bbf7d0;
+    }
+
+    .credit-stat {
+        background: #fff7ed;
+        border-color: #fed7aa;
+    }
+
+    .flow-steps {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(160px, 1fr));
+        gap: 10px;
+    }
+
+    .flow-step {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 12px;
+        border-radius: 14px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+    }
+
+    .step-number {
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #2563eb;
+        color: white;
+        font-weight: 800;
+        flex: 0 0 auto;
+    }
+
+    .step-title {
+        font-weight: 800;
+        color: #0f172a;
+        font-size: 13px;
+    }
+
+    .step-text {
+        color: #475569;
+        font-size: 12px;
+        line-height: 1.35;
+        margin-top: 2px;
+    }
+
+    .flow-expansion .mud-expand-panel {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px !important;
+        margin-bottom: 8px;
+        overflow: hidden;
+    }
+
+    .voucher-summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 8px;
+        background: #f8fafc;
+        border-radius: 10px;
+        font-size: 12px;
+        margin-bottom: 8px;
+    }
+
+    .account-branch {
+        display: flex;
+        gap: 8px;
+        margin-left: 8px;
+        margin-bottom: 8px;
+    }
+
+    .branch-line {
+        width: 14px;
+        border-left: 2px solid #93c5fd;
+        border-bottom: 2px solid #93c5fd;
+        border-radius: 0 0 0 8px;
+        min-height: 24px;
+        margin-top: 2px;
+    }
+
+    .account-branch-body {
+        flex: 1;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 8px;
+        background: #ffffff;
+    }
+
+    .account-branch-title {
+        font-weight: 800;
+        color: #1e3a8a;
+        font-size: 13px;
+    }
+
+    .account-branch-desc {
+        font-size: 11px;
+        color: #64748b;
+        margin-bottom: 6px;
+    }
+
+    .line-leaf {
+        display: grid;
+        grid-template-columns: 44px 100px 1fr;
+        gap: 8px;
+        align-items: center;
+        padding: 5px 8px;
+        border-radius: 10px;
+        font-size: 12px;
+        margin-top: 4px;
+    }
+
+    .debit-leaf {
+        background: #ecfdf5;
+        border: 1px solid #bbf7d0;
+    }
+
+    .credit-leaf {
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+    }
+
+    .leaf-type {
+        font-weight: 900;
+        color: #0f172a;
+    }
+
+    .leaf-amount {
+        text-align: right;
+        font-weight: 800;
+        font-family: Consolas, monospace;
+    }
+
+    .leaf-text {
+        color: #334155;
+    }
+
+    .t-account-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(260px, 1fr));
+        gap: 12px;
+    }
+
+    .t-account-box {
+        border: 1px solid #cbd5e1;
+        border-radius: 14px;
+        overflow: hidden;
+        background: white;
+    }
+
+    .t-account-title {
+        background: #0f172a;
+        color: white;
+        padding: 8px 10px;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: center;
+        font-weight: 900;
+    }
+
+        .t-account-title small {
+            font-weight: 500;
+            opacity: .85;
+            text-align: right;
+        }
+
+    .t-account-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        min-height: 110px;
+    }
+
+    .t-side {
+        padding: 8px;
+    }
+
+    .debit-side {
+        border-right: 2px solid #0f172a;
+        background: #f0fdf4;
+    }
+
+    .credit-side {
+        background: #fff7ed;
+    }
+
+    .t-side-title {
+        text-align: center;
+        font-weight: 900;
+        border-bottom: 2px solid #0f172a;
+        margin: -8px -8px 6px -8px;
+        padding: 5px;
+    }
+
+    .t-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 11px;
+        border-bottom: 1px dashed #cbd5e1;
+        padding: 3px 0;
+    }
+
+        .t-row b,
+        .t-total {
+            font-family: Consolas, monospace;
+        }
+
+    .t-total {
+        text-align: right;
+        margin-top: 6px;
+        padding-top: 4px;
+        border-top: 1px solid #94a3b8;
+        font-weight: 900;
+    }
+
+    .t-ending {
+        padding: 8px 10px;
+        background: #f8fafc;
+        font-size: 12px;
+        color: #334155;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .text-end {
+        text-align: right;
+    }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .logistics-cycle-card {
+        border: 1px solid #bfdbfe;
+        border-radius: 18px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        box-shadow: 0 10px 26px rgba(15, 23, 42, .06);
+    }
+
+    .cycle-timeline {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(210px, 1fr));
+        gap: 12px;
+        position: relative;
+    }
+
+    .cycle-stage {
+        position: relative;
+        display: flex;
+        gap: 10px;
+        min-height: 154px;
+        padding: 12px;
+        border-radius: 16px;
+        border: 1px solid #e2e8f0;
+        background: #ffffff;
+    }
+
+        .cycle-stage::after {
+            content: "→";
+            position: absolute;
+            right: -12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 22px;
+            height: 22px;
+            border-radius: 999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            background: #2563eb;
+            font-weight: 900;
+            z-index: 2;
+        }
+
+        .cycle-stage:nth-child(4n)::after,
+        .cycle-stage:last-child::after {
+            display: none;
+        }
+
+    .cycle-stage-active {
+        border-color: #60a5fa;
+        box-shadow: inset 4px 0 0 #2563eb, 0 8px 20px rgba(37, 99, 235, .08);
+    }
+
+    .cycle-stage-empty {
+        opacity: .78;
+        background: #f8fafc;
+    }
+
+    .cycle-stage-number {
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        background: #0f172a;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 900;
+        flex: 0 0 auto;
+    }
+
+    .cycle-stage-main {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .cycle-stage-title {
+        font-weight: 900;
+        color: #0f172a;
+        font-size: 13px;
+        line-height: 1.25;
+    }
+
+    .cycle-stage-desc {
+        font-size: 11.5px;
+        color: #475569;
+        margin-top: 3px;
+        line-height: 1.35;
+    }
+
+    .cycle-stage-meta {
+        margin-top: 8px;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: center;
+        padding: 6px 8px;
+        border-radius: 10px;
+        background: #eff6ff;
+        color: #1e3a8a;
+        font-size: 11px;
+    }
+
+        .cycle-stage-meta b {
+            font-family: Consolas, monospace;
+            color: #0f172a;
+            white-space: nowrap;
+        }
+
+    .cycle-stage-lines {
+        margin-top: 7px;
+        display: grid;
+        gap: 4px;
+    }
+
+    .cycle-mini-line {
+        display: grid;
+        grid-template-columns: 1fr 48px 80px;
+        gap: 6px;
+        align-items: center;
+        font-size: 10.5px;
+        padding: 4px 6px;
+        border-radius: 8px;
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+    }
+
+        .cycle-mini-line b {
+            text-align: right;
+            font-family: Consolas, monospace;
+        }
+
+    .cycle-more,
+    .cycle-empty {
+        margin-top: 6px;
+        font-size: 11px;
+        color: #64748b;
+        font-style: italic;
+    }
+
+    .cycle-note {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: #ecfdf5;
+        border: 1px solid #bbf7d0;
+        color: #065f46;
+        font-size: 12px;
+        line-height: 1.45;
+    }
+
+
+    /* Show full Voucher No - không cắt bằng dấu ... */
+    .voucher-no-cell {
+        min-width: 155px;
+        max-width: none !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+    }
+
+    .voucher-no-full {
+        display: inline-block;
+        max-width: none !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        font-family: Consolas, monospace;
+        line-height: 1.2;
+    }
+
+    .t-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 1fr) auto;
+        align-items: start;
+    }
+
+        .t-row .voucher-no-full {
+            font-size: 10.5px;
+        }
+
+    .cycle-mini-line {
+        grid-template-columns: minmax(130px, 1fr) 48px 80px;
+        align-items: start;
+    }
+
+        .cycle-mini-line .voucher-no-full {
+            font-size: 10px;
+            line-height: 1.15;
+        }
+
+
+
+    @@media print {
+        body * {
+            visibility: hidden;
+        }
+
+        #accountFlowPrintArea, #accountFlowPrintArea * {
+            visibility: visible;
+        }
+
+        #accountFlowPrintArea {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            padding: 12px;
+        }
+
+        .mud-button-root,
+        .mud-input-control,
+        .flow-filter-card {
+            display: none !important;
+        }
+
+        .t-account-grid {
+            grid-template-columns: repeat(2, minmax(260px, 1fr));
+        }
+    }
+
+    @@media (max-width: 1200px) {
+        .flow-steps {
+            grid-template-columns: repeat(2, minmax(160px, 1fr));
+        }
+
+        .cycle-timeline {
+            grid-template-columns: repeat(2, minmax(210px, 1fr));
+        }
+
+        .cycle-stage:nth-child(4n)::after {
+            display: flex;
+        }
+
+        .cycle-stage:nth-child(2n)::after {
+            display: none;
+        }
+
+        .t-account-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    @@media (max-width: 700px) {
+        .flow-steps {
+            grid-template-columns: 1fr;
+        }
+
+        .cycle-timeline {
+            grid-template-columns: 1fr;
+        }
+
+        .cycle-stage::after {
+            display: none !important;
+        }
+
+        .line-leaf {
+            grid-template-columns: 40px 90px 1fr;
+        }
+    }
+</style>

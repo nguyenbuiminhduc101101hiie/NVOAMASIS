@@ -1,0 +1,1136 @@
+@page "/accounting/ar-ap/debt-aging"
+@page "/DebtAging"
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>10.14.3 Aging công nợ</PageTitle>
+
+<div class="product-price-page aging-page">
+    <PpScreenHeader Title="10.14.3 Aging công nợ"
+                    Subtitle="Báo cáo tuổi nợ AR/AP theo số dư còn lại sau thanh toán">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap no-print">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">
+                    Load
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="ResetFilterAsync" Disabled="_busy">
+                    Reset
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Preview" OnClick="ToggleSimulator" Disabled="_busy">
+                    Simulator
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.PictureAsPdf" OnClick="PrintAsync" Disabled="_busy">
+                    Print / PDF
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2 filter-card no-print" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string" Label="Chọn theo" Value="_dateMode" ValueChanged="OnDateModeChanged"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@(DateModeByDate)">Theo ngày</MudSelectItem>
+                    <MudSelectItem T="string" Value="@(DateModeByPeriod)">Theo kỳ</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Ngày chốt công nợ" Date="_asOfDate" DateChanged="OnAsOfDateChanged"
+                               ReadOnly="@IsPeriodMode"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Year" Value="_fiscalYear" ValueChanged="OnYearChanged"
+                                 Disabled="@IsDateMode"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="2000" Max="2100" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?" Label="Month" Value="_periodMonth" ValueChanged="OnMonthChanged"
+                                 Disabled="@IsDateMode"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="12" />
+            </MudItem>
+            <MudItem xs="12" sm="1">
+                <MudSelect T="string" Label="Book" @bind-Value="_book"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string" Label="Loại công nợ" @bind-Value="_debtType"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("AR")">AR - Phải thu 131</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("AP")">AP - Phải trả 331</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudAutocomplete T="Guid?"
+                                 Label="Customer / Vendor"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 @bind-Value="_selectedCustomerId"
+                                 SearchFunc="SearchCustomerAsync"
+                                 ToStringFunc="CustomerToString"
+                                 Clearable="true"
+                                 CoerceText="true"
+                                 CoerceValue="true"
+                                 ResetValueOnEmptyText="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_search" Label="Search"
+                              Placeholder="Khách hàng, invoice, HBL, chứng từ..."
+                              Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Immediate="true" Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2" Class="mb-2 no-print">
+        <MudItem xs="12" sm="2">
+            <MudPaper Class="kpi-card total-card" Elevation="0">
+                <MudText Typo="Typo.caption">Tổng còn nợ</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.Balance).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count().ToString("N0") dòng · @VisibleRows.Select(x => x.CustomerId).Distinct().Count().ToString("N0") đối tượng</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="2">
+            <MudPaper Class="kpi-card notdue-card" Elevation="0">
+                <MudText Typo="Typo.caption">Chưa có hạn</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Where(x => x.BucketCode == "NO_DUE").Sum(x => x.Balance).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count(x => x.BucketCode == "NO_DUE").ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="2">
+            <MudPaper Class="kpi-card b030-card" Elevation="0">
+                <MudText Typo="Typo.caption">0 - 30 ngày</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Where(x => x.BucketCode == "B0_30").Sum(x => x.Balance).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count(x => x.BucketCode == "B0_30").ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="2">
+            <MudPaper Class="kpi-card b3160-card" Elevation="0">
+                <MudText Typo="Typo.caption">31 - 60 ngày</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Where(x => x.BucketCode == "B31_60").Sum(x => x.Balance).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count(x => x.BucketCode == "B31_60").ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="2">
+            <MudPaper Class="kpi-card b6190-card" Elevation="0">
+                <MudText Typo="Typo.caption">61 - 90 ngày</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Where(x => x.BucketCode == "B61_90").Sum(x => x.Balance).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count(x => x.BucketCode == "B61_90").ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="2">
+            <MudPaper Class="kpi-card b90-card" Elevation="0">
+                <MudText Typo="Typo.caption">Trên 90 ngày</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Where(x => x.BucketCode == "B90_PLUS").Sum(x => x.Balance).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">@VisibleRows.Count(x => x.BucketCode == "B90_PLUS").ToString("N0") dòng</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Class="product-price-card pa-3 mb-2 aging-header-card" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" md="8">
+                <MudText Typo="Typo.h6" Class="report-title">AGING REPORT - CÔNG NỢ THEO TUỔI NỢ</MudText>
+                <MudText Typo="Typo.body2"><b>Đối tượng:</b> @SelectedCustomerLabel</MudText>
+                <MudText Typo="Typo.body2">
+                    <b>Chọn theo:</b> @(IsDateMode ? "Theo ngày" : "Theo kỳ")
+                    · <b>Ngày chốt:</b> @_asOfDate?.ToString("dd/MM/yyyy")
+                    · <b>Book:</b> @_book · <b>Loại:</b> @_debtType
+                </MudText>
+            </MudItem>
+            <MudItem xs="12" md="4" Class="text-end no-print">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.MenuBook"
+                           OnClick="OpenLedgerSummary"
+                           Disabled="!_selectedCustomerId.HasValue">
+                    Mở sổ cái 10.6.1
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (_showSimulator)
+    {
+        <MudPaper Class="product-price-card pa-4 mb-2 pdf-simulator print-area" Elevation="0">
+            <div class="print-title">AGING REPORT / BÁO CÁO TUỔI NỢ</div>
+            <div class="print-subtitle">Chọn theo: @(IsDateMode ? "Theo ngày" : "Theo kỳ") · Ngày chốt: @_asOfDate?.ToString("dd/MM/yyyy") · Book: @_book · Loại: @_debtType</div>
+            <div class="print-subtitle">Đối tượng: @SelectedCustomerLabel</div>
+
+            <table class="print-summary-table">
+                <tr>
+                    <th>Chưa có hạn</th>
+                    <th>0-30</th>
+                    <th>31-60</th>
+                    <th>61-90</th>
+                    <th>Trên 90</th>
+                    <th>Tổng cộng</th>
+                </tr>
+                <tr>
+                    <td>@VisibleRows.Where(x => x.BucketCode == "NO_DUE").Sum(x => x.Balance).ToString("N0")</td>
+                    <td>@VisibleRows.Where(x => x.BucketCode == "B0_30").Sum(x => x.Balance).ToString("N0")</td>
+                    <td>@VisibleRows.Where(x => x.BucketCode == "B31_60").Sum(x => x.Balance).ToString("N0")</td>
+                    <td>@VisibleRows.Where(x => x.BucketCode == "B61_90").Sum(x => x.Balance).ToString("N0")</td>
+                    <td>@VisibleRows.Where(x => x.BucketCode == "B90_PLUS").Sum(x => x.Balance).ToString("N0")</td>
+                    <td>@VisibleRows.Sum(x => x.Balance).ToString("N0")</td>
+                </tr>
+            </table>
+
+            <table class="print-detail-table">
+                <thead>
+                    <tr>
+                        <th>Loại</th>
+                        <th>Khách hàng/Vendor</th>
+                        <th>Invoice</th>
+                        <th>HBL</th>
+                        <th>Due Date</th>
+                        <th>Số ngày</th>
+                        <th>Bucket</th>
+                        <th>Gốc</th>
+                        <th>Đã thanh toán</th>
+                        <th>Còn lại</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in VisibleRows.Take(300))
+                    {
+                        <tr>
+                            <td>@r.DebtType</td>
+                            <td>@r.CustomerName</td>
+                            <td>@r.InvoiceNo</td>
+                            <td>@r.HBLNo</td>
+                            <td>@(r.DueDate?.ToString("dd/MM/yyyy") ?? "")</td>
+                            <td>@r.DaysText</td>
+                            <td>@r.BucketText</td>
+                            <td class="num">@r.OriginalAmount.ToString("N0")</td>
+                            <td class="num">@r.PaidAmount.ToString("N0")</td>
+                            <td class="num">@r.Balance.ToString("N0")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </MudPaper>
+    }
+
+    <MudPaper Class="product-price-card pa-3 mb-2 no-print" Elevation="0">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <div>
+                <MudText Typo="Typo.h6" Class="report-title">CHI TIẾT TUỔI NỢ</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Dòng: @VisibleRows.Count().ToString("N0") · Tổng còn lại: @VisibleRows.Sum(x => x.Balance).ToString("N0")
+                </MudText>
+            </div>
+        </MudStack>
+
+        <MudDataGrid @key="_gridKey"
+                     T="DebtAgingRow"
+                     Items="VisibleRows.ToList()"
+                     Dense="true"
+                     Striped="true"
+                     Hover="true"
+                     Bordered="true"
+                     Filterable="true"
+                     FilterMode="@DataGridFilterMode.ColumnFilterRow"
+                     FixedHeader="true"
+                     Height="calc(100vh - 470px)"
+                     Class="aging-grid"
+                     Loading="_busy"
+                     RowClassFunc="RowClass">
+            <Columns>
+                <PropertyColumn Property="x => x.DebtType" Title="Loại" />
+                <PropertyColumn Property="x => x.BucketText" Title="Nhóm tuổi nợ" />
+                <PropertyColumn Property="x => x.CustomerName" Title="Khách hàng / Vendor" />
+                <PropertyColumn Property="x => x.AccountCode" Title="TK" />
+                <PropertyColumn Property="x => x.InvoiceNo" Title="Invoice No" />
+                <PropertyColumn Property="x => x.HBLNo" Title="HBL" />
+                <PropertyColumn Property="x => x.VoucherNo" Title="Chứng từ gốc" />
+                <PropertyColumn Property="x => x.VoucherDate" Title="Ngày CT" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.DueDate" Title="Ngày đến hạn" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.DaysText" Title="Số ngày" />
+                <PropertyColumn Property="x => x.OriginalAmount" Title="Số tiền gốc" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.PaidAmount" Title="Đã thanh toán" Format="N0" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Balance" Title="Còn lại" Format="N0" CellClass="text-end fw-bold balance-cell" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.Book" Title="Book" />
+                <PropertyColumn Property="x => x.Description" Title="Diễn giải" />
+                <TemplateColumn Title="Action" Filterable="false" Sortable="false">
+                    <CellTemplate>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.MenuBook"
+                                   OnClick="@(() => OpenLedger(context.Item))">
+                            Sổ cái
+                        </MudButton>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="DebtAgingRow" PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">
+                    Không có công nợ còn lại theo điều kiện lọc hiện tại.
+                </MudText>
+            </NoRecordsContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    private const string PermissionMenuName = "GeneralLedgerEntries";
+
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private bool _busy;
+    private bool _showSimulator;
+    private string _usr = string.Empty;
+    private int _gridKey;
+
+    private const string DateModeByDate = "DATE";
+    private const string DateModeByPeriod = "PERIOD";
+
+    private string _dateMode = DateModeByDate;
+    private DateTime? _asOfDate = DateTime.Today;
+    private int? _fiscalYear = DateTime.Today.Year;
+    private int? _periodMonth = DateTime.Today.Month;
+
+    private bool IsDateMode => string.Equals(_dateMode, DateModeByDate, StringComparison.OrdinalIgnoreCase);
+    private bool IsPeriodMode => string.Equals(_dateMode, DateModeByPeriod, StringComparison.OrdinalIgnoreCase);
+    private string _book = "TAX";
+    private string _debtType = "ALL";
+    private string _search = string.Empty;
+    private Guid? _selectedCustomerId;
+
+    private List<M_Customer> _customers = new();
+    private List<DebtAgingRow> _rows = new();
+
+    private IEnumerable<DebtAgingRow> VisibleRows => _rows.Where(MatchesFilter);
+
+    private string SelectedCustomerLabel =>
+        _selectedCustomerId.HasValue
+            ? CustomerToString(_selectedCustomerId)
+            : "Tất cả khách hàng / vendor";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        SyncPeriodFromAsOfDate();
+        await LoadCustomerOptionsAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnDateModeChanged(string mode)
+    {
+        _dateMode = string.IsNullOrWhiteSpace(mode) ? DateModeByDate : mode;
+
+        if (IsPeriodMode)
+            UpdateAsOfDateByPeriod();
+        else
+            SyncPeriodFromAsOfDate();
+
+        await LoadAsync();
+    }
+
+    private async Task OnAsOfDateChanged(DateTime? date)
+    {
+        _asOfDate = date;
+
+        if (IsDateMode)
+            SyncPeriodFromAsOfDate();
+
+        await LoadAsync();
+    }
+
+    private async Task OnYearChanged(int? year)
+    {
+        _fiscalYear = year;
+
+        if (IsPeriodMode)
+            UpdateAsOfDateByPeriod();
+
+        await LoadAsync();
+    }
+
+    private async Task OnMonthChanged(int? month)
+    {
+        _periodMonth = month;
+
+        if (IsPeriodMode)
+            UpdateAsOfDateByPeriod();
+
+        await LoadAsync();
+    }
+
+    private void SyncPeriodFromAsOfDate()
+    {
+        if (!_asOfDate.HasValue)
+            return;
+
+        _fiscalYear = _asOfDate.Value.Year;
+        _periodMonth = _asOfDate.Value.Month;
+    }
+
+    private void UpdateAsOfDateByPeriod()
+    {
+        if (!_fiscalYear.HasValue || !_periodMonth.HasValue)
+            return;
+
+        if (_periodMonth.Value < 1 || _periodMonth.Value > 12)
+            return;
+
+        var firstDay = new DateTime(_fiscalYear.Value, _periodMonth.Value, 1);
+        _asOfDate = firstDay.AddMonths(1).AddDays(-1);
+    }
+
+    private async Task ResetFilterAsync()
+    {
+        _dateMode = DateModeByDate;
+        _asOfDate = DateTime.Today;
+        _fiscalYear = DateTime.Today.Year;
+        _periodMonth = DateTime.Today.Month;
+        _book = "TAX";
+        _debtType = "ALL";
+        _selectedCustomerId = null;
+        _search = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadCustomerOptionsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        _customers = await db.Customer.AsNoTracking()
+            .Where(x => x.Customer_ID != Guid.Empty)
+            .OrderBy(x => x.Customer_Code)
+            .ThenBy(x => x.COMPANY)
+            .Take(5000)
+            .ToListAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem Aging công nợ.", MudBlazor.Severity.Warning);
+            _rows.Clear();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var asOf = (_asOfDate ?? DateTime.Today).Date;
+            var cutoff = asOf.AddDays(1);
+
+            var query =
+                from l in db.AccountingVoucherLines.AsNoTracking()
+                join v in db.AccountingVouchers.AsNoTracking() on l.VoucherId equals v.Id
+                where l.AccountCode != null
+                   && (l.AccountCode.StartsWith("131") || l.AccountCode.StartsWith("331"))
+                   && v.VoucherDate < cutoff
+                select new { Line = l, Voucher = v };
+
+            if (_selectedCustomerId.HasValue && _selectedCustomerId.Value != Guid.Empty)
+                query = query.Where(x => x.Line.CustomerId == _selectedCustomerId.Value);
+
+            if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.Line.IsTaxBook == true);
+
+            if (string.Equals(_book, "MGMT", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.Line.IsManagementBook == true);
+
+            if (string.Equals(_debtType, "AR", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.Line.AccountCode.StartsWith("131"));
+
+            if (string.Equals(_debtType, "AP", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.Line.AccountCode.StartsWith("331"));
+
+            var data = await query
+                .OrderBy(x => x.Voucher.VoucherDate)
+                .ThenBy(x => x.Voucher.VoucherNo)
+                .Take(50000)
+                .ToListAsync();
+
+            var hblLookup = await LoadHblLookupAsync(db, data.Select(x => x.Line.ShipmentId));
+
+            var sources = data.Select(x =>
+            {
+                var accountCode = x.Line.AccountCode ?? string.Empty;
+                var rootAccount = accountCode.StartsWith("331", StringComparison.OrdinalIgnoreCase) ? "331" : "131";
+                var isAP = rootAccount == "331";
+                var movement = isAP
+                    ? x.Line.CreditAmount - x.Line.DebitAmount
+                    : x.Line.DebitAmount - x.Line.CreditAmount;
+
+                var invoice = x.Line.InvoiceNo?.Trim() ?? string.Empty;
+                var hbl = ResolveHblNo(x.Line.ShipmentId, hblLookup);
+                var debtKey = !string.IsNullOrWhiteSpace(invoice)
+                    ? "INV:" + invoice
+                    : !string.IsNullOrWhiteSpace(hbl)
+                        ? "HBL:" + hbl
+                        : "CUSTOMER_BALANCE";
+
+                return new DebtSourceLine
+                {
+                    Id = x.Line.Id,
+                    VoucherId = x.Line.VoucherId,
+                    CustomerId = x.Line.CustomerId,
+                    RootAccount = rootAccount,
+                    AccountCode = accountCode,
+                    DebtType = isAP ? "AP" : "AR",
+                    VoucherNo = x.Voucher.VoucherNo ?? string.Empty,
+                    VoucherDate = x.Voucher.VoucherDate,
+                    DueDate = x.Line.DueDate,
+                    InvoiceNo = invoice,
+                    HBLNo = hbl,
+                    Description = x.Line.LineDescription ?? string.Empty,
+                    Book = GetBookName(x.Line.IsTaxBook, x.Line.IsManagementBook),
+                    DebtKey = debtKey,
+                    Movement = movement,
+                    OriginalAmount = movement > 0 ? movement : 0m,
+                    RemainingToAllocate = movement > 0 ? movement : 0m,
+                    PaymentRemaining = movement < 0 ? Math.Abs(movement) : 0m
+                };
+            })
+            .Where(x => Math.Abs(x.Movement) > 0.01m)
+            .ToList();
+
+            AllocatePayments(sources);
+
+            var customerIds = sources
+                .Where(x => x.CustomerId.HasValue && x.CustomerId.Value != Guid.Empty)
+                .Select(x => x.CustomerId!.Value)
+                .Distinct()
+                .ToHashSet();
+
+            var customerMap = await LoadCustomerMapAsync(db, customerIds);
+
+            _rows = sources
+                .Where(x => x.OriginalAmount > 0.01m && x.RemainingToAllocate > 0.01m)
+                .Select(x => CreateAgingRow(x, customerMap, asOf))
+                .OrderByDescending(x => x.DaysOverdue)
+                .ThenBy(x => x.CustomerName)
+                .ThenBy(x => x.DueDate)
+                .ToList();
+
+            _gridKey++;
+            Snackbar.Add($"Loaded {_rows.Count:N0} aging rows.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static void AllocatePayments(List<DebtSourceLine> sources)
+    {
+        var groups = sources.GroupBy(x => new
+        {
+            x.CustomerId,
+            x.RootAccount,
+            x.Book
+        });
+
+        foreach (var group in groups)
+        {
+            var invoices = group
+                .Where(x => x.OriginalAmount > 0.01m)
+                .OrderBy(x => x.DueDate ?? x.VoucherDate)
+                .ThenBy(x => x.VoucherDate)
+                .ThenBy(x => x.VoucherNo)
+                .ToList();
+
+            var payments = group
+                .Where(x => x.PaymentRemaining > 0.01m)
+                .OrderBy(x => x.VoucherDate)
+                .ThenBy(x => x.VoucherNo)
+                .ToList();
+
+            foreach (var invoice in invoices.Where(x => x.DebtKey != "CUSTOMER_BALANCE"))
+            {
+                foreach (var payment in payments.Where(x => x.PaymentRemaining > 0.01m && x.DebtKey == invoice.DebtKey))
+                {
+                    ApplyPayment(invoice, payment);
+                    if (invoice.RemainingToAllocate <= 0.01m)
+                        break;
+                }
+            }
+
+            foreach (var invoice in invoices.Where(x => x.RemainingToAllocate > 0.01m))
+            {
+                foreach (var payment in payments.Where(x => x.PaymentRemaining > 0.01m))
+                {
+                    ApplyPayment(invoice, payment);
+                    if (invoice.RemainingToAllocate <= 0.01m)
+                        break;
+                }
+            }
+        }
+    }
+
+    private static void ApplyPayment(DebtSourceLine invoice, DebtSourceLine payment)
+    {
+        var amount = Math.Min(invoice.RemainingToAllocate, payment.PaymentRemaining);
+        if (amount <= 0.01m)
+            return;
+
+        invoice.RemainingToAllocate -= amount;
+        invoice.AppliedAmount += amount;
+        payment.PaymentRemaining -= amount;
+    }
+
+    private DebtAgingRow CreateAgingRow(DebtSourceLine source, Dictionary<Guid, string> customerMap, DateTime asOf)
+    {
+        var dueDate = source.DueDate?.Date;
+        var daysOverdue = dueDate.HasValue ? (asOf - dueDate.Value).Days : 0;
+        var bucketCode = GetBucketCode(dueDate, daysOverdue);
+
+        return new DebtAgingRow
+        {
+            Id = source.Id,
+            VoucherId = source.VoucherId,
+            CustomerId = source.CustomerId,
+            DebtType = source.DebtType,
+            AccountCode = source.AccountCode,
+            CustomerName = source.CustomerId.HasValue && customerMap.TryGetValue(source.CustomerId.Value, out var customerName)
+                ? customerName
+                : string.Empty,
+            VoucherNo = source.VoucherNo,
+            VoucherDate = source.VoucherDate,
+            DueDate = dueDate,
+            DaysOverdue = daysOverdue,
+            BucketCode = bucketCode,
+            BucketText = GetBucketText(bucketCode),
+            InvoiceNo = source.InvoiceNo,
+            HBLNo = source.HBLNo,
+            Description = source.Description,
+            OriginalAmount = source.OriginalAmount,
+            PaidAmount = source.AppliedAmount,
+            Balance = source.RemainingToAllocate,
+            Book = source.Book
+        };
+    }
+
+    private static string GetBucketCode(DateTime? dueDate, int daysOverdue)
+    {
+        if (!dueDate.HasValue)
+            return "NO_DUE";
+
+        // Phân nhóm theo khoảng cách giữa ngày chốt và ngày đến hạn.
+        // Ví dụ: ngày chốt 07/06, hạn 30/06 => còn 23 ngày => nằm ở nhóm 0 - 30 ngày.
+        var days = Math.Abs(daysOverdue);
+
+        if (days <= 30)
+            return "B0_30";
+
+        if (days <= 60)
+            return "B31_60";
+
+        if (days <= 90)
+            return "B61_90";
+
+        return "B90_PLUS";
+    }
+
+    private static string GetBucketText(string bucketCode)
+    {
+        return bucketCode switch
+        {
+            "NO_DUE" => "Chưa có hạn",
+            "NOT_DUE" => "Chưa đến hạn",
+            "B0_30" => "0 - 30 ngày",
+            "B31_60" => "31 - 60 ngày",
+            "B61_90" => "61 - 90 ngày",
+            "B90_PLUS" => "Trên 90 ngày",
+            _ => bucketCode
+        };
+    }
+
+    private static string GetBookName(bool? isTaxBook, bool? isManagementBook)
+    {
+        if (isTaxBook == true && isManagementBook == true)
+            return "TAX/MGMT";
+
+        if (isTaxBook == true)
+            return "TAX";
+
+        if (isManagementBook == true)
+            return "MGMT";
+
+        return string.Empty;
+    }
+
+    private async Task<Dictionary<Guid, string>> LoadCustomerMapAsync(AppDbContext db, HashSet<Guid> customerIds)
+    {
+        if (customerIds.Count == 0)
+            return new Dictionary<Guid, string>();
+
+        var customers = await db.Customer.AsNoTracking()
+            .Where(c => customerIds.Contains(c.Customer_ID))
+            .Select(c => new
+            {
+                c.Customer_ID,
+                c.Customer_Code,
+                c.COMPANY,
+                c.EnglishName,
+                c.MainCode
+            })
+            .ToListAsync();
+
+        return customers.GroupBy(x => x.Customer_ID).ToDictionary(
+            g => g.Key,
+            g =>
+            {
+                var c = g.First();
+
+                var code = !string.IsNullOrWhiteSpace(c.Customer_Code)
+                    ? c.Customer_Code.Trim()
+                    : !string.IsNullOrWhiteSpace(c.MainCode)
+                        ? c.MainCode.Trim()
+                        : string.Empty;
+
+                var name = !string.IsNullOrWhiteSpace(c.COMPANY)
+                    ? c.COMPANY.Trim()
+                    : !string.IsNullOrWhiteSpace(c.EnglishName)
+                        ? c.EnglishName.Trim()
+                        : string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(name))
+                    return $"{code} - {name}";
+
+                return !string.IsNullOrWhiteSpace(name) ? name : code;
+            });
+    }
+
+    private Task<IEnumerable<Guid?>> SearchCustomerAsync(string value)
+    {
+        IEnumerable<M_Customer> query = _customers;
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var k = value.Trim();
+            query = query.Where(x =>
+                (x.Customer_Code?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (x.COMPANY?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (x.EnglishName?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (x.MainCode?.Contains(k, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+
+        return Task.FromResult(query.Select(x => (Guid?)x.Customer_ID).Take(50));
+    }
+
+    private string CustomerToString(Guid? id)
+    {
+        if (!id.HasValue || id.Value == Guid.Empty)
+            return string.Empty;
+
+        var c = _customers.FirstOrDefault(x => x.Customer_ID == id.Value);
+        if (c is null)
+            return id.Value.ToString();
+
+        var code = !string.IsNullOrWhiteSpace(c.Customer_Code)
+            ? c.Customer_Code.Trim()
+            : !string.IsNullOrWhiteSpace(c.MainCode)
+                ? c.MainCode.Trim()
+                : string.Empty;
+
+        var name = !string.IsNullOrWhiteSpace(c.COMPANY)
+            ? c.COMPANY.Trim()
+            : !string.IsNullOrWhiteSpace(c.EnglishName)
+                ? c.EnglishName.Trim()
+                : string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(name))
+            return $"{code} - {name}";
+
+        return !string.IsNullOrWhiteSpace(name) ? name : code;
+    }
+
+    private async Task OpenLedgerSummary()
+    {
+        if (!_selectedCustomerId.HasValue)
+        {
+            Snackbar.Add("Chọn Customer/Vendor trước khi mở sổ cái tổng hợp.", MudBlazor.Severity.Info);
+            return;
+        }
+
+        var accountCode = string.Equals(_debtType, "AP", StringComparison.OrdinalIgnoreCase) ? "331" : "131";
+        await OpenLedgerInternal(accountCode, _selectedCustomerId);
+    }
+
+    private async Task OpenLedger(DebtAgingRow row)
+    {
+        await OpenLedgerInternal(row.AccountCode, row.CustomerId);
+    }
+
+    private async Task OpenLedgerInternal(string accountCode, Guid? customerId)
+    {
+        if (!OnTabRequest.HasDelegate)
+        {
+            Snackbar.Add("Không mở được tab 10.6.1 vì chưa truyền OnTabRequest.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var book = string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase)
+            ? "TAX"
+            : _book.Trim().ToUpperInvariant();
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
+            builder.AddAttribute(1, "InitialAccountCode", accountCode);
+            builder.AddAttribute(2, "InitialFiscalYear", _fiscalYear);
+            builder.AddAttribute(3, "InitialPeriodMonth", _periodMonth);
+            builder.AddAttribute(4, "InitialBook", book);
+
+            if (customerId.HasValue && customerId.Value != Guid.Empty)
+                builder.AddAttribute(5, "InitialCustomerId", customerId);
+
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync((
+            $"GeneralLedgerSummary_{accountCode}_{customerId}_{_fiscalYear}_{_periodMonth}_{book}",
+            $"10.6.1 Sổ cái - TK {accountCode}",
+            content
+        ));
+    }
+
+    private void ToggleSimulator()
+    {
+        _showSimulator = !_showSimulator;
+    }
+
+    private async Task PrintAsync()
+    {
+        if (!_showSimulator)
+            _showSimulator = true;
+
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(150);
+        await JS.InvokeVoidAsync("window.print");
+    }
+
+    private bool MatchesFilter(DebtAgingRow x)
+    {
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var key = _search.Trim();
+
+        return x.DebtType.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.BucketText.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.CustomerName.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.AccountCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.InvoiceNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.HBLNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Description.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Book.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.Balance.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<Dictionary<Guid, string>> LoadHblLookupAsync(AppDbContext db, IEnumerable<Guid?> shipmentIds)
+    {
+        var ids = shipmentIds
+            .Where(id => id.HasValue && id.Value != Guid.Empty)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+
+        if (ids.Count == 0)
+            return new Dictionary<Guid, string>();
+
+        return await db.HBL.AsNoTracking()
+            .Where(h => ids.Contains(h.hblID))
+            .ToDictionaryAsync(h => h.hblID, h => h.hbl?.Trim() ?? string.Empty);
+    }
+
+    private static string ResolveHblNo(Guid? shipmentId, IReadOnlyDictionary<Guid, string> hblLookup)
+    {
+        if (!shipmentId.HasValue || shipmentId.Value == Guid.Empty)
+            return string.Empty;
+
+        return hblLookup.TryGetValue(shipmentId.Value, out var hbl) ? hbl : string.Empty;
+    }
+
+    private string RowClass(DebtAgingRow row, int rowNumber)
+    {
+        return row.BucketCode switch
+        {
+            "NO_DUE" => "row-nodue",
+            "NOT_DUE" => "row-notdue",
+            "B0_30" => "row-b030",
+            "B31_60" => "row-b3160",
+            "B61_90" => "row-b6190",
+            "B90_PLUS" => "row-b90",
+            _ => string.Empty
+        };
+    }
+
+    private sealed class DebtSourceLine
+    {
+        public Guid Id { get; set; }
+        public Guid VoucherId { get; set; }
+        public Guid? CustomerId { get; set; }
+        public string RootAccount { get; set; } = string.Empty;
+        public string AccountCode { get; set; } = string.Empty;
+        public string DebtType { get; set; } = string.Empty;
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime VoucherDate { get; set; }
+        public DateTime? DueDate { get; set; }
+        public string InvoiceNo { get; set; } = string.Empty;
+        public string HBLNo { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string Book { get; set; } = string.Empty;
+        public string DebtKey { get; set; } = string.Empty;
+        public decimal Movement { get; set; }
+        public decimal OriginalAmount { get; set; }
+        public decimal RemainingToAllocate { get; set; }
+        public decimal PaymentRemaining { get; set; }
+        public decimal AppliedAmount { get; set; }
+    }
+
+    private sealed class DebtAgingRow
+    {
+        public Guid Id { get; set; }
+        public Guid VoucherId { get; set; }
+        public Guid? CustomerId { get; set; }
+        public string DebtType { get; set; } = string.Empty;
+        public string AccountCode { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime VoucherDate { get; set; }
+        public DateTime? DueDate { get; set; }
+        public int DaysOverdue { get; set; }
+        public string DaysText => !DueDate.HasValue ? "Chưa có hạn" : DaysOverdue < 0 ? $"Còn {Math.Abs(DaysOverdue)} ngày" : DaysOverdue == 0 ? "Đến hạn hôm nay" : $"Quá hạn {DaysOverdue} ngày";
+        public string BucketCode { get; set; } = string.Empty;
+        public string BucketText { get; set; } = string.Empty;
+        public string InvoiceNo { get; set; } = string.Empty;
+        public string HBLNo { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public decimal OriginalAmount { get; set; }
+        public decimal PaidAmount { get; set; }
+        public decimal Balance { get; set; }
+        public string Book { get; set; } = string.Empty;
+    }
+}
+
+<style>
+    .aging-page {
+        background: #f4fdf7;
+    }
+
+        .aging-page .product-price-card {
+            border: 1px solid #d1fae5;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(22,101,52,.06);
+        }
+
+        .aging-page .filter-card {
+            background: linear-gradient(90deg, #ffffff, #ecfdf5);
+        }
+
+        .aging-page .kpi-card {
+            min-height: 96px;
+            padding: 14px;
+            border-radius: 16px;
+            border: 1px solid #d1fae5;
+            box-shadow: 0 8px 20px rgba(22,101,52,.05);
+        }
+
+        .aging-page .total-card {
+            background: #ecfdf5;
+        }
+
+        .aging-page .notdue-card {
+            background: #f8fafc;
+            border-color: #cbd5e1 !important;
+        }
+
+        .aging-page .b030-card {
+            background: #eff6ff;
+            border-color: #bfdbfe !important;
+        }
+
+        .aging-page .b3160-card {
+            background: #fff7ed;
+            border-color: #fed7aa !important;
+        }
+
+        .aging-page .b6190-card {
+            background: #fef3c7;
+            border-color: #fcd34d !important;
+        }
+
+        .aging-page .b90-card {
+            background: #fef2f2;
+            border-color: #fecaca !important;
+        }
+
+        .aging-page .aging-header-card {
+            background: linear-gradient(90deg, #ffffff, #f8fafc);
+        }
+
+        .aging-page .report-title {
+            font-weight: 800;
+            letter-spacing: .2px;
+            color: #063970;
+        }
+
+        .aging-page .aging-grid {
+            font-size: .82rem;
+        }
+
+            .aging-page .aging-grid .mud-table-container {
+                overflow-x: auto;
+            }
+
+            .aging-page .aging-grid .mud-table-root .mud-table {
+                width: max-content !important;
+                min-width: 100%;
+            }
+
+            .aging-page .aging-grid .mud-table-cell,
+            .aging-page .aging-grid td,
+            .aging-page .aging-grid th {
+                padding: 4px 8px !important;
+                white-space: nowrap;
+            }
+
+        .aging-page .row-nodue {
+            background-color: #fafafa !important;
+        }
+
+        .aging-page .row-notdue {
+            background-color: #f8fafc !important;
+        }
+
+        .aging-page .row-b030 {
+            background-color: #eff6ff !important;
+        }
+
+        .aging-page .row-b3160 {
+            background-color: #fff7ed !important;
+        }
+
+        .aging-page .row-b6190 {
+            background-color: #fffbeb !important;
+        }
+
+        .aging-page .row-b90 {
+            background-color: #fff1f2 !important;
+        }
+
+        .aging-page .balance-cell {
+            color: #b91c1c;
+        }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .text-end {
+        text-align: right !important;
+    }
+
+    .pdf-simulator {
+        background: #ffffff;
+        max-width: 1120px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .print-title {
+        font-size: 20px;
+        font-weight: 800;
+        text-align: center;
+        color: #063970;
+        margin-bottom: 4px;
+    }
+
+    .print-subtitle {
+        text-align: center;
+        font-size: 12px;
+        margin-bottom: 8px;
+    }
+
+    .print-summary-table,
+    .print-detail-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+        margin-top: 12px;
+    }
+
+        .print-summary-table th,
+        .print-summary-table td,
+        .print-detail-table th,
+        .print-detail-table td {
+            border: 1px solid #cbd5e1;
+            padding: 5px 6px;
+        }
+
+        .print-summary-table th,
+        .print-detail-table th {
+            background: #eff6ff;
+            font-weight: 800;
+        }
+
+    .num {
+        text-align: right;
+    }
+
+    @@media print {
+        body * {
+            visibility: hidden !important;
+        }
+
+        .print-area, .print-area * {
+            visibility: visible !important;
+        }
+
+        .print-area {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            box-shadow: none !important;
+            border: none !important;
+        }
+
+        .no-print {
+            display: none !important;
+        }
+    }
+</style>

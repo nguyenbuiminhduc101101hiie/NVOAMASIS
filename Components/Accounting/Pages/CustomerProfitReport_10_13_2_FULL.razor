@@ -34,20 +34,54 @@
     <MudPaper Class="product-price-card pa-3 mb-2 filter-card" Elevation="0">
         <MudGrid Spacing="2" AlignItems="Center">
             <MudItem xs="12" sm="2">
-                <MudDatePicker Label="Từ ngày" @bind-Date="_fromDate"
-                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+                <MudSelect T="string"
+                           Label="Chọn theo"
+                           Value="@_dateMode"
+                           ValueChanged="@OnDateModeChanged"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("DATE_RANGE")">Theo ngày</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("PERIOD")">Theo kỳ</MudSelectItem>
+                </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="2">
-                <MudDatePicker Label="Đến ngày" @bind-Date="_toDate"
-                               Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" />
+                <MudDatePicker Label="Từ ngày"
+                               @bind-Date="_fromDate"
+                               Disabled="@IsPeriodMode"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày"
+                               @bind-Date="_toDate"
+                               Disabled="@IsPeriodMode"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy" />
             </MudItem>
             <MudItem xs="6" sm="1">
-                <MudNumericField T="int?" Label="Year" Value="_fiscalYear" ValueChanged="OnYearChanged"
-                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="2000" Max="2100" />
+                <MudNumericField T="int?"
+                                 Label="Year"
+                                 Value="_fiscalYear"
+                                 ValueChanged="OnYearChanged"
+                                 Disabled="@IsDateRangeMode"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="2000"
+                                 Max="2100" />
             </MudItem>
             <MudItem xs="6" sm="1">
-                <MudNumericField T="int?" Label="Month" Value="_periodMonth" ValueChanged="OnMonthChanged"
-                                 Variant="Variant.Outlined" Margin="Margin.Dense" Min="1" Max="12" />
+                <MudNumericField T="int?"
+                                 Label="Month"
+                                 Value="_periodMonth"
+                                 ValueChanged="OnMonthChanged"
+                                 Disabled="@IsDateRangeMode"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="1"
+                                 Max="12" />
             </MudItem>
             <MudItem xs="12" sm="1">
                 <MudSelect T="string" Label="Book" @bind-Value="_book"
@@ -57,12 +91,12 @@
                     <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
                 </MudSelect>
             </MudItem>
-            <MudItem xs="12" sm="2">
+            <MudItem xs="12" sm="1">
                 <MudTextField @bind-Value="_customerFilter" Label="Customer"
                               Placeholder="Code / Name" Variant="Variant.Outlined"
                               Margin="Margin.Dense" Immediate="true" Clearable="true" />
             </MudItem>
-            <MudItem xs="12" sm="3">
+            <MudItem xs="12" sm="2">
                 <MudTextField @bind-Value="_search" Label="Search"
                               Placeholder="Customer, voucher, source, account..."
                               Variant="Variant.Outlined" Margin="Margin.Dense"
@@ -110,7 +144,7 @@
             <div>
                 <MudText Typo="Typo.h6" Class="report-title">BÁO CÁO LỢI NHUẬN THEO KHÁCH HÀNG</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    Kỳ @_periodMonth/@_fiscalYear · @_fromDate?.ToString("dd/MM/yyyy") - @_toDate?.ToString("dd/MM/yyyy") · Book @_book
+                    @DateModeCaption · @(_fromDate?.ToString("dd/MM/yyyy")) - @(_toDate?.ToString("dd/MM/yyyy")) · Book @_book
                 </MudText>
             </div>
             <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
@@ -210,6 +244,13 @@
     private bool _busy;
     private string _usr = string.Empty;
     private int _gridKey;
+    private string _dateMode = "DATE_RANGE";
+
+    private bool IsPeriodMode => string.Equals(_dateMode, "PERIOD", StringComparison.OrdinalIgnoreCase);
+    private bool IsDateRangeMode => string.Equals(_dateMode, "DATE_RANGE", StringComparison.OrdinalIgnoreCase);
+    private string DateModeCaption => IsPeriodMode
+        ? $"Kỳ {_periodMonth}/{_fiscalYear}"
+        : "Theo ngày";
 
     private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
     private DateTime? _toDate = DateTime.Today;
@@ -227,22 +268,42 @@
     {
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
-        UpdateDateRange();
+        EnsureDateRange();
+        await LoadAsync();
+    }
+
+    private async Task OnDateModeChanged(string value)
+    {
+        _dateMode = string.IsNullOrWhiteSpace(value) ? "DATE_RANGE" : value;
+
+        if (IsPeriodMode)
+            UpdateDateRange();
+        else
+            EnsureDateRange();
+
         await LoadAsync();
     }
 
     private async Task OnYearChanged(int? year)
     {
         _fiscalYear = year;
-        UpdateDateRange();
-        await LoadAsync();
+
+        if (IsPeriodMode)
+        {
+            UpdateDateRange();
+            await LoadAsync();
+        }
     }
 
     private async Task OnMonthChanged(int? month)
     {
         _periodMonth = month;
-        UpdateDateRange();
-        await LoadAsync();
+
+        if (IsPeriodMode)
+        {
+            UpdateDateRange();
+            await LoadAsync();
+        }
     }
 
     private void UpdateDateRange()
@@ -257,8 +318,18 @@
         _toDate = _fromDate.Value.AddMonths(1).AddDays(-1);
     }
 
+    private void EnsureDateRange()
+    {
+        _fromDate ??= new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDate ??= DateTime.Today;
+
+        if (_fromDate.Value.Date > _toDate.Value.Date)
+            (_fromDate, _toDate) = (_toDate, _fromDate);
+    }
+
     private async Task ResetFilterAsync()
     {
+        _dateMode = "DATE_RANGE";
         _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
         _toDate = DateTime.Today;
         _fiscalYear = DateTime.Today.Year;
@@ -266,7 +337,7 @@
         _book = "MGMT";
         _customerFilter = string.Empty;
         _search = string.Empty;
-        UpdateDateRange();
+        EnsureDateRange();
         await LoadAsync();
     }
 
@@ -287,16 +358,24 @@
             var query = db.GeneralLedgerEntries.AsNoTracking()
                 .Where(x => x.CustomerId.HasValue && x.CustomerId.Value != Guid.Empty);
 
-            if (_fromDate.HasValue)
-                query = query.Where(x => x.PostingDate >= _fromDate.Value.Date);
+            if (IsPeriodMode)
+                UpdateDateRange();
+            else
+                EnsureDateRange();
 
-            if (_toDate.HasValue)
-                query = query.Where(x => x.PostingDate <= _toDate.Value.Date);
+            var fromDate = _fromDate?.Date;
+            var toExclusive = _toDate?.Date.AddDays(1);
 
-            if (_fiscalYear.HasValue)
+            if (fromDate.HasValue)
+                query = query.Where(x => x.PostingDate >= fromDate.Value);
+
+            if (toExclusive.HasValue)
+                query = query.Where(x => x.PostingDate < toExclusive.Value);
+
+            if (IsPeriodMode && _fiscalYear.HasValue)
                 query = query.Where(x => x.FiscalYear == _fiscalYear.Value);
 
-            if (_periodMonth.HasValue)
+            if (IsPeriodMode && _periodMonth.HasValue)
                 query = query.Where(x => x.FiscalPeriod == _periodMonth.Value);
 
             if (string.Equals(_book, "TAX", StringComparison.OrdinalIgnoreCase))
@@ -427,6 +506,9 @@
             ? "MGMT"
             : _book.Trim().ToUpperInvariant();
 
+        var fromKey = _fromDate?.ToString("yyyyMMdd") ?? "none";
+        var toKey = _toDate?.ToString("yyyyMMdd") ?? "none";
+
         RenderFragment content = builder =>
         {
             builder.OpenComponent<Components.Accounting.Pages.GeneralLedgerSummary_10_6_1>(0);
@@ -439,7 +521,7 @@
         };
 
         await OnTabRequest.InvokeAsync((
-            $"GeneralLedgerSummary_{accountCode}_{row.CustomerId}_{_fiscalYear}_{_periodMonth}_{book}",
+            $"GeneralLedgerSummary_{accountCode}_{row.CustomerId}_{_dateMode}_{_fiscalYear}_{_periodMonth}_{book}_{fromKey}_{toKey}",
             $"10.6.1 Sổ cái tổng hợp - TK {accountCode} - {row.CustomerCode}",
             content
         ));
