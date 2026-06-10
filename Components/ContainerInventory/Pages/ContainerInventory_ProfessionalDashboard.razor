@@ -1,0 +1,965 @@
+@page "/ContainerInventory"
+@page "/container/inventory"
+@using System.Data
+@using System.Data.Common
+@using System.Text
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using MudBlazor
+@using NVOAMASIS.Data
+@attribute [Authorize]
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+<PageTitle>8.3.3 Container Inventory</PageTitle>
+
+<div class="container-inventory-page">
+    <MudPaper Class="ci-header pa-4 mb-3" Elevation="0">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="flex-wrap" Spacing="2">
+            <div>
+                <MudText Typo="Typo.h5" Class="ci-title">8.3.3 Container Inventory</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Statistics grouped by DEPOT + LINE + container type; E/F/D counts based on ITEM_NO, ISO, FEL and DAM</MudText>
+                @if (!string.IsNullOrWhiteSpace(_sourceInfo))
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Data source: @_sourceInfo</MudText>
+                }
+            </div>
+            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">
+                    Refresh
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload" OnClick="ExportCsvAsync" Disabled="_busy || !FilteredRecords.Any()">
+                    CSV
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Print" OnClick="PrintAsync" Disabled="_busy">
+                    Print
+                </MudButton>
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <MudAlert Severity="MudBlazor.Severity.Error" Variant="Variant.Filled" Dense="true" Class="mb-2">
+            @_errorMessage
+        </MudAlert>
+    }
+
+    <MudPaper Class="ci-card pa-3 mb-3" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" md="3">
+                <MudTextField @bind-Value="_search"
+                              Label="Search"
+                              Placeholder="Container, BOOK, BL, depot, port, vessel..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+            <MudItem xs="12" md="2">
+                <MudSelect T="string" @bind-Value="_agentFilter" Label="AGENT" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
+                    @foreach (var v in AgentOptions)
+                    {
+                        <MudSelectItem T="string" Value="@v">@v</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="2">
+                <MudSelect T="string" @bind-Value="_lineFilter" Label="LINE" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
+                    @foreach (var v in LineOptions)
+                    {
+                        <MudSelectItem T="string" Value="@v">@v</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="2">
+                <MudSelect T="string" @bind-Value="_depotFilter" Label="DEPOT" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
+                    @foreach (var v in DepotOptions)
+                    {
+                        <MudSelectItem T="string" Value="@v">@v</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="2">
+                <MudSelect T="string" @bind-Value="_sizeFilter" Label="Size/Type" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
+                    <MudSelectItem T="string" Value="@("20DC")">20DC</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("40HC")">40HC / 40HQ</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("OTHER")">OTHER</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="2">
+                <MudSelect T="string" @bind-Value="_statusFilter" Label="Status" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
+                    <MudSelectItem T="string" Value="@StatusInDepot">In Depot</MudSelectItem>
+                    <MudSelectItem T="string" Value="@StatusWaitingPort">Waiting Port Arrival</MudSelectItem>
+                    <MudSelectItem T="string" Value="@StatusArrivedPort">Arrived at Port</MudSelectItem>
+                    <MudSelectItem T="string" Value="@StatusInTransit">In Transit</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="1">
+                <MudCheckBox T="bool" @bind-Checked="_excludeDamaged" Label="Hide DAM" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="3" Class="mb-3">
+        <MudItem xs="12" md="3">
+            <MudPaper Class="ci-kpi kpi-depot pa-4" Elevation="1">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <div>
+                        <MudText Typo="Typo.subtitle2" Class="fw-bold">In Depot</MudText>
+                        <MudText Typo="Typo.caption">Container</MudText>
+                        <MudText Typo="Typo.h4" Class="ci-kpi-number">@InDepotRecords.Count.ToString("N0")</MudText>
+                    </div>
+                    <MudAvatar Color="Color.Primary" Size="Size.Large"><MudIcon Icon="@Icons.Material.Filled.Inventory2" /></MudAvatar>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudPaper Class="ci-kpi kpi-wait pa-4" Elevation="1">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <div>
+                        <MudText Typo="Typo.subtitle2" Class="fw-bold">Waiting Port Arrival</MudText>
+                        <MudText Typo="Typo.caption">Container</MudText>
+                        <MudText Typo="Typo.h4" Class="ci-kpi-number">@WaitingPortRecords.Count.ToString("N0")</MudText>
+                    </div>
+                    <MudAvatar Color="Color.Info" Size="Size.Large"><MudIcon Icon="@Icons.Material.Filled.PendingActions" /></MudAvatar>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudPaper Class="ci-kpi kpi-port pa-4" Elevation="1">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <div>
+                        <MudText Typo="Typo.subtitle2" Class="fw-bold">Arrived at Port</MudText>
+                        <MudText Typo="Typo.caption">Container</MudText>
+                        <MudText Typo="Typo.h4" Class="ci-kpi-number">@ArrivedPortRecords.Count.ToString("N0")</MudText>
+                    </div>
+                    <MudAvatar Color="Color.Success" Size="Size.Large"><MudIcon Icon="@Icons.Material.Filled.LocalShipping" /></MudAvatar>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudPaper Class="ci-kpi kpi-transit pa-4" Elevation="1">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                    <div>
+                        <MudText Typo="Typo.subtitle2" Class="fw-bold">In Transit</MudText>
+                        <MudText Typo="Typo.caption">Container</MudText>
+                        <MudText Typo="Typo.h4" Class="ci-kpi-number">@InTransitRecords.Count.ToString("N0")</MudText>
+                    </div>
+                    <MudAvatar Color="Color.Warning" Size="Size.Large"><MudIcon Icon="@Icons.Material.Filled.DirectionsBoat" /></MudAvatar>
+                </MudStack>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid Spacing="3">
+        <MudItem xs="12" lg="6">
+            <MudPaper Class="ci-card pa-3" Elevation="1">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.subtitle1" Class="ci-section-title">IN DEPOT</MudText>
+                    <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined" Size="Size.Small">@InDepotRecords.Count.ToString("N0") cont</MudChip>
+                </MudStack>
+                <MudDataGrid T="ContainerGroupRow" Items="InDepotGroupRows" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="330px">
+                    <Columns>
+                        <PropertyColumn Property="x => x.Depot" Title="DEPOT" />
+                        <PropertyColumn Property="x => x.Agent" Title="AGENT" />
+                        <PropertyColumn Property="x => x.Line" Title="LINE" />
+                        <PropertyColumn Property="x => x.ContainerType" Title="CONTAINER TYPE" />
+                        <PropertyColumn Property="x => x.ContainerCount" Title="TOTAL" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.EmptyCount" Title="E - Empty" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.FullCount" Title="F - Full" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.DamagedCount" Title="D - Damage" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.OtherFelCount" Title="Other" CellClass="text-end" HeaderClass="text-end" />
+                    </Columns>
+                    <PagerContent><MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" /></PagerContent>
+                </MudDataGrid>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="6">
+            <MudPaper Class="ci-card pa-3" Elevation="1">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.subtitle1" Class="ci-section-title">ARRIVED AT PORT</MudText>
+                    <MudChip T="string" Color="Color.Success" Variant="Variant.Outlined" Size="Size.Small">@ArrivedPortRecords.Count.ToString("N0") cont</MudChip>
+                </MudStack>
+                <MudDataGrid T="ContainerGroupRow" Items="ArrivedPortGroupRows" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="330px">
+                    <Columns>
+                        <PropertyColumn Property="x => x.Depot" Title="DEPOT" />
+                        <PropertyColumn Property="x => x.Agent" Title="AGENT" />
+                        <PropertyColumn Property="x => x.Line" Title="LINE" />
+                        <PropertyColumn Property="x => x.ContainerType" Title="CONTAINER TYPE" />
+                        <PropertyColumn Property="x => x.ContainerCount" Title="TOTAL" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.EmptyCount" Title="E - Empty" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.FullCount" Title="F - Full" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.DamagedCount" Title="D - Damage" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.OtherFelCount" Title="Other" CellClass="text-end" HeaderClass="text-end" />
+                    </Columns>
+                    <PagerContent><MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" /></PagerContent>
+                </MudDataGrid>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="6">
+            <MudPaper Class="ci-card pa-3" Elevation="1">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.subtitle1" Class="ci-section-title">WAITING PORT ARRIVAL</MudText>
+                    <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Size="Size.Small">@WaitingPortRecords.Count.ToString("N0") cont</MudChip>
+                </MudStack>
+                <MudDataGrid T="ContainerGroupRow" Items="WaitingPortGroupRows" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="300px">
+                    <Columns>
+                        <PropertyColumn Property="x => x.Depot" Title="DEPOT" />
+                        <PropertyColumn Property="x => x.Agent" Title="AGENT" />
+                        <PropertyColumn Property="x => x.Line" Title="LINE" />
+                        <PropertyColumn Property="x => x.ContainerType" Title="CONTAINER TYPE" />
+                        <PropertyColumn Property="x => x.ContainerCount" Title="TOTAL" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.EmptyCount" Title="E - Empty" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.FullCount" Title="F - Full" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.DamagedCount" Title="D - Damage" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.OtherFelCount" Title="Other" CellClass="text-end" HeaderClass="text-end" />
+                    </Columns>
+                    <PagerContent><MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" /></PagerContent>
+                </MudDataGrid>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="6">
+            <MudPaper Class="ci-card pa-3" Elevation="1">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.subtitle1" Class="ci-section-title">IN TRANSIT</MudText>
+                    <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">@InTransitRecords.Count.ToString("N0") cont</MudChip>
+                </MudStack>
+                <MudDataGrid T="ContainerGroupRow" Items="InTransitGroupRows" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="300px">
+                    <Columns>
+                        <PropertyColumn Property="x => x.Depot" Title="DEPOT" />
+                        <PropertyColumn Property="x => x.Agent" Title="AGENT" />
+                        <PropertyColumn Property="x => x.Line" Title="LINE" />
+                        <PropertyColumn Property="x => x.ContainerType" Title="CONTAINER TYPE" />
+                        <PropertyColumn Property="x => x.ContainerCount" Title="TOTAL" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.EmptyCount" Title="E - Empty" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.FullCount" Title="F - Full" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.DamagedCount" Title="D - Damage" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.OtherFelCount" Title="Other" CellClass="text-end" HeaderClass="text-end" />
+                    </Columns>
+                    <PagerContent><MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" /></PagerContent>
+                </MudDataGrid>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Class="ci-card pa-3 mt-3" Elevation="1">
+        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <div>
+                <MudText Typo="Typo.subtitle1" Class="ci-section-title">CONTAINER DETAIL</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Rows: @FilteredRecords.Count.ToString("N0") / @_records.Count.ToString("N0")</MudText>
+            </div>
+            <MudChip T="string" Color="Color.Secondary" Variant="Variant.Outlined" Size="Size.Small">Distinct ITEM_NO</MudChip>
+        </MudStack>
+        <MudDataGrid T="ContainerRecord" Items="FilteredRecords" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="480px" Class="ci-detail-grid" Loading="_busy">
+            <Columns>
+                <PropertyColumn Property="x => x.Status" Title="Status" />
+                <PropertyColumn Property="x => x.StatusReason" Title="Status Reason" />
+                <PropertyColumn Property="x => x.AGENT" Title="AGENT" />
+                <PropertyColumn Property="x => x.LINE" Title="LINE" />
+                <PropertyColumn Property="x => x.DEPOT" Title="DEPOT" />
+                <PropertyColumn Property="x => x.ITEM_NO" Title="ITEM_NO / Container" />
+                <PropertyColumn Property="x => x.ISO" Title="ISO" />
+                <PropertyColumn Property="x => x.SizeType" Title="Size" />
+                <PropertyColumn Property="x => x.FEL" Title="F/E" />
+                <PropertyColumn Property="x => x.WEIGHT" Title="WEIGHT" Format="N2" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.VGM_WEIGHT" Title="VGM" Format="N2" CellClass="text-end" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.BOOK_NO" Title="BOOK_NO" />
+                <PropertyColumn Property="x => x.BILL_OF_LADING" Title="B/L" />
+                <PropertyColumn Property="x => x.LOCATION" Title="LOCATION" />
+                <PropertyColumn Property="x => x.CATEGORY" Title="CATEGORY" />
+                <PropertyColumn Property="x => x.ARR_BY" Title="ARR_BY" />
+                <PropertyColumn Property="x => x.ARR_CAR" Title="ARR_CAR" />
+                <PropertyColumn Property="x => x.ARR_VES_NAME" Title="ARR VESSEL" />
+                <PropertyColumn Property="x => x.ARR_TS" Title="ARR_TS" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.DEP_BY" Title="DEP_BY" />
+                <PropertyColumn Property="x => x.DEP_CAR" Title="DEP_CAR" />
+                <PropertyColumn Property="x => x.DEP_VES_NAME" Title="DEP VESSEL" />
+                <PropertyColumn Property="x => x.DEP_TS" Title="DEP_TS" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.DISCH_PORT" Title="DISCH_PORT" />
+                <PropertyColumn Property="x => x.FINAL_DISCH_PORT" Title="FINAL_DISCH" />
+                <PropertyColumn Property="x => x.PLACE_OF_RECEIPT" Title="POR" />
+                <PropertyColumn Property="x => x.PLACE_OF_DELIVERY" Title="POD/DEL" />
+                <PropertyColumn Property="x => x.CUSTOM_CLEARANCE" Title="CUSTOM" />
+                <PropertyColumn Property="x => x.CC_TS" Title="CC_TS" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.DGS_CLASS" Title="DGS" />
+                <PropertyColumn Property="x => x.UN_NO" Title="UN_NO" />
+                <PropertyColumn Property="x => x.DAM" Title="DAM" />
+                <PropertyColumn Property="x => x.SOSEAL" Title="SOSEAL" />
+                <PropertyColumn Property="x => x.GHICHU" Title="NOTE" />
+                <PropertyColumn Property="x => x.DateImport" Title="DateImport" Format="dd/MM/yyyy HH:mm" />
+                <PropertyColumn Property="x => x.UserImport" Title="UserImport" />
+            </Columns>
+            <PagerContent><MudDataGridPager T="ContainerRecord" PageSizeOptions="new int[] { 25, 50, 100, 200 }" /></PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    private const string StatusInDepot = "In Depot";
+    private const string StatusWaitingPort = "Waiting Port Arrival";
+    private const string StatusArrivedPort = "Arrived at Port";
+    private const string StatusInTransit = "In Transit";
+
+    private static readonly string[] InventoryColumns = new[]
+    {
+        "Id", "AGENT", "LINE", "DEPOT", "ITEM_KEY", "ITEM_NO", "ISO", "FEL", "TEMP", "WEIGHT", "VGM_WEIGHT",
+        "BOOK_NO", "BILL_OF_LADING", "LOCATION", "CATEGORY", "ARR_BY", "ARR_CAR", "ARR_VES_NAME", "ARR_TS",
+        "DEP_BY", "DEP_CAR", "DEP_VES_NAME", "DEP_TS", "DISCH_PORT", "FINAL_DISCH_PORT", "PLACE_OF_RECEIPT",
+        "PLACE_OF_DELIVERY", "CUSTOM_CLEARANCE", "CC_TS", "DGS_CLASS", "UN_NO", "DAM", "GHICHU", "SOSEAL",
+        "DateImport", "UserImport", "CreatedAt"
+    };
+
+    private bool _busy;
+    private string _errorMessage = string.Empty;
+    private string _sourceInfo = string.Empty;
+    private string _search = string.Empty;
+    private string _agentFilter = string.Empty;
+    private string _lineFilter = string.Empty;
+    private string _depotFilter = string.Empty;
+    private string _sizeFilter = string.Empty;
+    private string _statusFilter = string.Empty;
+    private bool _excludeDamaged;
+
+    private List<ContainerRecord> _records = new();
+
+    private List<string> AgentOptions => _records.Select(x => x.AGENT).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
+    private List<string> LineOptions => _records.Select(x => x.LINE).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
+    private List<string> DepotOptions => _records.Select(x => x.DepotDisplay).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
+
+    private List<ContainerRecord> FilteredRecords => _records.Where(MatchesFilters).ToList();
+    private List<ContainerRecord> InDepotRecords => FilteredRecords.Where(x => x.Status == StatusInDepot).ToList();
+    private List<ContainerRecord> WaitingPortRecords => FilteredRecords.Where(x => x.Status == StatusWaitingPort).ToList();
+    private List<ContainerRecord> ArrivedPortRecords => FilteredRecords.Where(x => x.Status == StatusArrivedPort).ToList();
+    private List<ContainerRecord> InTransitRecords => FilteredRecords.Where(x => x.Status == StatusInTransit).ToList();
+
+    private List<ContainerGroupRow> InDepotGroupRows => BuildGroupRows(InDepotRecords);
+    private List<ContainerGroupRow> WaitingPortGroupRows => BuildGroupRows(WaitingPortRecords);
+    private List<ContainerGroupRow> ArrivedPortGroupRows => BuildGroupRows(ArrivedPortRecords);
+    private List<ContainerGroupRow> InTransitGroupRows => BuildGroupRows(InTransitRecords);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _busy = true;
+            _errorMessage = string.Empty;
+            _sourceInfo = string.Empty;
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var conn = db.Database.GetDbConnection();
+            if (conn.State != ConnectionState.Open)
+                await conn.OpenAsync();
+
+            var table = await FindInventoryTableAsync(conn);
+            if (table is null)
+            {
+                _records.Clear();
+                _errorMessage = "No inventory table was found with the required columns ITEM_NO, ISO, LOCATION, ARR_TS, DEP_TS and DateImport. DEPOT is optional but recommended. Please check the table name or SQL permissions.";
+                return;
+            }
+
+            var dbColumns = await LoadColumnNamesAsync(conn, table.SchemaName, table.TableName);
+            var selectedColumns = InventoryColumns.Where(x => dbColumns.Contains(x)).ToList();
+            if (!selectedColumns.Contains("ITEM_NO") || !selectedColumns.Contains("ISO"))
+            {
+                _records.Clear();
+                _errorMessage = "The detected table does not contain enough required columns ITEM_NO/ISO for container inventory statistics.";
+                return;
+            }
+
+            _sourceInfo = $"{QuoteName(table.SchemaName)}.{QuoteName(table.TableName)} · {selectedColumns.Count} columns";
+            var raw = await LoadInventoryRowsAsync(conn, table, selectedColumns);
+
+            _records = raw
+                .Where(x => !string.IsNullOrWhiteSpace(x.ContainerKey))
+                .GroupBy(x => x.ContainerKey, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.DateImport ?? DateTime.MinValue)
+                              .ThenByDescending(x => x.CreatedAt ?? DateTime.MinValue)
+                              .ThenByDescending(x => x.ARR_TS ?? DateTime.MinValue)
+                              .First())
+                .OrderBy(x => x.LOCATION)
+                .ThenBy(x => x.ITEM_NO)
+                .ToList();
+
+            foreach (var item in _records)
+            {
+                var statusInfo = ResolveStatusInfo(item);
+                item.Status = statusInfo.Status;
+                item.StatusReason = statusInfo.Reason;
+            }
+
+            Snackbar.Add($"Loaded {_records.Count:N0} distinct containers from {_sourceInfo}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            _errorMessage = root.Message;
+            Snackbar.Add(root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<TableRef?> FindInventoryTableAsync(DbConnection conn)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT TOP 1 s.name AS SchemaName, t.name AS TableName
+FROM sys.tables t
+INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ITEM_NO')
+  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ISO')
+  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'LOCATION')
+  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ARR_TS')
+  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'DEP_TS')
+  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'DateImport')
+ORDER BY
+  CASE
+    WHEN t.name LIKE N'%Inventory%' THEN 0
+    WHEN t.name LIKE N'%Container%' THEN 1
+    WHEN t.name LIKE N'%Stock%' THEN 2
+    ELSE 9
+  END,
+  t.name;";
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+            return new TableRef(reader.GetString(0), reader.GetString(1));
+
+        return null;
+    }
+
+    private async Task<HashSet<string>> LoadColumnNamesAsync(DbConnection conn, string schemaName, string tableName)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT c.name
+FROM sys.columns c
+INNER JOIN sys.tables t ON t.object_id = c.object_id
+INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE s.name = @SchemaName AND t.name = @TableName;";
+        AddParameter(cmd, "@SchemaName", schemaName);
+        AddParameter(cmd, "@TableName", tableName);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            result.Add(reader.GetString(0));
+
+        return result;
+    }
+
+    private async Task<List<ContainerRecord>> LoadInventoryRowsAsync(DbConnection conn, TableRef table, List<string> selectedColumns)
+    {
+        var result = new List<ContainerRecord>();
+        var selectList = string.Join(", ", selectedColumns.Select(QuoteName));
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+SELECT TOP (100000) {selectList}
+FROM {QuoteName(table.SchemaName)}.{QuoteName(table.TableName)} WITH (NOLOCK)
+ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
+        cmd.CommandTimeout = 180;
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        var ordinals = Enumerable.Range(0, reader.FieldCount)
+            .ToDictionary(reader.GetName, i => i, StringComparer.OrdinalIgnoreCase);
+
+        while (await reader.ReadAsync())
+        {
+            var row = new ContainerRecord
+            {
+                Id = GetGuid(reader, ordinals, "Id"),
+                AGENT = GetString(reader, ordinals, "AGENT"),
+                LINE = GetString(reader, ordinals, "LINE"),
+                DEPOT = GetString(reader, ordinals, "DEPOT"),
+                ITEM_KEY = GetString(reader, ordinals, "ITEM_KEY"),
+                ITEM_NO = GetString(reader, ordinals, "ITEM_NO"),
+                ISO = GetString(reader, ordinals, "ISO"),
+                FEL = GetString(reader, ordinals, "FEL"),
+                TEMP = GetDecimal(reader, ordinals, "TEMP"),
+                WEIGHT = GetDecimal(reader, ordinals, "WEIGHT"),
+                VGM_WEIGHT = GetDecimal(reader, ordinals, "VGM_WEIGHT"),
+                BOOK_NO = GetString(reader, ordinals, "BOOK_NO"),
+                BILL_OF_LADING = GetString(reader, ordinals, "BILL_OF_LADING"),
+                LOCATION = GetString(reader, ordinals, "LOCATION"),
+                CATEGORY = GetString(reader, ordinals, "CATEGORY"),
+                ARR_BY = GetString(reader, ordinals, "ARR_BY"),
+                ARR_CAR = GetString(reader, ordinals, "ARR_CAR"),
+                ARR_VES_NAME = GetString(reader, ordinals, "ARR_VES_NAME"),
+                ARR_TS = GetDateTime(reader, ordinals, "ARR_TS"),
+                DEP_BY = GetString(reader, ordinals, "DEP_BY"),
+                DEP_CAR = GetString(reader, ordinals, "DEP_CAR"),
+                DEP_VES_NAME = GetString(reader, ordinals, "DEP_VES_NAME"),
+                DEP_TS = GetDateTime(reader, ordinals, "DEP_TS"),
+                DISCH_PORT = GetString(reader, ordinals, "DISCH_PORT"),
+                FINAL_DISCH_PORT = GetString(reader, ordinals, "FINAL_DISCH_PORT"),
+                PLACE_OF_RECEIPT = GetString(reader, ordinals, "PLACE_OF_RECEIPT"),
+                PLACE_OF_DELIVERY = GetString(reader, ordinals, "PLACE_OF_DELIVERY"),
+                CUSTOM_CLEARANCE = GetString(reader, ordinals, "CUSTOM_CLEARANCE"),
+                CC_TS = GetDateTime(reader, ordinals, "CC_TS"),
+                DGS_CLASS = GetString(reader, ordinals, "DGS_CLASS"),
+                UN_NO = GetString(reader, ordinals, "UN_NO"),
+                DAM = GetString(reader, ordinals, "DAM"),
+                GHICHU = GetString(reader, ordinals, "GHICHU"),
+                SOSEAL = GetString(reader, ordinals, "SOSEAL"),
+                DateImport = GetDateTime(reader, ordinals, "DateImport"),
+                UserImport = GetString(reader, ordinals, "UserImport"),
+                CreatedAt = GetDateTime(reader, ordinals, "CreatedAt")
+            };
+            row.SizeType = DetectSizeType(row.ISO);
+            result.Add(row);
+        }
+
+        return result;
+    }
+
+    private bool MatchesFilters(ContainerRecord x)
+    {
+        if (_excludeDamaged && IsDamaged(x))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_agentFilter) && !string.Equals(x.AGENT, _agentFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_lineFilter) && !string.Equals(x.LINE, _lineFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_depotFilter) && !string.Equals(x.DepotDisplay, _depotFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_sizeFilter) && !string.Equals(x.SizeType, _sizeFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_statusFilter) && !string.Equals(x.Status, _statusFilter, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var key = _search.Trim();
+        return Contains(x.AGENT, key) || Contains(x.LINE, key) || Contains(x.DEPOT, key) || Contains(x.ITEM_KEY, key) || Contains(x.ITEM_NO, key)
+            || Contains(x.ISO, key) || Contains(x.FEL, key) || Contains(x.BOOK_NO, key) || Contains(x.BILL_OF_LADING, key)
+            || Contains(x.LOCATION, key) || Contains(x.CATEGORY, key) || Contains(x.ARR_CAR, key) || Contains(x.ARR_VES_NAME, key)
+            || Contains(x.DEP_CAR, key) || Contains(x.DEP_VES_NAME, key) || Contains(x.DISCH_PORT, key)
+            || Contains(x.FINAL_DISCH_PORT, key) || Contains(x.PLACE_OF_RECEIPT, key) || Contains(x.PLACE_OF_DELIVERY, key)
+            || Contains(x.CUSTOM_CLEARANCE, key) || Contains(x.DAM, key) || Contains(x.GHICHU, key) || Contains(x.SOSEAL, key);
+    }
+
+    private static List<ContainerGroupRow> BuildGroupRows(IEnumerable<ContainerRecord> rows)
+    {
+        return rows
+            .GroupBy(x => new
+            {
+                Depot = FirstNonEmpty(x.DepotDisplay, "N/A"),
+                Agent = string.IsNullOrWhiteSpace(x.AGENT) ? "N/A" : x.AGENT.Trim(),
+                Line = string.IsNullOrWhiteSpace(x.LINE) ? "N/A" : x.LINE.Trim(),
+                ContainerType = string.IsNullOrWhiteSpace(x.SizeType) ? "OTHER" : x.SizeType.Trim()
+            })
+            .Select(g => new ContainerGroupRow
+            {
+                Depot = g.Key.Depot,
+                Agent = g.Key.Agent,
+                Line = g.Key.Line,
+                ContainerType = g.Key.ContainerType,
+                ContainerCount = g.Select(x => x.ContainerKey).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                Size20 = g.Where(x => x.SizeType == "20DC").Select(x => x.ContainerKey).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                Size40 = g.Where(x => x.SizeType == "40HC").Select(x => x.ContainerKey).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                EmptyCount = g.Where(IsEmptyFel).Select(x => x.ContainerKey).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                FullCount = g.Where(IsFullFel).Select(x => x.ContainerKey).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                DamagedCount = g.Where(IsDamagedOrDFel).Select(x => x.ContainerKey).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                OtherFelCount = g.Where(x => !IsEmptyFel(x) && !IsFullFel(x) && !IsDamagedOrDFel(x)).Select(x => x.ContainerKey).Distinct(StringComparer.OrdinalIgnoreCase).Count()
+            })
+            .OrderBy(x => x.Depot)
+            .ThenBy(x => x.Line)
+            .ThenBy(x => x.ContainerType)
+            .ToList();
+    }
+
+    private (string Status, string Reason) ResolveStatusInfo(ContainerRecord x)
+    {
+        var location = Normalize(x.LOCATION);
+        var category = Normalize(x.CATEGORY);
+        var arrValid = IsValidDate(x.ARR_TS);
+        var depValid = IsValidDate(x.DEP_TS);
+
+        if (depValid && (!arrValid || x.DEP_TS!.Value >= x.ARR_TS!.Value))
+        {
+            var depText = x.DEP_TS?.ToString("dd/MM/yyyy HH:mm") ?? "available";
+            return (StatusInTransit, $"DEP_TS = {depText}; the container has left the yard/port or is in transit.");
+        }
+
+        if (!arrValid)
+        {
+            if (!string.IsNullOrWhiteSpace(x.BOOK_NO) ||
+                !string.IsNullOrWhiteSpace(x.BILL_OF_LADING) ||
+                !string.IsNullOrWhiteSpace(x.ARR_CAR) ||
+                !string.IsNullOrWhiteSpace(x.ARR_VES_NAME))
+            {
+                return (StatusWaitingPort, "ARR_TS is empty, but Booking/B/L/transport or inbound vessel data exists, so the container is waiting for port/yard arrival.");
+            }
+
+            return (StatusWaitingPort, "ARR_TS is empty, so the system classifies this container as Waiting Port Arrival.");
+        }
+
+        if (LooksLikeDepot(location, category))
+        {
+            var arrText = x.ARR_TS?.ToString("dd/MM/yyyy HH:mm") ?? "available";
+            return (StatusInDepot, $"ARR_TS = {arrText}; DEP_TS is empty; LOCATION/CATEGORY is identified as depot/yard/warehouse.");
+        }
+
+        if (LooksLikePort(location, x.DISCH_PORT, x.FINAL_DISCH_PORT, x.PLACE_OF_RECEIPT, x.PLACE_OF_DELIVERY))
+        {
+            var arrText = x.ARR_TS?.ToString("dd/MM/yyyy HH:mm") ?? "available";
+            return (StatusArrivedPort, $"ARR_TS = {arrText}; DEP_TS is empty; LOCATION/port fields are identified as port/terminal.");
+        }
+
+        return (StatusInDepot, "ARR_TS exists and DEP_TS is empty; no clear port indicator was detected, so the default status is In Depot.");
+    }
+
+    private static bool LooksLikeDepot(string location, string category)
+    {
+        if (location.StartsWith("Y-") || location.Contains("DEPOT") || location.Contains("KHO") || location.Contains("YARD") || location.Contains("ICD"))
+            return true;
+
+        if (category.Contains("DEPOT") || category.Contains("KHO") || category.Contains("YARD"))
+            return true;
+
+        return false;
+    }
+
+    private static bool LooksLikePort(string location, params string[] ports)
+    {
+        if (location.Contains("PORT") || location.Contains("CAT LAI") || location.Contains("CAI MEP") || location.Contains("TERMINAL") || location.Contains("CANG") || location.Contains("CẢNG"))
+            return true;
+
+        if (!LooksLikeDepot(location, string.Empty) && ports.Any(p => !string.IsNullOrWhiteSpace(p)))
+            return true;
+
+        return false;
+    }
+
+    private static string DetectSizeType(string iso)
+    {
+        var n = Normalize(iso);
+        if (string.IsNullOrWhiteSpace(n))
+            return "OTHER";
+
+        if (n.StartsWith("22") || n.StartsWith("20") || n.Contains("20"))
+            return "20DC";
+
+        if (n.StartsWith("45") || n.StartsWith("42") || n.StartsWith("43") || n.StartsWith("40") || n.Contains("HC") || n.Contains("HQ") || n.Contains("45"))
+            return "40HC";
+
+        return "OTHER";
+    }
+
+    private static bool IsEmptyFel(ContainerRecord x)
+    {
+        var fel = Normalize(x.FEL);
+        return fel is "E" or "EMPTY" or "R" or "MT";
+    }
+
+    private static bool IsFullFel(ContainerRecord x)
+    {
+        var fel = Normalize(x.FEL);
+        return fel is "F" or "FULL" or "L" or "LADEN";
+    }
+
+    private static bool IsDamagedOrDFel(ContainerRecord x)
+    {
+        var fel = Normalize(x.FEL);
+        return fel is "D" or "DAM" or "DAMAGE" or "DAMAGED" || IsDamaged(x);
+    }
+
+    private static bool IsDamaged(ContainerRecord x)
+    {
+        var dam = Normalize(x.DAM);
+        var note = Normalize(x.GHICHU);
+        if (string.IsNullOrWhiteSpace(dam) && string.IsNullOrWhiteSpace(note))
+            return false;
+
+        return dam is "1" or "Y" or "YES" or "DAM" or "DAMAGE" or "DAMAGED" or "HONG" or "HƯ"
+            || dam.Contains("DAM") || dam.Contains("HONG") || dam.Contains("HƯ")
+            || note.Contains("DAM") || note.Contains("HONG") || note.Contains("HƯ") || note.Contains("MOOP") || note.Contains("MOP") || note.Contains("BỂ") || note.Contains("BE ");
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Status,StatusReason,AGENT,LINE,DEPOT,ITEM_NO,ISO,Size,FEL,WEIGHT,VGM_WEIGHT,BOOK_NO,BILL_OF_LADING,LOCATION,CATEGORY,ARR_BY,ARR_CAR,ARR_VES_NAME,ARR_TS,DEP_BY,DEP_CAR,DEP_VES_NAME,DEP_TS,DISCH_PORT,FINAL_DISCH_PORT,PLACE_OF_RECEIPT,PLACE_OF_DELIVERY,CUSTOM_CLEARANCE,DAM,SOSEAL,GHICHU,DateImport,UserImport");
+        foreach (var x in FilteredRecords)
+        {
+            sb.AppendLine(string.Join(",", new[]
+            {
+                Csv(x.Status), Csv(x.StatusReason), Csv(x.AGENT), Csv(x.LINE), Csv(x.DepotDisplay), Csv(x.ITEM_NO), Csv(x.ISO), Csv(x.SizeType), Csv(x.FEL),
+                Csv(x.WEIGHT?.ToString("N2") ?? string.Empty), Csv(x.VGM_WEIGHT?.ToString("N2") ?? string.Empty), Csv(x.BOOK_NO), Csv(x.BILL_OF_LADING),
+                Csv(x.LOCATION), Csv(x.CATEGORY), Csv(x.ARR_BY), Csv(x.ARR_CAR), Csv(x.ARR_VES_NAME), Csv(FormatDateTime(x.ARR_TS)),
+                Csv(x.DEP_BY), Csv(x.DEP_CAR), Csv(x.DEP_VES_NAME), Csv(FormatDateTime(x.DEP_TS)), Csv(x.DISCH_PORT), Csv(x.FINAL_DISCH_PORT),
+                Csv(x.PLACE_OF_RECEIPT), Csv(x.PLACE_OF_DELIVERY), Csv(x.CUSTOM_CLEARANCE), Csv(x.DAM), Csv(x.SOSEAL), Csv(x.GHICHU),
+                Csv(FormatDateTime(x.DateImport)), Csv(x.UserImport)
+            }));
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = $"ContainerInventory_{DateTime.Now:yyyyMMddHHmmss}.csv";
+        await JS.InvokeVoidAsync("eval", $"const a=document.createElement('a');a.href='data:text/csv;base64,{base64}';a.download='{fileName}';a.click();");
+    }
+
+    private async Task PrintAsync()
+    {
+        await JS.InvokeVoidAsync("window.print");
+    }
+
+    private static void AddParameter(DbCommand cmd, string name, object? value)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value = value ?? DBNull.Value;
+        cmd.Parameters.Add(p);
+    }
+
+    private static string GetString(DbDataReader reader, Dictionary<string, int> ordinals, string name)
+    {
+        if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
+            return string.Empty;
+        return Convert.ToString(reader.GetValue(i))?.Trim() ?? string.Empty;
+    }
+
+    private static Guid? GetGuid(DbDataReader reader, Dictionary<string, int> ordinals, string name)
+    {
+        if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
+            return null;
+        var v = reader.GetValue(i);
+        if (v is Guid g)
+            return g;
+        return Guid.TryParse(Convert.ToString(v), out var parsed) ? parsed : null;
+    }
+
+    private static decimal? GetDecimal(DbDataReader reader, Dictionary<string, int> ordinals, string name)
+    {
+        if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
+            return null;
+        return Convert.ToDecimal(reader.GetValue(i));
+    }
+
+    private static DateTime? GetDateTime(DbDataReader reader, Dictionary<string, int> ordinals, string name)
+    {
+        if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
+            return null;
+        var v = reader.GetValue(i);
+        if (v is DateTime dt)
+            return IsValidDate(dt) ? dt : null;
+        return DateTime.TryParse(Convert.ToString(v), out var parsed) && IsValidDate(parsed) ? parsed : null;
+    }
+
+    private static bool IsValidDate(DateTime? value) => value.HasValue && IsValidDate(value.Value);
+    private static bool IsValidDate(DateTime value) => value.Year > 1901;
+
+    private static string QuoteName(string value) => "[" + value.Replace("]", "]]", StringComparison.Ordinal) + "]";
+    private static string Normalize(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant();
+    private static bool Contains(string? source, string key) => !string.IsNullOrWhiteSpace(source) && source.Contains(key, StringComparison.OrdinalIgnoreCase);
+    private static string FirstNonEmpty(params string[] values) => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? string.Empty;
+    private static string FormatDateTime(DateTime? value) => value?.ToString("dd/MM/yyyy HH:mm") ?? string.Empty;
+
+    private static string Csv(string value)
+    {
+        value ??= string.Empty;
+        return "\"" + value.Replace("\"", "\"\"") + "\"";
+    }
+
+    private sealed class TableRef
+    {
+        public TableRef(string schemaName, string tableName)
+        {
+            SchemaName = schemaName;
+            TableName = tableName;
+        }
+
+        public string SchemaName { get; }
+        public string TableName { get; }
+    }
+
+    private sealed class ContainerRecord
+    {
+        public Guid? Id { get; set; }
+        public string AGENT { get; set; } = string.Empty;
+        public string LINE { get; set; } = string.Empty;
+        public string DEPOT { get; set; } = string.Empty;
+        public string ITEM_KEY { get; set; } = string.Empty;
+        public string ITEM_NO { get; set; } = string.Empty;
+        public string ISO { get; set; } = string.Empty;
+        public string FEL { get; set; } = string.Empty;
+        public decimal? TEMP { get; set; }
+        public decimal? WEIGHT { get; set; }
+        public decimal? VGM_WEIGHT { get; set; }
+        public string BOOK_NO { get; set; } = string.Empty;
+        public string BILL_OF_LADING { get; set; } = string.Empty;
+        public string LOCATION { get; set; } = string.Empty;
+        public string CATEGORY { get; set; } = string.Empty;
+        public string ARR_BY { get; set; } = string.Empty;
+        public string ARR_CAR { get; set; } = string.Empty;
+        public string ARR_VES_NAME { get; set; } = string.Empty;
+        public DateTime? ARR_TS { get; set; }
+        public string DEP_BY { get; set; } = string.Empty;
+        public string DEP_CAR { get; set; } = string.Empty;
+        public string DEP_VES_NAME { get; set; } = string.Empty;
+        public DateTime? DEP_TS { get; set; }
+        public string DISCH_PORT { get; set; } = string.Empty;
+        public string FINAL_DISCH_PORT { get; set; } = string.Empty;
+        public string PLACE_OF_RECEIPT { get; set; } = string.Empty;
+        public string PLACE_OF_DELIVERY { get; set; } = string.Empty;
+        public string CUSTOM_CLEARANCE { get; set; } = string.Empty;
+        public DateTime? CC_TS { get; set; }
+        public string DGS_CLASS { get; set; } = string.Empty;
+        public string UN_NO { get; set; } = string.Empty;
+        public string DAM { get; set; } = string.Empty;
+        public string GHICHU { get; set; } = string.Empty;
+        public string SOSEAL { get; set; } = string.Empty;
+        public DateTime? DateImport { get; set; }
+        public string UserImport { get; set; } = string.Empty;
+        public DateTime? CreatedAt { get; set; }
+        public string SizeType { get; set; } = "OTHER";
+        public string Status { get; set; } = StatusInDepot;
+        public string StatusReason { get; set; } = string.Empty;
+        public string DepotDisplay => FirstNonEmpty(DEPOT, LOCATION, DISCH_PORT, FINAL_DISCH_PORT, PLACE_OF_DELIVERY, "N/A");
+        public string ContainerKey => !string.IsNullOrWhiteSpace(ITEM_NO) ? ITEM_NO.Trim() : !string.IsNullOrWhiteSpace(ITEM_KEY) ? ITEM_KEY.Trim() : Id?.ToString() ?? string.Empty;
+    }
+
+    private sealed class ContainerGroupRow
+    {
+        public string Depot { get; set; } = string.Empty;
+        public string Agent { get; set; } = string.Empty;
+        public string Line { get; set; } = string.Empty;
+        public string ContainerType { get; set; } = string.Empty;
+        public int ContainerCount { get; set; }
+        public int Size20 { get; set; }
+        public int Size40 { get; set; }
+        public int EmptyCount { get; set; }
+        public int FullCount { get; set; }
+        public int DamagedCount { get; set; }
+        public int OtherFelCount { get; set; }
+    }
+}
+
+<style>
+    .container-inventory-page {
+        background: #f4f8fb;
+        min-height: 100vh;
+        padding: 10px;
+    }
+
+    .ci-header,
+    .ci-card {
+        border-radius: 18px;
+        border: 1px solid #dbeafe;
+        background: #ffffff;
+        box-shadow: 0 12px 28px rgba(15, 23, 42, .06);
+    }
+
+    .ci-title {
+        color: #0b2c52;
+        font-weight: 900;
+        letter-spacing: .2px;
+    }
+
+    .ci-section-title {
+        color: #123b63;
+        font-weight: 900;
+        letter-spacing: .2px;
+    }
+
+    .ci-kpi {
+        min-height: 142px;
+        border-radius: 14px;
+        border: 1px solid #e5e7eb;
+        background: #ffffff;
+    }
+
+    .ci-kpi-number {
+        margin-top: 24px;
+        font-weight: 800;
+        color: #243247;
+    }
+
+    .kpi-depot {
+        border-bottom: 3px solid #5b4de1;
+    }
+
+    .kpi-wait {
+        border-bottom: 3px solid #3b82f6;
+    }
+
+    .kpi-port {
+        border-bottom: 3px solid #22c55e;
+    }
+
+    .kpi-transit {
+        border-bottom: 3px solid #f97316;
+    }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .text-end {
+        text-align: right !important;
+    }
+
+    .ci-detail-grid .mud-table-container,
+    .ci-card .mud-table-container {
+        overflow-x: auto;
+    }
+
+    .ci-detail-grid .mud-table-root .mud-table,
+    .ci-card .mud-table-root .mud-table {
+        min-width: 100%;
+        width: max-content !important;
+    }
+
+    .ci-detail-grid .mud-table-cell,
+    .ci-card .mud-table-cell {
+        white-space: nowrap;
+        padding: 5px 8px !important;
+    }
+
+    @@media print {
+        .mud-button-root,
+        .mud-input-control,
+        .mud-select,
+        .mud-checkbox {
+            display: none !important;
+        }
+
+        .container-inventory-page {
+            background: #ffffff;
+            padding: 0;
+        }
+
+        .ci-card,
+        .ci-header,
+        .ci-kpi {
+            box-shadow: none;
+            border: 1px solid #ddd;
+        }
+    }
+</style>
