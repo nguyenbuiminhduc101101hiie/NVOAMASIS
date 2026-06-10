@@ -6,6 +6,7 @@ public class M_8_3_IN_OUT_YARD_1 : IExcelImportEntity
 {
     [Key]
     public Guid Id { get; set; }
+    public string? DEPOT { get; set; }
     public string? METHOD { get; set; }
     public DateTime? EXEC_TS { get; set; }
     public string? LINE { get; set; }

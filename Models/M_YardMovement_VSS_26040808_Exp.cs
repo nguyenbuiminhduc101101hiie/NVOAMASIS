@@ -6,6 +6,7 @@ public class M_8_3_VSS_IN_OUT_YARD_Exp : IExcelImportEntity
 {
     [Key]
     public Guid Id { get; set; }
+    public string? DEPOT { get; set; }
     public string? METHOD { get; set; }
     public string? OPERATION_METHOD { get; set; }
     public DateTime? EXEC_TS { get; set; }
