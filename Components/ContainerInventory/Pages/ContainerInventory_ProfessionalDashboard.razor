@@ -1,5 +1,6 @@
 @page "/ContainerInventory"
 @page "/container/inventory"
+
 @using System.Data
 @using System.Data.Common
 @using System.Text
@@ -7,10 +8,13 @@
 @using Microsoft.JSInterop
 @using MudBlazor
 @using NVOAMASIS.Data
+
 @attribute [Authorize]
+
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
+@inject NavigationManager Navigation
 
 <PageTitle>8.3.3 Container Inventory</PageTitle>
 
@@ -19,20 +23,58 @@
         <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="flex-wrap" Spacing="2">
             <div>
                 <MudText Typo="Typo.h5" Class="ci-title">8.3.3 Container Inventory</MudText>
-                <MudText Typo="Typo.caption" Color="Color.Secondary">Statistics grouped by DEPOT + LINE + container type; E/F/D counts based on ITEM_NO, ISO, FEL and DAM</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Statistics from all yard/import tables using one common inventory logic: Current In Yard + In/Out Yard + VSS import/export tables.
+                </MudText>
                 @if (!string.IsNullOrWhiteSpace(_sourceInfo))
                 {
                     <MudText Typo="Typo.caption" Color="Color.Secondary">Data source: @_sourceInfo</MudText>
                 }
             </div>
+
             <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="flex-wrap">
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.UploadFile"
+                           OnClick="OpenImport834Async"
+                           Disabled="_busy">
+                    8.3.4 Import
+                </MudButton>
+
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Info"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.UploadFile"
+                           OnClick="OpenImport835Async"
+                           Disabled="_busy">
+                    8.3.5 Import
+                </MudButton>
+
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="LoadAsync"
+                           Disabled="_busy">
                     Refresh
                 </MudButton>
-                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload" OnClick="ExportCsvAsync" Disabled="_busy || !FilteredRecords.Any()">
+
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FileDownload"
+                           OnClick="ExportCsvAsync"
+                           Disabled="_busy || !FilteredRecords.Any()">
                     CSV
                 </MudButton>
-                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Print" OnClick="PrintAsync" Disabled="_busy">
+
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Secondary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Print"
+                           OnClick="PrintAsync"
+                           Disabled="_busy">
                     Print
                 </MudButton>
             </MudStack>
@@ -59,6 +101,16 @@
                               Adornment="Adornment.Start"
                               AdornmentIcon="@Icons.Material.Filled.Search" />
             </MudItem>
+
+            <MudItem xs="12" md="2">
+                <MudSelect T="string" @bind-Value="_sourceFilter" Label="Source" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
+                    @foreach (var v in SourceOptions)
+                    {
+                        <MudSelectItem T="string" Value="@v">@v</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
             <MudItem xs="12" md="2">
                 <MudSelect T="string" @bind-Value="_agentFilter" Label="AGENT" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
                     @foreach (var v in AgentOptions)
@@ -67,6 +119,7 @@
                     }
                 </MudSelect>
             </MudItem>
+
             <MudItem xs="12" md="2">
                 <MudSelect T="string" @bind-Value="_lineFilter" Label="LINE" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
                     @foreach (var v in LineOptions)
@@ -75,6 +128,7 @@
                     }
                 </MudSelect>
             </MudItem>
+
             <MudItem xs="12" md="2">
                 <MudSelect T="string" @bind-Value="_depotFilter" Label="DEPOT" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
                     @foreach (var v in DepotOptions)
@@ -83,6 +137,7 @@
                     }
                 </MudSelect>
             </MudItem>
+
             <MudItem xs="12" md="2">
                 <MudSelect T="string" @bind-Value="_sizeFilter" Label="Size/Type" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
                     <MudSelectItem T="string" Value="@("20DC")">20DC</MudSelectItem>
@@ -90,6 +145,7 @@
                     <MudSelectItem T="string" Value="@("OTHER")">OTHER</MudSelectItem>
                 </MudSelect>
             </MudItem>
+
             <MudItem xs="12" md="2">
                 <MudSelect T="string" @bind-Value="_statusFilter" Label="Status" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
                     <MudSelectItem T="string" Value="@StatusInDepot">In Depot</MudSelectItem>
@@ -98,6 +154,7 @@
                     <MudSelectItem T="string" Value="@StatusInTransit">In Transit</MudSelectItem>
                 </MudSelect>
             </MudItem>
+
             <MudItem xs="12" md="1">
                 <MudCheckBox T="bool" @bind-Checked="_excludeDamaged" Label="Hide DAM" Color="Color.Primary" />
             </MudItem>
@@ -113,10 +170,13 @@
                         <MudText Typo="Typo.caption">Container</MudText>
                         <MudText Typo="Typo.h4" Class="ci-kpi-number">@InDepotRecords.Count.ToString("N0")</MudText>
                     </div>
-                    <MudAvatar Color="Color.Primary" Size="Size.Large"><MudIcon Icon="@Icons.Material.Filled.Inventory2" /></MudAvatar>
+                    <MudAvatar Color="Color.Primary" Size="Size.Large">
+                        <MudIcon Icon="@Icons.Material.Filled.Inventory2" />
+                    </MudAvatar>
                 </MudStack>
             </MudPaper>
         </MudItem>
+
         <MudItem xs="12" md="3">
             <MudPaper Class="ci-kpi kpi-wait pa-4" Elevation="1">
                 <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
@@ -125,10 +185,13 @@
                         <MudText Typo="Typo.caption">Container</MudText>
                         <MudText Typo="Typo.h4" Class="ci-kpi-number">@WaitingPortRecords.Count.ToString("N0")</MudText>
                     </div>
-                    <MudAvatar Color="Color.Info" Size="Size.Large"><MudIcon Icon="@Icons.Material.Filled.PendingActions" /></MudAvatar>
+                    <MudAvatar Color="Color.Info" Size="Size.Large">
+                        <MudIcon Icon="@Icons.Material.Filled.PendingActions" />
+                    </MudAvatar>
                 </MudStack>
             </MudPaper>
         </MudItem>
+
         <MudItem xs="12" md="3">
             <MudPaper Class="ci-kpi kpi-port pa-4" Elevation="1">
                 <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
@@ -137,10 +200,13 @@
                         <MudText Typo="Typo.caption">Container</MudText>
                         <MudText Typo="Typo.h4" Class="ci-kpi-number">@ArrivedPortRecords.Count.ToString("N0")</MudText>
                     </div>
-                    <MudAvatar Color="Color.Success" Size="Size.Large"><MudIcon Icon="@Icons.Material.Filled.LocalShipping" /></MudAvatar>
+                    <MudAvatar Color="Color.Success" Size="Size.Large">
+                        <MudIcon Icon="@Icons.Material.Filled.LocalShipping" />
+                    </MudAvatar>
                 </MudStack>
             </MudPaper>
         </MudItem>
+
         <MudItem xs="12" md="3">
             <MudPaper Class="ci-kpi kpi-transit pa-4" Elevation="1">
                 <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
@@ -149,7 +215,9 @@
                         <MudText Typo="Typo.caption">Container</MudText>
                         <MudText Typo="Typo.h4" Class="ci-kpi-number">@InTransitRecords.Count.ToString("N0")</MudText>
                     </div>
-                    <MudAvatar Color="Color.Warning" Size="Size.Large"><MudIcon Icon="@Icons.Material.Filled.DirectionsBoat" /></MudAvatar>
+                    <MudAvatar Color="Color.Warning" Size="Size.Large">
+                        <MudIcon Icon="@Icons.Material.Filled.DirectionsBoat" />
+                    </MudAvatar>
                 </MudStack>
             </MudPaper>
         </MudItem>
@@ -162,6 +230,7 @@
                     <MudText Typo="Typo.subtitle1" Class="ci-section-title">IN DEPOT</MudText>
                     <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined" Size="Size.Small">@InDepotRecords.Count.ToString("N0") cont</MudChip>
                 </MudStack>
+
                 <MudDataGrid T="ContainerGroupRow" Items="InDepotGroupRows" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="330px">
                     <Columns>
                         <PropertyColumn Property="x => x.Depot" Title="DEPOT" />
@@ -174,7 +243,9 @@
                         <PropertyColumn Property="x => x.DamagedCount" Title="D - Damage" CellClass="text-end" HeaderClass="text-end" />
                         <PropertyColumn Property="x => x.OtherFelCount" Title="Other" CellClass="text-end" HeaderClass="text-end" />
                     </Columns>
-                    <PagerContent><MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" /></PagerContent>
+                    <PagerContent>
+                        <MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" />
+                    </PagerContent>
                 </MudDataGrid>
             </MudPaper>
         </MudItem>
@@ -185,6 +256,7 @@
                     <MudText Typo="Typo.subtitle1" Class="ci-section-title">ARRIVED AT PORT</MudText>
                     <MudChip T="string" Color="Color.Success" Variant="Variant.Outlined" Size="Size.Small">@ArrivedPortRecords.Count.ToString("N0") cont</MudChip>
                 </MudStack>
+
                 <MudDataGrid T="ContainerGroupRow" Items="ArrivedPortGroupRows" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="330px">
                     <Columns>
                         <PropertyColumn Property="x => x.Depot" Title="DEPOT" />
@@ -197,7 +269,9 @@
                         <PropertyColumn Property="x => x.DamagedCount" Title="D - Damage" CellClass="text-end" HeaderClass="text-end" />
                         <PropertyColumn Property="x => x.OtherFelCount" Title="Other" CellClass="text-end" HeaderClass="text-end" />
                     </Columns>
-                    <PagerContent><MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" /></PagerContent>
+                    <PagerContent>
+                        <MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" />
+                    </PagerContent>
                 </MudDataGrid>
             </MudPaper>
         </MudItem>
@@ -208,6 +282,7 @@
                     <MudText Typo="Typo.subtitle1" Class="ci-section-title">WAITING PORT ARRIVAL</MudText>
                     <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Size="Size.Small">@WaitingPortRecords.Count.ToString("N0") cont</MudChip>
                 </MudStack>
+
                 <MudDataGrid T="ContainerGroupRow" Items="WaitingPortGroupRows" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="300px">
                     <Columns>
                         <PropertyColumn Property="x => x.Depot" Title="DEPOT" />
@@ -220,7 +295,9 @@
                         <PropertyColumn Property="x => x.DamagedCount" Title="D - Damage" CellClass="text-end" HeaderClass="text-end" />
                         <PropertyColumn Property="x => x.OtherFelCount" Title="Other" CellClass="text-end" HeaderClass="text-end" />
                     </Columns>
-                    <PagerContent><MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" /></PagerContent>
+                    <PagerContent>
+                        <MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" />
+                    </PagerContent>
                 </MudDataGrid>
             </MudPaper>
         </MudItem>
@@ -231,6 +308,7 @@
                     <MudText Typo="Typo.subtitle1" Class="ci-section-title">IN TRANSIT</MudText>
                     <MudChip T="string" Color="Color.Warning" Variant="Variant.Outlined" Size="Size.Small">@InTransitRecords.Count.ToString("N0") cont</MudChip>
                 </MudStack>
+
                 <MudDataGrid T="ContainerGroupRow" Items="InTransitGroupRows" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="300px">
                     <Columns>
                         <PropertyColumn Property="x => x.Depot" Title="DEPOT" />
@@ -243,7 +321,9 @@
                         <PropertyColumn Property="x => x.DamagedCount" Title="D - Damage" CellClass="text-end" HeaderClass="text-end" />
                         <PropertyColumn Property="x => x.OtherFelCount" Title="Other" CellClass="text-end" HeaderClass="text-end" />
                     </Columns>
-                    <PagerContent><MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" /></PagerContent>
+                    <PagerContent>
+                        <MudDataGridPager T="ContainerGroupRow" PageSizeOptions="new int[] { 10, 25, 50 }" />
+                    </PagerContent>
                 </MudDataGrid>
             </MudPaper>
         </MudItem>
@@ -255,19 +335,39 @@
                 <MudText Typo="Typo.subtitle1" Class="ci-section-title">CONTAINER DETAIL</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">Rows: @FilteredRecords.Count.ToString("N0") / @_records.Count.ToString("N0")</MudText>
             </div>
-            <MudChip T="string" Color="Color.Secondary" Variant="Variant.Outlined" Size="Size.Small">Distinct ITEM_NO</MudChip>
+            <MudChip T="string" Color="Color.Secondary" Variant="Variant.Outlined" Size="Size.Small">Distinct container by latest event</MudChip>
         </MudStack>
-        <MudDataGrid T="ContainerRecord" Items="FilteredRecords" Dense="true" Hover="true" Bordered="true" Striped="true" Filterable="true" FixedHeader="true" Height="480px" Class="ci-detail-grid" Loading="_busy">
+
+        <MudDataGrid T="ContainerRecord"
+                     Items="FilteredRecords"
+                     Dense="true"
+                     Hover="true"
+                     Bordered="true"
+                     Striped="true"
+                     Filterable="true"
+                     FixedHeader="true"
+                     Height="480px"
+                     Class="ci-detail-grid ci-click-grid"
+                     Loading="_busy"
+                     RowClick="OnContainerRowClick"
+                     @bind-SelectedItem="_selectedRecord">
             <Columns>
+                <PropertyColumn Property="x => x.SourceTable" Title="Latest Source" />
+                <PropertyColumn Property="x => x.SourceType" Title="Source Type" />
+                <PropertyColumn Property="x => x.DuplicateCount" Title="Dup Rows" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.DuplicateSourceTables" Title="Dup Sources" />
+                <PropertyColumn Property="x => x.DuplicateEventHistory" Title="Dup Event History" />
                 <PropertyColumn Property="x => x.Status" Title="Status" />
                 <PropertyColumn Property="x => x.StatusReason" Title="Status Reason" />
+                <PropertyColumn Property="x => x.EventMethod" Title="Method" />
+                <PropertyColumn Property="x => x.EventTs" Title="Event Time" Format="dd/MM/yyyy HH:mm" />
                 <PropertyColumn Property="x => x.AGENT" Title="AGENT" />
                 <PropertyColumn Property="x => x.LINE" Title="LINE" />
                 <PropertyColumn Property="x => x.DEPOT" Title="DEPOT" />
-                <PropertyColumn Property="x => x.ITEM_NO" Title="ITEM_NO / Container" />
-                <PropertyColumn Property="x => x.ISO" Title="ISO" />
-                <PropertyColumn Property="x => x.SizeType" Title="Size" />
-                <PropertyColumn Property="x => x.FEL" Title="F/E" />
+                <PropertyColumn Property="x => x.ITEM_NO" Title="Container" />
+                <PropertyColumn Property="x => x.ISO" Title="ISO / Size" />
+                <PropertyColumn Property="x => x.SizeType" Title="Size Group" />
+                <PropertyColumn Property="x => x.FEL" Title="F/E/D" />
                 <PropertyColumn Property="x => x.WEIGHT" Title="WEIGHT" Format="N2" CellClass="text-end" HeaderClass="text-end" />
                 <PropertyColumn Property="x => x.VGM_WEIGHT" Title="VGM" Format="N2" CellClass="text-end" HeaderClass="text-end" />
                 <PropertyColumn Property="x => x.BOOK_NO" Title="BOOK_NO" />
@@ -286,33 +386,161 @@
                 <PropertyColumn Property="x => x.FINAL_DISCH_PORT" Title="FINAL_DISCH" />
                 <PropertyColumn Property="x => x.PLACE_OF_RECEIPT" Title="POR" />
                 <PropertyColumn Property="x => x.PLACE_OF_DELIVERY" Title="POD/DEL" />
-                <PropertyColumn Property="x => x.CUSTOM_CLEARANCE" Title="CUSTOM" />
-                <PropertyColumn Property="x => x.CC_TS" Title="CC_TS" Format="dd/MM/yyyy HH:mm" />
                 <PropertyColumn Property="x => x.DGS_CLASS" Title="DGS" />
-                <PropertyColumn Property="x => x.UN_NO" Title="UN_NO" />
                 <PropertyColumn Property="x => x.DAM" Title="DAM" />
                 <PropertyColumn Property="x => x.SOSEAL" Title="SOSEAL" />
                 <PropertyColumn Property="x => x.GHICHU" Title="NOTE" />
+                <PropertyColumn Property="x => x.STORAGEDAY" Title="Storage Days" />
                 <PropertyColumn Property="x => x.DateImport" Title="DateImport" Format="dd/MM/yyyy HH:mm" />
                 <PropertyColumn Property="x => x.UserImport" Title="UserImport" />
             </Columns>
-            <PagerContent><MudDataGridPager T="ContainerRecord" PageSizeOptions="new int[] { 25, 50, 100, 200 }" /></PagerContent>
+            <PagerContent>
+                <MudDataGridPager T="ContainerRecord" PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
         </MudDataGrid>
+
+        @if (_selectedRecord is not null)
+        {
+            <MudPaper Class="ci-selected-detail pa-3 mt-3" Elevation="0">
+                <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                    <div>
+                        <MudText Typo="Typo.subtitle1" Class="ci-section-title">
+                            Container Event Detail: @_selectedRecord.ITEM_NO
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                            Latest status: @_selectedRecord.Status · Duplicate rows/events: @_selectedDuplicateRows.Count.ToString("N0")
+                        </MudText>
+                    </div>
+
+                    <MudStack Row="true" Spacing="1">
+                        <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined" Size="Size.Small">
+                            @_selectedRecord.DepotDisplay
+                        </MudChip>
+                        <MudChip T="string" Color="Color.Secondary" Variant="Variant.Outlined" Size="Size.Small">
+                            @_selectedRecord.LINE
+                        </MudChip>
+                        <MudButton Variant="Variant.Text"
+                                   Color="Color.Error"
+                                   Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Close"
+                                   OnClick="CloseContainerDetail">
+                            Close
+                        </MudButton>
+                    </MudStack>
+                </MudStack>
+
+                <MudGrid Spacing="2" Class="mb-2">
+                    <MudItem xs="12" md="3">
+                        <MudPaper Class="ci-mini-card pa-2" Elevation="0">
+                            <MudText Typo="Typo.caption">Container</MudText>
+                            <MudText Typo="Typo.subtitle2" Class="fw-bold">@_selectedRecord.ITEM_NO</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudPaper Class="ci-mini-card pa-2" Elevation="0">
+                            <MudText Typo="Typo.caption">Size / F-E-D</MudText>
+                            <MudText Typo="Typo.subtitle2" Class="fw-bold">@_selectedRecord.ISO / @_selectedRecord.FEL</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudPaper Class="ci-mini-card pa-2" Elevation="0">
+                            <MudText Typo="Typo.caption">Book / B/L</MudText>
+                            <MudText Typo="Typo.subtitle2" Class="fw-bold">@_selectedRecord.BOOK_NO / @_selectedRecord.BILL_OF_LADING</MudText>
+                        </MudPaper>
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudPaper Class="ci-mini-card pa-2" Elevation="0">
+                            <MudText Typo="Typo.caption">Latest Source</MudText>
+                            <MudText Typo="Typo.subtitle2" Class="fw-bold">@_selectedRecord.SourceTable</MudText>
+                        </MudPaper>
+                    </MudItem>
+                </MudGrid>
+
+                <MudDataGrid T="ContainerRecord"
+                             Items="_selectedDuplicateRows"
+                             Dense="true"
+                             Hover="true"
+                             Bordered="true"
+                             Striped="true"
+                             Filterable="true"
+                             FixedHeader="true"
+                             Height="300px"
+                             Class="ci-detail-grid">
+                    <Columns>
+                        <PropertyColumn Property="x => x.SourceTable" Title="Source Table" />
+                        <PropertyColumn Property="x => x.SourceType" Title="Type" />
+                        <PropertyColumn Property="x => x.Status" Title="Status" />
+                        <PropertyColumn Property="x => x.StatusReason" Title="Status Reason" />
+                        <PropertyColumn Property="x => x.EventMethod" Title="Method" />
+                        <PropertyColumn Property="x => x.EventTs" Title="Event Time" Format="dd/MM/yyyy HH:mm" />
+                        <PropertyColumn Property="x => x.AGENT" Title="AGENT" />
+                        <PropertyColumn Property="x => x.LINE" Title="LINE" />
+                        <PropertyColumn Property="x => x.DEPOT" Title="DEPOT" />
+                        <PropertyColumn Property="x => x.ITEM_NO" Title="Container" />
+                        <PropertyColumn Property="x => x.ISO" Title="ISO / Size" />
+                        <PropertyColumn Property="x => x.FEL" Title="F/E/D" />
+                        <PropertyColumn Property="x => x.WEIGHT" Title="WEIGHT" Format="N2" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.VGM_WEIGHT" Title="VGM" Format="N2" CellClass="text-end" HeaderClass="text-end" />
+                        <PropertyColumn Property="x => x.BOOK_NO" Title="BOOK_NO" />
+                        <PropertyColumn Property="x => x.BILL_OF_LADING" Title="B/L" />
+                        <PropertyColumn Property="x => x.LOCATION" Title="LOCATION" />
+                        <PropertyColumn Property="x => x.CATEGORY" Title="CATEGORY" />
+                        <PropertyColumn Property="x => x.ARR_BY" Title="ARR_BY" />
+                        <PropertyColumn Property="x => x.ARR_CAR" Title="ARR_CAR" />
+                        <PropertyColumn Property="x => x.ARR_VES_NAME" Title="ARR VESSEL" />
+                        <PropertyColumn Property="x => x.ARR_TS" Title="ARR_TS" Format="dd/MM/yyyy HH:mm" />
+                        <PropertyColumn Property="x => x.DEP_BY" Title="DEP_BY" />
+                        <PropertyColumn Property="x => x.DEP_CAR" Title="DEP_CAR" />
+                        <PropertyColumn Property="x => x.DEP_VES_NAME" Title="DEP VESSEL" />
+                        <PropertyColumn Property="x => x.DEP_TS" Title="DEP_TS" Format="dd/MM/yyyy HH:mm" />
+                        <PropertyColumn Property="x => x.DISCH_PORT" Title="DISCH_PORT" />
+                        <PropertyColumn Property="x => x.FINAL_DISCH_PORT" Title="FINAL_DISCH" />
+                        <PropertyColumn Property="x => x.PLACE_OF_RECEIPT" Title="POR" />
+                        <PropertyColumn Property="x => x.PLACE_OF_DELIVERY" Title="POD/DEL" />
+                        <PropertyColumn Property="x => x.DGS_CLASS" Title="DGS" />
+                        <PropertyColumn Property="x => x.DAM" Title="DAM" />
+                        <PropertyColumn Property="x => x.SOSEAL" Title="SOSEAL" />
+                        <PropertyColumn Property="x => x.GHICHU" Title="NOTE" />
+                        <PropertyColumn Property="x => x.STORAGEDAY" Title="Storage Days" />
+                        <PropertyColumn Property="x => x.DateImport" Title="DateImport" Format="dd/MM/yyyy HH:mm" />
+                        <PropertyColumn Property="x => x.UserImport" Title="UserImport" />
+                    </Columns>
+                    <PagerContent>
+                        <MudDataGridPager T="ContainerRecord" PageSizeOptions="new int[] { 10, 25, 50 }" />
+                    </PagerContent>
+                </MudDataGrid>
+            </MudPaper>
+        }
     </MudPaper>
 </div>
 
 @code {
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
     private const string StatusInDepot = "In Depot";
     private const string StatusWaitingPort = "Waiting Port Arrival";
     private const string StatusArrivedPort = "Arrived at Port";
     private const string StatusInTransit = "In Transit";
 
-    private static readonly string[] InventoryColumns = new[]
+    private static readonly string[] PreferredSourceTables =
     {
-        "Id", "AGENT", "LINE", "DEPOT", "ITEM_KEY", "ITEM_NO", "ISO", "FEL", "TEMP", "WEIGHT", "VGM_WEIGHT",
+        "M_YardMovement_AMS_26040816_Current_In_Yard2",
+        "M_8_3_IN_OUT_YARD_1",
+        "M_8_3_VSS_IN_OUT_YARD_Exp",
+        "M_8_3_VSS_IN_OUT_YARD_Imp"
+    };
+
+    private static readonly string[] SourceColumns =
+    {
+        "Id",
+        "AGENT", "LINE", "DEPOT", "ITEM_KEY", "ITEM_NO", "ISO", "FEL", "TEMP", "WEIGHT", "VGM_WEIGHT",
         "BOOK_NO", "BILL_OF_LADING", "LOCATION", "CATEGORY", "ARR_BY", "ARR_CAR", "ARR_VES_NAME", "ARR_TS",
         "DEP_BY", "DEP_CAR", "DEP_VES_NAME", "DEP_TS", "DISCH_PORT", "FINAL_DISCH_PORT", "PLACE_OF_RECEIPT",
         "PLACE_OF_DELIVERY", "CUSTOM_CLEARANCE", "CC_TS", "DGS_CLASS", "UN_NO", "DAM", "GHICHU", "SOSEAL",
+        "METHOD", "OPERATION_METHOD", "EXEC_TS", "KHACHHANG", "SOCONT", "KICHCO", "PORT_GRADE", "LINE_GRADE",
+        "TRANGTHAI", "TRONGLUONG", "TRONGLUONG_VGM", "BL_NO", "RELEASE_NO", "HUONG", "HUONG1", "CANGCT", "CANGDEN",
+        "GIAO", "NHAN", "ENTRY_VOY_NO", "ENTRY_VES_NAME", "EXIT_VOY_NO", "EXIT_VES_NAME", "ENTRY_TRUCK_ID",
+        "EXIT_TRUCK_ID", "STORAGEDAY",
         "DateImport", "UserImport", "CreatedAt"
     };
 
@@ -320,6 +548,7 @@
     private string _errorMessage = string.Empty;
     private string _sourceInfo = string.Empty;
     private string _search = string.Empty;
+    private string _sourceFilter = string.Empty;
     private string _agentFilter = string.Empty;
     private string _lineFilter = string.Empty;
     private string _depotFilter = string.Empty;
@@ -328,7 +557,12 @@
     private bool _excludeDamaged;
 
     private List<ContainerRecord> _records = new();
+    private List<ContainerRecord> _allEventRows = new();
+    private List<ContainerRecord> _selectedDuplicateRows = new();
+    private ContainerRecord? _selectedRecord;
+    private List<TableSource> _loadedSources = new();
 
+    private List<string> SourceOptions => _records.Select(x => x.SourceTable).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
     private List<string> AgentOptions => _records.Select(x => x.AGENT).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
     private List<string> LineOptions => _records.Select(x => x.LINE).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
     private List<string> DepotOptions => _records.Select(x => x.DepotDisplay).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
@@ -349,6 +583,46 @@
         await LoadAsync();
     }
 
+    private async Task OpenImport834Async()
+    {
+        if (OnTabRequest.HasDelegate)
+        {
+            await OnTabRequest.InvokeAsync((
+                "YardMovementImportPro",
+                "8.3.4 Import Yard Movement",
+                RenderImport834()));
+            return;
+        }
+
+        Navigation.NavigateTo("/YardMovementImportPro");
+    }
+
+    private RenderFragment RenderImport834() => builder =>
+    {
+        builder.OpenComponent<Components.Stock.Pages.YardMovement_ImportTwoSheets_EasyProfessional>(0);
+        builder.CloseComponent();
+    };
+
+    private async Task OpenImport835Async()
+    {
+        if (OnTabRequest.HasDelegate)
+        {
+            await OnTabRequest.InvokeAsync((
+                "DepotContainerImportPro835",
+                "8.3.5 Import Container / Depot Movement",
+                RenderImport835()));
+            return;
+        }
+
+        Navigation.NavigateTo("/DepotContainerImportPro");
+    }
+
+    private RenderFragment RenderImport835() => builder =>
+    {
+        builder.OpenComponent<Components.Stock.Pages.DepotContainerImportPro_835>(0);
+        builder.CloseComponent();
+    };
+
     private async Task LoadAsync()
     {
         try
@@ -356,40 +630,71 @@
             _busy = true;
             _errorMessage = string.Empty;
             _sourceInfo = string.Empty;
+            _loadedSources.Clear();
 
             await using var db = await DbFactory.CreateDbContextAsync();
             var conn = db.Database.GetDbConnection();
+
             if (conn.State != ConnectionState.Open)
                 await conn.OpenAsync();
 
-            var table = await FindInventoryTableAsync(conn);
-            if (table is null)
+            var sources = await FindInventorySourceTablesAsync(conn);
+            _loadedSources = sources;
+
+            if (sources.Count == 0)
             {
                 _records.Clear();
-                _errorMessage = "No inventory table was found with the required columns ITEM_NO, ISO, LOCATION, ARR_TS, DEP_TS and DateImport. DEPOT is optional but recommended. Please check the table name or SQL permissions.";
+                _errorMessage = "No compatible inventory/import tables were found. Required shape: Current table has ITEM_NO + ISO + DateImport, or In/Out table has SOCONT + KICHCO + DateImport.";
                 return;
             }
 
-            var dbColumns = await LoadColumnNamesAsync(conn, table.SchemaName, table.TableName);
-            var selectedColumns = InventoryColumns.Where(x => dbColumns.Contains(x)).ToList();
-            if (!selectedColumns.Contains("ITEM_NO") || !selectedColumns.Contains("ISO"))
+            var raw = new List<ContainerRecord>();
+
+            foreach (var source in sources)
             {
-                _records.Clear();
-                _errorMessage = "The detected table does not contain enough required columns ITEM_NO/ISO for container inventory statistics.";
-                return;
+                var dbColumns = await LoadColumnNamesAsync(conn, source.SchemaName, source.TableName);
+                var selectedColumns = SourceColumns.Where(x => dbColumns.Contains(x)).ToList();
+
+                if (selectedColumns.Count == 0)
+                    continue;
+
+                raw.AddRange(await LoadSourceRowsAsync(conn, source, selectedColumns));
             }
 
-            _sourceInfo = $"{QuoteName(table.SchemaName)}.{QuoteName(table.TableName)} · {selectedColumns.Count} columns";
-            var raw = await LoadInventoryRowsAsync(conn, table, selectedColumns);
+            _allEventRows = raw
+                .Where(x => !string.IsNullOrWhiteSpace(x.ContainerKey))
+                .ToList();
 
-            _records = raw
+            _selectedRecord = null;
+            _selectedDuplicateRows.Clear();
+
+            _records = _allEventRows
                 .Where(x => !string.IsNullOrWhiteSpace(x.ContainerKey))
                 .GroupBy(x => x.ContainerKey, StringComparer.OrdinalIgnoreCase)
-                .Select(g => g.OrderByDescending(x => x.DateImport ?? DateTime.MinValue)
-                              .ThenByDescending(x => x.CreatedAt ?? DateTime.MinValue)
-                              .ThenByDescending(x => x.ARR_TS ?? DateTime.MinValue)
-                              .First())
-                .OrderBy(x => x.LOCATION)
+                .Select(g =>
+                {
+                    var allRows = g.OrderByDescending(x => x.EventDate ?? DateTime.MinValue)
+                                   .ThenByDescending(x => x.DateImport ?? DateTime.MinValue)
+                                   .ThenByDescending(x => x.CreatedAt ?? DateTime.MinValue)
+                                   .ThenByDescending(x => x.ARR_TS ?? DateTime.MinValue)
+                                   .ToList();
+
+                    var latest = allRows.First();
+
+                    latest.DuplicateCount = allRows.Count;
+                    latest.DuplicateSourceTables = string.Join(", ",
+                        allRows.Select(x => x.SourceTable)
+                               .Where(x => !string.IsNullOrWhiteSpace(x))
+                               .Distinct(StringComparer.OrdinalIgnoreCase));
+
+                    latest.DuplicateEventHistory = string.Join(" | ",
+                        allRows.Take(6).Select(x =>
+                            $"{FormatDateTime(x.EventDate)} - {x.SourceTable} - {FirstNonEmpty(x.EventMethod, x.Status, x.FEL, x.CATEGORY)}"));
+
+                    return latest;
+                })
+                .OrderBy(x => x.DepotDisplay)
+                .ThenBy(x => x.LINE)
                 .ThenBy(x => x.ITEM_NO)
                 .ToList();
 
@@ -400,11 +705,13 @@
                 item.StatusReason = statusInfo.Reason;
             }
 
+            _sourceInfo = $"{sources.Count:N0} table(s): {string.Join(", ", sources.Select(x => x.TableName))}";
             Snackbar.Add($"Loaded {_records.Count:N0} distinct containers from {_sourceInfo}.", MudBlazor.Severity.Success);
         }
         catch (Exception ex)
         {
             var root = ex;
+
             while (root.InnerException is not null)
                 root = root.InnerException;
 
@@ -418,31 +725,109 @@
         }
     }
 
-    private async Task<TableRef?> FindInventoryTableAsync(DbConnection conn)
+    private async Task<List<TableSource>> FindInventorySourceTablesAsync(DbConnection conn)
+    {
+        var result = new List<TableSource>();
+
+        foreach (var tableName in PreferredSourceTables)
+        {
+            var source = await FindSpecificSourceTableAsync(conn, tableName);
+
+            if (source is not null && !result.Any(x => x.SchemaName == source.SchemaName && x.TableName == source.TableName))
+                result.Add(source);
+        }
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+SELECT s.name AS SchemaName, t.name AS TableName
+FROM sys.tables t
+INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE
+(
+       (EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ITEM_NO')
+    AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ISO')
+    AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'DateImport'))
+    OR
+       (EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'SOCONT')
+    AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'KICHCO')
+    AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'DateImport'))
+)
+AND
+(
+       t.name LIKE N'%Yard%'
+    OR t.name LIKE N'%IN_OUT%'
+    OR t.name LIKE N'%VSS%'
+    OR t.name LIKE N'%Inventory%'
+    OR t.name LIKE N'%Container%'
+    OR t.name LIKE N'%Stock%'
+    OR t.name LIKE N'%Depot%'
+)
+ORDER BY
+  CASE
+    WHEN t.name = N'M_YardMovement_AMS_26040816_Current_In_Yard2' THEN 0
+    WHEN t.name = N'M_8_3_IN_OUT_YARD_1' THEN 1
+    WHEN t.name = N'M_8_3_VSS_IN_OUT_YARD_Exp' THEN 2
+    WHEN t.name = N'M_8_3_VSS_IN_OUT_YARD_Imp' THEN 3
+    WHEN t.name LIKE N'%Current%In%Yard%' THEN 4
+    WHEN t.name LIKE N'%IN_OUT%' THEN 4
+    ELSE 9
+  END,
+  t.name;";
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        var candidates = new List<TableRef>();
+
+        while (await reader.ReadAsync())
+            candidates.Add(new TableRef(reader.GetString(0), reader.GetString(1)));
+
+        await reader.CloseAsync();
+
+        foreach (var c in candidates)
+        {
+            if (result.Any(x => x.SchemaName == c.SchemaName && x.TableName == c.TableName))
+                continue;
+
+            var source = await BuildSourceIfCompatibleAsync(conn, c.SchemaName, c.TableName);
+
+            if (source is not null)
+                result.Add(source);
+        }
+
+        return result;
+    }
+
+    private async Task<TableSource?> FindSpecificSourceTableAsync(DbConnection conn, string tableName)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
 SELECT TOP 1 s.name AS SchemaName, t.name AS TableName
 FROM sys.tables t
 INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
-WHERE EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ITEM_NO')
-  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ISO')
-  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'LOCATION')
-  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ARR_TS')
-  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'DEP_TS')
-  AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'DateImport')
-ORDER BY
-  CASE
-    WHEN t.name LIKE N'%Inventory%' THEN 0
-    WHEN t.name LIKE N'%Container%' THEN 1
-    WHEN t.name LIKE N'%Stock%' THEN 2
-    ELSE 9
-  END,
-  t.name;";
+WHERE t.name = @TableName
+ORDER BY s.name, t.name;";
+        AddParameter(cmd, "@TableName", tableName);
 
         await using var reader = await cmd.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
-            return new TableRef(reader.GetString(0), reader.GetString(1));
+
+        if (!await reader.ReadAsync())
+            return null;
+
+        var schema = reader.GetString(0);
+        var table = reader.GetString(1);
+        await reader.CloseAsync();
+
+        return await BuildSourceIfCompatibleAsync(conn, schema, table);
+    }
+
+    private async Task<TableSource?> BuildSourceIfCompatibleAsync(DbConnection conn, string schemaName, string tableName)
+    {
+        var columns = await LoadColumnNamesAsync(conn, schemaName, tableName);
+
+        if (columns.Contains("ITEM_NO") && columns.Contains("ISO") && columns.Contains("DateImport"))
+            return new TableSource(schemaName, tableName, "CurrentInYard");
+
+        if (columns.Contains("SOCONT") && columns.Contains("KICHCO") && columns.Contains("DateImport"))
+            return new TableSource(schemaName, tableName, "InOutYard");
 
         return null;
     }
@@ -450,6 +835,7 @@ ORDER BY
     private async Task<HashSet<string>> LoadColumnNamesAsync(DbConnection conn, string schemaName, string tableName)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
 SELECT c.name
@@ -461,22 +847,32 @@ WHERE s.name = @SchemaName AND t.name = @TableName;";
         AddParameter(cmd, "@TableName", tableName);
 
         await using var reader = await cmd.ExecuteReaderAsync();
+
         while (await reader.ReadAsync())
             result.Add(reader.GetString(0));
 
         return result;
     }
 
-    private async Task<List<ContainerRecord>> LoadInventoryRowsAsync(DbConnection conn, TableRef table, List<string> selectedColumns)
+    private async Task<List<ContainerRecord>> LoadSourceRowsAsync(DbConnection conn, TableSource source, List<string> selectedColumns)
     {
         var result = new List<ContainerRecord>();
         var selectList = string.Join(", ", selectedColumns.Select(QuoteName));
 
+        var orderColumns = new[] { "DateImport", "CreatedAt", "EXEC_TS", "ARR_TS", "DEP_TS" }
+            .Where(c => selectedColumns.Contains(c, StringComparer.OrdinalIgnoreCase))
+            .Select(QuoteName)
+            .ToList();
+
+        var orderBy = orderColumns.Count > 0
+            ? $"COALESCE({string.Join(", ", orderColumns)}) DESC"
+            : "(SELECT NULL)";
+
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
 SELECT TOP (100000) {selectList}
-FROM {QuoteName(table.SchemaName)}.{QuoteName(table.TableName)} WITH (NOLOCK)
-ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
+FROM {QuoteName(source.SchemaName)}.{QuoteName(source.TableName)} WITH (NOLOCK)
+ORDER BY {orderBy};";
         cmd.CommandTimeout = 180;
 
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -485,35 +881,117 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
 
         while (await reader.ReadAsync())
         {
+            var method = FirstNonEmpty(
+                GetString(reader, ordinals, "METHOD"),
+                GetString(reader, ordinals, "OPERATION_METHOD"));
+
+            var execTs = GetDateTime(reader, ordinals, "EXEC_TS");
+            var isInOut = source.SourceType == "InOutYard";
+            var looksOut = LooksLikeOutMovement(method);
+            var looksIn = LooksLikeInMovement(method);
+
+            var arrTs = GetDateTime(reader, ordinals, "ARR_TS");
+            var depTs = GetDateTime(reader, ordinals, "DEP_TS");
+
+            if (isInOut && arrTs is null && looksIn)
+                arrTs = execTs;
+
+            if (isInOut && depTs is null && looksOut)
+                depTs = execTs;
+
             var row = new ContainerRecord
             {
                 Id = GetGuid(reader, ordinals, "Id"),
+                SourceTable = source.TableName,
+                SourceType = source.SourceType,
+                EventMethod = method,
+                EventTs = FirstNonEmptyDate(execTs, arrTs, depTs, GetDateTime(reader, ordinals, "DateImport"), GetDateTime(reader, ordinals, "CreatedAt")),
+
                 AGENT = GetString(reader, ordinals, "AGENT"),
                 LINE = GetString(reader, ordinals, "LINE"),
                 DEPOT = GetString(reader, ordinals, "DEPOT"),
                 ITEM_KEY = GetString(reader, ordinals, "ITEM_KEY"),
-                ITEM_NO = GetString(reader, ordinals, "ITEM_NO"),
-                ISO = GetString(reader, ordinals, "ISO"),
-                FEL = GetString(reader, ordinals, "FEL"),
+
+                ITEM_NO = FirstNonEmpty(
+                    GetString(reader, ordinals, "ITEM_NO"),
+                    GetString(reader, ordinals, "SOCONT")),
+
+                ISO = FirstNonEmpty(
+                    GetString(reader, ordinals, "ISO"),
+                    GetString(reader, ordinals, "KICHCO")),
+
+                FEL = FirstNonEmpty(
+                    GetString(reader, ordinals, "FEL"),
+                    GetString(reader, ordinals, "TRANGTHAI")),
+
                 TEMP = GetDecimal(reader, ordinals, "TEMP"),
-                WEIGHT = GetDecimal(reader, ordinals, "WEIGHT"),
-                VGM_WEIGHT = GetDecimal(reader, ordinals, "VGM_WEIGHT"),
+
+                WEIGHT = FirstNonEmptyDecimal(
+                    GetDecimal(reader, ordinals, "WEIGHT"),
+                    GetDecimal(reader, ordinals, "TRONGLUONG")),
+
+                VGM_WEIGHT = FirstNonEmptyDecimal(
+                    GetDecimal(reader, ordinals, "VGM_WEIGHT"),
+                    GetDecimal(reader, ordinals, "TRONGLUONG_VGM")),
+
                 BOOK_NO = GetString(reader, ordinals, "BOOK_NO"),
-                BILL_OF_LADING = GetString(reader, ordinals, "BILL_OF_LADING"),
-                LOCATION = GetString(reader, ordinals, "LOCATION"),
-                CATEGORY = GetString(reader, ordinals, "CATEGORY"),
-                ARR_BY = GetString(reader, ordinals, "ARR_BY"),
-                ARR_CAR = GetString(reader, ordinals, "ARR_CAR"),
-                ARR_VES_NAME = GetString(reader, ordinals, "ARR_VES_NAME"),
-                ARR_TS = GetDateTime(reader, ordinals, "ARR_TS"),
-                DEP_BY = GetString(reader, ordinals, "DEP_BY"),
-                DEP_CAR = GetString(reader, ordinals, "DEP_CAR"),
-                DEP_VES_NAME = GetString(reader, ordinals, "DEP_VES_NAME"),
-                DEP_TS = GetDateTime(reader, ordinals, "DEP_TS"),
-                DISCH_PORT = GetString(reader, ordinals, "DISCH_PORT"),
-                FINAL_DISCH_PORT = GetString(reader, ordinals, "FINAL_DISCH_PORT"),
-                PLACE_OF_RECEIPT = GetString(reader, ordinals, "PLACE_OF_RECEIPT"),
-                PLACE_OF_DELIVERY = GetString(reader, ordinals, "PLACE_OF_DELIVERY"),
+
+                BILL_OF_LADING = FirstNonEmpty(
+                    GetString(reader, ordinals, "BILL_OF_LADING"),
+                    GetString(reader, ordinals, "BL_NO")),
+
+                LOCATION = FirstNonEmpty(
+                    GetString(reader, ordinals, "LOCATION"),
+                    GetString(reader, ordinals, "DEPOT")),
+
+                CATEGORY = FirstNonEmpty(
+                    GetString(reader, ordinals, "CATEGORY"),
+                    method),
+
+                ARR_BY = FirstNonEmpty(
+                    GetString(reader, ordinals, "ARR_BY"),
+                    looksIn ? method : string.Empty),
+
+                ARR_CAR = FirstNonEmpty(
+                    GetString(reader, ordinals, "ARR_CAR"),
+                    GetString(reader, ordinals, "ENTRY_TRUCK_ID")),
+
+                ARR_VES_NAME = FirstNonEmpty(
+                    GetString(reader, ordinals, "ARR_VES_NAME"),
+                    GetString(reader, ordinals, "ENTRY_VES_NAME")),
+
+                ARR_TS = arrTs,
+
+                DEP_BY = FirstNonEmpty(
+                    GetString(reader, ordinals, "DEP_BY"),
+                    looksOut ? method : string.Empty),
+
+                DEP_CAR = FirstNonEmpty(
+                    GetString(reader, ordinals, "DEP_CAR"),
+                    GetString(reader, ordinals, "EXIT_TRUCK_ID")),
+
+                DEP_VES_NAME = FirstNonEmpty(
+                    GetString(reader, ordinals, "DEP_VES_NAME"),
+                    GetString(reader, ordinals, "EXIT_VES_NAME")),
+
+                DEP_TS = depTs,
+
+                DISCH_PORT = FirstNonEmpty(
+                    GetString(reader, ordinals, "DISCH_PORT"),
+                    GetString(reader, ordinals, "CANGCT")),
+
+                FINAL_DISCH_PORT = FirstNonEmpty(
+                    GetString(reader, ordinals, "FINAL_DISCH_PORT"),
+                    GetString(reader, ordinals, "CANGDEN")),
+
+                PLACE_OF_RECEIPT = FirstNonEmpty(
+                    GetString(reader, ordinals, "PLACE_OF_RECEIPT"),
+                    GetString(reader, ordinals, "NHAN")),
+
+                PLACE_OF_DELIVERY = FirstNonEmpty(
+                    GetString(reader, ordinals, "PLACE_OF_DELIVERY"),
+                    GetString(reader, ordinals, "GIAO")),
+
                 CUSTOM_CLEARANCE = GetString(reader, ordinals, "CUSTOM_CLEARANCE"),
                 CC_TS = GetDateTime(reader, ordinals, "CC_TS"),
                 DGS_CLASS = GetString(reader, ordinals, "DGS_CLASS"),
@@ -521,10 +999,12 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
                 DAM = GetString(reader, ordinals, "DAM"),
                 GHICHU = GetString(reader, ordinals, "GHICHU"),
                 SOSEAL = GetString(reader, ordinals, "SOSEAL"),
+                STORAGEDAY = GetInt(reader, ordinals, "STORAGEDAY"),
                 DateImport = GetDateTime(reader, ordinals, "DateImport"),
                 UserImport = GetString(reader, ordinals, "UserImport"),
                 CreatedAt = GetDateTime(reader, ordinals, "CreatedAt")
             };
+
             row.SizeType = DetectSizeType(row.ISO);
             result.Add(row);
         }
@@ -532,9 +1012,41 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
         return result;
     }
 
+    private void OnContainerRowClick(DataGridRowClickEventArgs<ContainerRecord> args)
+    {
+        if (args.Item is null)
+            return;
+
+        _selectedRecord = args.Item;
+
+        _selectedDuplicateRows = _allEventRows
+            .Where(x => string.Equals(x.ContainerKey, args.Item.ContainerKey, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x => x.EventDate ?? DateTime.MinValue)
+            .ThenByDescending(x => x.DateImport ?? DateTime.MinValue)
+            .ThenByDescending(x => x.CreatedAt ?? DateTime.MinValue)
+            .ThenByDescending(x => x.ARR_TS ?? DateTime.MinValue)
+            .ToList();
+
+        foreach (var row in _selectedDuplicateRows)
+        {
+            var statusInfo = ResolveStatusInfo(row);
+            row.Status = statusInfo.Status;
+            row.StatusReason = statusInfo.Reason;
+        }
+    }
+
+    private void CloseContainerDetail()
+    {
+        _selectedRecord = null;
+        _selectedDuplicateRows.Clear();
+    }
+
     private bool MatchesFilters(ContainerRecord x)
     {
         if (_excludeDamaged && IsDamaged(x))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_sourceFilter) && !string.Equals(x.SourceTable, _sourceFilter, StringComparison.OrdinalIgnoreCase))
             return false;
 
         if (!string.IsNullOrWhiteSpace(_agentFilter) && !string.Equals(x.AGENT, _agentFilter, StringComparison.OrdinalIgnoreCase))
@@ -556,12 +1068,33 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
             return true;
 
         var key = _search.Trim();
-        return Contains(x.AGENT, key) || Contains(x.LINE, key) || Contains(x.DEPOT, key) || Contains(x.ITEM_KEY, key) || Contains(x.ITEM_NO, key)
-            || Contains(x.ISO, key) || Contains(x.FEL, key) || Contains(x.BOOK_NO, key) || Contains(x.BILL_OF_LADING, key)
-            || Contains(x.LOCATION, key) || Contains(x.CATEGORY, key) || Contains(x.ARR_CAR, key) || Contains(x.ARR_VES_NAME, key)
-            || Contains(x.DEP_CAR, key) || Contains(x.DEP_VES_NAME, key) || Contains(x.DISCH_PORT, key)
-            || Contains(x.FINAL_DISCH_PORT, key) || Contains(x.PLACE_OF_RECEIPT, key) || Contains(x.PLACE_OF_DELIVERY, key)
-            || Contains(x.CUSTOM_CLEARANCE, key) || Contains(x.DAM, key) || Contains(x.GHICHU, key) || Contains(x.SOSEAL, key);
+
+        return Contains(x.SourceTable, key)
+            || Contains(x.SourceType, key)
+            || Contains(x.EventMethod, key)
+            || Contains(x.AGENT, key)
+            || Contains(x.LINE, key)
+            || Contains(x.DEPOT, key)
+            || Contains(x.ITEM_KEY, key)
+            || Contains(x.ITEM_NO, key)
+            || Contains(x.ISO, key)
+            || Contains(x.FEL, key)
+            || Contains(x.BOOK_NO, key)
+            || Contains(x.BILL_OF_LADING, key)
+            || Contains(x.LOCATION, key)
+            || Contains(x.CATEGORY, key)
+            || Contains(x.ARR_CAR, key)
+            || Contains(x.ARR_VES_NAME, key)
+            || Contains(x.DEP_CAR, key)
+            || Contains(x.DEP_VES_NAME, key)
+            || Contains(x.DISCH_PORT, key)
+            || Contains(x.FINAL_DISCH_PORT, key)
+            || Contains(x.PLACE_OF_RECEIPT, key)
+            || Contains(x.PLACE_OF_DELIVERY, key)
+            || Contains(x.CUSTOM_CLEARANCE, key)
+            || Contains(x.DAM, key)
+            || Contains(x.GHICHU, key)
+            || Contains(x.SOSEAL, key);
     }
 
     private static List<ContainerGroupRow> BuildGroupRows(IEnumerable<ContainerRecord> rows)
@@ -596,10 +1129,39 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
 
     private (string Status, string Reason) ResolveStatusInfo(ContainerRecord x)
     {
+        var movement = Normalize(FirstNonEmpty(x.EventMethod, x.CATEGORY, x.FEL));
         var location = Normalize(x.LOCATION);
         var category = Normalize(x.CATEGORY);
         var arrValid = IsValidDate(x.ARR_TS);
         var depValid = IsValidDate(x.DEP_TS);
+
+        if (x.SourceType == "InOutYard")
+        {
+            if (LooksLikeOutMovement(movement))
+            {
+                var time = FormatDateTime(x.EventTs);
+                return (StatusInTransit, $"In/Out source; METHOD/OPERATION indicates OUT movement. Event time: {time}.");
+            }
+
+            if (LooksLikeInMovement(movement))
+            {
+                var time = FormatDateTime(x.EventTs);
+
+                if (LooksLikePort(location, x.DISCH_PORT, x.FINAL_DISCH_PORT, x.PLACE_OF_RECEIPT, x.PLACE_OF_DELIVERY))
+                    return (StatusArrivedPort, $"In/Out source; IN movement and port fields detected. Event time: {time}.");
+
+                return (StatusInDepot, $"In/Out source; METHOD/OPERATION indicates IN movement. Event time: {time}.");
+            }
+
+            if (movement.Contains("TRANSIT"))
+                return (StatusInTransit, "TRANGTHAI or METHOD contains transit indicator.");
+
+            if (movement.Contains("PORT") || movement.Contains("CANG") || movement.Contains("CẢNG"))
+                return (StatusArrivedPort, "TRANGTHAI or METHOD contains port indicator.");
+
+            if (movement.Contains("DEPOT") || movement.Contains("YARD") || movement.Contains("ICD"))
+                return (StatusInDepot, "TRANGTHAI or METHOD contains depot/yard indicator.");
+        }
 
         if (depValid && (!arrValid || x.DEP_TS!.Value >= x.ARR_TS!.Value))
         {
@@ -640,7 +1202,7 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
         if (location.StartsWith("Y-") || location.Contains("DEPOT") || location.Contains("KHO") || location.Contains("YARD") || location.Contains("ICD"))
             return true;
 
-        if (category.Contains("DEPOT") || category.Contains("KHO") || category.Contains("YARD"))
+        if (category.Contains("DEPOT") || category.Contains("KHO") || category.Contains("YARD") || category.Contains("ICD"))
             return true;
 
         return false;
@@ -657,9 +1219,47 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
         return false;
     }
 
+    private static bool LooksLikeInMovement(string? text)
+    {
+        var n = Normalize(text);
+
+        if (string.IsNullOrWhiteSpace(n))
+            return false;
+
+        return n.Contains("IN")
+            || n.Contains("ENTRY")
+            || n.Contains("ARR")
+            || n.Contains("ARRIVAL")
+            || n.Contains("GATE IN")
+            || n.Contains("GATEIN")
+            || n.Contains("NHAP")
+            || n.Contains("NHẬP")
+            || n.Contains("VAO")
+            || n.Contains("VÀO");
+    }
+
+    private static bool LooksLikeOutMovement(string? text)
+    {
+        var n = Normalize(text);
+
+        if (string.IsNullOrWhiteSpace(n))
+            return false;
+
+        return n.Contains("OUT")
+            || n.Contains("EXIT")
+            || n.Contains("DEP")
+            || n.Contains("DEPART")
+            || n.Contains("GATE OUT")
+            || n.Contains("GATEOUT")
+            || n.Contains("XUAT")
+            || n.Contains("XUẤT")
+            || n.Contains("RA");
+    }
+
     private static string DetectSizeType(string iso)
     {
         var n = Normalize(iso);
+
         if (string.IsNullOrWhiteSpace(n))
             return "OTHER";
 
@@ -694,34 +1294,48 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
     {
         var dam = Normalize(x.DAM);
         var note = Normalize(x.GHICHU);
+
         if (string.IsNullOrWhiteSpace(dam) && string.IsNullOrWhiteSpace(note))
             return false;
 
         return dam is "1" or "Y" or "YES" or "DAM" or "DAMAGE" or "DAMAGED" or "HONG" or "HƯ"
-            || dam.Contains("DAM") || dam.Contains("HONG") || dam.Contains("HƯ")
-            || note.Contains("DAM") || note.Contains("HONG") || note.Contains("HƯ") || note.Contains("MOOP") || note.Contains("MOP") || note.Contains("BỂ") || note.Contains("BE ");
+            || dam.Contains("DAM")
+            || dam.Contains("HONG")
+            || dam.Contains("HƯ")
+            || note.Contains("DAM")
+            || note.Contains("HONG")
+            || note.Contains("HƯ")
+            || note.Contains("MOOP")
+            || note.Contains("MOP")
+            || note.Contains("BỂ")
+            || note.Contains("BE ");
     }
 
     private async Task ExportCsvAsync()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("Status,StatusReason,AGENT,LINE,DEPOT,ITEM_NO,ISO,Size,FEL,WEIGHT,VGM_WEIGHT,BOOK_NO,BILL_OF_LADING,LOCATION,CATEGORY,ARR_BY,ARR_CAR,ARR_VES_NAME,ARR_TS,DEP_BY,DEP_CAR,DEP_VES_NAME,DEP_TS,DISCH_PORT,FINAL_DISCH_PORT,PLACE_OF_RECEIPT,PLACE_OF_DELIVERY,CUSTOM_CLEARANCE,DAM,SOSEAL,GHICHU,DateImport,UserImport");
+
+        sb.AppendLine("SourceTable,SourceType,DuplicateCount,DuplicateSourceTables,DuplicateEventHistory,Status,StatusReason,EventMethod,EventTime,AGENT,LINE,DEPOT,Container,ISO,Size,FEL,WEIGHT,VGM_WEIGHT,BOOK_NO,BILL_OF_LADING,LOCATION,CATEGORY,ARR_BY,ARR_CAR,ARR_VES_NAME,ARR_TS,DEP_BY,DEP_CAR,DEP_VES_NAME,DEP_TS,DISCH_PORT,FINAL_DISCH_PORT,PLACE_OF_RECEIPT,PLACE_OF_DELIVERY,DAM,SOSEAL,GHICHU,STORAGEDAY,DateImport,UserImport");
+
         foreach (var x in FilteredRecords)
         {
             sb.AppendLine(string.Join(",", new[]
             {
-                Csv(x.Status), Csv(x.StatusReason), Csv(x.AGENT), Csv(x.LINE), Csv(x.DepotDisplay), Csv(x.ITEM_NO), Csv(x.ISO), Csv(x.SizeType), Csv(x.FEL),
-                Csv(x.WEIGHT?.ToString("N2") ?? string.Empty), Csv(x.VGM_WEIGHT?.ToString("N2") ?? string.Empty), Csv(x.BOOK_NO), Csv(x.BILL_OF_LADING),
-                Csv(x.LOCATION), Csv(x.CATEGORY), Csv(x.ARR_BY), Csv(x.ARR_CAR), Csv(x.ARR_VES_NAME), Csv(FormatDateTime(x.ARR_TS)),
+                Csv(x.SourceTable), Csv(x.SourceType), Csv(x.DuplicateCount.ToString()), Csv(x.DuplicateSourceTables), Csv(x.DuplicateEventHistory),
+                Csv(x.Status), Csv(x.StatusReason), Csv(x.EventMethod), Csv(FormatDateTime(x.EventTs)),
+                Csv(x.AGENT), Csv(x.LINE), Csv(x.DepotDisplay), Csv(x.ITEM_NO), Csv(x.ISO), Csv(x.SizeType), Csv(x.FEL),
+                Csv(x.WEIGHT?.ToString("N2") ?? string.Empty), Csv(x.VGM_WEIGHT?.ToString("N2") ?? string.Empty),
+                Csv(x.BOOK_NO), Csv(x.BILL_OF_LADING), Csv(x.LOCATION), Csv(x.CATEGORY), Csv(x.ARR_BY), Csv(x.ARR_CAR), Csv(x.ARR_VES_NAME), Csv(FormatDateTime(x.ARR_TS)),
                 Csv(x.DEP_BY), Csv(x.DEP_CAR), Csv(x.DEP_VES_NAME), Csv(FormatDateTime(x.DEP_TS)), Csv(x.DISCH_PORT), Csv(x.FINAL_DISCH_PORT),
-                Csv(x.PLACE_OF_RECEIPT), Csv(x.PLACE_OF_DELIVERY), Csv(x.CUSTOM_CLEARANCE), Csv(x.DAM), Csv(x.SOSEAL), Csv(x.GHICHU),
+                Csv(x.PLACE_OF_RECEIPT), Csv(x.PLACE_OF_DELIVERY), Csv(x.DAM), Csv(x.SOSEAL), Csv(x.GHICHU), Csv(x.STORAGEDAY?.ToString() ?? string.Empty),
                 Csv(FormatDateTime(x.DateImport)), Csv(x.UserImport)
             }));
         }
 
         var bytes = Encoding.UTF8.GetBytes(sb.ToString());
         var base64 = Convert.ToBase64String(bytes);
-        var fileName = $"ContainerInventory_{DateTime.Now:yyyyMMddHHmmss}.csv";
+        var fileName = $"ContainerInventory_AllSources_{DateTime.Now:yyyyMMddHHmmss}.csv";
+
         await JS.InvokeVoidAsync("eval", $"const a=document.createElement('a');a.href='data:text/csv;base64,{base64}';a.download='{fileName}';a.click();");
     }
 
@@ -742,6 +1356,7 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
     {
         if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
             return string.Empty;
+
         return Convert.ToString(reader.GetValue(i))?.Trim() ?? string.Empty;
     }
 
@@ -749,9 +1364,12 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
     {
         if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
             return null;
+
         var v = reader.GetValue(i);
+
         if (v is Guid g)
             return g;
+
         return Guid.TryParse(Convert.ToString(v), out var parsed) ? parsed : null;
     }
 
@@ -759,16 +1377,28 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
     {
         if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
             return null;
+
         return Convert.ToDecimal(reader.GetValue(i));
+    }
+
+    private static int? GetInt(DbDataReader reader, Dictionary<string, int> ordinals, string name)
+    {
+        if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
+            return null;
+
+        return Convert.ToInt32(reader.GetValue(i));
     }
 
     private static DateTime? GetDateTime(DbDataReader reader, Dictionary<string, int> ordinals, string name)
     {
         if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
             return null;
+
         var v = reader.GetValue(i);
+
         if (v is DateTime dt)
             return IsValidDate(dt) ? dt : null;
+
         return DateTime.TryParse(Convert.ToString(v), out var parsed) && IsValidDate(parsed) ? parsed : null;
     }
 
@@ -778,7 +1408,16 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
     private static string QuoteName(string value) => "[" + value.Replace("]", "]]", StringComparison.Ordinal) + "]";
     private static string Normalize(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant();
     private static bool Contains(string? source, string key) => !string.IsNullOrWhiteSpace(source) && source.Contains(key, StringComparison.OrdinalIgnoreCase);
-    private static string FirstNonEmpty(params string[] values) => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? string.Empty;
+
+    private static string FirstNonEmpty(params string[] values)
+        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? string.Empty;
+
+    private static decimal? FirstNonEmptyDecimal(params decimal?[] values)
+        => values.FirstOrDefault(x => x.HasValue);
+
+    private static DateTime? FirstNonEmptyDate(params DateTime?[] values)
+        => values.FirstOrDefault(x => x.HasValue);
+
     private static string FormatDateTime(DateTime? value) => value?.ToString("dd/MM/yyyy HH:mm") ?? string.Empty;
 
     private static string Csv(string value)
@@ -799,9 +1438,33 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
         public string TableName { get; }
     }
 
+    private sealed class TableSource
+    {
+        public TableSource(string schemaName, string tableName, string sourceType)
+        {
+            SchemaName = schemaName;
+            TableName = tableName;
+            SourceType = sourceType;
+        }
+
+        public string SchemaName { get; }
+        public string TableName { get; }
+        public string SourceType { get; }
+    }
+
     private sealed class ContainerRecord
     {
         public Guid? Id { get; set; }
+
+        public string SourceTable { get; set; } = string.Empty;
+        public string SourceType { get; set; } = string.Empty;
+        public string EventMethod { get; set; } = string.Empty;
+        public DateTime? EventTs { get; set; }
+
+        public int DuplicateCount { get; set; } = 1;
+        public string DuplicateSourceTables { get; set; } = string.Empty;
+        public string DuplicateEventHistory { get; set; } = string.Empty;
+
         public string AGENT { get; set; } = string.Empty;
         public string LINE { get; set; } = string.Empty;
         public string DEPOT { get; set; } = string.Empty;
@@ -835,14 +1498,18 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
         public string DAM { get; set; } = string.Empty;
         public string GHICHU { get; set; } = string.Empty;
         public string SOSEAL { get; set; } = string.Empty;
+        public int? STORAGEDAY { get; set; }
         public DateTime? DateImport { get; set; }
         public string UserImport { get; set; } = string.Empty;
         public DateTime? CreatedAt { get; set; }
+
         public string SizeType { get; set; } = "OTHER";
         public string Status { get; set; } = StatusInDepot;
         public string StatusReason { get; set; } = string.Empty;
+
         public string DepotDisplay => FirstNonEmpty(DEPOT, LOCATION, DISCH_PORT, FINAL_DISCH_PORT, PLACE_OF_DELIVERY, "N/A");
         public string ContainerKey => !string.IsNullOrWhiteSpace(ITEM_NO) ? ITEM_NO.Trim() : !string.IsNullOrWhiteSpace(ITEM_KEY) ? ITEM_KEY.Trim() : Id?.ToString() ?? string.Empty;
+        public DateTime? EventDate => FirstNonEmptyDate(EventTs, DEP_TS, ARR_TS, DateImport, CreatedAt);
     }
 
     private sealed class ContainerGroupRow
@@ -940,6 +1607,23 @@ ORDER BY COALESCE(DateImport, CreatedAt, ARR_TS) DESC;";
     .ci-card .mud-table-cell {
         white-space: nowrap;
         padding: 5px 8px !important;
+    }
+
+    .ci-click-grid .mud-table-row {
+        cursor: pointer;
+    }
+
+    .ci-selected-detail {
+        border-radius: 16px;
+        border: 1px solid #93c5fd;
+        background: #f8fbff;
+    }
+
+    .ci-mini-card {
+        border-radius: 12px;
+        border: 1px solid #dbeafe;
+        background: #ffffff;
+        min-height: 72px;
     }
 
     @@media print {
