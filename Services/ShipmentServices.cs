@@ -2238,7 +2238,7 @@ namespace NVOAMASIS.Services
         /// <summary>
         /// Generates Arrival Notice PDF bytes for Sea (SI/SE). Used for QR code public link - no JSRuntime.
         /// </summary>
-        public async Task<byte[]?> GetArrivalNoticePdfBytesAsync(M_HBL detail, string billType = "PASL", string branches = "")
+        public async Task<byte[]?> GetArrivalNoticePdfBytesAsync(M_HBL detail)
         {
             try
             {
@@ -2281,7 +2281,7 @@ namespace NVOAMASIS.Services
         /// <summary>
         /// Generates Arrival Notice PDF bytes for Air (AI/AE). Used for QR code public link - no JSRuntime.
         /// </summary>
-        public async Task<byte[]?> GetArrivalNoticeAirPdfBytesAsync(M_HBL detail, string billType = "PASL", string branches = "")
+        public async Task<byte[]?> GetArrivalNoticeAirPdfBytesAsync(M_HBL detail)
         {
             try
             {
@@ -2402,18 +2402,18 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportDO_NVOCC(M_HBL detail, string billType = "PASL", string branches = "")
+        public async Task<BoolandMessReponse> ExportDO_NVOCC(M_HBL detail)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrderNVOCC.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2504,18 +2504,18 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDOAir(M_HBL detail, string billType = "PASL", string branches = "")
+        public async Task<BoolandMessReponse> ExportDOAir(M_HBL detail)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrder_Air.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -2544,17 +2544,17 @@ namespace NVOAMASIS.Services
         /// <summary>
         /// Generates DO (Delivery Order) PDF bytes for Sea (SI/SE). Used for QR code public link - no JSRuntime.
         /// </summary>
-        public async Task<byte[]?> GetDOPdfBytesAsync(M_HBL detail, string billType = "PASL", string branches = "")
+        public async Task<byte[]?> GetDOPdfBytesAsync(M_HBL detail)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrderNVOCC.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
@@ -2574,17 +2574,17 @@ namespace NVOAMASIS.Services
         /// <summary>
         /// Generates DO (Delivery Order) PDF bytes for Air (AI/AE). Used for QR code public link - no JSRuntime.
         /// </summary>
-        public async Task<byte[]?> GetDOAirPdfBytesAsync(M_HBL detail, string billType = "PASL", string branches = "")
+        public async Task<byte[]?> GetDOAirPdfBytesAsync(M_HBL detail)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrder_Air.mrt");
+                var companyLogo = await GetCompanyLogoAsync();
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
+                ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
                 var flightdate = (detail.Air_FlightDate1 ?? "").Split('/').ToList();
@@ -2607,6 +2607,7 @@ namespace NVOAMASIS.Services
         private static readonly string[] CompanyLogoResourceNames =
         [
             "logo_bill",
+            "logo_nvocc",
             "PASLLogo",
             "VietStartLogo",
             "AMSSLogo",
