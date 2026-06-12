@@ -2760,7 +2760,7 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportDebitSI(M_Debit detail, string cur_type, string billType = "PASL", string branches = "")
+        public async Task<BoolandMessReponse> ExportDebitSI(M_Debit detail, string cur_type, string? billType = null, string? branches = null)
         {
             try
             {
@@ -2778,13 +2778,13 @@ namespace NVOAMASIS.Services
         
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
-
-
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
 
                 report.Load(rpt);
                 report.Culture = "en-US";
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
                 var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
                 var fcl = await GetFLCByMBLID(hblinfo.mblid); //
 
