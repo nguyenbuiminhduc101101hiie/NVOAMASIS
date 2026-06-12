@@ -7,7 +7,8 @@
 @using System.Text
 @using System.Text.RegularExpressions
 @using System.Net
-@using System.Net.Mail
+@using MailKit.Security
+@using MimeKit
 @using NVOAMASIS.Services
 @using NVOAMASIS.Services.MultiTenant
 @using NVOAMASIS.Models
@@ -507,15 +508,68 @@
 
     private async Task SendTenantCreatedEmailAsync(TenantGeneratedCredentials c)
     {
-        // Đọc SMTP từ appsettings.json theo đúng cấu hình LMS.
-        // Có fallback để môi trường demo vẫn gửi được nếu appsettings chưa bind kịp.
+        var settings = ReadTenantSmtpSettings();
+        var loginUrl = navSvc.ToAbsoluteUri($"/Account/Login?tab=login&db={Uri.EscapeDataString(c.DatabaseName)}").ToString();
+        var message = BuildTenantCreatedMessage(c, loginUrl, settings);
+        var attempts = await BuildSmtpConnectionAttemptsAsync(settings);
+        var failures = new List<string>();
+
+        foreach (var attempt in attempts)
+        {
+            using var client = new MailKit.Net.Smtp.SmtpClient();
+            try
+            {
+                await client.ConnectAsync(attempt.Host, settings.Port, attempt.SocketOptions);
+                await client.AuthenticateAsync(settings.Username, settings.Password);
+                await client.SendAsync(message);
+                await client.DisconnectAsync(true);
+
+                if (!string.Equals(attempt.Host, settings.Host, StringComparison.OrdinalIgnoreCase))
+                {
+                    Logger.LogWarning(
+                        "Tenant registration email used SMTP fallback host {FallbackHost} instead of configured host {ConfiguredHost}.",
+                        attempt.Host,
+                        settings.Host);
+                }
+
+                return;
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{attempt.Host}:{settings.Port} [{attempt.SocketOptions}] - {FlattenExceptionMessage(ex)}");
+                Logger.LogWarning(
+                    ex,
+                    "SMTP send failed for tenant registration via {Host}:{Port} using {SocketOptions}.",
+                    attempt.Host,
+                    settings.Port,
+                    attempt.SocketOptions);
+
+                try
+                {
+                    if (client.IsConnected)
+                        await client.DisconnectAsync(true);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        var attemptedHosts = string.Join(", ", attempts.Select(static a => a.Host).Distinct(StringComparer.OrdinalIgnoreCase));
+        var detail = string.Join(" || ", failures);
+        throw new InvalidOperationException(
+            $"Không thể gửi email đăng ký. Ứng dụng đã thử các host SMTP: {attemptedHosts}. Host cấu hình có thể không khớp certificate của mail server. Chi tiết: {detail}");
+    }
+
+    private TenantSmtpSettings ReadTenantSmtpSettings()
+    {
         var host = ReadConfig("Smtp:Host", "mail.logisticssoftware.vn");
         var portText = ReadConfig("Smtp:Port", "587");
         var enableSslText = ReadConfig("Smtp:EnableSsl", "true");
         var username = ReadConfig("Smtp:UserName")
                     ?? ReadConfig("Smtp:Username")
                     ?? ReadConfig("Smtp:User")
-                    ?? "vns.noreply@logisticssoftware.vn";
+                    ?? "vms.noreply@logisticssoftware.vn";
         var password = ReadConfig("Smtp:Password", "Noreply@1");
         var fromEmail = ReadConfig("Smtp:FromEmail")
                      ?? ReadConfig("Smtp:SenderEmail")
@@ -532,33 +586,117 @@
 
         var port = int.TryParse(portText, out var parsedPort) ? parsedPort : 587;
         var enableSsl = !bool.TryParse(enableSslText, out var parsedSsl) || parsedSsl;
-        var loginUrl = navSvc.ToAbsoluteUri($"/Account/Login?tab=login&db={Uri.EscapeDataString(c.DatabaseName)}").ToString();
+        return new TenantSmtpSettings(host, port, enableSsl, username, password, fromEmail, fromName);
+    }
 
-        using var message = new MailMessage
+    private static MimeMessage BuildTenantCreatedMessage(TenantGeneratedCredentials c, string loginUrl, TenantSmtpSettings settings)
+    {
+        var sender = new MailboxAddress(settings.FromName, settings.FromEmail);
+        var message = new MimeMessage();
+        message.From.Add(sender);
+        message.Sender = sender;
+        message.To.Add(MailboxAddress.Parse(c.Email));
+        message.ReplyTo.Add(sender);
+        message.Subject = "Thông tin đăng nhập LMS";
+        message.Body = new BodyBuilder
         {
-            From = new MailAddress(fromEmail, fromName, Encoding.UTF8),
-            Sender = new MailAddress(fromEmail, fromName, Encoding.UTF8),
-            Subject = "Thông tin đăng nhập LMS",
-            SubjectEncoding = Encoding.UTF8,
-            BodyEncoding = Encoding.UTF8,
-            HeadersEncoding = Encoding.UTF8,
-            IsBodyHtml = true,
-            Body = BuildTenantEmailHtml(c, loginUrl)
-        };
+            HtmlBody = BuildTenantEmailHtml(c, loginUrl)
+        }.ToMessageBody();
+        return message;
+    }
 
-        message.To.Add(new MailAddress(c.Email));
-        message.ReplyToList.Add(new MailAddress(fromEmail, fromName, Encoding.UTF8));
+    private async Task<IReadOnlyList<SmtpConnectionAttempt>> BuildSmtpConnectionAttemptsAsync(TenantSmtpSettings settings)
+    {
+        var hosts = new List<string>();
+        AddHostCandidate(hosts, settings.Host);
 
-        using var client = new SmtpClient(host, port)
+        foreach (var resolvedHost in await ResolveReverseDnsHostsAsync(settings.Host))
+            AddHostCandidate(hosts, resolvedHost);
+
+        var senderDomain = ExtractEmailDomain(settings.FromEmail) ?? ExtractEmailDomain(settings.Username);
+        if (!string.IsNullOrWhiteSpace(senderDomain))
         {
-            DeliveryMethod = SmtpDeliveryMethod.Network,
-            UseDefaultCredentials = false,
-            EnableSsl = enableSsl,
-            Credentials = new NetworkCredential(username, password),
-            Timeout = 60000
-        };
+            AddHostCandidate(hosts, $"smtp.{senderDomain}");
+            AddHostCandidate(hosts, $"mail.{senderDomain}");
+            AddHostCandidate(hosts, senderDomain);
+        }
 
-        await client.SendMailAsync(message);
+        if (settings.Host.StartsWith("mail.", StringComparison.OrdinalIgnoreCase)
+            || settings.Host.StartsWith("smtp.", StringComparison.OrdinalIgnoreCase))
+        {
+            AddHostCandidate(hosts, settings.Host[(settings.Host.IndexOf('.') + 1)..]);
+        }
+
+        var socketOptions = BuildSocketOptions(settings.Port, settings.EnableSsl);
+        return hosts
+            .SelectMany(host => socketOptions.Select(option => new SmtpConnectionAttempt(host, option)))
+            .ToList();
+    }
+
+    private static IReadOnlyList<SecureSocketOptions> BuildSocketOptions(int port, bool enableSsl)
+    {
+        var options = new List<SecureSocketOptions>();
+
+        if (enableSsl)
+        {
+            options.Add(port == 465 ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls);
+            options.Add(SecureSocketOptions.Auto);
+        }
+        else
+        {
+            options.Add(SecureSocketOptions.None);
+            options.Add(SecureSocketOptions.Auto);
+        }
+
+        return options.Distinct().ToList();
+    }
+
+    private static async Task<IReadOnlyList<string>> ResolveReverseDnsHostsAsync(string host)
+    {
+        var results = new List<string>();
+
+        try
+        {
+            var addresses = await Dns.GetHostAddressesAsync(host);
+            foreach (var address in addresses)
+            {
+                try
+                {
+                    var entry = await Dns.GetHostEntryAsync(address);
+                    AddHostCandidate(results, entry.HostName);
+                }
+                catch
+                {
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return results;
+    }
+
+    private static void AddHostCandidate(ICollection<string> hosts, string? host)
+    {
+        var normalized = host?.Trim().TrimEnd('.');
+        if (string.IsNullOrWhiteSpace(normalized))
+            return;
+
+        if (!hosts.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            hosts.Add(normalized);
+    }
+
+    private static string? ExtractEmailDomain(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+            return null;
+
+        var atIndex = email.LastIndexOf('@');
+        if (atIndex < 0 || atIndex == email.Length - 1)
+            return null;
+
+        return email[(atIndex + 1)..].Trim();
     }
 
     private string? ReadConfig(string key, string? fallback = null)
@@ -569,9 +707,14 @@
 
     private static string BuildMailErrorMessage(Exception ex)
     {
-        var message = ex.Message;
-        if (ex.InnerException != null)
-            message += " | Inner: " + ex.InnerException.Message;
+        var message = FlattenExceptionMessage(ex);
+
+        if (message.Contains("RemoteCertificateNameMismatch", StringComparison.OrdinalIgnoreCase)
+            || (message.Contains("certificate", StringComparison.OrdinalIgnoreCase)
+                && message.Contains("name", StringComparison.OrdinalIgnoreCase)))
+        {
+            message += " | Host SMTP hiện tại không khớp certificate của mail server. Cần dùng hostname canonical đúng của nhà cung cấp mail.";
+        }
 
         if (message.Contains("5.7.0", StringComparison.OrdinalIgnoreCase)
             || message.Contains("Authentication Required", StringComparison.OrdinalIgnoreCase)
@@ -581,6 +724,32 @@
         }
 
         return message;
+    }
+
+    private static string FlattenExceptionMessage(Exception ex)
+    {
+        var messages = new List<string>();
+        CollectExceptionMessages(ex, messages);
+        return string.Join(" | Inner: ", messages.Distinct(StringComparer.Ordinal));
+    }
+
+    private static void CollectExceptionMessages(Exception? ex, ICollection<string> messages)
+    {
+        if (ex == null)
+            return;
+
+        if (ex is AggregateException aggregateException)
+        {
+            foreach (var inner in aggregateException.Flatten().InnerExceptions)
+                CollectExceptionMessages(inner, messages);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ex.Message))
+            messages.Add(ex.Message.Trim());
+
+        if (ex.InnerException != null)
+            CollectExceptionMessages(ex.InnerException, messages);
     }
 
     private string BuildCredentialBackupText(TenantGeneratedCredentials c)
@@ -743,4 +912,15 @@
         public string AppUser { get; set; } = "";
         public string AppPassword { get; set; } = "";
     }
+
+    private sealed record TenantSmtpSettings(
+        string Host,
+        int Port,
+        bool EnableSsl,
+        string Username,
+        string Password,
+        string FromEmail,
+        string FromName);
+
+    private sealed record SmtpConnectionAttempt(string Host, SecureSocketOptions SocketOptions);
 }
