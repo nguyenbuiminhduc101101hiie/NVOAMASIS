@@ -3066,21 +3066,21 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportCreditSI(List<M_Credit> list_debit, List<M_HBL> hblinfo, string cur_type, string billType = "PASL", string branches = "")
+        public async Task<BoolandMessReponse> ExportCreditSI(List<M_Credit> list_debit, List<M_HBL> hblinfo, string cur_type)
         {
             try
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportCreditNote_SeaImport.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
-
-
-
                 report.Load(rpt);
                 report.Culture = "en-US";
-                report.Dictionary.Variables["BillType"].Value = billType;
-                ApplyCompanyBranchVariable(report, branches);
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
                 var fcl = await GetFLCByMBLID(hblinfo.First().mblid);
                 double? total_payment = 0;
                 double? total_amount_notvat = 0;
