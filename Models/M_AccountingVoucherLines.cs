@@ -33,6 +33,17 @@ namespace NVOAMASIS.Models
 
         public bool IsTaxBook { get; set; }
         public bool IsManagementBook { get; set; }
+        public string? HBLNo { get; set; }
+        public string? BookingNo { get; set; }
+        public string? POLName { get; set; }
+        public string? PODName { get; set; }
+        public string? ContainerNo { get; set; }
+        public string? ContainerSizeType { get; set; }
+        public string? SaleName { get; set; }
+        public string? DELName { get; set; }
+        public string? PORName { get; set; }
+        public string? TransportMode { get; set; }
+
 
         /// <summary>FINANCIAL / TAX / MANAGEMENT (NVARCHAR(20)).</summary>
         [StringLength(20)]

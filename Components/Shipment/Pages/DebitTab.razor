@@ -658,22 +658,6 @@
     {
         try
         {
-            // Show company selection dialog first
-            var companyDialogOptions = new DialogOptions
-            {
-                ClassBackground = "class-dialog-custom",
-                FullWidth = true,
-                MaxWidth = MaxWidth.ExtraSmall,
-                CloseOnEscapeKey = true,
-                DisableBackdropClick = true,
-            };
-            var companyDialogRef = await DialogService.ShowAsync<Shipment.Pages.DialogCompanyOption>("Debit - Chọn Company", companyDialogOptions);
-            var companyResult = await companyDialogRef.Result;
-            if (companyResult.Canceled) return;
-            var billType = (string)companyResult.Data!;
-            var branches = await ResolveBranchByCompanyAsync(billType);
-            if (branches is null) return;
-
             var optionsdialog = new DialogOptions
             {
                 ClassBackground = "class-dialog-custom",
@@ -716,6 +700,26 @@
             StateHasChanged();
             await Task.Delay(1);
 
+            var billType = string.Empty;
+            var branches = string.Empty;
+            if (type != "SI" || isMBL)
+            {
+                var companyOptions = await gsv.GetCompanyOtherList();
+                billType = companyOptions
+                    .Select(x => x.Code?.Trim())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(billType))
+                {
+                    CallSnackBar("Không tìm thấy thông tin công ty", MudBlazor.Severity.Error);
+                    return;
+                }
+                var resolvedBranches = await ResolveBranchByCompanyAsync(billType);
+                if (resolvedBranches is null) return;
+                branches = resolvedBranches;
+            }
+
             if (type == "SI")
             {
                 if (isMBL)
@@ -725,7 +729,7 @@
                 }
                 else
                 {
-                    var rs = await shipsv.ExportDebitSI(debitdetail, cur_type, billType, branches);
+                    var rs = await shipsv.ExportDebitSI(debitdetail, cur_type);
                     CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
                 }
 

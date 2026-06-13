@@ -51,13 +51,64 @@
                                      Label="Shipment (HBL)"
                                      Variant="Variant.Outlined"
                                      Margin="Margin.Dense"
-                                     @bind-Value="_line.ShipmentId"
+                                     Value="_line.ShipmentId"
+                                     ValueChanged="OnShipmentIdChangedAsync"
                                      SearchFunc="SearchHblAsync"
                                      ToStringFunc="HblToString"
                                      Clearable="true"
                                      CoerceText="true"
                                      CoerceValue="true"
                                      ResetValueOnEmptyText="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudAutocomplete T="string"
+                                     Label="HBL No"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Value="_line.HBLNo"
+                                     ValueChanged="OnHblNoChangedAsync"
+                                     SearchFunc="SearchHblNoAsync"
+                                     Clearable="true"
+                                     CoerceText="true"
+                                     CoerceValue="true"
+                                     ResetValueOnEmptyText="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudAutocomplete T="string"
+                                     Label="Container No"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Value="_line.ContainerNo"
+                                     ValueChanged="OnContainerNoChangedAsync"
+                                     SearchFunc="SearchContainerNoAsync"
+                                     Clearable="true"
+                                     CoerceText="true"
+                                     CoerceValue="true"
+                                     ResetValueOnEmptyText="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_line.ContainerSizeType" Label="Container Size/Type" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_line.BookingNo" Label="Booking No" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudTextField @bind-Value="_line.PORName" Label="POR" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudTextField @bind-Value="_line.POLName" Label="POL" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudTextField @bind-Value="_line.PODName" Label="POD" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="6" md="3">
+                    <MudTextField @bind-Value="_line.DELName" Label="DEL" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_line.SaleName" Label="Sale Name" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_line.TransportMode" Label="Transport Mode" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 </MudItem>
                 <MudItem xs="12" md="6">
                     <MudTextField @bind-Value="ContractIdText" Label="Contract" Variant="Variant.Outlined" Margin="Margin.Dense" />
@@ -133,6 +184,8 @@
     private List<DanhMucTaiKhoan> _danhMucs = new();
     private List<M_Customer> _customers = new();
     private List<M_HBL> _hbls = new();
+    private List<M_Container> _containers = new();
+    private List<M_Container> _containersForHbl = new();
 
     private static readonly string[] LedgerTypeOptions = { "FINANCIAL", "TAX", "MANAGEMENT","GENERAL" };
 
@@ -152,6 +205,12 @@
             .Where(x => x.hblID != Guid.Empty)
             .OrderByDescending(x => x.dateupdate)
             .ThenByDescending(x => x.hbl)
+            .Take(2000)
+            .ToListAsync();
+        _containers = await db.Container.AsNoTracking()
+            .Where(x => x.hblid != null && x.CONTAINER_NO != null && x.CONTAINER_NO != "")
+            .OrderByDescending(x => x.UPDATETIME)
+            .ThenBy(x => x.CONTAINER_NO)
             .Take(2000)
             .ToListAsync();
 
@@ -182,6 +241,16 @@
                 InvoiceDate = src.InvoiceDate,
                 IsTaxBook = src.IsTaxBook,
                 IsManagementBook = src.IsManagementBook,
+                HBLNo = src.HBLNo,
+                BookingNo = src.BookingNo,
+                POLName = src.POLName,
+                PODName = src.PODName,
+                ContainerNo = src.ContainerNo,
+                ContainerSizeType = src.ContainerSizeType,
+                SaleName = src.SaleName,
+                DELName = src.DELName,
+                PORName = src.PORName,
+                TransportMode = src.TransportMode,
                 SortKey = src.SortKey
             };
             if (src.CustomerId is Guid customerId && customerId != Guid.Empty && _customers.All(x => x.Customer_ID != customerId))
@@ -202,6 +271,8 @@
                 if (dm is not null)
                     _selectedDmId = dm.Id;
             }
+
+            await EnsureContainersForHblAsync(_line.ShipmentId, _line.HBLNo, db);
         }
         else
         {
@@ -366,6 +437,166 @@
             return string.Empty;
         var h = _hbls.FirstOrDefault(x => x.hblID == id.Value);
         return h?.hbl ?? string.Empty;
+    }
+
+    private async Task OnShipmentIdChangedAsync(Guid? id)
+    {
+        _line.ShipmentId = id;
+        if (id is null || id == Guid.Empty)
+        {
+            _containersForHbl = new List<M_Container>();
+            return;
+        }
+        var hbl = _hbls.FirstOrDefault(x => x.hblID == id.Value);
+        if (hbl is null)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            hbl = await db.HBL.AsNoTracking().FirstOrDefaultAsync(x => x.hblID == id.Value);
+            if (hbl is not null && _hbls.All(x => x.hblID != hbl.hblID))
+                _hbls.Add(hbl);
+        }
+        if (hbl is null)
+            return;
+
+        ApplyHblToLine(hbl);
+        await EnsureContainersForHblAsync(hbl.hblID, hbl.hbl, null);
+        ApplyFirstContainerForHbl();
+    }
+
+    private Task<IEnumerable<string>> SearchHblNoAsync(string value)
+    {
+        IEnumerable<M_HBL> query = _hbls.Where(x => !string.IsNullOrWhiteSpace(x.hbl));
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var k = value.Trim();
+            query = query.Where(x => x.hbl!.Contains(k, StringComparison.OrdinalIgnoreCase));
+        }
+        return Task.FromResult(query
+            .Select(x => x.hbl!.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(50));
+    }
+
+    private async Task OnHblNoChangedAsync(string value)
+    {
+        _line.HBLNo = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        if (string.IsNullOrWhiteSpace(_line.HBLNo))
+        {
+            _containersForHbl = new List<M_Container>();
+            return;
+        }
+
+        var hbl = _hbls.FirstOrDefault(x => string.Equals((x.hbl ?? string.Empty).Trim(), _line.HBLNo, StringComparison.OrdinalIgnoreCase));
+        if (hbl is null)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            hbl = await db.HBL.AsNoTracking().FirstOrDefaultAsync(x => x.hbl == _line.HBLNo);
+            if (hbl is not null && _hbls.All(x => x.hblID != hbl.hblID))
+                _hbls.Add(hbl);
+        }
+        if (hbl is null)
+            return;
+
+        ApplyHblToLine(hbl);
+        await EnsureContainersForHblAsync(hbl.hblID, hbl.hbl, null);
+        ApplyFirstContainerForHbl();
+    }
+
+    private void ApplyHblToLine(M_HBL hbl)
+    {
+        _line.ShipmentId = hbl.hblID;
+        _line.HBLNo = hbl.hbl;
+        _line.BookingNo = hbl.bkno;
+        _line.POLName = hbl.polname;
+        _line.PODName = hbl.podname;
+        _line.DELName = hbl.delName;
+        _line.PORName = hbl.porname;
+        _line.SaleName = hbl.SaleName;
+    }
+
+    private void ApplyFirstContainerForHbl()
+    {
+        var first = _containersForHbl.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.CONTAINER_NO));
+        if (first is null)
+            return;
+        _line.ContainerNo = first.CONTAINER_NO;
+        _line.ContainerSizeType = first.CTN_SIZE_TYPE;
+    }
+
+    private async Task EnsureContainersForHblAsync(Guid? hblId, string? hblNo, AppDbContext? db)
+    {
+        if ((hblId is null || hblId == Guid.Empty) && string.IsNullOrWhiteSpace(hblNo))
+        {
+            _containersForHbl = new List<M_Container>();
+            return;
+        }
+
+        if ((hblId is null || hblId == Guid.Empty) && !string.IsNullOrWhiteSpace(hblNo))
+        {
+            var matched = _hbls.FirstOrDefault(x => string.Equals((x.hbl ?? string.Empty).Trim(), hblNo!.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (matched is not null)
+                hblId = matched.hblID;
+        }
+
+        if (hblId is null || hblId == Guid.Empty)
+        {
+            _containersForHbl = new List<M_Container>();
+            return;
+        }
+
+        _containersForHbl = _containers.Where(x => x.hblid == hblId).ToList();
+        if (_containersForHbl.Count > 0)
+            return;
+
+        var ownsDb = db is null;
+        db ??= await DbFactory.CreateDbContextAsync();
+        try
+        {
+            var fetched = await db.Container.AsNoTracking()
+                .Where(x => x.hblid == hblId && x.CONTAINER_NO != null && x.CONTAINER_NO != "")
+                .ToListAsync();
+            foreach (var c in fetched)
+            {
+                if (_containers.All(x => x.CTN_ID != c.CTN_ID))
+                    _containers.Add(c);
+            }
+            _containersForHbl = _containers.Where(x => x.hblid == hblId).ToList();
+        }
+        finally
+        {
+            if (ownsDb)
+                await db.DisposeAsync();
+        }
+    }
+
+    private Task<IEnumerable<string>> SearchContainerNoAsync(string value)
+    {
+        var source = _containersForHbl.Count > 0 ? _containersForHbl : _containers;
+        IEnumerable<M_Container> query = source.Where(x => !string.IsNullOrWhiteSpace(x.CONTAINER_NO));
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var k = value.Trim();
+            query = query.Where(x => x.CONTAINER_NO!.Contains(k, StringComparison.OrdinalIgnoreCase));
+        }
+        return Task.FromResult(query
+            .Select(x => x.CONTAINER_NO!.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(50));
+    }
+
+    private Task OnContainerNoChangedAsync(string value)
+    {
+        _line.ContainerNo = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        if (string.IsNullOrWhiteSpace(_line.ContainerNo))
+            return Task.CompletedTask;
+
+        var source = _containersForHbl.Count > 0 ? _containersForHbl : _containers;
+        var c = source.FirstOrDefault(x => string.Equals((x.CONTAINER_NO ?? string.Empty).Trim(), _line.ContainerNo, StringComparison.OrdinalIgnoreCase));
+        if (c is not null)
+            _line.ContainerSizeType = c.CTN_SIZE_TYPE;
+        return Task.CompletedTask;
     }
 
     private async Task SaveAsync()

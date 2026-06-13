@@ -54,20 +54,11 @@ namespace NVOAMASIS.Controllers
                             payload = new ArrivalNoticeTokenPayload
                             {
                                 HblId = legacy.HblId,
-                                Type = legacy.Type ?? "",
-                                BillType = "PASL",
-                                Branches = ""
+                                Type = legacy.Type ?? ""
                             };
                         }
                     }
                     catch { /* use DB */ }
-                }
-
-                if (payload != null)
-                {
-                    if (string.IsNullOrWhiteSpace(payload.BillType))
-                        payload.BillType = "PASL";
-                    payload.Branches ??= "";
                 }
             }
 
@@ -84,16 +75,13 @@ namespace NVOAMASIS.Controllers
             if (hbl == null)
                 return NotFound("HBL not found.");
 
-            var billType = string.IsNullOrWhiteSpace(payload.BillType) ? "PASL" : payload.BillType.Trim();
-            var branches = payload.Branches?.Trim() ?? "";
-
             byte[]? pdfBytes;
-            string fileName = $"AN_{hbl.hbl ?? "document"}.pdf";
+            var fileName = $"AN_{hbl.hbl ?? "document"}.pdf";
 
             if (payload.Type == "SI" || payload.Type == "SE")
-                pdfBytes = await _shipmentService.GetArrivalNoticePdfBytesAsync(hbl, billType, branches);
+                pdfBytes = await _shipmentService.GetArrivalNoticePdfBytesAsync(hbl);
             else if (payload.Type == "AI" || payload.Type == "AE")
-                pdfBytes = await _shipmentService.GetArrivalNoticeAirPdfBytesAsync(hbl, billType, branches);
+                pdfBytes = await _shipmentService.GetArrivalNoticeAirPdfBytesAsync(hbl);
             else
                 return BadRequest("Invalid type.");
 

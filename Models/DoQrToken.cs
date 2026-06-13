@@ -4,8 +4,6 @@ namespace NVOAMASIS.Models
     {
         public Guid HblId { get; set; }
         public string Type { get; set; } = "";
-        public string BillType { get; set; } = "PASL";
-        public string Branches { get; set; } = "";
     }
 
     public static class DoQrCacheKeys
