@@ -101,32 +101,46 @@
     </MudPaper>
 
     <MudGrid Spacing="2" Class="mb-2">
-        <MudItem xs="12" sm="3">
+        <MudItem xs="12" sm="6" md="2">
             <MudPaper Class="kpi-card opening-card" Elevation="0">
                 <MudText Typo="Typo.caption">Opening Debit</MudText>
                 <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.OpeningDebit).ToString("N0")</MudText>
                 <MudText Typo="Typo.caption">Số dư đầu kỳ Nợ</MudText>
             </MudPaper>
         </MudItem>
-        <MudItem xs="12" sm="3">
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card opening-card" Elevation="0">
+                <MudText Typo="Typo.caption">Opening Credit</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.OpeningCredit).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Số dư đầu kỳ Có</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
             <MudPaper Class="kpi-card movement-card" Elevation="0">
                 <MudText Typo="Typo.caption">Movement Debit</MudText>
                 <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.PeriodDebit).ToString("N0")</MudText>
                 <MudText Typo="Typo.caption">Phát sinh Nợ trong kỳ</MudText>
             </MudPaper>
         </MudItem>
-        <MudItem xs="12" sm="3">
+        <MudItem xs="12" sm="6" md="2">
             <MudPaper Class="kpi-card movement-credit-card" Elevation="0">
                 <MudText Typo="Typo.caption">Movement Credit</MudText>
                 <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.PeriodCredit).ToString("N0")</MudText>
                 <MudText Typo="Typo.caption">Phát sinh Có trong kỳ</MudText>
             </MudPaper>
         </MudItem>
-        <MudItem xs="12" sm="3">
+        <MudItem xs="12" sm="6" md="2">
             <MudPaper Class="kpi-card closing-card" Elevation="0">
                 <MudText Typo="Typo.caption">Closing Debit</MudText>
                 <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.ClosingDebit).ToString("N0")</MudText>
                 <MudText Typo="Typo.caption">Số dư cuối kỳ Nợ</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card closing-card" Elevation="0">
+                <MudText Typo="Typo.caption">Closing Credit</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@VisibleRows.Sum(x => x.ClosingCredit).ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Số dư cuối kỳ Có</MudText>
             </MudPaper>
         </MudItem>
     </MudGrid>
@@ -491,24 +505,28 @@ ORDER BY start_date;";
                 .GroupBy(x => x.AccountCode.Trim(), StringComparer.OrdinalIgnoreCase)
                 .Select(g =>
                 {
-                    var opening = g.Sum(x => x.OpeningBalance);
+                    var openingDebit = g.Sum(x => x.OpeningDebit);
+                    var openingCredit = g.Sum(x => x.OpeningCredit);
                     var debit = g.Sum(x => x.DebitTotal);
                     var credit = g.Sum(x => x.CreditTotal);
-                    var closing = g.Sum(x => x.ClosingBalance);
+                    var closingDebit = g.Sum(x => x.ClosingDebit);
+                    var closingCredit = g.Sum(x => x.ClosingCredit);
 
                     return new AccountBalanceSnapshotRow
                     {
                         AccountCode = g.Key,
                         AccountName = nameMap.TryGetValue(g.Key, out var name) ? name : string.Empty,
 
-                        OpeningDebit = opening >= 0 ? opening : 0,
-                        OpeningCredit = opening < 0 ? Math.Abs(opening) : 0,
+                        // Lấy trực tiếp từ 4 cột mới trong dbo.account_balance:
+                        // opening_debit / opening_credit / closing_debit / closing_credit
+                        OpeningDebit = openingDebit,
+                        OpeningCredit = openingCredit,
 
                         PeriodDebit = debit,
                         PeriodCredit = credit,
 
-                        ClosingDebit = closing >= 0 ? closing : 0,
-                        ClosingCredit = closing < 0 ? Math.Abs(closing) : 0
+                        ClosingDebit = closingDebit,
+                        ClosingCredit = closingCredit
                     };
                 })
                 .OrderBy(x => x.AccountCode)
@@ -559,9 +577,18 @@ ORDER BY start_date;";
             .Select(x => new BalanceCalcRow
             {
                 AccountCode = x.AccountCode ?? string.Empty,
-                OpeningBalance = x.OpeningBalance,
+
+                // Lấy trực tiếp 4 cột mới. Nếu dữ liệu cũ chưa backfill thì fallback từ balance signed.
+                OpeningDebit = x.OpeningDebit ?? (x.OpeningBalance > 0 ? x.OpeningBalance : 0),
+                OpeningCredit = x.OpeningCredit ?? (x.OpeningBalance < 0 ? Math.Abs(x.OpeningBalance) : 0),
+
                 DebitTotal = x.DebitTotal,
                 CreditTotal = x.CreditTotal,
+
+                ClosingDebit = x.ClosingDebit ?? (x.ClosingBalance > 0 ? x.ClosingBalance : 0),
+                ClosingCredit = x.ClosingCredit ?? (x.ClosingBalance < 0 ? Math.Abs(x.ClosingBalance) : 0),
+
+                OpeningBalance = x.OpeningBalance,
                 ClosingBalance = x.ClosingBalance,
                 AccountType = x.AccountType,
                 BookCode = x.BookCode
@@ -597,7 +624,12 @@ ORDER BY start_date;";
             .Select(x => new BalanceCalcRow
             {
                 AccountCode = x.AccountCode ?? string.Empty,
+
+                // Lấy số dư đầu kỳ từ 2 cột mới, fallback về opening_balance nếu dữ liệu cũ chưa backfill.
+                OpeningDebit = x.OpeningDebit ?? (x.OpeningBalance > 0 ? x.OpeningBalance : 0),
+                OpeningCredit = x.OpeningCredit ?? (x.OpeningBalance < 0 ? Math.Abs(x.OpeningBalance) : 0),
                 OpeningBalance = x.OpeningBalance,
+
                 AccountType = x.AccountType,
                 BookCode = x.BookCode
             })
@@ -648,7 +680,7 @@ ORDER BY start_date;";
         var openingMap = openingRows
             .Where(x => !string.IsNullOrWhiteSpace(x.AccountCode))
             .GroupBy(x => x.AccountCode.Trim(), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Sum(x => x.OpeningBalance), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.OpeningDebit - x.OpeningCredit), StringComparer.OrdinalIgnoreCase);
 
         var typeMap = openingRows
             .Where(x => !string.IsNullOrWhiteSpace(x.AccountCode))
@@ -678,14 +710,24 @@ ORDER BY start_date;";
             typeMap.TryGetValue(acc, out var accountType);
 
             var opening = openingFromBalance + preNet;
+            var closing = opening + debit - credit;
 
             result.Add(new BalanceCalcRow
             {
                 AccountCode = acc,
-                OpeningBalance = opening,
+
+                OpeningDebit = opening > 0 ? opening : 0,
+                OpeningCredit = opening < 0 ? Math.Abs(opening) : 0,
+
                 DebitTotal = debit,
                 CreditTotal = credit,
-                ClosingBalance = opening + debit - credit,
+
+                ClosingDebit = closing > 0 ? closing : 0,
+                ClosingCredit = closing < 0 ? Math.Abs(closing) : 0,
+
+                // Vẫn giữ balance signed để không ảnh hưởng logic cũ / debug.
+                OpeningBalance = opening,
+                ClosingBalance = closing,
                 AccountType = string.IsNullOrWhiteSpace(accountType) ? AccountTypeFromAccountCode(acc) : accountType,
                 BookCode = string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase) ? "ALL" : _book
             });
@@ -840,10 +882,21 @@ ORDER BY start_date;";
     private sealed class BalanceCalcRow
     {
         public string AccountCode { get; set; } = string.Empty;
-        public decimal OpeningBalance { get; set; }
+
+        // 4 cột mới từ dbo.account_balance
+        public decimal OpeningDebit { get; set; }
+        public decimal OpeningCredit { get; set; }
+        public decimal ClosingDebit { get; set; }
+        public decimal ClosingCredit { get; set; }
+
+        // Phát sinh trong kỳ
         public decimal DebitTotal { get; set; }
         public decimal CreditTotal { get; set; }
+
+        // Balance signed giữ lại để tính theo ngày và tương thích logic cũ
+        public decimal OpeningBalance { get; set; }
         public decimal ClosingBalance { get; set; }
+
         public string? AccountType { get; set; }
         public string? BookCode { get; set; }
     }

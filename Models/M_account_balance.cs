@@ -70,6 +70,18 @@ namespace NVOAMASIS.Models
         [Column("updated_at")]
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+        [Column("opening_debit", TypeName = "decimal(18,2)")]
+        public decimal? OpeningDebit { get; set; }
+
+        [Column("opening_credit", TypeName = "decimal(18,2)")]
+        public decimal? OpeningCredit { get; set; }
+
+        [Column("closing_debit", TypeName = "decimal(18,2)")]
+        public decimal? ClosingDebit { get; set; }
+
+        [Column("closing_credit", TypeName = "decimal(18,2)")]
+        public decimal? ClosingCredit { get; set; }
+
         [InverseProperty(nameof(M_account_balance_gl_line.AccountBalance))]
         public ICollection<M_account_balance_gl_line> GlSnapshotLines { get; set; } = new List<M_account_balance_gl_line>();
     }
