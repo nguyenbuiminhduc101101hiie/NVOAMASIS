@@ -362,8 +362,6 @@
                 .Take(50000)
                 .ToListAsync();
 
-            var hblLookup = await LoadHblLookupAsync(db, data.Select(x => x.Line.ShipmentId));
-
             // Công nợ phải tính theo số dư còn lại:
             // AR 131: còn phải thu = Nợ 131 - Có 131.
             // AP 331: còn phải trả = Có 331 - Nợ 331.
@@ -393,8 +391,7 @@
                         ? x.Line.DebitAmount - x.Line.CreditAmount       // AR: Nợ làm tăng phải thu, Có làm giảm phải thu
                         : x.Line.CreditAmount - x.Line.DebitAmount;      // AP: Có làm tăng phải trả, Nợ làm giảm phải trả
 
-                    var hblNo = ResolveHblNo(x.Line.ShipmentId, hblLookup);
-                    var matchKey = BuildDebtMatchKey(x.Line.InvoiceNo, hblNo);
+                    var matchKey = BuildDebtMatchKey(x.Line.InvoiceNo, x.Line.HBLNo);
 
                     if (netDebtAmount > 0.01m)
                     {
@@ -412,7 +409,7 @@
                             RemainingAmount = netDebtAmount,
                             CustomerName = string.Empty,
                             InvoiceNo = x.Line.InvoiceNo ?? string.Empty,
-                            HBLNo = hblNo,
+                            HBLNo = x.Line.HBLNo ?? string.Empty,
                             LineDescription = x.Line.LineDescription ?? string.Empty,
                             Book = GetLineBookKey(x.Line.IsTaxBook, x.Line.IsManagementBook),
                             MatchKey = matchKey
@@ -596,30 +593,6 @@
     }
 
     private const string CustomerBalanceMatchKey = "CUSTOMER_BALANCE";
-
-    private static async Task<Dictionary<Guid, string>> LoadHblLookupAsync(AppDbContext db, IEnumerable<Guid?> shipmentIds)
-    {
-        var ids = shipmentIds
-            .Where(id => id.HasValue && id.Value != Guid.Empty)
-            .Select(id => id!.Value)
-            .Distinct()
-            .ToList();
-
-        if (ids.Count == 0)
-            return new Dictionary<Guid, string>();
-
-        return await db.HBL.AsNoTracking()
-            .Where(h => ids.Contains(h.hblID))
-            .ToDictionaryAsync(h => h.hblID, h => h.hbl?.Trim() ?? string.Empty);
-    }
-
-    private static string ResolveHblNo(Guid? shipmentId, IReadOnlyDictionary<Guid, string> hblLookup)
-    {
-        if (!shipmentId.HasValue || shipmentId.Value == Guid.Empty)
-            return string.Empty;
-
-        return hblLookup.TryGetValue(shipmentId.Value, out var hbl) ? hbl : string.Empty;
-    }
 
     private static string BuildDebtMatchKey(string? invoiceNo, string? hblNo)
     {
