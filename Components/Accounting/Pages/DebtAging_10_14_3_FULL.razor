@@ -472,8 +472,6 @@
                 .Take(50000)
                 .ToListAsync();
 
-            var hblLookup = await LoadHblLookupAsync(db, data.Select(x => x.Line.ShipmentId));
-
             var sources = data.Select(x =>
             {
                 var accountCode = x.Line.AccountCode ?? string.Empty;
@@ -484,7 +482,7 @@
                     : x.Line.DebitAmount - x.Line.CreditAmount;
 
                 var invoice = x.Line.InvoiceNo?.Trim() ?? string.Empty;
-                var hbl = ResolveHblNo(x.Line.ShipmentId, hblLookup);
+                var hbl = x.Line.HBLNo?.Trim() ?? string.Empty;
                 var debtKey = !string.IsNullOrWhiteSpace(invoice)
                     ? "INV:" + invoice
                     : !string.IsNullOrWhiteSpace(hbl)
@@ -858,30 +856,6 @@
             || x.Description.Contains(key, StringComparison.OrdinalIgnoreCase)
             || x.Book.Contains(key, StringComparison.OrdinalIgnoreCase)
             || x.Balance.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static async Task<Dictionary<Guid, string>> LoadHblLookupAsync(AppDbContext db, IEnumerable<Guid?> shipmentIds)
-    {
-        var ids = shipmentIds
-            .Where(id => id.HasValue && id.Value != Guid.Empty)
-            .Select(id => id!.Value)
-            .Distinct()
-            .ToList();
-
-        if (ids.Count == 0)
-            return new Dictionary<Guid, string>();
-
-        return await db.HBL.AsNoTracking()
-            .Where(h => ids.Contains(h.hblID))
-            .ToDictionaryAsync(h => h.hblID, h => h.hbl?.Trim() ?? string.Empty);
-    }
-
-    private static string ResolveHblNo(Guid? shipmentId, IReadOnlyDictionary<Guid, string> hblLookup)
-    {
-        if (!shipmentId.HasValue || shipmentId.Value == Guid.Empty)
-            return string.Empty;
-
-        return hblLookup.TryGetValue(shipmentId.Value, out var hbl) ? hbl : string.Empty;
     }
 
     private string RowClass(DebtAgingRow row, int rowNumber)
