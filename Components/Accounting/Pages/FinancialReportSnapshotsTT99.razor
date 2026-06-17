@@ -59,6 +59,13 @@
         TT99/2025 - Giao diện báo cáo tài chính mới: Báo cáo tình hình tài chính, KQKD, LCTT, Thuyết minh và Công nợ.
     </MudAlert>
 
+    @if (!string.IsNullOrWhiteSpace(_pageError))
+    {
+        <MudAlert Severity="MudBlazor.Severity.Error" Variant="Variant.Filled" Dense="true" Class="mb-2">
+            @_pageError
+        </MudAlert>
+    }
+
     <MudPaper Class="pa-2 mb-2 frs-compact-toggle d-flex flex-wrap align-center gap-3" Elevation="0" Outlined="true">
         <MudText Typo="Typo.caption" Class="fw-bold mr-2">Hiển thị:</MudText>
 
@@ -205,9 +212,32 @@
                              FilterMode="@DataGridFilterMode.ColumnFilterRow"
                              Loading="_busy">
                     <Columns>
-                        <PropertyColumn Property="x => GetReportDisplayName(x.ReportCode)" Title="@Localizer["FinancialReportSnapshot.ColReport"]" />
-                        <PropertyColumn Property="x => BookCodeOrDefault(x.BookCode)" Title="Book" />
-                        <PropertyColumn Property="x => SnapshotPeriodLabel(x)" Title="@Localizer["FinancialReportSnapshot.ColPeriod"]" />
+                        @* 
+                            FIX UNHANDLED ERROR:
+                            MudBlazor PropertyColumn chỉ nên dùng property thật của model.
+                            Các expression dạng GetReportDisplayName(x.ReportCode),
+                            BookCodeOrDefault(x.BookCode), SnapshotPeriodLabel(x)
+                            có thể làm DataGrid throw unhandled render exception.
+                            Chuyển sang TemplateColumn để hiển thị giá trị computed.
+                        *@
+                        <TemplateColumn Title="@Localizer["FinancialReportSnapshot.ColReport"]">
+                            <CellTemplate>
+                                @GetReportDisplayName(context.Item.ReportCode)
+                            </CellTemplate>
+                        </TemplateColumn>
+
+                        <TemplateColumn Title="Book">
+                            <CellTemplate>
+                                @BookCodeOrDefault(context.Item.BookCode)
+                            </CellTemplate>
+                        </TemplateColumn>
+
+                        <TemplateColumn Title="@Localizer["FinancialReportSnapshot.ColPeriod"]">
+                            <CellTemplate>
+                                @SnapshotPeriodLabel(context.Item)
+                            </CellTemplate>
+                        </TemplateColumn>
+
                         <PropertyColumn Property="x => x.Status" Title="@Localizer["FinancialReportSnapshot.ColStatus"]" />
                         <PropertyColumn Property="x => x.Difference" Title="@Localizer["FinancialReportSnapshot.ColDifference"]" Format="N0" CellClass="text-end" HeaderClass="text-end" />
                     </Columns>
@@ -741,6 +771,7 @@
     private enum HeaderSessionMode { None, NewDraft, EditingExisting }
 
     private bool _busy;
+    private string _pageError = string.Empty;
     private HeaderSessionMode _headerSession = HeaderSessionMode.None;
     private string _usr = string.Empty;
     private string _currentUser = string.Empty;
@@ -901,7 +932,7 @@
                 => "dbo.usp_GenerateDebtCustomerDetail_TT99",
 
             "DEBT_BY_CUSTOMER_TT99"
-                => "dbo.usp_GenerateDebtCustomerDetail_TT99",
+                => "dbo.usp_GenerateDebtByCustomer_TT99",
 
             "TAX_REPORT_LOGISTICS_TT99"
                 => "dbo.usp_GenerateTaxReportLogistics_TT99",
@@ -1064,21 +1095,177 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var auth = await asv.GetAuth();
-        _usr = auth.User.Identity?.Name ?? string.Empty;
-        _currentUser = string.IsNullOrWhiteSpace(_usr) ? "system" : _usr;
-        _snapshot.CreatedBy = _currentUser;
+        try
+        {
+            _pageError = string.Empty;
 
-        await LoadReportTypesAsync();
-        await LoadCustomersAsync();
-        await LoadCompanyInfoAsync();
-        await LoadAsync();
-        ResetToIdleState();
+            var auth = await asv.GetAuth();
+            _usr = auth.User.Identity?.Name ?? string.Empty;
+            _currentUser = string.IsNullOrWhiteSpace(_usr) ? "system" : _usr;
+            _snapshot.CreatedBy = _currentUser;
+
+            await LoadReportTypesAsync();
+            await LoadCustomersAsync();
+            await LoadCompanyInfoAsync();
+            await LoadAsync();
+            ResetToIdleState();
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            _pageError = root.Message;
+            CallSnack(root.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private static void AddDbParameterCompat(System.Data.Common.DbCommand cmd, string name, object? value)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value = value ?? DBNull.Value;
+        cmd.Parameters.Add(p);
+    }
+
+    private static async Task<bool> SqlObjectExistsAsync(System.Data.Common.DbConnection conn, string objectName)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT CASE WHEN OBJECT_ID(@object_name) IS NULL THEN 0 ELSE 1 END;";
+        cmd.CommandType = System.Data.CommandType.Text;
+        AddDbParameterCompat(cmd, "@object_name", objectName);
+
+        var result = await cmd.ExecuteScalarAsync();
+        return Convert.ToInt32(result ?? 0) == 1;
+    }
+
+    private static async Task<string?> FindFirstExistingColumnAsync(
+        System.Data.Common.DbConnection conn,
+        string objectName,
+        params string[] candidateColumns)
+    {
+        /*
+            Dùng vòng lặp đơn giản để tránh lỗi compile Razor với string.Join + Select index.
+            COL_LENGTH nhận object name và column name dạng parameter được.
+        */
+        foreach (var col in candidateColumns)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT CASE WHEN COL_LENGTH(@object_name, @column_name) IS NULL THEN 0 ELSE 1 END;";
+            cmd.CommandType = System.Data.CommandType.Text;
+
+            AddDbParameterCompat(cmd, "@object_name", objectName);
+            AddDbParameterCompat(cmd, "@column_name", col);
+
+            var result = await cmd.ExecuteScalarAsync();
+            if (Convert.ToInt32(result ?? 0) == 1)
+                return col;
+        }
+
+        return null;
     }
 
     private async Task LoadCompanyInfoAsync()
     {
-        _companyInfo = await Db.CompanyInfomation.AsNoTracking().FirstOrDefaultAsync();
+        /*
+            FIX lỗi:
+            Invalid column name 'AccountName'
+            Invalid column name 'BankAddress'
+            Invalid column name 'BankName'
+            Invalid column name 'IBAN_CODE'
+
+            Không load CompanyInfo bằng EF ở màn hình này.
+            Chỉ đọc raw SQL đúng các cột đang tồn tại: tên công ty và địa chỉ.
+        */
+        _companyInfo = null;
+
+        try
+        {
+            var conn = Db.Database.GetDbConnection();
+            var shouldClose = conn.State != System.Data.ConnectionState.Open;
+
+            if (shouldClose)
+                await conn.OpenAsync();
+
+            try
+            {
+                string? tableName = null;
+
+                foreach (var candidateTable in new[]
+                {
+                    "dbo.CompanyInfomation",
+                    "dbo.CompanyInfo",
+                    "dbo.company_info",
+                    "dbo.company_information"
+                })
+                {
+                    if (await SqlObjectExistsAsync(conn, candidateTable))
+                    {
+                        tableName = candidateTable;
+                        break;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(tableName))
+                    return;
+
+                var nameCol = await FindFirstExistingColumnAsync(
+                    conn,
+                    tableName,
+                    "NameTiengViet",
+                    "CompanyName",
+                    "Name",
+                    "company_name",
+                    "TenCongTy",
+                    "TenCongTyVN");
+
+                var addressCol = await FindFirstExistingColumnAsync(
+                    conn,
+                    tableName,
+                    "Address",
+                    "DiaChi",
+                    "CompanyAddress",
+                    "company_address",
+                    "AddressVN");
+
+                var nameExpr = string.IsNullOrWhiteSpace(nameCol)
+                    ? "CAST(NULL AS NVARCHAR(500))"
+                    : $"CAST([{nameCol.Replace("]", "]]")}] AS NVARCHAR(500))";
+
+                var addressExpr = string.IsNullOrWhiteSpace(addressCol)
+                    ? "CAST(NULL AS NVARCHAR(1000))"
+                    : $"CAST([{addressCol.Replace("]", "]]")}] AS NVARCHAR(1000))";
+
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $@"
+SELECT TOP (1)
+    NameTiengViet = {nameExpr},
+    Address = {addressExpr}
+FROM {tableName};";
+                cmd.CommandType = System.Data.CommandType.Text;
+
+                await using var reader = await cmd.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    _companyInfo = new M_CompanyInfo
+                    {
+                        NameTiengViet = reader.IsDBNull(0) ? string.Empty : Convert.ToString(reader.GetValue(0)) ?? string.Empty,
+                        Address = reader.IsDBNull(1) ? string.Empty : Convert.ToString(reader.GetValue(1)) ?? string.Empty
+                    };
+                }
+            }
+            finally
+            {
+                if (shouldClose)
+                    await conn.CloseAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            // Không cho lỗi CompanyInfo làm sập màn hình báo cáo.
+            CallSnack($"Không load được Company Info: {ex.Message}", MudBlazor.Severity.Warning);
+        }
     }
 
     private async Task LoadReportTypesAsync()
@@ -1255,6 +1442,49 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
         return ordinal < 0 || reader.IsDBNull(ordinal) ? 0 : Convert.ToDecimal(reader.GetValue(ordinal));
     }
 
+    private static void AddCommandParameter(System.Data.Common.DbCommand cmd, string name, object? value)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value = value ?? DBNull.Value;
+        cmd.Parameters.Add(p);
+    }
+
+    private static async Task<bool> ProcedureParameterExistsAsync(
+        System.Data.Common.DbConnection conn,
+        string procedureName,
+        string parameterName)
+    {
+        await using var checkCmd = conn.CreateCommand();
+        checkCmd.CommandText = @"
+SELECT CASE WHEN EXISTS
+(
+    SELECT 1
+    FROM sys.parameters
+    WHERE object_id = OBJECT_ID(@procedure_name)
+      AND name = @parameter_name
+)
+THEN 1 ELSE 0 END;";
+        checkCmd.CommandType = System.Data.CommandType.Text;
+
+        AddCommandParameter(checkCmd, "@procedure_name", procedureName);
+        AddCommandParameter(checkCmd, "@parameter_name", parameterName.StartsWith("@") ? parameterName : "@" + parameterName);
+
+        var result = await checkCmd.ExecuteScalarAsync();
+        return Convert.ToInt32(result ?? 0) == 1;
+    }
+
+    private static async Task AddProcedureParameterIfExistsAsync(
+        System.Data.Common.DbConnection conn,
+        System.Data.Common.DbCommand cmd,
+        string procedureName,
+        string parameterName,
+        object? value)
+    {
+        if (await ProcedureParameterExistsAsync(conn, procedureName, parameterName))
+            AddCommandParameter(cmd, parameterName, value ?? DBNull.Value);
+    }
+
     private async Task GenerateLinesFromAccountBalanceAsync()
     {
         if (!CanWorkWithLines)
@@ -1267,6 +1497,7 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
         var bookCode = NormalizeBookCode(_generateBookCode);
         _snapshot.ReportCode = reportCode;
         _snapshot.BookCode = bookCode;
+
         var procedureName = GetGenerateProcedureName(reportCode);
 
         if (string.IsNullOrWhiteSpace(procedureName))
@@ -1312,50 +1543,37 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
                 cmd.CommandType = System.Data.CommandType.StoredProcedure;
                 cmd.CommandTimeout = 180;
 
-                var pFiscalYear = cmd.CreateParameter();
-                pFiscalYear.ParameterName = "@FiscalYear";
-                pFiscalYear.Value = _snapshot.FiscalYear;
-                cmd.Parameters.Add(pFiscalYear);
+                /*
+                    FIX HANDLE:
+                    Các procedure TT99 hiện không dùng cùng một bộ tham số:
+                    - Một số dùng @Book
+                    - Tax report dùng @BookCode
+                    - Debt detail có thêm @CustomerId
+                    - Một số procedure có @CreatedBy, @ClearOld, @CompanyId
 
-                var pPeriodMonth = cmd.CreateParameter();
-                pPeriodMonth.ParameterName = "@PeriodMonth";
-                pPeriodMonth.Value = _snapshot.PeriodMonth;
-                cmd.Parameters.Add(pPeriodMonth);
+                    Vì vậy không hard-code theo report type nữa.
+                    Màn hình sẽ kiểm tra sys.parameters rồi chỉ add tham số nếu procedure thật sự có.
+                    Tránh lỗi:
+                    - Procedure or function has too many arguments specified
+                    - Procedure expects parameter ... which was not supplied
+                */
 
-                if (IsTaxReportLogisticsReport(reportCode))
-                {
-                    var pBookCode = cmd.CreateParameter();
-                    pBookCode.ParameterName = "@BookCode";
-                    pBookCode.Value = bookCode;
-                    cmd.Parameters.Add(pBookCode);
-                }
-                else
-                {
-                    var pBook = cmd.CreateParameter();
-                    pBook.ParameterName = "@Book";
-                    pBook.Value = bookCode;
-                    cmd.Parameters.Add(pBook);
+                await AddProcedureParameterIfExistsAsync(conn, cmd, procedureName, "@FiscalYear", _snapshot.FiscalYear);
+                await AddProcedureParameterIfExistsAsync(conn, cmd, procedureName, "@PeriodMonth", _snapshot.PeriodMonth);
 
-                    var pCreatedBy = cmd.CreateParameter();
-                    pCreatedBy.ParameterName = "@CreatedBy";
-                    pCreatedBy.Value = createdBy;
-                    cmd.Parameters.Add(pCreatedBy);
+                await AddProcedureParameterIfExistsAsync(conn, cmd, procedureName, "@Book", bookCode);
+                await AddProcedureParameterIfExistsAsync(conn, cmd, procedureName, "@BookCode", bookCode);
 
-                    var pClearOld = cmd.CreateParameter();
-                    pClearOld.ParameterName = "@ClearOld";
-                    pClearOld.Value = true;
-                    cmd.Parameters.Add(pClearOld);
+                await AddProcedureParameterIfExistsAsync(conn, cmd, procedureName, "@CompanyId", DBNull.Value);
+                await AddProcedureParameterIfExistsAsync(conn, cmd, procedureName, "@CreatedBy", createdBy);
+                await AddProcedureParameterIfExistsAsync(conn, cmd, procedureName, "@ClearOld", true);
 
-                    // if (IsCustomerDebtReport(reportCode))
-                    // {
-                    //     var pCustomerId = cmd.CreateParameter();
-                    //     pCustomerId.ParameterName = "@CustomerId";
-                    //     pCustomerId.Value = SelectedCustomerId.HasValue
-                    //         ? SelectedCustomerId.Value
-                    //         : DBNull.Value;
-                    //     cmd.Parameters.Add(pCustomerId);
-                    // }
-                }
+                await AddProcedureParameterIfExistsAsync(
+                    conn,
+                    cmd,
+                    procedureName,
+                    "@CustomerId",
+                    SelectedCustomerId.HasValue ? SelectedCustomerId.Value : DBNull.Value);
 
                 await using var reader = await cmd.ExecuteReaderAsync();
                 while (await reader.ReadAsync())
@@ -1410,15 +1628,28 @@ ORDER BY COALESCE(NULLIF(Customer_Code, N''), NULLIF(MainCode, N''), CONVERT(NVA
         }
         catch (SqlException ex)
         {
-            CallSnack(ex.Message, MudBlazor.Severity.Error);
+            var msg = ex.Message;
+
+            if (ex.Errors.Count > 0)
+            {
+                msg = string.Join(Environment.NewLine,
+                    ex.Errors.Cast<SqlError>().Select(x => $"SQL {x.Number}: {x.Message}"));
+            }
+
+            CallSnack(msg, MudBlazor.Severity.Error);
         }
         catch (Exception ex)
         {
-            CallSnack(ex.Message, MudBlazor.Severity.Error);
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            CallSnack(root.Message, MudBlazor.Severity.Error);
         }
         finally
         {
             _busy = false;
+            StateHasChanged();
         }
     }
 
