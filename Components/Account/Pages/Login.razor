@@ -170,18 +170,39 @@
             return document.getElementById(id);
         }
 
+        function trimValue(value) {
+            return value === undefined || value === null ? "" : String(value).trim();
+        }
+
         function setInputValue(id, value) {
             const input = el(id);
             if (!input || value === undefined || value === null) return;
 
-            input.value = value;
+            input.value = trimValue(value);
             input.dispatchEvent(new Event("input", { bubbles: true }));
             input.dispatchEvent(new Event("change", { bubbles: true }));
         }
 
         function readInputValue(id) {
             const input = el(id);
-            return input ? input.value : "";
+            return input ? trimValue(input.value) : "";
+        }
+
+        function trimInputInPlace(input) {
+            if (!input) return;
+
+            const trimmed = trimValue(input.value);
+            if (trimmed === input.value) return;
+
+            input.value = trimmed;
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+
+        function trimAllLoginInputs() {
+            ["tenantDatabaseName", "tenantSqlUserId", "tenantSqlPassword", "tenantAppUserName", "tenantAppPassword"].forEach(function (id) {
+                trimInputInPlace(el(id));
+            });
         }
 
         function saveRememberedLogin() {
@@ -234,7 +255,10 @@
             if (form.dataset.rememberHooked === "1") return;
             form.dataset.rememberHooked = "1";
 
-            form.addEventListener("submit", saveRememberedLogin);
+            form.addEventListener("submit", function () {
+                trimAllLoginInputs();
+                saveRememberedLogin();
+            });
 
             const remember = el("tenantRememberMe");
             if (remember) {
@@ -247,6 +271,17 @@
             ["tenantDatabaseName", "tenantSqlUserId", "tenantSqlPassword", "tenantAppUserName", "tenantAppPassword"].forEach(function (id) {
                 const input = el(id);
                 if (!input) return;
+
+                input.addEventListener("blur", function () {
+                    trimInputInPlace(input);
+                });
+
+                input.addEventListener("paste", function () {
+                    setTimeout(function () {
+                        trimInputInPlace(input);
+                    }, 0);
+                });
+
                 input.addEventListener("input", function () {
                     const rememberNow = el("tenantRememberMe");
                     if (rememberNow && rememberNow.checked) saveRememberedLogin();
@@ -373,7 +408,8 @@
 
         LoginInput ??= new TenantLoginModel();
         if (!string.IsNullOrWhiteSpace(PrefillDatabaseName))
-            LoginInput.DatabaseName = PrefillDatabaseName;
+            LoginInput.DatabaseName = PrefillDatabaseName.Trim();
+        TrimLoginInput(LoginInput);
 
         RegisterInput ??= new TenantEmailRegisterModel();
 
@@ -388,6 +424,7 @@
     public async Task LoginUser()
     {
         if (LoginInput == null) return;
+        TrimLoginInput(LoginInput);
         isBusy = true;
         errorMessage = null;
         successMessage = null;
@@ -563,18 +600,18 @@
 
     private TenantSmtpSettings ReadTenantSmtpSettings()
     {
-        var host = ReadConfig("Smtp:Host", "mail.logisticssoftware.vn");
-        var portText = ReadConfig("Smtp:Port", "587");
-        var enableSslText = ReadConfig("Smtp:EnableSsl", "true");
-        var username = ReadConfig("Smtp:UserName")
+        var host = TrimConfig(ReadConfig("Smtp:Host", "mail.logisticssoftware.vn"));
+        var portText = TrimConfig(ReadConfig("Smtp:Port", "587"));
+        var enableSslText = TrimConfig(ReadConfig("Smtp:EnableSsl", "true"));
+        var username = TrimConfig(ReadConfig("Smtp:UserName")
                     ?? ReadConfig("Smtp:Username")
                     ?? ReadConfig("Smtp:User")
-                    ?? "vms.noreply@logisticssoftware.vn";
-        var password = ReadConfig("Smtp:Password", "Noreply@1");
-        var fromEmail = ReadConfig("Smtp:FromEmail")
+                    ?? "vms.noreply@logisticssoftware.vn");
+        var password = TrimConfig(ReadConfig("Smtp:Password", "Noreply@1"));
+        var fromEmail = TrimConfig(ReadConfig("Smtp:FromEmail")
                      ?? ReadConfig("Smtp:SenderEmail")
-                     ?? username;
-        var fromName = ReadConfig("Smtp:FromName", "LMS");
+                     ?? username);
+        var fromName = TrimConfig(ReadConfig("Smtp:FromName", "LMS"));
 
         if (string.IsNullOrWhiteSpace(host)
             || string.IsNullOrWhiteSpace(fromEmail)
@@ -702,8 +739,11 @@
     private string? ReadConfig(string key, string? fallback = null)
     {
         var value = Configuration[key];
-        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+        return string.IsNullOrWhiteSpace(value) ? TrimConfig(fallback) : value.Trim();
     }
+
+    private static string? TrimConfig(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static string BuildMailErrorMessage(Exception ex)
     {
@@ -754,13 +794,13 @@
 
     private string BuildCredentialBackupText(TenantGeneratedCredentials c)
     {
-        var loginUrl = navSvc.ToAbsoluteUri($"/Account/Login?tab=login&db={Uri.EscapeDataString(c.DatabaseName)}").ToString();
-        return $"Email: {c.Email}\nDatabase: {c.DatabaseName}\nSQL User: {c.SqlUser}\nSQL Password: {c.SqlPassword}\nApp User: {c.AppUser}\nApp Password: {c.AppPassword}\nLogin: {loginUrl}";
+        var loginUrl = navSvc.ToAbsoluteUri($"/Account/Login?tab=login&db={Uri.EscapeDataString(c.DatabaseName.Trim())}").ToString();
+        return $"Email: {c.Email.Trim()}\nDatabase: {c.DatabaseName.Trim()}\nSQL User: {c.SqlUser.Trim()}\nSQL Password: {c.SqlPassword.Trim()}\nApp User: {c.AppUser.Trim()}\nApp Password: {c.AppPassword.Trim()}\nLogin: {loginUrl}";
     }
 
     private static string BuildTenantEmailHtml(TenantGeneratedCredentials c, string loginUrl)
     {
-        string H(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
+        string H(string? value) => WebUtility.HtmlEncode((value ?? string.Empty).Trim());
 
         return $@"
 <div style='font-family:Segoe UI,Arial,sans-serif;background:#f8fafc;padding:24px;color:#0f172a;'>
@@ -775,15 +815,15 @@
 
       <h3 style='margin-top:20px;color:#0f766e;'>1. Thông tin SQL Server tenant</h3>
       <table style='width:100%;border-collapse:collapse;font-size:14px;'>
-        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;width:180px;'>Database Name</td><td style='padding:8px;border:1px solid #e2e8f0;'><b>{H(c.DatabaseName)}</b></td></tr>
-        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;'>SQL User</td><td style='padding:8px;border:1px solid #e2e8f0;'><b>{H(c.SqlUser)}</b></td></tr>
-        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;'>SQL Password</td><td style='padding:8px;border:1px solid #e2e8f0;'><b>{H(c.SqlPassword)}</b></td></tr>
+        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;width:180px;'>Database Name</td><td style='padding:8px;border:1px solid #e2e8f0;white-space:nowrap;'><b>{H(c.DatabaseName)}</b></td></tr>
+        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;'>SQL User</td><td style='padding:8px;border:1px solid #e2e8f0;white-space:nowrap;'><b>{H(c.SqlUser)}</b></td></tr>
+        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;'>SQL Password</td><td style='padding:8px;border:1px solid #e2e8f0;white-space:nowrap;'><b>{H(c.SqlPassword)}</b></td></tr>
       </table>
 
       <h3 style='margin-top:20px;color:#2563eb;'>2. Tài khoản ứng dụng</h3>
       <table style='width:100%;border-collapse:collapse;font-size:14px;'>
-        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;width:180px;'>App User</td><td style='padding:8px;border:1px solid #e2e8f0;'><b>{H(c.AppUser)}</b></td></tr>
-        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;'>App Password</td><td style='padding:8px;border:1px solid #e2e8f0;'><b>{H(c.AppPassword)}</b></td></tr>
+        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;width:180px;'>App User</td><td style='padding:8px;border:1px solid #e2e8f0;white-space:nowrap;'><b>{H(c.AppUser)}</b></td></tr>
+        <tr><td style='padding:8px;border:1px solid #e2e8f0;background:#f8fafc;'>App Password</td><td style='padding:8px;border:1px solid #e2e8f0;white-space:nowrap;'><b>{H(c.AppPassword)}</b></td></tr>
       </table>
 
       <div style='margin-top:22px;'>
@@ -794,6 +834,15 @@
     </div>
   </div>
 </div>";
+    }
+
+    private static void TrimLoginInput(TenantLoginModel input)
+    {
+        input.DatabaseName = input.DatabaseName.Trim();
+        input.SqlUserId = input.SqlUserId.Trim();
+        input.SqlPassword = input.SqlPassword.Trim();
+        input.AppUserName = input.AppUserName.Trim();
+        input.AppPassword = input.AppPassword.Trim();
     }
 
     private static string NormalizeEmail(string? email)
