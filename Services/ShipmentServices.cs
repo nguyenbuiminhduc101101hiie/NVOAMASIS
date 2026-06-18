@@ -33,7 +33,7 @@ using System.Linq;
 
 namespace NVOAMASIS.Services
 {
-    public class ShipmentService(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv, SupportServices supsv, HistoryLogService HistoryLogService, IDbContextFactory<AppDbContext> _dbFactory, ITenantContext _tenantContext)
+    public class ShipmentService(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv, SupportServices supsv, HistoryLogService HistoryLogService, IDbContextFactory<AppDbContext> _dbFactory, ITenantContext _tenantContext, BillSeaReportTemplateService billSeaReportTemplateService)
     {
         public async Task<List<M_Job>> GetListJobByMBLs(List<M_MBL> listdata)
         {
@@ -2073,8 +2073,8 @@ namespace NVOAMASIS.Services
             try
             {
                 var report = new StiReport();
-                var reportName = attach ? "BillSea_NVOCC_Att_1.mrt" : "BillSea_NVOCC.mrt";
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", reportName);
+                var reportName = attach ? BillSeaReportTemplateNames.Attach : BillSeaReportTemplateNames.Main;
+                var templateBytes = await billSeaReportTemplateService.GetTemplateBytesAsync(reportName);
                 var connectionString = ResolveReportConnectionString();
                 var companyLogo = await GetCompanyLogoAsync();
                 var companyBillSeaForm = await GetCompanyBillSeaFormAsync();
@@ -2082,7 +2082,7 @@ namespace NVOAMASIS.Services
                 StiBlazorHelper.Initialize(JSRuntime);
 
                 report = StiReport.CreateNewReport();
-                report.Load(rpt);
+                report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
                 ApplyCompanyLogoToReport(report, companyLogo, showLogo: !isOriginal);
                 ApplyBillSeaFormToReport(report, companyBillSeaForm);

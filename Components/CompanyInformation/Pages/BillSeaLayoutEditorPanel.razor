@@ -1,17 +1,20 @@
 @using System.Globalization
 @using System.Xml.Linq
-@inject IWebHostEnvironment Env
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
+@inject BillSeaReportTemplateService TemplateService
 @inject SharedServices ssv
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 
-<MudStack Row Spacing="2" Class="pa-4" AlignItems="AlignItems.Center">
+<MudStack Row Spacing="2" Class="pa-4" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
     <MudButton OnClick="LoadLayout"
                Size="Size.Small"
                Color="Color.Primary"
                Variant="Variant.Filled"
                StartIcon="@Icons.Material.Filled.Refresh"
                Disabled="_loading">
-        Tải danh sách text
+        Tải form
     </MudButton>
     <MudButton OnClick="SaveLayout"
                Size="Size.Small"
@@ -19,7 +22,55 @@
                Variant="Variant.Filled"
                StartIcon="@Icons.Material.Filled.Save"
                Disabled="_loading || !_pages.Any()">
-        Lưu vị trí vào @ReportFileName
+        Lưu layout công ty
+    </MudButton>
+    <MudButton OnClick="ResetToDefaultTemplate"
+               Size="Size.Small"
+               Color="Color.Warning"
+               Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Filled.Restore"
+               Disabled="_loading || !_usesCustomTemplate">
+        Khôi phục mặc định
+    </MudButton>
+    <MudButton OnClick="UndoLastChange"
+               Size="Size.Small"
+               Color="Color.Default"
+               Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Filled.Undo"
+               Disabled="_loading || _undoStack.Count == 0">
+        Hoàn tác
+    </MudButton>
+    <MudButton OnClick="() => BeginPlacement(BillSeaElementKind.HorizontalLine)"
+               Size="Size.Small"
+               Color="@(_pendingPlacementKind == BillSeaElementKind.HorizontalLine ? Color.Primary : Color.Default)"
+               Variant="@(_pendingPlacementKind == BillSeaElementKind.HorizontalLine ? Variant.Filled : Variant.Outlined)"
+               StartIcon="@Icons.Material.Filled.HorizontalRule"
+               Disabled="_loading || CurrentPage is null">
+        Line ngang
+    </MudButton>
+    <MudButton OnClick="() => BeginPlacement(BillSeaElementKind.VerticalLine)"
+               Size="Size.Small"
+               Color="@(_pendingPlacementKind == BillSeaElementKind.VerticalLine ? Color.Primary : Color.Default)"
+               Variant="@(_pendingPlacementKind == BillSeaElementKind.VerticalLine ? Variant.Filled : Variant.Outlined)"
+               StartIcon="@Icons.Material.Filled.MoreVert"
+               Disabled="_loading || CurrentPage is null">
+        Line dọc
+    </MudButton>
+    <MudButton OnClick="() => BeginPlacement(BillSeaElementKind.StaticText)"
+               Size="Size.Small"
+               Color="@(_pendingPlacementKind == BillSeaElementKind.StaticText ? Color.Primary : Color.Default)"
+               Variant="@(_pendingPlacementKind == BillSeaElementKind.StaticText ? Variant.Filled : Variant.Outlined)"
+               StartIcon="@Icons.Material.Filled.TextFields"
+               Disabled="_loading || CurrentPage is null">
+        Label text
+    </MudButton>
+    <MudButton OnClick="DeleteSelected"
+               Size="Size.Small"
+               Color="Color.Error"
+               Variant="Variant.Outlined"
+               StartIcon="@Icons.Material.Filled.Delete"
+               Disabled="_loading || !HasDeletableSelection()">
+        Xóa đã chọn
     </MudButton>
     @if (_pages.Count > 1)
     {
@@ -31,20 +82,18 @@
                    Style="min-width:220px;">
             @foreach (var pageLayout in _pages)
             {
-                <MudSelectItem Value="@pageLayout.PageName">@pageLayout.PageName (@pageLayout.Items.Count text)</MudSelectItem>
+                <MudSelectItem Value="@pageLayout.PageName">@pageLayout.PageName (@pageLayout.Elements.Count phần tử)</MudSelectItem>
             }
         </MudSelect>
     }
     <MudTextField @bind-Value="_keyword"
-                  Label="Lọc theo tên text"
-                  Placeholder="Ví dụ: Text36"
+                  Label="Lọc tên"
                   Variant="Variant.Outlined"
                   Margin="Margin.Dense"
                   Immediate="true"
                   Adornment="Adornment.Start"
                   AdornmentIcon="@Icons.Material.Filled.Search"
-                  Class="ml-2"
-                  Style="min-width:260px;" />
+                  Style="min-width:240px;" />
 </MudStack>
 
 @if (_loading)
@@ -54,386 +103,1142 @@
 
 <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
     <MudText Typo="Typo.body2" Color="Color.Secondary">
-        Kéo thả trực tiếp từng text box trên form nền để canh vị trí, sau đó bấm lưu.
-        @if (_pages.Count > 1)
+        Layout được lưu riêng theo database công ty đang đăng nhập. File @ReportFileName trong project chỉ là template mặc định.
+        @if (_usesCustomTemplate)
         {
-            <span> Report có @_pages.Count page — chỉ hiển thị text của page đang chọn.</span>
+            <span> Đang dùng <b>bản tùy chỉnh</b> của công ty.</span>
         }
+        else
+        {
+            <span> Đang dùng <b>template mặc định</b>.</span>
+        }
+        Bấm Line ngang / Line dọc / Label text rồi <b>click lên canvas</b> để đặt đúng vị trí (bấm lại nút đó hoặc Esc để hủy). Giữ Ctrl + click để chọn nhiều phần tử.
     </MudText>
 </MudPaper>
 
+@if (_pendingPlacementKind is not null)
+{
+    <MudAlert Class="mx-4 mb-4" Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined" Dense="true">
+        Đang chọn vị trí cho <b>@GetPlacementLabel()</b> — click lên form để đặt. Bấm lại nút trên hoặc phím Esc để hủy.
+    </MudAlert>
+}
+
+@if (_selectedNames.Count == 1 && _selectedElement is { Kind: BillSeaElementKind.HorizontalLine or BillSeaElementKind.VerticalLine })
+{
+    <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+        <MudStack Row Spacing="3" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            <MudNumericField T="double"
+                             Value="_selectedElement.LineSize"
+                             ValueChanged="OnSelectedLineSizeChanged"
+                             Label="Độ dày line"
+                             Variant="Variant.Outlined"
+                             Margin="Margin.Dense"
+                             Min="1"
+                             Max="20"
+                             Step="1"
+                             Style="max-width:160px;" />
+            <MudSlider T="double"
+                       Value="_selectedElement.LineSize"
+                       ValueChanged="OnSelectedLineSizeChanged"
+                       Min="1"
+                       Max="20"
+                       Step="1"
+                       Style="min-width:220px;max-width:360px;" />
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                @_selectedElement.LineSize.ToString("0.##", CultureInfo.InvariantCulture) pt
+            </MudText>
+        </MudStack>
+    </MudPaper>
+}
+
+@if (HasSelectedTextElements())
+{
+    <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+        <MudStack Spacing="3">
+            @if (_selectedNames.Count == 1 && _selectedElement?.Kind == BillSeaElementKind.StaticText)
+            {
+                <MudTextField Value="_selectedElement.Text"
+                              ValueChanged="@((string value) => OnSelectedTextChanged(value))"
+                              Label="Nội dung label đang chọn"
+                              Variant="Variant.Outlined"
+                              Immediate="true" />
+            }
+            else if (GetSelectedTextElements().Count > 1)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Cỡ chữ cho @GetSelectedTextElements().Count phần tử text đang chọn
+                </MudText>
+            }
+
+            <MudStack Row Spacing="3" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                <MudNumericField T="double"
+                                 Value="GetFontSizeEditorValue()"
+                                 ValueChanged="OnSelectedFontSizeChanged"
+                                 Label="Cỡ chữ"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="4"
+                                 Max="72"
+                                 Step="1"
+                                 Style="max-width:160px;" />
+                <MudSlider T="double"
+                           Value="GetFontSizeEditorValue()"
+                           ValueChanged="OnSelectedFontSizeChanged"
+                           Min="4"
+                           Max="72"
+                           Step="1"
+                           Style="min-width:220px;max-width:360px;" />
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    @GetFontSizeEditorValue().ToString("0.##", CultureInfo.InvariantCulture) pt
+                </MudText>
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+}
+
 <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
-    @{
-        var formBillSeaSrc = GetImageDataUrl(FormBillSea);
-    }
-    @if (formBillSeaSrc is null)
-    {
-        <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined">
-            Chưa có FormBillSea trong Company Information. Vui lòng upload ảnh nền để kéo-thả trực quan.
-        </MudAlert>
-    }
-    else if (CurrentPage is null)
+    @if (CurrentPage is null)
     {
         <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
-            Bấm "Tải danh sách text" để bắt đầu chỉnh layout.
+            Bấm "Tải form" để bắt đầu thiết kế.
         </MudAlert>
     }
     else
     {
-        <div style="@GetCanvasStyle()">
-            <img src="@formBillSeaSrc" alt="Form Bill Sea Preview" style="width:100%;height:100%;object-fit:fill;user-select:none;pointer-events:none;" draggable="false" />
-
-            @foreach (var item in FilteredItems)
+        <div style="@GetCanvasStyle()" tabindex="0" @onkeydown="OnCanvasKeyDown">
+            @if (_selectedNames.Count > 1)
             {
-                <div style="@GetTextBoxStyle(item)"
-                     @onmousedown="(e => BeginDrag(item, e))"
-                     @onmousedown:preventDefault="true">
-                    <span style="font-size:11px;line-height:1;">@item.Name</span>
-                </div>
+                <MudText Typo="Typo.caption" Color="Color.Primary" Style="position:absolute;top:4px;right:8px;z-index:120;">
+                    Đã chọn @_selectedNames.Count phần tử
+                </MudText>
             }
 
-            @if (_dragItem is not null)
+            <div style="@GetElementsLayerStyle()">
+            @foreach (var item in SortedElements)
             {
-                <div style="position:absolute;inset:0;z-index:100;cursor:grabbing;background:transparent;"
+                @if (item.Kind is BillSeaElementKind.HorizontalLine or BillSeaElementKind.VerticalLine)
+                {
+                    <div style="@GetLineContainerStyle(item)"
+                         @onmousedown="(e => OnElementMouseDown(item, e))"
+                         @onmousedown:preventDefault="true">
+                        <div style="@GetLineVisualStyle(item)"></div>
+
+                        @if (IsSelected(item) && _selectedNames.Count == 1)
+                        {
+                            <div style="@GetLineHandleStyle(item, isStart: true)"
+                                 @onmousedown="(e => BeginLineResize(item, isStart: true, e))"
+                                 @onmousedown:preventDefault="true"
+                                 @onmousedown:stopPropagation="true"></div>
+                            <div style="@GetLineHandleStyle(item, isStart: false)"
+                                 @onmousedown="(e => BeginLineResize(item, isStart: false, e))"
+                                 @onmousedown:preventDefault="true"
+                                 @onmousedown:stopPropagation="true"></div>
+                        }
+                    </div>
+                }
+                else if (item.Kind == BillSeaElementKind.Image)
+                {
+                    <div style="@GetImageBoxStyle(item)"
+                         @onmousedown="(e => OnElementMouseDown(item, e))"
+                         @onmousedown:preventDefault="true">
+                        @if (_logoDataUrl is not null)
+                        {
+                            <img src="@_logoDataUrl" alt="@item.Name" style="width:100%;height:100%;object-fit:contain;pointer-events:none;" />
+                        }
+                        else
+                        {
+                            <span style="@GetImageLabelStyle(item)">@(string.IsNullOrWhiteSpace(item.Text) ? item.Name : item.Text)</span>
+                        }
+
+                        @if (IsSelected(item) && _selectedNames.Count == 1)
+                        {
+                            @foreach (var handle in BoxResizeHandles)
+                            {
+                                <div style="@GetBoxHandleStyle(handle)"
+                                     @onmousedown="(e => BeginBoxResize(item, handle, e))"
+                                     @onmousedown:preventDefault="true"
+                                     @onmousedown:stopPropagation="true"></div>
+                            }
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div style="@GetBoxStyle(item)"
+                         @onmousedown="(e => OnElementMouseDown(item, e))"
+                         @onmousedown:preventDefault="true">
+                        <span style="@GetTextPreviewStyle(item)">
+                            @(string.IsNullOrWhiteSpace(item.Text) ? item.Name : item.Text)
+                        </span>
+
+                        @if (IsSelected(item) && _selectedNames.Count == 1)
+                        {
+                            @foreach (var handle in BoxResizeHandles)
+                            {
+                                <div style="@GetBoxHandleStyle(handle)"
+                                     @onmousedown="(e => BeginBoxResize(item, handle, e))"
+                                     @onmousedown:preventDefault="true"
+                                     @onmousedown:stopPropagation="true"></div>
+                            }
+                        }
+                    </div>
+                }
+            }
+            </div>
+
+            @if (_pendingPlacementKind is not null && _placementPreviewVisible)
+            {
+                <div style="@GetPlacementPreviewStyle()"></div>
+            }
+
+            @if (_pendingPlacementKind is not null)
+            {
+                <div style="@GetPlacementOverlayStyle()"
+                     @onmousemove="OnPlacementMouseMove"
+                     @onmouseleave="OnPlacementMouseLeave"
+                     @onmousedown="OnPlacementClick"
+                     @onmousedown:preventDefault="true"
+                     @onmousedown:stopPropagation="true"></div>
+            }
+
+            @if (_activeItem is not null)
+            {
+                <div style="position:absolute;inset:0;z-index:10000;cursor:@GetOverlayCursor();background:transparent;touch-action:none;"
                      @onmousemove="OnCanvasMouseMove"
-                     @onmouseup="EndDrag"
-                     @onmouseleave="EndDrag"></div>
+                     @onmousemove:preventDefault="true"
+                     @onmouseup="EndInteraction"
+                     @onmouseleave="EndInteraction"></div>
             }
         </div>
     }
 </MudPaper>
 
 @code {
-  [Parameter] public string ReportFileName { get; set; } = string.Empty;
-  [Parameter] public byte[]? FormBillSea { get; set; }
-  [Parameter] public string UserName { get; set; } = string.Empty;
+    [Parameter] public string ReportFileName { get; set; } = string.Empty;
+    [Parameter] public string UserName { get; set; } = string.Empty;
+    [Parameter] public byte[]? FormBillSeaLogo { get; set; }
 
-  const double PreviewWidthPx = 900;
-  bool _loading;
-  string _keyword = string.Empty;
-  string _selectedPageName = string.Empty;
-  List<BillSeaPageLayout> _pages = new();
-  BillSeaTextLayoutItem? _dragItem;
-  double _dragOffsetXInches;
-  double _dragOffsetYInches;
-  string? _selectedTextName;
+    const double PreviewWidthPx = 900;
+    string? _logoDataUrl;
+    bool _usesCustomTemplate;
+    bool _loading;
+    string _keyword = string.Empty;
+    string _selectedPageName = string.Empty;
+    List<BillSeaPageLayout> _pages = new();
+    BillSeaDesignElement? _activeItem;
+    BillSeaDesignElement? _selectedElement;
+    ElementInteraction _interaction = ElementInteraction.None;
+    double _dragPointerStartClientX;
+    double _dragPointerStartClientY;
+    double _dragAnchorStartLeft;
+    double _dragAnchorStartTop;
+    int _designCounter;
+    BillSeaElementKind? _pendingPlacementKind;
+    bool _placementPreviewVisible;
+    double _placementPreviewLeft;
+    double _placementPreviewTop;
+    bool _interactionUndoPushed;
+    string? _propertyEditUndoElementName;
+    readonly Stack<List<BillSeaPageLayout>> _undoStack = new();
+    readonly HashSet<string> _sessionAddedNames = new(StringComparer.OrdinalIgnoreCase);
+    readonly HashSet<string> _selectedNames = new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, (double Left, double Top)> _dragGroupStarts = new(StringComparer.OrdinalIgnoreCase);
 
-  BillSeaPageLayout? CurrentPage =>
-      _pages.FirstOrDefault(p => string.Equals(p.PageName, _selectedPageName, StringComparison.OrdinalIgnoreCase))
-      ?? _pages.FirstOrDefault();
+    const int MaxUndoSteps = 50;
 
-  double PageWidthInches => CurrentPage?.PageWidthInches ?? 8.27;
-  double PageHeightInches => CurrentPage?.PageHeightInches ?? 11.69;
-  double Scale => PreviewWidthPx / PageWidthInches;
-  double PreviewHeightPx => PageHeightInches * Scale;
-
-  IEnumerable<BillSeaTextLayoutItem> FilteredItems
-  {
-    get
+    static readonly BoxResizeHandle[] BoxResizeHandles =
     {
-      var items = CurrentPage?.Items ?? Enumerable.Empty<BillSeaTextLayoutItem>();
-      return string.IsNullOrWhiteSpace(_keyword)
-          ? items
-          : items.Where(x => x.Name.Contains(_keyword, StringComparison.OrdinalIgnoreCase));
-    }
-  }
+        BoxResizeHandle.NorthWest,
+        BoxResizeHandle.North,
+        BoxResizeHandle.NorthEast,
+        BoxResizeHandle.West,
+        BoxResizeHandle.East,
+        BoxResizeHandle.SouthWest,
+        BoxResizeHandle.South,
+        BoxResizeHandle.SouthEast
+    };
 
-  string GetReportPath() => Path.Combine(Env.WebRootPath, "Reports", ReportFileName);
-
-  async Task LoadLayout()
-  {
-    try
+    enum ElementInteraction
     {
-      _loading = true;
-      var reportPath = GetReportPath();
-      if (!File.Exists(reportPath))
-      {
-        ShowMessage($"Không tìm thấy file {ReportFileName}", MudBlazor.Severity.Error);
-        return;
-      }
-
-      var doc = XDocument.Load(reportPath);
-      _pages = LoadPagesFromReport(doc);
-      _selectedPageName = _pages.FirstOrDefault()?.PageName ?? string.Empty;
-      _selectedTextName = CurrentPage?.Items.FirstOrDefault()?.Name;
-
-      var totalItems = _pages.Sum(p => p.Items.Count);
-      ShowMessage($"Đã tải {totalItems} text item từ {_pages.Count} page trong {ReportFileName}.", MudBlazor.Severity.Success);
-    }
-    catch (Exception ex)
-    {
-      ShowMessage($"Không tải được layout {ReportFileName}: " + ex.Message, MudBlazor.Severity.Error);
-    }
-    finally
-    {
-      _loading = false;
-    }
-  }
-
-  static List<BillSeaPageLayout> LoadPagesFromReport(XDocument doc)
-  {
-    var pages = new List<BillSeaPageLayout>();
-    var pagesContainer = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "Pages");
-    if (pagesContainer is null)
-      return pages;
-
-    foreach (var pageNode in pagesContainer.Elements())
-    {
-      if (pageNode.Attribute("type")?.Value != "Page" && pageNode.Element("PageWidth") is null)
-        continue;
-
-      var pageName = pageNode.Element("Name")?.Value?.Trim();
-      if (string.IsNullOrWhiteSpace(pageName))
-        pageName = pageNode.Name.LocalName;
-
-      var pageWidthInches = 8.27;
-      var pageHeightInches = 11.69;
-      if (double.TryParse(pageNode.Element("PageWidth")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var pageWidth) && pageWidth > 0)
-        pageWidthInches = pageWidth;
-      if (double.TryParse(pageNode.Element("PageHeight")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var pageHeight) && pageHeight > 0)
-        pageHeightInches = pageHeight;
-
-      var items = pageNode
-          .Descendants()
-          .Where(x => x.Name.LocalName.StartsWith("Text", StringComparison.OrdinalIgnoreCase))
-          .Select(x => new
-          {
-            Name = x.Element("Name")?.Value?.Trim(),
-            ClientRectangle = x.Element("ClientRectangle")?.Value?.Trim()
-          })
-          .Where(x => !string.IsNullOrWhiteSpace(x.Name) && !string.IsNullOrWhiteSpace(x.ClientRectangle))
-          .Select(x =>
-          {
-            var rect = ParseClientRectangle(x.ClientRectangle!);
-            return rect is null || rect.Value.Width <= 0 || rect.Value.Height <= 0
-                ? null
-                : new BillSeaTextLayoutItem
-                {
-                  Name = x.Name!,
-                  Left = rect.Value.Left,
-                  Top = rect.Value.Top,
-                  Width = rect.Value.Width,
-                  Height = rect.Value.Height
-                };
-          })
-          .Where(x => x is not null)
-          .Select(x => x!)
-          .OrderBy(x => x.Name)
-          .ToList();
-
-      pages.Add(new BillSeaPageLayout
-      {
-        PageName = pageName,
-        PageWidthInches = pageWidthInches,
-        PageHeightInches = pageHeightInches,
-        Items = items
-      });
+        None,
+        Move,
+        LineResizeStart,
+        LineResizeEnd,
+        BoxResizeNorthWest,
+        BoxResizeNorth,
+        BoxResizeNorthEast,
+        BoxResizeWest,
+        BoxResizeEast,
+        BoxResizeSouthWest,
+        BoxResizeSouth,
+        BoxResizeSouthEast
     }
 
-    return pages;
-  }
-
-  async Task SaveLayout()
-  {
-    try
+    enum BoxResizeHandle
     {
-      if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
-      {
-        ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
-        return;
-      }
+        NorthWest,
+        North,
+        NorthEast,
+        West,
+        East,
+        SouthWest,
+        South,
+        SouthEast
+    }
 
-      _loading = true;
-      var reportPath = GetReportPath();
-      if (!File.Exists(reportPath))
-      {
-        ShowMessage($"Không tìm thấy file {ReportFileName}", MudBlazor.Severity.Error);
-        return;
-      }
+    const double MinBoxSizeInches = 0.15;
 
-      if (!_pages.Any())
-      {
-        ShowMessage("Chưa có dữ liệu text để lưu.", MudBlazor.Severity.Warning);
-        return;
-      }
+    BillSeaPageLayout? CurrentPage =>
+        _pages.FirstOrDefault(p => string.Equals(p.PageName, _selectedPageName, StringComparison.OrdinalIgnoreCase))
+        ?? _pages.FirstOrDefault();
 
-      var backupPath = reportPath + ".bak";
-      if (!File.Exists(backupPath))
-        File.Copy(reportPath, backupPath, overwrite: false);
+    double PageWidthInches => CurrentPage?.PageWidthInches ?? 8.27;
+    double PageHeightInches => CurrentPage?.PageHeightInches ?? 11.69;
+    double Scale => PreviewWidthPx / PageWidthInches;
+    double PreviewHeightPx => PageHeightInches * Scale;
 
-      var doc = XDocument.Load(reportPath);
-      var updated = 0;
-
-      foreach (var pageLayout in _pages)
-      {
-        var pageNode = FindPageNode(doc, pageLayout.PageName);
-        if (pageNode is null)
-          continue;
-
-        var map = pageLayout.Items.ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
-        foreach (var textNode in pageNode.Descendants().Where(x => x.Name.LocalName.StartsWith("Text", StringComparison.OrdinalIgnoreCase)))
+    IEnumerable<BillSeaDesignElement> FilteredElements
+    {
+        get
         {
-          var name = textNode.Element("Name")?.Value?.Trim();
-          if (string.IsNullOrWhiteSpace(name))
-            continue;
-
-          if (!map.TryGetValue(name, out var item))
-            continue;
-
-          var rectElement = textNode.Element("ClientRectangle");
-          if (rectElement is null)
-            continue;
-
-          rectElement.Value = BuildClientRectangle(item);
-          updated++;
+            var items = CurrentPage?.Elements ?? Enumerable.Empty<BillSeaDesignElement>();
+            return string.IsNullOrWhiteSpace(_keyword)
+                ? items
+                : items.Where(x => x.Name.Contains(_keyword, StringComparison.OrdinalIgnoreCase)
+                    || x.Text.Contains(_keyword, StringComparison.OrdinalIgnoreCase));
         }
-      }
-
-      doc.Save(reportPath);
-      ShowMessage($"Đã cập nhật {updated} text item vào {ReportFileName}.", MudBlazor.Severity.Success);
     }
-    catch (Exception ex)
+
+    IEnumerable<BillSeaDesignElement> SortedElements =>
+        FilteredElements.OrderBy(GetElementZIndex);
+
+    protected override void OnParametersSet() => _logoDataUrl = BuildLogoDataUrl(FormBillSeaLogo);
+
+    static string? BuildLogoDataUrl(byte[]? logo)
     {
-      ShowMessage($"Không lưu được layout {ReportFileName}: " + ex.Message, MudBlazor.Severity.Error);
+        if (logo is not { Length: > 0 })
+            return null;
+
+        return $"data:image/png;base64,{Convert.ToBase64String(logo)}";
     }
-    finally
+
+    async Task LoadLayout()
     {
-      _loading = false;
+        try
+        {
+            _loading = true;
+            if (!BillSeaReportTemplateNames.IsSupported(ReportFileName))
+            {
+                ShowMessage($"Report {ReportFileName} chưa được hỗ trợ lưu theo công ty.", MudBlazor.Severity.Error);
+                return;
+            }
+
+            var doc = await TemplateService.LoadTemplateDocumentAsync(ReportFileName);
+            var templateInfo = await TemplateService.GetTemplateInfoAsync(ReportFileName);
+            _usesCustomTemplate = templateInfo.UsesCustomTemplate;
+
+            _pages = BillSeaLayoutMrtHelper.LoadPages(doc);
+            _selectedPageName = _pages.FirstOrDefault()?.PageName ?? string.Empty;
+            _selectedNames.Clear();
+            var firstElement = CurrentPage?.Elements.FirstOrDefault();
+            if (firstElement is not null)
+            {
+                _selectedNames.Add(firstElement.Name);
+                _selectedElement = firstElement;
+            }
+            else
+            {
+                _selectedElement = null;
+            }
+            _designCounter = _pages.SelectMany(p => p.Elements).Count();
+            _undoStack.Clear();
+            _sessionAddedNames.Clear();
+            CancelPlacement();
+
+            var totalItems = _pages.Sum(p => p.Elements.Count);
+            var source = _usesCustomTemplate ? "bản tùy chỉnh công ty" : "template mặc định";
+            ShowMessage($"Đã tải {totalItems} phần tử từ {source}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Không tải được layout: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
-  }
 
-  static XElement? FindPageNode(XDocument doc, string pageName)
-  {
-    var pagesContainer = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "Pages");
-    if (pagesContainer is null)
-      return null;
-
-    return pagesContainer.Elements().FirstOrDefault(pageNode =>
+    async Task SaveLayout()
     {
-      var name = pageNode.Element("Name")?.Value?.Trim() ?? pageNode.Name.LocalName;
-      return string.Equals(name, pageName, StringComparison.OrdinalIgnoreCase);
-    });
-  }
+        try
+        {
+            if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
+            {
+                ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+                return;
+            }
 
-  static BillSeaRect? ParseClientRectangle(string value)
-  {
-    var parts = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-    if (parts.Length != 4)
-      return null;
+            _loading = true;
+            if (!BillSeaReportTemplateNames.IsSupported(ReportFileName))
+            {
+                ShowMessage($"Report {ReportFileName} chưa được hỗ trợ lưu theo công ty.", MudBlazor.Severity.Error);
+                return;
+            }
 
-    if (!double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var left))
-      return null;
-    if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var top))
-      return null;
-    if (!double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var width))
-      return null;
-    if (!double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var height))
-      return null;
+            if (!_pages.Any())
+            {
+                ShowMessage("Chưa có dữ liệu để lưu.", MudBlazor.Severity.Warning);
+                return;
+            }
 
-    return new BillSeaRect(left, top, width, height);
-  }
+            var doc = await TemplateService.LoadTemplateDocumentAsync(ReportFileName);
+            var updated = BillSeaLayoutMrtHelper.SavePages(doc, _pages);
+            await TemplateService.SaveTemplateDocumentAsync(ReportFileName, doc);
+            _usesCustomTemplate = true;
+            ShowMessage($"Đã lưu {updated} thay đổi vào layout riêng của công ty ({ReportFileName}).", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Không lưu được layout: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
 
-  static string BuildClientRectangle(BillSeaTextLayoutItem item) =>
-      string.Join(",",
-          item.Left.ToString("0.####", CultureInfo.InvariantCulture),
-          item.Top.ToString("0.####", CultureInfo.InvariantCulture),
-          item.Width.ToString("0.####", CultureInfo.InvariantCulture),
-          item.Height.ToString("0.####", CultureInfo.InvariantCulture));
+    async Task ResetToDefaultTemplate()
+    {
+        try
+        {
+            if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
+            {
+                ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+                return;
+            }
 
-  string GetCanvasStyle() =>
-      $"position:relative;width:{PreviewWidthPx.ToString("0.##", CultureInfo.InvariantCulture)}px;" +
-      $"height:{PreviewHeightPx.ToString("0.##", CultureInfo.InvariantCulture)}px;" +
-      "max-width:100%;border:1px solid #d0d0d0;overflow:hidden;user-select:none;";
+            var confirmed = await DialogService.ShowMessageBox(
+                "Khôi phục mặc định",
+                $"Bạn có chắc muốn khôi phục {ReportFileName} về template gốc trong wwwroot/Reports?\n\nBản layout riêng của công ty trong database sẽ bị xóa.",
+                yesText: "Khôi phục",
+                cancelText: "Hủy");
 
-  string GetTextBoxStyle(BillSeaTextLayoutItem item)
-  {
-    var selected = string.Equals(item.Name, _selectedTextName, StringComparison.OrdinalIgnoreCase);
-    var borderColor = selected ? "#1976d2" : "rgba(25,118,210,0.55)";
-    var backgroundColor = selected ? "rgba(25,118,210,0.20)" : "rgba(25,118,210,0.12)";
+            if (confirmed != true)
+                return;
 
-    return "position:absolute;" +
-           $"left:{(item.Left * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
-           $"top:{(item.Top * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
-           $"width:{Math.Max(16, item.Width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
-           $"height:{Math.Max(16, item.Height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
-           $"border:1px dashed {borderColor};" +
-           $"background:{backgroundColor};" +
-           "z-index:10;cursor:grab;display:flex;align-items:flex-start;justify-content:flex-start;padding:1px;overflow:hidden;";
-  }
+            _loading = true;
+            await TemplateService.ResetToDefaultAsync(ReportFileName);
+            _usesCustomTemplate = false;
+            await LoadLayout();
+            ShowMessage($"Đã khôi phục {ReportFileName} về template mặc định.", MudBlazor.Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Không khôi phục được template: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
 
-  void BeginDrag(BillSeaTextLayoutItem item, MouseEventArgs e)
-  {
-    _dragItem = item;
-    _selectedTextName = item.Name;
-    _dragOffsetXInches = e.OffsetX / Scale;
-    _dragOffsetYInches = e.OffsetY / Scale;
-  }
+    void BeginPlacement(BillSeaElementKind kind)
+    {
+        if (CurrentPage is null)
+            return;
 
-  void OnCanvasMouseMove(MouseEventArgs e)
-  {
-    if (_dragItem is null)
-      return;
+        if (_pendingPlacementKind == kind)
+        {
+            CancelPlacement();
+            return;
+        }
 
-    var newLeft = (e.OffsetX / Scale) - _dragOffsetXInches;
-    var newTop = (e.OffsetY / Scale) - _dragOffsetYInches;
+        EndInteraction();
+        _pendingPlacementKind = kind;
+        _placementPreviewVisible = false;
+    }
 
-    var maxLeft = Math.Max(0, PageWidthInches - _dragItem.Width);
-    var maxTop = Math.Max(0, PageHeightInches - _dragItem.Height);
-    _dragItem.Left = Math.Clamp(newLeft, 0, maxLeft);
-    _dragItem.Top = Math.Clamp(newTop, 0, maxTop);
-  }
+    void CancelPlacement()
+    {
+        _pendingPlacementKind = null;
+        _placementPreviewVisible = false;
+    }
 
-  void EndDrag()
-  {
-    _dragItem = null;
-  }
+    void OnCanvasKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key is "Escape" or "Esc")
+            CancelPlacement();
+    }
 
-  static string? GetImageDataUrl(byte[]? image)
-  {
-    if (image is not { Length: > 0 })
-      return null;
+    string GetPlacementLabel() => _pendingPlacementKind switch
+    {
+        BillSeaElementKind.HorizontalLine => "line ngang",
+        BillSeaElementKind.VerticalLine => "line dọc",
+        BillSeaElementKind.StaticText => "label text",
+        _ => "phần tử mới"
+    };
 
-    return $"data:{DetectImageMime(image)};base64,{Convert.ToBase64String(image)}";
-  }
+    void OnPlacementMouseMove(MouseEventArgs e)
+    {
+        if (_pendingPlacementKind is null)
+            return;
 
-  static string DetectImageMime(byte[] data)
-  {
-    if (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
-      return "image/jpeg";
-    if (data.Length >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
-      return "image/png";
-    if (data.Length >= 6 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46)
-      return "image/gif";
-    if (data.Length >= 12 && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50)
-      return "image/webp";
-    return "image/png";
-  }
+        UpdatePlacementPreview(e.OffsetX, e.OffsetY);
+    }
 
-  void ShowMessage(string message, MudBlazor.Severity severity)
-  {
-    Snackbar.Clear();
-    Snackbar.Configuration.SnackbarVariant = Variant.Filled;
-    Snackbar.Configuration.MaxDisplayedSnackbars = 3;
-    Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
-    Snackbar.Add(message, severity);
-  }
+    void OnPlacementMouseLeave()
+    {
+        _placementPreviewVisible = false;
+    }
 
-  class BillSeaPageLayout
-  {
-    public string PageName { get; set; } = string.Empty;
-    public double PageWidthInches { get; set; } = 8.27;
-    public double PageHeightInches { get; set; } = 11.69;
-    public List<BillSeaTextLayoutItem> Items { get; set; } = new();
-  }
+    void UpdatePlacementPreview(double offsetX, double offsetY)
+    {
+        if (_pendingPlacementKind is null)
+            return;
 
-  class BillSeaTextLayoutItem
-  {
-    public string Name { get; set; } = string.Empty;
-    public double Left { get; set; }
-    public double Top { get; set; }
-    public double Width { get; set; }
-    public double Height { get; set; }
-  }
+        var (width, height) = GetDefaultSize(_pendingPlacementKind.Value);
+        _placementPreviewLeft = Math.Clamp(offsetX / Scale, 0, Math.Max(0, PageWidthInches - width));
+        _placementPreviewTop = Math.Clamp(offsetY / Scale, 0, Math.Max(0, PageHeightInches - height));
+        _placementPreviewVisible = true;
+    }
 
-  readonly record struct BillSeaRect(double Left, double Top, double Width, double Height);
+    void OnPlacementClick(MouseEventArgs e)
+    {
+        if (_pendingPlacementKind is null || CurrentPage is null)
+            return;
+
+        var kind = _pendingPlacementKind.Value;
+        UpdatePlacementPreview(e.OffsetX, e.OffsetY);
+        _pendingPlacementKind = null;
+        _placementPreviewVisible = false;
+
+        var (width, height) = GetDefaultSize(kind);
+        var left = _placementPreviewLeft;
+        var top = _placementPreviewTop;
+
+        var element = kind switch
+        {
+            BillSeaElementKind.HorizontalLine => new BillSeaDesignElement
+            {
+                Name = NextName("HLine"),
+                Kind = BillSeaElementKind.HorizontalLine,
+                Left = left,
+                Top = top,
+                Width = width,
+                Height = height,
+                LineSize = 1
+            },
+            BillSeaElementKind.VerticalLine => new BillSeaDesignElement
+            {
+                Name = NextName("VLine"),
+                Kind = BillSeaElementKind.VerticalLine,
+                Left = left,
+                Top = top,
+                Width = width,
+                Height = height,
+                LineSize = 1
+            },
+            BillSeaElementKind.StaticText => new BillSeaDesignElement
+            {
+                Name = NextName("Label"),
+                Kind = BillSeaElementKind.StaticText,
+                Left = left,
+                Top = top,
+                Width = width,
+                Height = height,
+                Text = "Label mới"
+            },
+            _ => null
+        };
+
+        if (element is null)
+            return;
+
+        AddElement(element);
+    }
+
+    static (double Width, double Height) GetDefaultSize(BillSeaElementKind kind) => kind switch
+    {
+        BillSeaElementKind.HorizontalLine => (2.5, 0.01),
+        BillSeaElementKind.VerticalLine => (0.01, 2),
+        BillSeaElementKind.StaticText => (1.5, 0.2),
+        _ => (1, 1)
+    };
+
+    void AddElement(BillSeaDesignElement element)
+    {
+        if (CurrentPage is null)
+            return;
+
+        PushUndo();
+        CurrentPage.Elements.Add(element);
+        _sessionAddedNames.Add(element.Name);
+        SetSingleSelection(element);
+    }
+
+    bool HasDeletableSelection() =>
+        GetSelectedElements().Any(x => x.Kind is not (BillSeaElementKind.DataText or BillSeaElementKind.Image));
+
+    List<BillSeaDesignElement> GetSelectedElements()
+    {
+        if (CurrentPage is null)
+            return new List<BillSeaDesignElement>();
+
+        return CurrentPage.Elements
+            .Where(x => _selectedNames.Contains(x.Name))
+            .ToList();
+    }
+
+    bool IsSelected(BillSeaDesignElement item) => _selectedNames.Contains(item.Name);
+
+    void SetSingleSelection(BillSeaDesignElement item)
+    {
+        _selectedNames.Clear();
+        _selectedNames.Add(item.Name);
+        _selectedElement = item;
+        _propertyEditUndoElementName = null;
+    }
+
+    void ToggleSelection(BillSeaDesignElement item)
+    {
+        if (_selectedNames.Contains(item.Name))
+            _selectedNames.Remove(item.Name);
+        else
+            _selectedNames.Add(item.Name);
+
+        _selectedElement = GetSelectedElements().FirstOrDefault();
+        _propertyEditUndoElementName = null;
+    }
+
+    void DeleteSelected()
+    {
+        if (CurrentPage is null || !HasDeletableSelection())
+            return;
+
+        PushUndo();
+        var namesToDelete = GetSelectedElements()
+            .Where(x => x.Kind is not (BillSeaElementKind.DataText or BillSeaElementKind.Image))
+            .Select(x => x.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        CurrentPage.Elements.RemoveAll(x => namesToDelete.Contains(x.Name));
+        foreach (var name in namesToDelete)
+            _sessionAddedNames.Remove(name);
+
+        _selectedNames.RemoveWhere(name => namesToDelete.Contains(name));
+        _selectedElement = GetSelectedElements().FirstOrDefault()
+            ?? CurrentPage.Elements.FirstOrDefault();
+        if (_selectedElement is not null && !IsSelected(_selectedElement))
+            _selectedNames.Add(_selectedElement.Name);
+    }
+
+    void UndoLastChange()
+    {
+        if (_undoStack.Count == 0)
+            return;
+
+        var selectedNames = _selectedNames.ToList();
+        var pageName = _selectedPageName;
+        _pages = BillSeaLayoutClone.ClonePages(_undoStack.Pop());
+        _selectedPageName = _pages.Any(p => string.Equals(p.PageName, pageName, StringComparison.OrdinalIgnoreCase))
+            ? pageName
+            : _pages.FirstOrDefault()?.PageName ?? string.Empty;
+
+        _selectedNames.Clear();
+        foreach (var name in selectedNames)
+        {
+            if (CurrentPage?.Elements.Any(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase)) == true)
+                _selectedNames.Add(name);
+        }
+
+        _selectedElement = GetSelectedElements().FirstOrDefault()
+            ?? CurrentPage?.Elements.FirstOrDefault();
+        if (_selectedElement is not null && _selectedNames.Count == 0)
+            _selectedNames.Add(_selectedElement.Name);
+        _activeItem = null;
+        _interaction = ElementInteraction.None;
+        ShowMessage("Đã hoàn tác thay đổi.", MudBlazor.Severity.Info);
+    }
+
+    void PushUndo()
+    {
+        if (_undoStack.Count >= MaxUndoSteps)
+        {
+            var items = new List<List<BillSeaPageLayout>>(_undoStack);
+            items.RemoveAt(items.Count - 1);
+            _undoStack.Clear();
+            foreach (var item in items.AsEnumerable().Reverse())
+                _undoStack.Push(item);
+        }
+
+        _undoStack.Push(BillSeaLayoutClone.ClonePages(_pages));
+    }
+
+    string NextName(string prefix)
+    {
+        _designCounter++;
+        return $"{prefix}{_designCounter}";
+    }
+
+    void OnElementMouseDown(BillSeaDesignElement item, MouseEventArgs e)
+    {
+        if (e.CtrlKey)
+        {
+            ToggleSelection(item);
+            return;
+        }
+
+        if (!IsSelected(item))
+            SetSingleSelection(item);
+
+        BeginMove(item, e);
+    }
+
+    void BeginMove(BillSeaDesignElement item, MouseEventArgs e)
+    {
+        BeginInteractionUndo();
+        _activeItem = item;
+        _selectedElement = item;
+        _interaction = ElementInteraction.Move;
+        _dragPointerStartClientX = e.ClientX;
+        _dragPointerStartClientY = e.ClientY;
+        _dragAnchorStartLeft = item.Left;
+        _dragAnchorStartTop = item.Top;
+
+        _dragGroupStarts.Clear();
+        foreach (var selected in GetSelectedElements())
+            _dragGroupStarts[selected.Name] = (selected.Left, selected.Top);
+    }
+
+    void EnsurePropertyEditUndo()
+    {
+        if (_selectedElement is null)
+            return;
+
+        if (string.Equals(_propertyEditUndoElementName, _selectedElement.Name, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        PushUndo();
+        _propertyEditUndoElementName = _selectedElement.Name;
+    }
+
+    void OnSelectedLineSizeChanged(double value)
+    {
+        if (_selectedElement is null)
+            return;
+
+        EnsurePropertyEditUndo();
+        _selectedElement.LineSize = Math.Clamp(value, 1, 20);
+    }
+
+    bool HasSelectedTextElements() => GetSelectedTextElements().Count > 0;
+
+    List<BillSeaDesignElement> GetSelectedTextElements() =>
+        GetSelectedElements()
+            .Where(x => x.Kind is BillSeaElementKind.StaticText or BillSeaElementKind.DataText)
+            .ToList();
+
+    double GetFontSizeEditorValue() =>
+        GetSelectedTextElements().FirstOrDefault()?.FontSize ?? 8;
+
+    void OnSelectedFontSizeChanged(double value)
+    {
+        var texts = GetSelectedTextElements();
+        if (texts.Count == 0)
+            return;
+
+        EnsurePropertyEditUndo();
+        var fontSize = Math.Clamp(value, 4, 72);
+        foreach (var text in texts)
+            text.FontSize = fontSize;
+    }
+
+    string GetTextPreviewStyle(BillSeaDesignElement item)
+    {
+        var fontSizePx = (item.FontSize / 72d * Scale).ToString("0.##", CultureInfo.InvariantCulture);
+        var fontWeight = item.FontBold ? "bold" : "normal";
+        var fontFamily = string.IsNullOrWhiteSpace(item.FontFamily) ? "Times New Roman" : item.FontFamily;
+        return $"font-family:{fontFamily};font-size:{fontSizePx}px;font-weight:{fontWeight};line-height:1.1;overflow:hidden;pointer-events:none;";
+    }
+
+    void OnSelectedTextChanged(string value)
+    {
+        if (_selectedElement is null)
+            return;
+
+        EnsurePropertyEditUndo();
+        _selectedElement.Text = value;
+    }
+
+    int GetElementZIndex(BillSeaDesignElement item)
+    {
+        if (_sessionAddedNames.Contains(item.Name))
+            return 200;
+
+        return item.Kind switch
+        {
+            BillSeaElementKind.Image => 35,
+            BillSeaElementKind.DataText => 30,
+            BillSeaElementKind.StaticText => 25,
+            _ => 20
+        };
+    }
+
+    string GetCanvasStyle()
+    {
+        var cursor = _pendingPlacementKind is not null ? "cursor:crosshair;" : string.Empty;
+        return "position:relative;" + cursor +
+               $"width:{PreviewWidthPx.ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"height:{PreviewHeightPx.ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               "max-width:100%;border:1px solid #bdbdbd;overflow:hidden;user-select:none;" +
+               "background-color:#fff;" +
+               "background-image:linear-gradient(to right,#f3f3f3 1px,transparent 1px),linear-gradient(to bottom,#f3f3f3 1px,transparent 1px);" +
+               $"background-size:{(Scale / 4).ToString("0.##", CultureInfo.InvariantCulture)}px {(Scale / 4).ToString("0.##", CultureInfo.InvariantCulture)}px;";
+    }
+
+    string GetPlacementOverlayStyle() =>
+        "position:absolute;inset:0;z-index:9999;cursor:crosshair !important;background:transparent;";
+
+    string GetPlacementPreviewStyle()
+    {
+        if (_pendingPlacementKind is null)
+            return "display:none;";
+
+        var (width, height) = GetDefaultSize(_pendingPlacementKind.Value);
+        var leftPx = (_placementPreviewLeft * Scale).ToString("0.##", CultureInfo.InvariantCulture);
+        var topPx = (_placementPreviewTop * Scale).ToString("0.##", CultureInfo.InvariantCulture);
+
+        return _pendingPlacementKind.Value switch
+        {
+            BillSeaElementKind.HorizontalLine =>
+                $"position:absolute;z-index:9998;pointer-events:none;left:{leftPx}px;" +
+                $"top:{((_placementPreviewTop * Scale) - 6).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                $"width:{Math.Max(4, width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;height:12px;" +
+                "border-top:2px dashed #1976d2;opacity:0.85;",
+            BillSeaElementKind.VerticalLine =>
+                $"position:absolute;z-index:9998;pointer-events:none;left:{((_placementPreviewLeft * Scale) - 6).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                $"top:{topPx}px;width:12px;" +
+                $"height:{Math.Max(4, height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                "border-left:2px dashed #1976d2;opacity:0.85;",
+            _ =>
+                $"position:absolute;z-index:9998;pointer-events:none;left:{leftPx}px;top:{topPx}px;" +
+                $"width:{Math.Max(16, width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                $"height:{Math.Max(16, height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                "border:2px dashed #1976d2;background:rgba(25,118,210,0.12);opacity:0.9;"
+        };
+    }
+
+    string GetElementsLayerStyle() =>
+        _activeItem is not null || _pendingPlacementKind is not null
+            ? "position:absolute;inset:0;pointer-events:none;"
+            : "position:absolute;inset:0;";
+
+    string GetLineContainerStyle(BillSeaDesignElement item)
+    {
+        var hitPadding = 6;
+        var thicknessPx = GetLineThicknessPx(item);
+
+        if (item.Kind == BillSeaElementKind.HorizontalLine)
+        {
+            var containerHeight = Math.Max(12, thicknessPx + hitPadding * 2);
+            return "position:absolute;" +
+                   $"left:{(item.Left * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                   $"top:{((item.Top * Scale) - (containerHeight / 2)).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                   $"width:{Math.Max(4, item.Width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                   $"height:{containerHeight.ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+                   $"z-index:{GetElementZIndex(item)};cursor:grab;";
+        }
+
+        var containerWidth = Math.Max(12, thicknessPx + hitPadding * 2);
+        return "position:absolute;" +
+               $"left:{((item.Left * Scale) - (containerWidth / 2)).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"top:{(item.Top * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"width:{containerWidth.ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"height:{Math.Max(4, item.Height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"z-index:{GetElementZIndex(item)};cursor:grab;";
+    }
+
+    static double GetLineThicknessPx(BillSeaDesignElement item) =>
+        Math.Clamp(item.LineSize, 1, 20);
+
+    string GetLineVisualStyle(BillSeaDesignElement item)
+    {
+        var selected = IsSelected(item);
+        var color = selected ? "#1976d2" : "#111";
+        var thicknessPx = GetLineThicknessPx(item).ToString("0.##", CultureInfo.InvariantCulture);
+
+        if (item.Kind == BillSeaElementKind.HorizontalLine)
+        {
+            return "position:absolute;left:0;right:0;top:50%;height:0;" +
+                   $"border-top:{thicknessPx}px solid {color};transform:translateY(-50%);pointer-events:none;";
+        }
+
+        return "position:absolute;top:0;bottom:0;left:50%;width:0;" +
+               $"border-left:{thicknessPx}px solid {color};transform:translateX(-50%);pointer-events:none;";
+    }
+
+    string GetLineHandleStyle(BillSeaDesignElement item, bool isStart)
+    {
+        const string baseStyle = "position:absolute;width:10px;height:10px;border-radius:50%;background:#1976d2;border:1px solid #fff;z-index:12;";
+
+        if (item.Kind == BillSeaElementKind.HorizontalLine)
+        {
+            var left = isStart ? "-5px" : "calc(100% - 5px)";
+            return baseStyle + $"left:{left};top:1px;cursor:ew-resize;";
+        }
+
+        var top = isStart ? "-5px" : "calc(100% - 5px)";
+        return baseStyle + $"top:{top};left:1px;cursor:ns-resize;";
+    }
+
+    string GetOverlayCursor() => _interaction switch
+    {
+        ElementInteraction.LineResizeStart or ElementInteraction.LineResizeEnd
+            when _activeItem?.Kind == BillSeaElementKind.HorizontalLine => "ew-resize",
+        ElementInteraction.LineResizeStart or ElementInteraction.LineResizeEnd
+            when _activeItem?.Kind == BillSeaElementKind.VerticalLine => "ns-resize",
+        ElementInteraction.BoxResizeNorthWest or ElementInteraction.BoxResizeSouthEast => "nwse-resize",
+        ElementInteraction.BoxResizeNorthEast or ElementInteraction.BoxResizeSouthWest => "nesw-resize",
+        ElementInteraction.BoxResizeNorth or ElementInteraction.BoxResizeSouth => "ns-resize",
+        ElementInteraction.BoxResizeWest or ElementInteraction.BoxResizeEast => "ew-resize",
+        _ => "grabbing"
+    };
+
+    string GetBoxHandleStyle(BoxResizeHandle handle)
+    {
+        const string baseStyle = "position:absolute;width:8px;height:8px;border-radius:2px;background:#1976d2;border:1px solid #fff;z-index:15;";
+
+        return handle switch
+        {
+            BoxResizeHandle.NorthWest => baseStyle + "top:-4px;left:-4px;cursor:nwse-resize;",
+            BoxResizeHandle.North => baseStyle + "top:-4px;left:calc(50% - 4px);cursor:ns-resize;",
+            BoxResizeHandle.NorthEast => baseStyle + "top:-4px;right:-4px;cursor:nesw-resize;",
+            BoxResizeHandle.West => baseStyle + "top:calc(50% - 4px);left:-4px;cursor:ew-resize;",
+            BoxResizeHandle.East => baseStyle + "top:calc(50% - 4px);right:-4px;cursor:ew-resize;",
+            BoxResizeHandle.SouthWest => baseStyle + "bottom:-4px;left:-4px;cursor:nesw-resize;",
+            BoxResizeHandle.South => baseStyle + "bottom:-4px;left:calc(50% - 4px);cursor:ns-resize;",
+            _ => baseStyle + "bottom:-4px;right:-4px;cursor:nwse-resize;"
+        };
+    }
+
+    string GetImageBoxStyle(BillSeaDesignElement item)
+    {
+        var selected = IsSelected(item);
+        var borderColor = selected ? "#1976d2" : "rgba(230,81,0,0.85)";
+        var backgroundColor = selected ? "rgba(25,118,210,0.12)" : "rgba(255,243,224,0.55)";
+
+        return "position:absolute;" +
+               $"left:{(item.Left * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"top:{(item.Top * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"width:{Math.Max(24, item.Width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"height:{Math.Max(24, item.Height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"border:1px dashed {borderColor};" +
+               $"background:{backgroundColor};" +
+               $"z-index:{GetElementZIndex(item)};cursor:grab;display:flex;align-items:center;justify-content:center;padding:1px;overflow:hidden;";
+    }
+
+    static string GetImageLabelStyle(BillSeaDesignElement item) =>
+        "font-size:11px;font-weight:600;color:#e65100;text-align:center;line-height:1.1;pointer-events:none;";
+
+    string GetBoxStyle(BillSeaDesignElement item)
+    {
+        var selected = IsSelected(item);
+        var isData = item.Kind == BillSeaElementKind.DataText;
+        var borderColor = selected ? "#1976d2" : isData ? "rgba(46,125,50,0.8)" : "rgba(97,97,97,0.8)";
+        var backgroundColor = selected
+            ? "rgba(25,118,210,0.18)"
+            : isData ? "rgba(46,125,50,0.12)" : "rgba(158,158,158,0.10)";
+
+        return "position:absolute;" +
+               $"left:{(item.Left * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"top:{(item.Top * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"width:{Math.Max(16, item.Width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"height:{Math.Max(16, item.Height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"border:1px dashed {borderColor};" +
+               $"background:{backgroundColor};" +
+               $"z-index:{GetElementZIndex(item)};cursor:grab;display:flex;align-items:flex-start;justify-content:flex-start;padding:1px;overflow:visible;";
+    }
+
+    void BeginInteractionUndo()
+    {
+        if (_interactionUndoPushed)
+            return;
+
+        PushUndo();
+        _interactionUndoPushed = true;
+    }
+
+    void BeginBoxResize(BillSeaDesignElement item, BoxResizeHandle handle, MouseEventArgs e)
+    {
+        SetSingleSelection(item);
+        BeginInteractionUndo();
+        _activeItem = item;
+        _selectedElement = item;
+        _interaction = handle switch
+        {
+            BoxResizeHandle.NorthWest => ElementInteraction.BoxResizeNorthWest,
+            BoxResizeHandle.North => ElementInteraction.BoxResizeNorth,
+            BoxResizeHandle.NorthEast => ElementInteraction.BoxResizeNorthEast,
+            BoxResizeHandle.West => ElementInteraction.BoxResizeWest,
+            BoxResizeHandle.East => ElementInteraction.BoxResizeEast,
+            BoxResizeHandle.SouthWest => ElementInteraction.BoxResizeSouthWest,
+            BoxResizeHandle.South => ElementInteraction.BoxResizeSouth,
+            _ => ElementInteraction.BoxResizeSouthEast
+        };
+    }
+
+    void BeginLineResize(BillSeaDesignElement item, bool isStart, MouseEventArgs e)
+    {
+        SetSingleSelection(item);
+        BeginInteractionUndo();
+        _activeItem = item;
+        _selectedElement = item;
+        _interaction = isStart ? ElementInteraction.LineResizeStart : ElementInteraction.LineResizeEnd;
+    }
+
+    void OnCanvasMouseMove(MouseEventArgs e)
+    {
+        if (_activeItem is null)
+            return;
+
+        var x = e.OffsetX / Scale;
+        var y = e.OffsetY / Scale;
+
+        switch (_interaction)
+        {
+            case ElementInteraction.Move:
+            {
+                var deltaX = (e.ClientX - _dragPointerStartClientX) / Scale;
+                var deltaY = (e.ClientY - _dragPointerStartClientY) / Scale;
+                var newLeft = _dragAnchorStartLeft + deltaX;
+                var newTop = _dragAnchorStartTop + deltaY;
+                var maxLeft = Math.Max(0, PageWidthInches - _activeItem.Width);
+                var maxTop = Math.Max(0, PageHeightInches - _activeItem.Height);
+                var clampedLeft = Math.Clamp(newLeft, 0, maxLeft);
+                var clampedTop = Math.Clamp(newTop, 0, maxTop);
+                var appliedDeltaX = clampedLeft - _dragAnchorStartLeft;
+                var appliedDeltaY = clampedTop - _dragAnchorStartTop;
+
+                foreach (var selected in GetSelectedElements())
+                {
+                    if (!_dragGroupStarts.TryGetValue(selected.Name, out var start))
+                        continue;
+
+                    var targetLeft = start.Left + appliedDeltaX;
+                    var targetTop = start.Top + appliedDeltaY;
+                    var itemMaxLeft = Math.Max(0, PageWidthInches - selected.Width);
+                    var itemMaxTop = Math.Max(0, PageHeightInches - selected.Height);
+                    selected.Left = Math.Clamp(targetLeft, 0, itemMaxLeft);
+                    selected.Top = Math.Clamp(targetTop, 0, itemMaxTop);
+                }
+
+                break;
+            }
+            case ElementInteraction.LineResizeEnd when _activeItem.Kind == BillSeaElementKind.HorizontalLine:
+                _activeItem.Width = Math.Clamp(x - _activeItem.Left, 0.1, PageWidthInches - _activeItem.Left);
+                break;
+            case ElementInteraction.LineResizeStart when _activeItem.Kind == BillSeaElementKind.HorizontalLine:
+            {
+                var right = _activeItem.Left + _activeItem.Width;
+                var newLeft = Math.Clamp(x, 0, right - 0.1);
+                _activeItem.Left = newLeft;
+                _activeItem.Width = right - newLeft;
+                break;
+            }
+            case ElementInteraction.LineResizeEnd when _activeItem.Kind == BillSeaElementKind.VerticalLine:
+                _activeItem.Height = Math.Clamp(y - _activeItem.Top, 0.1, PageHeightInches - _activeItem.Top);
+                break;
+            case ElementInteraction.LineResizeStart when _activeItem.Kind == BillSeaElementKind.VerticalLine:
+            {
+                var bottom = _activeItem.Top + _activeItem.Height;
+                var newTop = Math.Clamp(y, 0, bottom - 0.1);
+                _activeItem.Top = newTop;
+                _activeItem.Height = bottom - newTop;
+                break;
+            }
+            case ElementInteraction.BoxResizeEast:
+                _activeItem.Width = Math.Clamp(x - _activeItem.Left, MinBoxSizeInches, PageWidthInches - _activeItem.Left);
+                break;
+            case ElementInteraction.BoxResizeWest:
+            {
+                var right = _activeItem.Left + _activeItem.Width;
+                var newLeft = Math.Clamp(x, 0, right - MinBoxSizeInches);
+                _activeItem.Left = newLeft;
+                _activeItem.Width = right - newLeft;
+                break;
+            }
+            case ElementInteraction.BoxResizeSouth:
+                _activeItem.Height = Math.Clamp(y - _activeItem.Top, MinBoxSizeInches, PageHeightInches - _activeItem.Top);
+                break;
+            case ElementInteraction.BoxResizeNorth:
+            {
+                var bottom = _activeItem.Top + _activeItem.Height;
+                var newTop = Math.Clamp(y, 0, bottom - MinBoxSizeInches);
+                _activeItem.Top = newTop;
+                _activeItem.Height = bottom - newTop;
+                break;
+            }
+            case ElementInteraction.BoxResizeSouthEast:
+                ResizeBoxCorner(x, y, resizeLeft: false, resizeTop: false);
+                break;
+            case ElementInteraction.BoxResizeSouthWest:
+                ResizeBoxCorner(x, y, resizeLeft: true, resizeTop: false);
+                break;
+            case ElementInteraction.BoxResizeNorthEast:
+                ResizeBoxCorner(x, y, resizeLeft: false, resizeTop: true);
+                break;
+            case ElementInteraction.BoxResizeNorthWest:
+                ResizeBoxCorner(x, y, resizeLeft: true, resizeTop: true);
+                break;
+        }
+    }
+
+    void ResizeBoxCorner(double x, double y, bool resizeLeft, bool resizeTop)
+    {
+        if (_activeItem is null)
+            return;
+
+        var right = _activeItem.Left + _activeItem.Width;
+        var bottom = _activeItem.Top + _activeItem.Height;
+
+        if (resizeLeft)
+        {
+            var newLeft = Math.Clamp(x, 0, right - MinBoxSizeInches);
+            _activeItem.Left = newLeft;
+            _activeItem.Width = right - newLeft;
+        }
+        else
+        {
+            _activeItem.Width = Math.Clamp(x - _activeItem.Left, MinBoxSizeInches, PageWidthInches - _activeItem.Left);
+        }
+
+        if (resizeTop)
+        {
+            var newTop = Math.Clamp(y, 0, bottom - MinBoxSizeInches);
+            _activeItem.Top = newTop;
+            _activeItem.Height = bottom - newTop;
+        }
+        else
+        {
+            _activeItem.Height = Math.Clamp(y - _activeItem.Top, MinBoxSizeInches, PageHeightInches - _activeItem.Top);
+        }
+    }
+
+    void EndInteraction()
+    {
+        _activeItem = null;
+        _interaction = ElementInteraction.None;
+        _interactionUndoPushed = false;
+        _dragGroupStarts.Clear();
+    }
+
+    void ShowMessage(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Clear();
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
 }
