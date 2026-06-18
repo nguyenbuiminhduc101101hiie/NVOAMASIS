@@ -1,0 +1,439 @@
+@using System.Globalization
+@using System.Xml.Linq
+@inject IWebHostEnvironment Env
+@inject SharedServices ssv
+@inject ISnackbar Snackbar
+
+<MudStack Row Spacing="2" Class="pa-4" AlignItems="AlignItems.Center">
+    <MudButton OnClick="LoadLayout"
+               Size="Size.Small"
+               Color="Color.Primary"
+               Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh"
+               Disabled="_loading">
+        Tải danh sách text
+    </MudButton>
+    <MudButton OnClick="SaveLayout"
+               Size="Size.Small"
+               Color="Color.Success"
+               Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Save"
+               Disabled="_loading || !_pages.Any()">
+        Lưu vị trí vào @ReportFileName
+    </MudButton>
+    @if (_pages.Count > 1)
+    {
+        <MudSelect T="string"
+                   Label="Chọn page"
+                   @bind-Value="_selectedPageName"
+                   Variant="Variant.Outlined"
+                   Margin="Margin.Dense"
+                   Style="min-width:220px;">
+            @foreach (var pageLayout in _pages)
+            {
+                <MudSelectItem Value="@pageLayout.PageName">@pageLayout.PageName (@pageLayout.Items.Count text)</MudSelectItem>
+            }
+        </MudSelect>
+    }
+    <MudTextField @bind-Value="_keyword"
+                  Label="Lọc theo tên text"
+                  Placeholder="Ví dụ: Text36"
+                  Variant="Variant.Outlined"
+                  Margin="Margin.Dense"
+                  Immediate="true"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Class="ml-2"
+                  Style="min-width:260px;" />
+</MudStack>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mx-4" />
+}
+
+<MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+    <MudText Typo="Typo.body2" Color="Color.Secondary">
+        Kéo thả trực tiếp từng text box trên form nền để canh vị trí, sau đó bấm lưu.
+        @if (_pages.Count > 1)
+        {
+            <span> Report có @_pages.Count page — chỉ hiển thị text của page đang chọn.</span>
+        }
+    </MudText>
+</MudPaper>
+
+<MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+    @{
+        var formBillSeaSrc = GetImageDataUrl(FormBillSea);
+    }
+    @if (formBillSeaSrc is null)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined">
+            Chưa có FormBillSea trong Company Information. Vui lòng upload ảnh nền để kéo-thả trực quan.
+        </MudAlert>
+    }
+    else if (CurrentPage is null)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
+            Bấm "Tải danh sách text" để bắt đầu chỉnh layout.
+        </MudAlert>
+    }
+    else
+    {
+        <div style="@GetCanvasStyle()">
+            <img src="@formBillSeaSrc" alt="Form Bill Sea Preview" style="width:100%;height:100%;object-fit:fill;user-select:none;pointer-events:none;" draggable="false" />
+
+            @foreach (var item in FilteredItems)
+            {
+                <div style="@GetTextBoxStyle(item)"
+                     @onmousedown="(e => BeginDrag(item, e))"
+                     @onmousedown:preventDefault="true">
+                    <span style="font-size:11px;line-height:1;">@item.Name</span>
+                </div>
+            }
+
+            @if (_dragItem is not null)
+            {
+                <div style="position:absolute;inset:0;z-index:100;cursor:grabbing;background:transparent;"
+                     @onmousemove="OnCanvasMouseMove"
+                     @onmouseup="EndDrag"
+                     @onmouseleave="EndDrag"></div>
+            }
+        </div>
+    }
+</MudPaper>
+
+@code {
+  [Parameter] public string ReportFileName { get; set; } = string.Empty;
+  [Parameter] public byte[]? FormBillSea { get; set; }
+  [Parameter] public string UserName { get; set; } = string.Empty;
+
+  const double PreviewWidthPx = 900;
+  bool _loading;
+  string _keyword = string.Empty;
+  string _selectedPageName = string.Empty;
+  List<BillSeaPageLayout> _pages = new();
+  BillSeaTextLayoutItem? _dragItem;
+  double _dragOffsetXInches;
+  double _dragOffsetYInches;
+  string? _selectedTextName;
+
+  BillSeaPageLayout? CurrentPage =>
+      _pages.FirstOrDefault(p => string.Equals(p.PageName, _selectedPageName, StringComparison.OrdinalIgnoreCase))
+      ?? _pages.FirstOrDefault();
+
+  double PageWidthInches => CurrentPage?.PageWidthInches ?? 8.27;
+  double PageHeightInches => CurrentPage?.PageHeightInches ?? 11.69;
+  double Scale => PreviewWidthPx / PageWidthInches;
+  double PreviewHeightPx => PageHeightInches * Scale;
+
+  IEnumerable<BillSeaTextLayoutItem> FilteredItems
+  {
+    get
+    {
+      var items = CurrentPage?.Items ?? Enumerable.Empty<BillSeaTextLayoutItem>();
+      return string.IsNullOrWhiteSpace(_keyword)
+          ? items
+          : items.Where(x => x.Name.Contains(_keyword, StringComparison.OrdinalIgnoreCase));
+    }
+  }
+
+  string GetReportPath() => Path.Combine(Env.WebRootPath, "Reports", ReportFileName);
+
+  async Task LoadLayout()
+  {
+    try
+    {
+      _loading = true;
+      var reportPath = GetReportPath();
+      if (!File.Exists(reportPath))
+      {
+        ShowMessage($"Không tìm thấy file {ReportFileName}", MudBlazor.Severity.Error);
+        return;
+      }
+
+      var doc = XDocument.Load(reportPath);
+      _pages = LoadPagesFromReport(doc);
+      _selectedPageName = _pages.FirstOrDefault()?.PageName ?? string.Empty;
+      _selectedTextName = CurrentPage?.Items.FirstOrDefault()?.Name;
+
+      var totalItems = _pages.Sum(p => p.Items.Count);
+      ShowMessage($"Đã tải {totalItems} text item từ {_pages.Count} page trong {ReportFileName}.", MudBlazor.Severity.Success);
+    }
+    catch (Exception ex)
+    {
+      ShowMessage($"Không tải được layout {ReportFileName}: " + ex.Message, MudBlazor.Severity.Error);
+    }
+    finally
+    {
+      _loading = false;
+    }
+  }
+
+  static List<BillSeaPageLayout> LoadPagesFromReport(XDocument doc)
+  {
+    var pages = new List<BillSeaPageLayout>();
+    var pagesContainer = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "Pages");
+    if (pagesContainer is null)
+      return pages;
+
+    foreach (var pageNode in pagesContainer.Elements())
+    {
+      if (pageNode.Attribute("type")?.Value != "Page" && pageNode.Element("PageWidth") is null)
+        continue;
+
+      var pageName = pageNode.Element("Name")?.Value?.Trim();
+      if (string.IsNullOrWhiteSpace(pageName))
+        pageName = pageNode.Name.LocalName;
+
+      var pageWidthInches = 8.27;
+      var pageHeightInches = 11.69;
+      if (double.TryParse(pageNode.Element("PageWidth")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var pageWidth) && pageWidth > 0)
+        pageWidthInches = pageWidth;
+      if (double.TryParse(pageNode.Element("PageHeight")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var pageHeight) && pageHeight > 0)
+        pageHeightInches = pageHeight;
+
+      var items = pageNode
+          .Descendants()
+          .Where(x => x.Name.LocalName.StartsWith("Text", StringComparison.OrdinalIgnoreCase))
+          .Select(x => new
+          {
+            Name = x.Element("Name")?.Value?.Trim(),
+            ClientRectangle = x.Element("ClientRectangle")?.Value?.Trim()
+          })
+          .Where(x => !string.IsNullOrWhiteSpace(x.Name) && !string.IsNullOrWhiteSpace(x.ClientRectangle))
+          .Select(x =>
+          {
+            var rect = ParseClientRectangle(x.ClientRectangle!);
+            return rect is null || rect.Value.Width <= 0 || rect.Value.Height <= 0
+                ? null
+                : new BillSeaTextLayoutItem
+                {
+                  Name = x.Name!,
+                  Left = rect.Value.Left,
+                  Top = rect.Value.Top,
+                  Width = rect.Value.Width,
+                  Height = rect.Value.Height
+                };
+          })
+          .Where(x => x is not null)
+          .Select(x => x!)
+          .OrderBy(x => x.Name)
+          .ToList();
+
+      pages.Add(new BillSeaPageLayout
+      {
+        PageName = pageName,
+        PageWidthInches = pageWidthInches,
+        PageHeightInches = pageHeightInches,
+        Items = items
+      });
+    }
+
+    return pages;
+  }
+
+  async Task SaveLayout()
+  {
+    try
+    {
+      if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
+      {
+        ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+        return;
+      }
+
+      _loading = true;
+      var reportPath = GetReportPath();
+      if (!File.Exists(reportPath))
+      {
+        ShowMessage($"Không tìm thấy file {ReportFileName}", MudBlazor.Severity.Error);
+        return;
+      }
+
+      if (!_pages.Any())
+      {
+        ShowMessage("Chưa có dữ liệu text để lưu.", MudBlazor.Severity.Warning);
+        return;
+      }
+
+      var backupPath = reportPath + ".bak";
+      if (!File.Exists(backupPath))
+        File.Copy(reportPath, backupPath, overwrite: false);
+
+      var doc = XDocument.Load(reportPath);
+      var updated = 0;
+
+      foreach (var pageLayout in _pages)
+      {
+        var pageNode = FindPageNode(doc, pageLayout.PageName);
+        if (pageNode is null)
+          continue;
+
+        var map = pageLayout.Items.ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
+        foreach (var textNode in pageNode.Descendants().Where(x => x.Name.LocalName.StartsWith("Text", StringComparison.OrdinalIgnoreCase)))
+        {
+          var name = textNode.Element("Name")?.Value?.Trim();
+          if (string.IsNullOrWhiteSpace(name))
+            continue;
+
+          if (!map.TryGetValue(name, out var item))
+            continue;
+
+          var rectElement = textNode.Element("ClientRectangle");
+          if (rectElement is null)
+            continue;
+
+          rectElement.Value = BuildClientRectangle(item);
+          updated++;
+        }
+      }
+
+      doc.Save(reportPath);
+      ShowMessage($"Đã cập nhật {updated} text item vào {ReportFileName}.", MudBlazor.Severity.Success);
+    }
+    catch (Exception ex)
+    {
+      ShowMessage($"Không lưu được layout {ReportFileName}: " + ex.Message, MudBlazor.Severity.Error);
+    }
+    finally
+    {
+      _loading = false;
+    }
+  }
+
+  static XElement? FindPageNode(XDocument doc, string pageName)
+  {
+    var pagesContainer = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "Pages");
+    if (pagesContainer is null)
+      return null;
+
+    return pagesContainer.Elements().FirstOrDefault(pageNode =>
+    {
+      var name = pageNode.Element("Name")?.Value?.Trim() ?? pageNode.Name.LocalName;
+      return string.Equals(name, pageName, StringComparison.OrdinalIgnoreCase);
+    });
+  }
+
+  static BillSeaRect? ParseClientRectangle(string value)
+  {
+    var parts = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length != 4)
+      return null;
+
+    if (!double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var left))
+      return null;
+    if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var top))
+      return null;
+    if (!double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var width))
+      return null;
+    if (!double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var height))
+      return null;
+
+    return new BillSeaRect(left, top, width, height);
+  }
+
+  static string BuildClientRectangle(BillSeaTextLayoutItem item) =>
+      string.Join(",",
+          item.Left.ToString("0.####", CultureInfo.InvariantCulture),
+          item.Top.ToString("0.####", CultureInfo.InvariantCulture),
+          item.Width.ToString("0.####", CultureInfo.InvariantCulture),
+          item.Height.ToString("0.####", CultureInfo.InvariantCulture));
+
+  string GetCanvasStyle() =>
+      $"position:relative;width:{PreviewWidthPx.ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+      $"height:{PreviewHeightPx.ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+      "max-width:100%;border:1px solid #d0d0d0;overflow:hidden;user-select:none;";
+
+  string GetTextBoxStyle(BillSeaTextLayoutItem item)
+  {
+    var selected = string.Equals(item.Name, _selectedTextName, StringComparison.OrdinalIgnoreCase);
+    var borderColor = selected ? "#1976d2" : "rgba(25,118,210,0.55)";
+    var backgroundColor = selected ? "rgba(25,118,210,0.20)" : "rgba(25,118,210,0.12)";
+
+    return "position:absolute;" +
+           $"left:{(item.Left * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+           $"top:{(item.Top * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+           $"width:{Math.Max(16, item.Width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+           $"height:{Math.Max(16, item.Height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+           $"border:1px dashed {borderColor};" +
+           $"background:{backgroundColor};" +
+           "z-index:10;cursor:grab;display:flex;align-items:flex-start;justify-content:flex-start;padding:1px;overflow:hidden;";
+  }
+
+  void BeginDrag(BillSeaTextLayoutItem item, MouseEventArgs e)
+  {
+    _dragItem = item;
+    _selectedTextName = item.Name;
+    _dragOffsetXInches = e.OffsetX / Scale;
+    _dragOffsetYInches = e.OffsetY / Scale;
+  }
+
+  void OnCanvasMouseMove(MouseEventArgs e)
+  {
+    if (_dragItem is null)
+      return;
+
+    var newLeft = (e.OffsetX / Scale) - _dragOffsetXInches;
+    var newTop = (e.OffsetY / Scale) - _dragOffsetYInches;
+
+    var maxLeft = Math.Max(0, PageWidthInches - _dragItem.Width);
+    var maxTop = Math.Max(0, PageHeightInches - _dragItem.Height);
+    _dragItem.Left = Math.Clamp(newLeft, 0, maxLeft);
+    _dragItem.Top = Math.Clamp(newTop, 0, maxTop);
+  }
+
+  void EndDrag()
+  {
+    _dragItem = null;
+  }
+
+  static string? GetImageDataUrl(byte[]? image)
+  {
+    if (image is not { Length: > 0 })
+      return null;
+
+    return $"data:{DetectImageMime(image)};base64,{Convert.ToBase64String(image)}";
+  }
+
+  static string DetectImageMime(byte[] data)
+  {
+    if (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+      return "image/jpeg";
+    if (data.Length >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
+      return "image/png";
+    if (data.Length >= 6 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46)
+      return "image/gif";
+    if (data.Length >= 12 && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50)
+      return "image/webp";
+    return "image/png";
+  }
+
+  void ShowMessage(string message, MudBlazor.Severity severity)
+  {
+    Snackbar.Clear();
+    Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+    Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+    Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+    Snackbar.Add(message, severity);
+  }
+
+  class BillSeaPageLayout
+  {
+    public string PageName { get; set; } = string.Empty;
+    public double PageWidthInches { get; set; } = 8.27;
+    public double PageHeightInches { get; set; } = 11.69;
+    public List<BillSeaTextLayoutItem> Items { get; set; } = new();
+  }
+
+  class BillSeaTextLayoutItem
+  {
+    public string Name { get; set; } = string.Empty;
+    public double Left { get; set; }
+    public double Top { get; set; }
+    public double Width { get; set; }
+    public double Height { get; set; }
+  }
+
+  readonly record struct BillSeaRect(double Left, double Top, double Width, double Height);
+}

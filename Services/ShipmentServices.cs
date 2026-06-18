@@ -2073,10 +2073,11 @@ namespace NVOAMASIS.Services
             try
             {
                 var report = new StiReport();
-                var reportName = attach ? "BillSea_NVOCC_Att.mrt" : "BillSea_NVOCC.mrt";
+                var reportName = attach ? "BillSea_NVOCC_Att_1.mrt" : "BillSea_NVOCC.mrt";
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", reportName);
                 var connectionString = ResolveReportConnectionString();
                 var companyLogo = await GetCompanyLogoAsync();
+                var companyBillSeaForm = await GetCompanyBillSeaFormAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
@@ -2084,6 +2085,7 @@ namespace NVOAMASIS.Services
                 report.Load(rpt);
                 ApplyReportConnectionString(report, connectionString);
                 ApplyCompanyLogoToReport(report, companyLogo, showLogo: !isOriginal);
+                ApplyBillSeaFormToReport(report, companyBillSeaForm);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["chk_show_pre_Carr"].Value = showPreCarriage ? "true" : "false";
                 // Original = không logo, Draft = có logo
@@ -2653,6 +2655,15 @@ namespace NVOAMASIS.Services
                 .FirstOrDefaultAsync();
         }
 
+        private async Task<byte[]?> GetCompanyBillSeaFormAsync()
+        {
+            _context.ChangeTracker.Clear();
+            return await _context.CompanyInfomation
+                .AsNoTracking()
+                .Select(x => x.FormBillSea)
+                .FirstOrDefaultAsync();
+        }
+
         private void ApplyArrivalReportSetup(StiReport report, byte[]? companyLogo)
         {
             var connectionString = ResolveReportConnectionString();
@@ -2746,6 +2757,19 @@ namespace NVOAMASIS.Services
 
             logoVariable.Type = typeof(System.Drawing.Image);
             logoVariable.ValueObject = CreateLogoImage(logo);
+        }
+
+        private static void ApplyBillSeaFormToReport(StiReport report, byte[]? formBillSea)
+        {
+            if (formBillSea is not { Length: > 0 })
+                return;
+
+            // Support both old and new report templates.
+            if (report.Dictionary.Resources.Contains("AMSSform"))
+                report.Dictionary.Resources["AMSSform"].Content = formBillSea;
+
+            if (report.Dictionary.Resources.Contains("logo_bill"))
+                report.Dictionary.Resources["logo_bill"].Content = formBillSea;
         }
 
         private static void ApplyCompanyBranchVariable(StiReport report, string? branches)
