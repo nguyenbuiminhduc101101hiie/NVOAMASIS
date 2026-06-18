@@ -21,6 +21,7 @@ namespace NVOAMASIS.Models
         public string? IPAddress { get; set; }
         public int? hanmovecus { get; set; }
         public byte[]? Logo { get; set; }
+        public byte[]? FormBillSea { get; set; }
         public string? AccountName { get; set; }
         public string? BankName { get; set; }
         public string? BankAddress { get; set; }
