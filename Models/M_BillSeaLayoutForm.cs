@@ -15,6 +15,8 @@ namespace NVOAMASIS.Models
 
         public byte[]? AttachMrtContent { get; set; }
 
+        public byte[]? Logo { get; set; }
+
         [MaxLength(260)]
         public string SourceTemplate { get; set; } = "BillSea_NVOCC.mrt";
 

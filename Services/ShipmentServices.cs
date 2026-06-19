@@ -2091,7 +2091,11 @@ namespace NVOAMASIS.Services
                 }
 
                 var connectionString = ResolveReportConnectionString();
-                var companyLogo = await GetCompanyLogoAsync();
+                byte[]? reportLogo;
+                if (layoutFormId is Guid layoutForm && layoutForm != Guid.Empty)
+                    reportLogo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(layoutForm);
+                else
+                    reportLogo = await GetCompanyLogoAsync();
                 var companyBillSeaForm = await GetCompanyBillSeaFormAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
@@ -2099,7 +2103,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
-                ApplyCompanyLogoToReport(report, companyLogo, showLogo: !isOriginal);
+                ApplyCompanyLogoToReport(report, reportLogo, showLogo: !isOriginal);
                 ApplyBillSeaFormToReport(report, companyBillSeaForm);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["chk_show_pre_Carr"].Value = showPreCarriage ? "true" : "false";

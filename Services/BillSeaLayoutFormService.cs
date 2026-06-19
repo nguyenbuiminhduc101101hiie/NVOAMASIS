@@ -89,6 +89,48 @@ namespace NVOAMASIS.Services
             return !ContentEquals(form.MrtContent, defaultBytes);
         }
 
+        public async Task<byte[]?> GetCompanyLogoAsync(CancellationToken cancellationToken = default)
+        {
+            context.ChangeTracker.Clear();
+            return await context.CompanyInfomation
+                .AsNoTracking()
+                .Select(x => x.Logo)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        public async Task<byte[]?> GetFormLogoAsync(Guid formId, CancellationToken cancellationToken = default)
+        {
+            var form = await GetFormAsync(formId, cancellationToken);
+            return form?.Logo is { Length: > 0 } ? form.Logo : null;
+        }
+
+        public async Task<byte[]?> GetEffectiveFormLogoAsync(Guid formId, CancellationToken cancellationToken = default)
+        {
+            var formLogo = await GetFormLogoAsync(formId, cancellationToken);
+            return formLogo ?? await GetCompanyLogoAsync(cancellationToken);
+        }
+
+        public async Task<bool> HasCustomFormLogoAsync(Guid formId, CancellationToken cancellationToken = default)
+        {
+            var form = await GetFormAsync(formId, cancellationToken);
+            return form?.Logo is { Length: > 0 };
+        }
+
+        public async Task SaveFormLogoAsync(Guid formId, byte[]? logo, CancellationToken cancellationToken = default)
+        {
+            var form = await context.BillSeaLayoutForms
+                .FirstOrDefaultAsync(x => x.BillSeaLayoutFormId == formId && x.IsActive, cancellationToken);
+            if (form is null)
+                throw new InvalidOperationException("Không tìm thấy form Bill Sea.");
+
+            form.Logo = logo is { Length: > 0 } ? logo : null;
+            form.UpdatedAt = DateTime.UtcNow;
+            await context.SaveChangesAsync(cancellationToken);
+        }
+
+        public async Task ClearFormLogoAsync(Guid formId, CancellationToken cancellationToken = default) =>
+            await SaveFormLogoAsync(formId, null, cancellationToken);
+
         public async Task<M_BillSeaLayoutForm> CreateFormAsync(string formName, string? createdBy = null, CancellationToken cancellationToken = default)
         {
             var trimmedName = formName.Trim();
