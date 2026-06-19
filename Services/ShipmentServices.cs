@@ -54,7 +54,7 @@ namespace NVOAMASIS.Services
             var rs = await _context.Job
                 .Where(x => x.Continued == true
                             && user.Roles_Dept.Contains(x.Loai)
-                            && (string.IsNullOrEmpty(user.CompanyCode) || x.CompanyCode == user.CompanyCode))
+                           )
                 .OrderByDescending(x => x.Dateupdate)
                 .ToListAsync();
 
@@ -2130,23 +2130,38 @@ namespace NVOAMASIS.Services
             }
         }
         /// <param name="isOriginal">true = Original (không logo); false = Draft (có logo)</param>
-        public async Task<BoolandMessReponse> ExportBilAir(Guid id, bool isOriginal = false)
+        public async Task<BoolandMessReponse> ExportBilAir(Guid id, bool isOriginal = false, Guid? layoutFormId = null)
         {
             try
             {
                 var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillAir.mrt");
+                byte[] templateBytes;
+                if (layoutFormId is Guid formId && formId != Guid.Empty)
+                    templateBytes = await billSeaLayoutFormService.GetFormBytesAsync(formId);
+                else
+                    templateBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(BillSeaReportTemplateNames.Air);
+
                 var connectionString = ResolveReportConnectionString();
-                var companyLogo = await GetCompanyLogoAsync();
+                byte[]? reportLogo;
+                if (layoutFormId is Guid layoutForm && layoutForm != Guid.Empty)
+                    reportLogo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(layoutForm);
+                else
+                    reportLogo = await GetCompanyLogoAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
-                report.Load(rpt);
+                report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 if (report.Dictionary.Variables["IsOriginal"] != null)
                     report.Dictionary.Variables["IsOriginal"].Value = isOriginal ? "true" : "false";
-                ApplyCompanyLogoToReport(report, companyLogo, showLogo: !isOriginal);
+                ApplyCompanyLogoToReport(report, reportLogo, showLogo: !isOriginal);
+
+                byte[]? formBillAir = null;
+                if (layoutFormId is Guid airFormId && airFormId != Guid.Empty)
+                    formBillAir = await billSeaLayoutFormService.GetFormBillAirAsync(airFormId);
+                ApplyBillAirFormToReport(report, formBillAir);
+
                 report.Render();
                 using (var ms = new MemoryStream())
                 {
@@ -2789,6 +2804,21 @@ namespace NVOAMASIS.Services
 
             if (report.Dictionary.Resources.Contains("logo_bill"))
                 report.Dictionary.Resources["logo_bill"].Content = formBillSea;
+        }
+
+        private static void ApplyBillAirFormToReport(StiReport report, byte[]? formBillAir)
+        {
+            if (formBillAir is not { Length: > 0 })
+                return;
+
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is not StiImage image)
+                    continue;
+
+                if (string.Equals(image.Name, "Image1", StringComparison.OrdinalIgnoreCase))
+                    image.Image = CreateLogoImage(formBillAir);
+            }
         }
 
         private static void ApplyCompanyBranchVariable(StiReport report, string? branches)

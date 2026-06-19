@@ -17,6 +17,11 @@ namespace NVOAMASIS.Models
 
         public byte[]? Logo { get; set; }
 
+        public byte[]? FormBillAir { get; set; }
+
+        [MaxLength(10)]
+        public string FormKind { get; set; } = nameof(BillLayoutFormKind.Sea);
+
         [MaxLength(260)]
         public string SourceTemplate { get; set; } = "BillSea_NVOCC.mrt";
 

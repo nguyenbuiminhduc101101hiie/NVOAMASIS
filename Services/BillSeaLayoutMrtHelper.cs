@@ -462,7 +462,10 @@ namespace NVOAMASIS.Services
 
         private static string GetImageDisplayLabel(string name, XElement node)
         {
-            if (string.Equals(name, "Image1", StringComparison.OrdinalIgnoreCase)
+            if (string.Equals(name, "Image1", StringComparison.OrdinalIgnoreCase))
+                return "Form Bill";
+
+            if (string.Equals(name, "CompanyLogo", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(name, "Text1", StringComparison.OrdinalIgnoreCase))
             {
                 return "Logo";
@@ -733,6 +736,41 @@ namespace NVOAMASIS.Services
                 element.Top.ToString("0.####", CultureInfo.InvariantCulture),
                 element.Width.ToString("0.####", CultureInfo.InvariantCulture),
                 element.Height.ToString("0.####", CultureInfo.InvariantCulture));
+
+        public static byte[]? ExtractImageBytes(byte[] mrtBytes, string imageName = "Image1")
+        {
+            if (mrtBytes is not { Length: > 0 })
+                return null;
+
+            using var ms = new MemoryStream(mrtBytes);
+            var doc = XDocument.Load(ms);
+            return ExtractImageBytes(doc, imageName);
+        }
+
+        public static byte[]? ExtractImageBytes(XDocument doc, string imageName = "Image1")
+        {
+            var imageNode = doc.Descendants()
+                .FirstOrDefault(x =>
+                    string.Equals(x.Attribute("type")?.Value, "Image", StringComparison.OrdinalIgnoreCase)
+                    && (
+                        string.Equals(x.Name.LocalName, imageName, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(x.Element("Name")?.Value, imageName, StringComparison.OrdinalIgnoreCase)
+                    ));
+
+            var base64 = imageNode?.Element("ImageBytes")?.Value;
+            if (string.IsNullOrWhiteSpace(base64))
+                return null;
+
+            try
+            {
+                base64 = new string(base64.Where(c => !char.IsWhiteSpace(c)).ToArray());
+                return Convert.FromBase64String(base64);
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         private static string SanitizeName(string name) =>
             new string(name.Where(char.IsLetterOrDigit).ToArray());
