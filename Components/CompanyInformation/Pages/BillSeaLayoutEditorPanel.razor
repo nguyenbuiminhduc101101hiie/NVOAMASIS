@@ -1,5 +1,6 @@
 @using System.Globalization
 @using System.Xml.Linq
+@using Microsoft.AspNetCore.Components.Forms
 @using NVOAMASIS.Models
 @using NVOAMASIS.Services
 @inject BillSeaLayoutFormService FormService
@@ -95,6 +96,49 @@
                   AdornmentIcon="@Icons.Material.Filled.Search"
                   Style="min-width:240px;" />
 </MudStack>
+
+<MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+    <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+        <MudText Typo="Typo.subtitle2"><b>Logo form Bill Sea</b></MudText>
+        @if (_logoDataUrl is not null)
+        {
+            <MudImage Src="@_logoDataUrl" Alt="Logo form" Style="max-height:72px; max-width:180px;" ObjectFit="ObjectFit.Contain" />
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Color="Color.Secondary">Chưa có logo</MudText>
+        }
+        <MudFileUpload T="IBrowserFile" Accept=".png,.jpg,.jpeg,.gif,.webp" FilesChanged="OnFormLogoFileChanged">
+            <ButtonTemplate Context="btnCtx">
+                <MudButton HtmlTag="label"
+                           for="@btnCtx"
+                           Size="Size.Small"
+                           Variant="Variant.Outlined"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Image"
+                           Disabled="_loading || TemplateId == Guid.Empty">
+                    Chọn logo
+                </MudButton>
+            </ButtonTemplate>
+        </MudFileUpload>
+        @if (_hasCustomFormLogo)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" OnClick="ClearFormLogo" Disabled="_loading">
+                Xóa logo form
+            </MudButton>
+        }
+        <MudText Typo="Typo.caption" Color="Color.Secondary">
+            @if (_hasCustomFormLogo)
+            {
+                <span>Đang dùng <b>logo riêng</b> của form <b>@TemplateName</b>.</span>
+            }
+            else
+            {
+                <span>Chưa chọn logo riêng — preview/export dùng <b>logo công ty</b>.</span>
+            }
+        </MudText>
+    </MudStack>
+</MudPaper>
 
 @if (_loading)
 {
@@ -319,11 +363,13 @@
     [Parameter] public Guid TemplateId { get; set; }
     [Parameter] public string TemplateName { get; set; } = string.Empty;
     [Parameter] public string UserName { get; set; } = string.Empty;
-    [Parameter] public byte[]? FormBillSeaLogo { get; set; }
     [Parameter] public bool IsAttachMode { get; set; }
 
     const double PreviewWidthPx = 900;
+    const long MaxLogoBytes = 2 * 1024 * 1024;
     string? _logoDataUrl;
+    byte[]? _companyLogoBytes;
+    bool _hasCustomFormLogo;
     bool _usesCustomTemplate;
     bool _loading;
     string _keyword = string.Empty;
@@ -416,14 +462,117 @@
     IEnumerable<BillSeaDesignElement> SortedElements =>
         FilteredElements.OrderBy(GetElementZIndex);
 
-    protected override void OnParametersSet() => _logoDataUrl = BuildLogoDataUrl(FormBillSeaLogo);
+    protected override async Task OnParametersSetAsync() => await LoadFormLogoAsync();
 
     static string? BuildLogoDataUrl(byte[]? logo)
     {
         if (logo is not { Length: > 0 })
             return null;
 
-        return $"data:image/png;base64,{Convert.ToBase64String(logo)}";
+        return $"data:{DetectImageMime(logo)};base64,{Convert.ToBase64String(logo)}";
+    }
+
+    static string DetectImageMime(byte[] data)
+    {
+        if (data.Length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+            return "image/jpeg";
+        if (data.Length >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
+            return "image/png";
+        if (data.Length >= 6 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46)
+            return "image/gif";
+        if (data.Length >= 12 && data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50)
+            return "image/webp";
+        return "image/png";
+    }
+
+    async Task LoadFormLogoAsync()
+    {
+        if (TemplateId == Guid.Empty)
+        {
+            _hasCustomFormLogo = false;
+            _logoDataUrl = null;
+            return;
+        }
+
+        try
+        {
+            _companyLogoBytes ??= await FormService.GetCompanyLogoAsync();
+            _hasCustomFormLogo = await FormService.HasCustomFormLogoAsync(TemplateId);
+            var formLogo = await FormService.GetFormLogoAsync(TemplateId);
+            _logoDataUrl = BuildLogoDataUrl(_hasCustomFormLogo ? formLogo : _companyLogoBytes);
+        }
+        catch (Exception ex)
+        {
+            _hasCustomFormLogo = false;
+            _logoDataUrl = BuildLogoDataUrl(_companyLogoBytes);
+            ShowMessage($"Không tải được logo form: {ex.Message}", MudBlazor.Severity.Warning);
+        }
+    }
+
+    async Task OnFormLogoFileChanged(IBrowserFile? file)
+    {
+        if (file is null || TemplateId == Guid.Empty)
+            return;
+
+        if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
+        {
+            ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            if (file.Size > MaxLogoBytes)
+            {
+                ShowMessage("Logo tối đa 2MB.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _loading = true;
+            await using var stream = file.OpenReadStream(MaxLogoBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var logoBytes = ms.ToArray();
+            await FormService.SaveFormLogoAsync(TemplateId, logoBytes);
+            await LoadFormLogoAsync();
+            ShowMessage($"Đã lưu logo riêng cho form '{TemplateName}'.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Không lưu được logo: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task ClearFormLogo()
+    {
+        if (TemplateId == Guid.Empty)
+            return;
+
+        if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
+        {
+            ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _loading = true;
+            await FormService.ClearFormLogoAsync(TemplateId);
+            await LoadFormLogoAsync();
+            ShowMessage("Đã xóa logo riêng. Form sẽ dùng logo công ty.", MudBlazor.Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Không xóa được logo: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
 
     async Task LoadLayout()
@@ -461,6 +610,8 @@
             _undoStack.Clear();
             _sessionAddedNames.Clear();
             CancelPlacement();
+
+            await LoadFormLogoAsync();
 
             var totalItems = _pages.Sum(p => p.Elements.Count);
             var source = _usesCustomTemplate ? "bản tùy chỉnh công ty" : (IsAttachMode ? "bản Attach mặc định" : "template mặc định");
