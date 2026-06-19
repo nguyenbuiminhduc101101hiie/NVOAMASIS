@@ -115,6 +115,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_Currency> Currency { get; set; }
         public DbSet<M_Test_getapi> Test_getapi { get; set; }
         public DbSet<M_CompanyInfo> CompanyInfomation { get; set; }
+        public DbSet<M_BillSeaLayoutForm> BillSeaLayoutForms { get; set; }
         public DbSet<M_Info_Company_other> Information_Comapny_Other { get; set; }
 
         public DbSet<M_CuocCont> CuocCont { get; set; }
@@ -176,6 +177,9 @@ namespace NVOAMASIS.Data
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<M_BillSeaLayoutForm>()
+                .ToTable("BillSeaLayoutForm");
 
             // Create unique index on ResourceKey + Culture
             modelBuilder.Entity<LocalizationResource>()

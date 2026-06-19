@@ -1,3 +1,6 @@
+@using NVOAMASIS.Services
+@inject BillSeaLayoutFormService FormService
+
 <MudDialog>
     <TitleContent>
         <MudText Typo="Typo.h6">
@@ -6,20 +9,52 @@
         </MudText>
     </TitleContent>
     <DialogContent>
-        @* ── Chọn bản in: Original / Draft ── *@
+        <MudText Typo="Typo.subtitle1" Class="mb-2"><b>Mẫu form Bill Sea</b></MudText>
+        @if (_forms.Count == 0)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+                Chưa có form Bill Sea. Tạo form tại menu 1.17 trước khi xuất.
+            </MudAlert>
+        }
+        else
+        {
+            <MudRadioGroup @bind-Value="SelectedLayoutFormId" T="Guid?">
+                @foreach (var form in _forms)
+                {
+                    <MudRadio T="Guid?" Value="@form.BillSeaLayoutFormId" Color="Color.Primary">
+                        @form.FormName@(Attach && !form.HasAttachForm ? " (chưa có Attach)" : "")
+                    </MudRadio>
+                }
+            </MudRadioGroup>
+        }
+
+        @if (Attach && SelectedForm is not null && !SelectedForm.HasAttachForm)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mt-2 mb-3">
+                Form <b>@SelectedForm.FormName</b> chưa có form Attach. Tạo tại menu 1.17.
+            </MudAlert>
+        }
+        else if (Attach && SelectedForm is not null)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mt-2 mb-3">
+                Chế độ <b>Attach</b> sẽ dùng form Attach của <b>@SelectedForm.FormName</b>.
+            </MudAlert>
+        }
+
+        <MudDivider Class="my-3" />
+
         <MudText Typo="Typo.subtitle1" Class="mb-2"><b>Bản in</b></MudText>
         <MudRadioGroup @bind-Value="IsOriginal" T="bool">
             <MudRadio Value="false" Color="Color.Secondary">
-                <MudText>Draft <MudText Typo="Typo.caption" Color="Color.Default"></MudText></MudText>
+                <MudText>Draft</MudText>
             </MudRadio>
             <MudRadio Value="true" Color="Color.Secondary">
-                <MudText>Original <MudText Typo="Typo.caption" Color="Color.Default"></MudText></MudText>
+                <MudText>Original</MudText>
             </MudRadio>
         </MudRadioGroup>
 
         <MudDivider Class="my-3" />
 
-        @* ── Vessel / Voyage display ── *@
         <MudText Typo="Typo.subtitle1" Class="mb-2"><b>Vessel / Voyage hiển thị</b></MudText>
         <MudRadioGroup @bind-Value="SelectedVesselOption" T="string">
             <MudRadio Value="@PreCarriageOption" Color="Color.Tertiary">Pre-Carriage</MudRadio>
@@ -32,7 +67,7 @@
                      Class="mt-2" />
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled">
+        <MudButton OnClick="Submit" Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!CanExport)">
             <MudIcon Icon="@Icons.Material.Filled.PictureAsPdf" Class="mr-1" /> Export
         </MudButton>
         <MudButton OnClick="Cancel" Color="Color.Default">Cancel</MudButton>
@@ -46,30 +81,51 @@
     [CascadingParameter]
     public MudDialogInstance MudDialog { get; set; } = default!;
 
-    /// <summary>true = Original (không logo), false = Draft (có logo)</summary>
-    private bool IsOriginal { get; set; } = false;
-
+    private bool IsOriginal { get; set; }
     private string SelectedVesselOption { get; set; } = PreCarriageOption;
     private bool Attach { get; set; }
+    private Guid? SelectedLayoutFormId { get; set; }
+    private List<BillSeaLayoutFormSummary> _forms = new();
+
+    BillSeaLayoutFormSummary? SelectedForm =>
+        SelectedLayoutFormId is Guid id
+            ? _forms.FirstOrDefault(x => x.BillSeaLayoutFormId == id)
+            : null;
+
+    bool CanExport =>
+        _forms.Count > 0
+        && SelectedLayoutFormId is not null
+        && (!Attach || SelectedForm?.HasAttachForm == true);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _forms = await FormService.ListFormsAsync();
+        if (_forms.Count > 0)
+            SelectedLayoutFormId = _forms[0].BillSeaLayoutFormId;
+    }
 
     private void Submit()
     {
+        if (!CanExport)
+            return;
+
         bool showPreCarriage = SelectedVesselOption == PreCarriageOption;
         MudDialog.Close(DialogResult.Ok(new BillExportOptions
         {
-            IsOriginal      = IsOriginal,
+            IsOriginal = IsOriginal,
             ShowPreCarriage = showPreCarriage,
-            Attach          = Attach
+            Attach = Attach,
+            LayoutFormId = SelectedLayoutFormId
         }));
     }
 
     private void Cancel() => MudDialog.Cancel();
 
-    /// <summary>DTO trả kết quả dialog về caller.</summary>
     public class BillExportOptions
     {
-        public bool   IsOriginal      { get; set; }
-        public bool   ShowPreCarriage { get; set; } = true;
-        public bool   Attach          { get; set; }
+        public bool IsOriginal { get; set; }
+        public bool ShowPreCarriage { get; set; } = true;
+        public bool Attach { get; set; }
+        public Guid? LayoutFormId { get; set; }
     }
 }

@@ -4,6 +4,8 @@
 @inject AccountService asv
 @inject SharedServices ssv
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject BillSeaLayoutFormService FormService
 
 <PageTitle>Chỉnh layout Bill Sea</PageTitle>
 <MudText Class="pa-2" Typo="Typo.h6">Chỉnh layout Bill Sea</MudText>
@@ -13,32 +15,130 @@
     <MudProgressLinear Indeterminate="true" Class="mx-4" />
 }
 
-<MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4">
-    <MudTabPanel Text="BillSea Layout">
-        <BillSeaLayoutEditorPanel ReportFileName="BillSea_NVOCC.mrt"
-                                  UserName="@_userName"
-                                  FormBillSeaLogo="@_company.FormBillSea" />
-    </MudTabPanel>
+<MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+    <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+        <MudSelect T="Guid?"
+                   Label="Chọn form Bill"
+                   Value="_selectedFormId"
+                   ValueChanged="OnSelectedFormChanged"
+                   ToStringFunc="FormIdToName"
+                   Variant="Variant.Outlined"
+                   Margin="Margin.Dense"
+                   Style="min-width:280px;"
+                   Disabled="_loading || !_forms.Any()">
+            @foreach (var form in _forms)
+            {
+                <MudSelectItem T="Guid?" Value="@form.BillSeaLayoutFormId">
+                    @form.FormName@(form.IsCustomized ? " (đã chỉnh)" : "")
+                </MudSelectItem>
+            }
+        </MudSelect>
+        <MudButton OnClick="CreateNewForm"
+                   Size="Size.Small"
+                   Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   Disabled="_loading">
+            Tạo form mới
+        </MudButton>
+        <MudButton OnClick="DeleteSelectedForm"
+                   Size="Size.Small"
+                   Color="Color.Error"
+                   Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.Delete"
+                   Disabled="_loading || _selectedFormId is null">
+            Xóa form
+        </MudButton>
+        <MudButton OnClick="ReloadForms"
+                   Size="Size.Small"
+                   Color="Color.Default"
+                   Variant="Variant.Outlined"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Disabled="_loading">
+            Tải lại danh sách
+        </MudButton>
+        @if (_selectedForm is not null)
+        {
+            <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+                <MudButton Color="@(!_editAttachMode ? Color.Primary : Color.Default)"
+                           Variant="@(!_editAttachMode ? Variant.Filled : Variant.Outlined)"
+                           OnClick="() => _editAttachMode = false">
+                    Form chính
+                </MudButton>
+                <MudButton Color="@(_editAttachMode ? Color.Primary : Color.Default)"
+                           Variant="@(_editAttachMode ? Variant.Filled : Variant.Outlined)"
+                           Disabled="!_selectedForm.HasAttachForm"
+                           OnClick="() => _editAttachMode = true">
+                    Form Attach
+                </MudButton>
+            </MudButtonGroup>
+            @if (!_selectedForm.HasAttachForm)
+            {
+                <MudButton OnClick="CreateAttachForm"
+                           Size="Size.Small"
+                           Color="Color.Secondary"
+                           Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.AttachFile"
+                           Disabled="_loading">
+                    Tạo form Attach
+                </MudButton>
+            }
+            else if (_editAttachMode)
+            {
+                <MudButton OnClick="DeleteAttachForm"
+                           Size="Size.Small"
+                           Color="Color.Error"
+                           Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.LinkOff"
+                           Disabled="_loading">
+                    Xóa form Attach
+                </MudButton>
+            }
+        }
+    </MudStack>
+    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+        Form mới được tạo từ template gốc <b>BillSea_NVOCC.mrt</b>. Form Attach gồm 2 page: page 1 từ form chính (thay mô tả hàng hóa), page 2 từ <b>BillSea_NVOCC_Att_1.mrt.bak</b>.
+    </MudText>
+</MudPaper>
 
-    <MudTabPanel Text="BillSea Att 1 Layout">
-        <BillSeaLayoutEditorPanel ReportFileName="BillSea_NVOCC_Att_1.mrt"
-                                  UserName="@_userName"
-                                  FormBillSeaLogo="@_company.FormBillSea" />
-    </MudTabPanel>
-</MudTabs>
+@if (_selectedFormId is Guid formId && _selectedForm is not null && (!_editAttachMode || _selectedForm.HasAttachForm))
+{
+    <BillSeaLayoutEditorPanel @key="@($"{formId}-{_editAttachMode}")"
+                              TemplateId="formId"
+                              TemplateName="@_selectedForm.FormName"
+                              UserName="@_userName"
+                              FormBillSeaLogo="@_company.Logo"
+                              IsAttachMode="_editAttachMode" />
+}
+else if (_selectedForm is not null && _editAttachMode && !_selectedForm.HasAttachForm)
+{
+    <MudAlert Class="mx-4" Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
+        Form <b>@_selectedForm.FormName</b> chưa có form Attach. Bấm <b>Tạo form Attach</b> để tạo từ form chính hiện tại.
+    </MudAlert>
+}
+else if (!_loading)
+{
+    <MudAlert Class="mx-4" Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
+        Chưa có form Bill Sea. Bấm <b>Tạo form mới</b> để bắt đầu.
+    </MudAlert>
+}
 
 @code {
     M_CompanyInfo _company = new();
     string _userName = string.Empty;
     bool _loading;
+    Guid? _selectedFormId;
+    BillSeaLayoutFormSummary? _selectedForm;
+    List<BillSeaLayoutFormSummary> _forms = new();
+    bool _editAttachMode;
 
     protected override async Task OnInitializedAsync()
     {
         _userName = asv.GetAuth().Result.User.Identity!.Name!;
-        await LoadCompanyInfoAsync();
+        await LoadPageAsync();
     }
 
-    async Task LoadCompanyInfoAsync()
+    async Task LoadPageAsync()
     {
         try
         {
@@ -51,10 +151,179 @@
             }
 
             _company = await gsv.GetSingleCompany_info();
+            await ReloadForms();
         }
         catch (Exception ex)
         {
-            ShowMessage("Không tải được thông tin công ty: " + ex.Message, MudBlazor.Severity.Error);
+            ShowMessage("Không tải được dữ liệu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task ReloadForms()
+    {
+        _forms = await FormService.ListFormsAsync();
+        if (_selectedFormId is Guid currentId && _forms.Any(x => x.BillSeaLayoutFormId == currentId))
+        {
+            _selectedForm = _forms.First(x => x.BillSeaLayoutFormId == currentId);
+            return;
+        }
+
+        _selectedFormId = _forms.FirstOrDefault()?.BillSeaLayoutFormId;
+        _selectedForm = _forms.FirstOrDefault();
+    }
+
+    Task OnSelectedFormChanged(Guid? formId)
+    {
+        _selectedFormId = formId;
+        _selectedForm = formId is null
+            ? null
+            : _forms.FirstOrDefault(x => x.BillSeaLayoutFormId == formId);
+        _editAttachMode = false;
+        return Task.CompletedTask;
+    }
+
+    string FormIdToName(Guid? id) =>
+        id is null ? string.Empty : _forms.FirstOrDefault(x => x.BillSeaLayoutFormId == id)?.FormName ?? string.Empty;
+
+    async Task CreateNewForm()
+    {
+        if (!await ssv.CheckPermission(_userName, "Edit", "Companyinformation"))
+        {
+            ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            ["Title"] = "Tạo form Bill Sea mới"
+        };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<BillSeaLayoutFormNameDialog>("Tạo form mới", parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not string formName)
+            return;
+
+        try
+        {
+            _loading = true;
+            var created = await FormService.CreateFormAsync(formName, _userName);
+            await ReloadForms();
+            _selectedFormId = created.BillSeaLayoutFormId;
+            _selectedForm = _forms.FirstOrDefault(x => x.BillSeaLayoutFormId == created.BillSeaLayoutFormId);
+            ShowMessage($"Đã tạo form '{created.FormName}'.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task DeleteSelectedForm()
+    {
+        if (_selectedFormId is not Guid formId || _selectedForm is null)
+            return;
+
+        if (!await ssv.CheckPermission(_userName, "Edit", "Companyinformation"))
+        {
+            ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Xóa form Bill Sea",
+            $"Bạn có chắc muốn xóa form '{_selectedForm.FormName}'?" + (_selectedForm.HasAttachForm ? "\n\nForm Attach đi kèm cũng sẽ bị xóa." : ""),
+            yesText: "Xóa",
+            cancelText: "Hủy");
+        if (confirmed != true)
+            return;
+
+        try
+        {
+            _loading = true;
+            await FormService.DeleteFormAsync(formId);
+            _editAttachMode = false;
+            await ReloadForms();
+            ShowMessage("Đã xóa form.", MudBlazor.Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task CreateAttachForm()
+    {
+        if (_selectedFormId is not Guid formId || _selectedForm is null)
+            return;
+
+        if (!await ssv.CheckPermission(_userName, "Edit", "Companyinformation"))
+        {
+            ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _loading = true;
+            await FormService.CreateAttachFormAsync(formId);
+            await ReloadForms();
+            _selectedForm = _forms.FirstOrDefault(x => x.BillSeaLayoutFormId == formId);
+            _editAttachMode = true;
+            ShowMessage($"Đã tạo form Attach cho '{_selectedForm?.FormName}'.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task DeleteAttachForm()
+    {
+        if (_selectedFormId is not Guid formId || _selectedForm is null || !_selectedForm.HasAttachForm)
+            return;
+
+        if (!await ssv.CheckPermission(_userName, "Edit", "Companyinformation"))
+        {
+            ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Xóa form Attach",
+            $"Bạn có chắc muốn xóa form Attach của '{_selectedForm.FormName}'?",
+            yesText: "Xóa",
+            cancelText: "Hủy");
+        if (confirmed != true)
+            return;
+
+        try
+        {
+            _loading = true;
+            await FormService.DeleteAttachFormAsync(formId);
+            _editAttachMode = false;
+            await ReloadForms();
+            _selectedForm = _forms.FirstOrDefault(x => x.BillSeaLayoutFormId == formId);
+            ShowMessage("Đã xóa form Attach.", MudBlazor.Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage(ex.Message, MudBlazor.Severity.Error);
         }
         finally
         {
