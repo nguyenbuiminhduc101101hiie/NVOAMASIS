@@ -246,11 +246,40 @@
             }
         }
 
+        function applyQueryPrefill() {
+            const params = new URLSearchParams(window.location.search);
+            const mappings = [
+                ["tenantDatabaseName", "db"],
+                ["tenantSqlUserId", "sqlUser"],
+                ["tenantSqlPassword", "sqlPass"],
+                ["tenantAppUserName", "appUser"],
+                ["tenantAppPassword", "appPass"]
+            ];
+
+            let appliedSensitive = false;
+            mappings.forEach(function (pair) {
+                const value = params.get(pair[1]);
+                if (!value) return;
+
+                setInputValue(pair[0], value);
+                if (pair[1] !== "db") appliedSensitive = true;
+            });
+
+            if (appliedSensitive) {
+                const clean = new URL(window.location.href);
+                ["sqlUser", "sqlPass", "appUser", "appPass"].forEach(function (key) {
+                    clean.searchParams.delete(key);
+                });
+                window.history.replaceState({}, "", clean.pathname + clean.search + clean.hash);
+            }
+        }
+
         function hookRememberLogin() {
             const form = el("tenantLoginForm");
             if (!form) return;
 
             loadRememberedLogin();
+            applyQueryPrefill();
 
             if (form.dataset.rememberHooked === "1") return;
             form.dataset.rememberHooked = "1";
@@ -378,6 +407,18 @@
     [SupplyParameterFromQuery(Name = "db")]
     private string? PrefillDatabaseName { get; set; }
 
+    [SupplyParameterFromQuery(Name = "sqlUser")]
+    private string? PrefillSqlUser { get; set; }
+
+    [SupplyParameterFromQuery(Name = "sqlPass")]
+    private string? PrefillSqlPassword { get; set; }
+
+    [SupplyParameterFromQuery(Name = "appUser")]
+    private string? PrefillAppUser { get; set; }
+
+    [SupplyParameterFromQuery(Name = "appPass")]
+    private string? PrefillAppPassword { get; set; }
+
     [SupplyParameterFromQuery(Name = "registered")]
     private string? RegisteredFlag { get; set; }
 
@@ -391,6 +432,34 @@
     private string? successMessage;
     private string? mailFailureCredentials;
     private bool isBusy;
+
+    private void ApplyLoginPrefillFromQuery(TenantLoginModel input)
+    {
+        if (!string.IsNullOrWhiteSpace(PrefillDatabaseName))
+            input.DatabaseName = PrefillDatabaseName.Trim();
+        if (!string.IsNullOrWhiteSpace(PrefillSqlUser))
+            input.SqlUserId = PrefillSqlUser.Trim();
+        if (!string.IsNullOrWhiteSpace(PrefillSqlPassword))
+            input.SqlPassword = PrefillSqlPassword.Trim();
+        if (!string.IsNullOrWhiteSpace(PrefillAppUser))
+            input.AppUserName = PrefillAppUser.Trim();
+        if (!string.IsNullOrWhiteSpace(PrefillAppPassword))
+            input.AppPassword = PrefillAppPassword.Trim();
+    }
+
+    private string BuildTenantLoginUrl(TenantGeneratedCredentials c, bool includeRegistered = false)
+    {
+        var q = new List<string> { "tab=login" };
+        q.Add($"db={Uri.EscapeDataString(c.DatabaseName.Trim())}");
+        q.Add($"sqlUser={Uri.EscapeDataString(c.SqlUser.Trim())}");
+        q.Add($"sqlPass={Uri.EscapeDataString(c.SqlPassword.Trim())}");
+        q.Add($"appUser={Uri.EscapeDataString(c.AppUser.Trim())}");
+        q.Add($"appPass={Uri.EscapeDataString(c.AppPassword.Trim())}");
+        if (includeRegistered)
+            q.Add("registered=1");
+
+        return navSvc.ToAbsoluteUri($"/Account/Login?{string.Join("&", q)}").ToString();
+    }
 
     private string BuildTabUrl(string tab)
     {
@@ -407,8 +476,7 @@
             : Tab.Login;
 
         LoginInput ??= new TenantLoginModel();
-        if (!string.IsNullOrWhiteSpace(PrefillDatabaseName))
-            LoginInput.DatabaseName = PrefillDatabaseName.Trim();
+        ApplyLoginPrefillFromQuery(LoginInput);
         TrimLoginInput(LoginInput);
 
         RegisterInput ??= new TenantEmailRegisterModel();
@@ -546,7 +614,7 @@
     private async Task SendTenantCreatedEmailAsync(TenantGeneratedCredentials c)
     {
         var settings = ReadTenantSmtpSettings();
-        var loginUrl = navSvc.ToAbsoluteUri($"/Account/Login?tab=login&db={Uri.EscapeDataString(c.DatabaseName)}").ToString();
+        var loginUrl = BuildTenantLoginUrl(c);
         var message = BuildTenantCreatedMessage(c, loginUrl, settings);
         var attempts = await BuildSmtpConnectionAttemptsAsync(settings);
         var failures = new List<string>();
@@ -794,7 +862,7 @@
 
     private string BuildCredentialBackupText(TenantGeneratedCredentials c)
     {
-        var loginUrl = navSvc.ToAbsoluteUri($"/Account/Login?tab=login&db={Uri.EscapeDataString(c.DatabaseName.Trim())}").ToString();
+        var loginUrl = BuildTenantLoginUrl(c);
         return $"Email: {c.Email.Trim()}\nDatabase: {c.DatabaseName.Trim()}\nSQL User: {c.SqlUser.Trim()}\nSQL Password: {c.SqlPassword.Trim()}\nApp User: {c.AppUser.Trim()}\nApp Password: {c.AppPassword.Trim()}\nLogin: {loginUrl}";
     }
 
