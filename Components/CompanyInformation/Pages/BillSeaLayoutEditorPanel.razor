@@ -2,7 +2,7 @@
 @using System.Xml.Linq
 @using NVOAMASIS.Models
 @using NVOAMASIS.Services
-@inject BillSeaReportTemplateService TemplateService
+@inject BillSeaLayoutFormService FormService
 @inject SharedServices ssv
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
@@ -29,8 +29,8 @@
                Color="Color.Warning"
                Variant="Variant.Outlined"
                StartIcon="@Icons.Material.Filled.Restore"
-               Disabled="_loading || !_usesCustomTemplate">
-        Khôi phục mặc định
+               Disabled="_loading || (!IsAttachMode && !_usesCustomTemplate)">
+        @(IsAttachMode ? "Tạo lại Attach" : "Khôi phục mặc định")
     </MudButton>
     <MudButton OnClick="UndoLastChange"
                Size="Size.Small"
@@ -103,16 +103,18 @@
 
 <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
     <MudText Typo="Typo.body2" Color="Color.Secondary">
-        Layout được lưu riêng theo database công ty đang đăng nhập. File @ReportFileName trong project chỉ là template mặc định.
-        @if (_usesCustomTemplate)
+        @if (IsAttachMode)
         {
-            <span> Đang dùng <b>bản tùy chỉnh</b> của công ty.</span>
+            <span>Form <b>Attach</b> của <b>@TemplateName</b> — 2 page (page 1 từ form chính, page 2 từ BillSea_NVOCC_Att_1.mrt.bak).</span>
         }
         else
         {
-            <span> Đang dùng <b>template mặc định</b>.</span>
+            <span>Layout được lưu theo từng form Bill trong database công ty. Form <b>@TemplateName</b> tạo từ template gốc BillSea_NVOCC.mrt.</span>
         }
-        Bấm Line ngang / Line dọc / Label text rồi <b>click lên canvas</b> để đặt đúng vị trí (bấm lại nút đó hoặc Esc để hủy). Giữ Ctrl + click để chọn nhiều phần tử.
+        @if (_usesCustomTemplate) { <span> Đang dùng <b>bản đã chỉnh</b>.</span> }
+        else if (!IsAttachMode) { <span> Đang dùng <b>nội dung gốc</b>.</span> }
+        else { <span> Đang dùng <b>bản Attach mặc định</b>.</span> }
+        Bấm Line ngang / Line dọc / Label text rồi click lên canvas để đặt. Giữ Ctrl + click để chọn nhiều phần tử.
     </MudText>
 </MudPaper>
 
@@ -314,9 +316,11 @@
 </MudPaper>
 
 @code {
-    [Parameter] public string ReportFileName { get; set; } = string.Empty;
+    [Parameter] public Guid TemplateId { get; set; }
+    [Parameter] public string TemplateName { get; set; } = string.Empty;
     [Parameter] public string UserName { get; set; } = string.Empty;
     [Parameter] public byte[]? FormBillSeaLogo { get; set; }
+    [Parameter] public bool IsAttachMode { get; set; }
 
     const double PreviewWidthPx = 900;
     string? _logoDataUrl;
@@ -427,15 +431,18 @@
         try
         {
             _loading = true;
-            if (!BillSeaReportTemplateNames.IsSupported(ReportFileName))
+            if (TemplateId == Guid.Empty)
             {
-                ShowMessage($"Report {ReportFileName} chưa được hỗ trợ lưu theo công ty.", MudBlazor.Severity.Error);
+                ShowMessage("Chưa chọn form Bill Sea.", MudBlazor.Severity.Warning);
                 return;
             }
 
-            var doc = await TemplateService.LoadTemplateDocumentAsync(ReportFileName);
-            var templateInfo = await TemplateService.GetTemplateInfoAsync(ReportFileName);
-            _usesCustomTemplate = templateInfo.UsesCustomTemplate;
+            var doc = IsAttachMode
+                ? await FormService.LoadAttachFormDocumentAsync(TemplateId)
+                : await FormService.LoadFormDocumentAsync(TemplateId);
+            _usesCustomTemplate = IsAttachMode
+                ? await FormService.IsAttachFormCustomizedAsync(TemplateId)
+                : await FormService.IsFormCustomizedAsync(TemplateId);
 
             _pages = BillSeaLayoutMrtHelper.LoadPages(doc);
             _selectedPageName = _pages.FirstOrDefault()?.PageName ?? string.Empty;
@@ -456,7 +463,7 @@
             CancelPlacement();
 
             var totalItems = _pages.Sum(p => p.Elements.Count);
-            var source = _usesCustomTemplate ? "bản tùy chỉnh công ty" : "template mặc định";
+            var source = _usesCustomTemplate ? "bản tùy chỉnh công ty" : (IsAttachMode ? "bản Attach mặc định" : "template mặc định");
             ShowMessage($"Đã tải {totalItems} phần tử từ {source}.", MudBlazor.Severity.Success);
         }
         catch (Exception ex)
@@ -480,9 +487,9 @@
             }
 
             _loading = true;
-            if (!BillSeaReportTemplateNames.IsSupported(ReportFileName))
+            if (TemplateId == Guid.Empty)
             {
-                ShowMessage($"Report {ReportFileName} chưa được hỗ trợ lưu theo công ty.", MudBlazor.Severity.Error);
+                ShowMessage("Chưa chọn form Bill Sea.", MudBlazor.Severity.Warning);
                 return;
             }
 
@@ -492,11 +499,16 @@
                 return;
             }
 
-            var doc = await TemplateService.LoadTemplateDocumentAsync(ReportFileName);
+            var doc = IsAttachMode
+                ? await FormService.LoadAttachFormDocumentAsync(TemplateId)
+                : await FormService.LoadFormDocumentAsync(TemplateId);
             var updated = BillSeaLayoutMrtHelper.SavePages(doc, _pages);
-            await TemplateService.SaveTemplateDocumentAsync(ReportFileName, doc);
+            if (IsAttachMode)
+                await FormService.SaveAttachFormDocumentAsync(TemplateId, doc);
+            else
+                await FormService.SaveFormDocumentAsync(TemplateId, doc);
             _usesCustomTemplate = true;
-            ShowMessage($"Đã lưu {updated} thay đổi vào layout riêng của công ty ({ReportFileName}).", MudBlazor.Severity.Success);
+            ShowMessage($"Đã lưu {updated} thay đổi vào form {(IsAttachMode ? "Attach" : "")} '{TemplateName}'.", MudBlazor.Severity.Success);
         }
         catch (Exception ex)
         {
@@ -519,19 +531,26 @@
             }
 
             var confirmed = await DialogService.ShowMessageBox(
-                "Khôi phục mặc định",
-                $"Bạn có chắc muốn khôi phục {ReportFileName} về template gốc trong wwwroot/Reports?\n\nBản layout riêng của công ty trong database sẽ bị xóa.",
-                yesText: "Khôi phục",
+                IsAttachMode ? "Tạo lại form Attach" : "Khôi phục mặc định",
+                IsAttachMode
+                    ? $"Bạn có chắc muốn tạo lại form Attach của '{TemplateName}' từ form chính hiện tại?\n\nMọi chỉnh sửa trên form Attach sẽ bị ghi đè."
+                    : $"Bạn có chắc muốn khôi phục form '{TemplateName}' về template gốc BillSea_NVOCC.mrt?\n\nMọi chỉnh sửa trên form này sẽ bị ghi đè.",
+                yesText: IsAttachMode ? "Tạo lại" : "Khôi phục",
                 cancelText: "Hủy");
 
             if (confirmed != true)
                 return;
 
             _loading = true;
-            await TemplateService.ResetToDefaultAsync(ReportFileName);
+            if (IsAttachMode)
+                await FormService.ResetAttachFormToDefaultAsync(TemplateId);
+            else
+                await FormService.ResetFormToDefaultAsync(TemplateId);
             _usesCustomTemplate = false;
             await LoadLayout();
-            ShowMessage($"Đã khôi phục {ReportFileName} về template mặc định.", MudBlazor.Severity.Info);
+            ShowMessage(IsAttachMode
+                ? $"Đã tạo lại form Attach của '{TemplateName}'."
+                : $"Đã khôi phục form '{TemplateName}' về template mặc định.", MudBlazor.Severity.Info);
         }
         catch (Exception ex)
         {

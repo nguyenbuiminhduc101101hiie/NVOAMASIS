@@ -131,7 +131,7 @@ builder.Services.AddScoped<QuotationService>();
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<FontService>();
 builder.Services.AddScoped<GlobalServices>();
-builder.Services.AddScoped<BillSeaReportTemplateService>();
+builder.Services.AddScoped<BillSeaLayoutFormService>();
 builder.Services.AddScoped<ProductPriceServices>();
 builder.Services.AddScoped<LocalChargesServices>();
 builder.Services.AddScoped<LenhDieuXeServices>();

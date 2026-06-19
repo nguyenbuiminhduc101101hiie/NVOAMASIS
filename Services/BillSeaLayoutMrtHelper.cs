@@ -444,11 +444,21 @@ namespace NVOAMASIS.Services
             string.Equals(GetComponentType(node), "Image", StringComparison.OrdinalIgnoreCase)
             || node.Name.LocalName.StartsWith("Image", StringComparison.OrdinalIgnoreCase);
 
-        private static bool IsTextNode(XElement node) =>
-            !IsImageNode(node)
-            && node.Name.LocalName.StartsWith("Text", StringComparison.OrdinalIgnoreCase)
-            && node.Element("ClientRectangle") is not null
-            && node.Element("Text") is not null;
+        private static bool IsTextNode(XElement node)
+        {
+            if (IsImageNode(node))
+                return false;
+
+            if (node.Element("ClientRectangle") is null || node.Element("Text") is null)
+                return false;
+
+            if (string.Equals(GetComponentType(node), "Text", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var localName = node.Name.LocalName;
+            return localName.StartsWith("Text", StringComparison.OrdinalIgnoreCase)
+                || localName.StartsWith("Label", StringComparison.OrdinalIgnoreCase);
+        }
 
         private static string GetImageDisplayLabel(string name, XElement node)
         {

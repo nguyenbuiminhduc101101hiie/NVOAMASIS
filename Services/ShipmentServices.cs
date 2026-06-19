@@ -33,7 +33,7 @@ using System.Linq;
 
 namespace NVOAMASIS.Services
 {
-    public class ShipmentService(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv, SupportServices supsv, HistoryLogService HistoryLogService, IDbContextFactory<AppDbContext> _dbFactory, ITenantContext _tenantContext, BillSeaReportTemplateService billSeaReportTemplateService)
+    public class ShipmentService(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv, SupportServices supsv, HistoryLogService HistoryLogService, IDbContextFactory<AppDbContext> _dbFactory, ITenantContext _tenantContext, BillSeaLayoutFormService billSeaLayoutFormService)
     {
         public async Task<List<M_Job>> GetListJobByMBLs(List<M_MBL> listdata)
         {
@@ -2068,13 +2068,28 @@ namespace NVOAMASIS.Services
         /// <param name="showPreCarriage">true = show vessel-voy in "Pre-Carriage"; false = show in "Vessel & Voy No."</param>
         /// <param name="attach">true = export attached page template</param>
         /// <param name="isOriginal">true = Original (không logo); false = Draft (có logo)</param>
-        public async Task<BoolandMessReponse> ExportBillSea(Guid id, bool showPreCarriage = true, bool attach = false, bool isOriginal = false)
+        public async Task<BoolandMessReponse> ExportBillSea(Guid id, bool showPreCarriage = true, bool attach = false, bool isOriginal = false, Guid? layoutFormId = null)
         {
             try
             {
                 var report = new StiReport();
-                var reportName = attach ? BillSeaReportTemplateNames.Attach : BillSeaReportTemplateNames.Main;
-                var templateBytes = await billSeaReportTemplateService.GetTemplateBytesAsync(reportName);
+                byte[] templateBytes;
+                if (attach)
+                {
+                    if (layoutFormId is Guid attachFormId && attachFormId != Guid.Empty)
+                        templateBytes = await billSeaLayoutFormService.GetAttachFormBytesAsync(attachFormId);
+                    else
+                        templateBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(BillSeaReportTemplateNames.Attach);
+                }
+                else if (layoutFormId is Guid formId && formId != Guid.Empty)
+                {
+                    templateBytes = await billSeaLayoutFormService.GetFormBytesAsync(formId);
+                }
+                else
+                {
+                    templateBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(BillSeaReportTemplateNames.Main);
+                }
+
                 var connectionString = ResolveReportConnectionString();
                 var companyLogo = await GetCompanyLogoAsync();
                 var companyBillSeaForm = await GetCompanyBillSeaFormAsync();
