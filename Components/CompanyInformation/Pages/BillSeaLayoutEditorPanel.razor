@@ -73,6 +73,14 @@
                Disabled="_loading || !HasDeletableSelection()">
         Xóa đã chọn
     </MudButton>
+    <MudButton OnClick="ToggleCanvasImages"
+               Size="Size.Small"
+               Color="@(_showCanvasImages ? Color.Primary : Color.Default)"
+               Variant="@(_showCanvasImages ? Variant.Filled : Variant.Outlined)"
+               StartIcon="@(_showCanvasImages ? Icons.Material.Filled.Visibility : Icons.Material.Filled.VisibilityOff)"
+               Disabled="_loading || CurrentPage is null">
+        @(_showCanvasImages ? "Ẩn ảnh" : "Hiện ảnh")
+    </MudButton>
     @if (_pages.Count > 1)
     {
         <MudSelect T="string"
@@ -99,7 +107,7 @@
 
 <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
     <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
-        <MudText Typo="Typo.subtitle2"><b>Logo form Bill Sea</b></MudText>
+        <MudText Typo="Typo.subtitle2"><b>@(FormKind == BillLayoutFormKind.Air ? "Logo (CompanyLogo)" : "Logo form")</b></MudText>
         @if (_logoDataUrl is not null)
         {
             <MudImage Src="@_logoDataUrl" Alt="Logo form" Style="max-height:72px; max-width:180px;" ObjectFit="ObjectFit.Contain" />
@@ -140,6 +148,52 @@
     </MudStack>
 </MudPaper>
 
+@if (FormKind == BillLayoutFormKind.Air)
+{
+    <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+        <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            <MudText Typo="Typo.subtitle2"><b>Form Bill Air (Image1)</b></MudText>
+            @if (_formBillAirDataUrl is not null)
+            {
+                <MudImage Src="@_formBillAirDataUrl" Alt="Form Bill Air" Style="max-height:72px; max-width:180px;" ObjectFit="ObjectFit.Contain" />
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Chưa có nền form</MudText>
+            }
+            <MudFileUpload T="IBrowserFile" Accept=".png,.jpg,.jpeg,.gif,.webp" FilesChanged="OnFormBillAirFileChanged">
+                <ButtonTemplate Context="btnCtx">
+                    <MudButton HtmlTag="label"
+                               for="@btnCtx"
+                               Size="Size.Small"
+                               Variant="Variant.Outlined"
+                               Color="Color.Secondary"
+                               StartIcon="@Icons.Material.Filled.Description"
+                               Disabled="_loading || TemplateId == Guid.Empty">
+                        Chọn Form Bill Air
+                    </MudButton>
+                </ButtonTemplate>
+            </MudFileUpload>
+            @if (_hasCustomFormBillAir)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" OnClick="ClearFormBillAir" Disabled="_loading">
+                    Xóa Form Bill Air
+                </MudButton>
+            }
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                @if (_hasCustomFormBillAir)
+                {
+                    <span>Đang dùng <b>Form Bill Air riêng</b> của form <b>@TemplateName</b> (thay Image1).</span>
+                }
+                else
+                {
+                    <span>Chưa chọn riêng — preview/export dùng <b>Image1</b> mặc định từ <b>BillAir.mrt</b>.</span>
+                }
+            </MudText>
+        </MudStack>
+    </MudPaper>
+}
+
 @if (_loading)
 {
     <MudProgressLinear Indeterminate="true" Class="mx-4" />
@@ -149,16 +203,17 @@
     <MudText Typo="Typo.body2" Color="Color.Secondary">
         @if (IsAttachMode)
         {
-            <span>Form <b>Attach</b> của <b>@TemplateName</b> — 2 page (page 1 từ form chính, page 2 từ BillSea_NVOCC_Att_1.mrt.bak).</span>
+            <span>Form <b>Attach</b> của <b>@TemplateName</b> (Sea) — 2 page.</span>
         }
         else
         {
-            <span>Layout được lưu theo từng form Bill trong database công ty. Form <b>@TemplateName</b> tạo từ template gốc BillSea_NVOCC.mrt.</span>
+            <span>Layout form <b>@BillLayoutFormKindHelper.GetDisplayName(FormKind)</b> <b>@TemplateName</b> từ template <b>@GetSourceTemplateName()</b>.</span>
         }
         @if (_usesCustomTemplate) { <span> Đang dùng <b>bản đã chỉnh</b>.</span> }
         else if (!IsAttachMode) { <span> Đang dùng <b>nội dung gốc</b>.</span> }
         else { <span> Đang dùng <b>bản Attach mặc định</b>.</span> }
         Bấm Line ngang / Line dọc / Label text rồi click lên canvas để đặt. Giữ Ctrl + click để chọn nhiều phần tử.
+        Bấm <b>Hiện ảnh</b> để xem logo/nền form khi căn chỉnh; <b>Ẩn ảnh</b> để di chuyển các phần tử dễ hơn.
     </MudText>
 </MudPaper>
 
@@ -259,9 +314,32 @@
                 </MudText>
             }
 
+            @if (_showCanvasImages)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Style="position:absolute;top:4px;left:8px;z-index:120;">
+                    Đang hiện ảnh nền/logo để so sánh
+                </MudText>
+            }
+
             <div style="@GetElementsLayerStyle()">
+            @if (_showCanvasImages)
+            {
+                var backgroundImage = GetFormBackgroundImage();
+                if (backgroundImage is not null && GetImagePreviewUrl(backgroundImage) is { } backgroundUrl)
+                {
+                    <div style="@GetBackgroundImageLayerStyle(backgroundImage)">
+                        <img src="@backgroundUrl" alt="Form Bill" style="width:100%;height:100%;object-fit:fill;pointer-events:none;user-select:none;" />
+                    </div>
+                }
+            }
+
             @foreach (var item in SortedElements)
             {
+                @if (IsFormBackgroundImage(item))
+                {
+                    continue;
+                }
+
                 @if (item.Kind is BillSeaElementKind.HorizontalLine or BillSeaElementKind.VerticalLine)
                 {
                     <div style="@GetLineContainerStyle(item)"
@@ -284,12 +362,13 @@
                 }
                 else if (item.Kind == BillSeaElementKind.Image)
                 {
+                    var previewUrl = _showCanvasImages ? GetImagePreviewUrl(item) : null;
                     <div style="@GetImageBoxStyle(item)"
                          @onmousedown="(e => OnElementMouseDown(item, e))"
                          @onmousedown:preventDefault="true">
-                        @if (_logoDataUrl is not null)
+                        @if (previewUrl is not null)
                         {
-                            <img src="@_logoDataUrl" alt="@item.Name" style="width:100%;height:100%;object-fit:contain;pointer-events:none;" />
+                            <img src="@previewUrl" alt="@item.Name" style="width:100%;height:100%;object-fit:contain;pointer-events:none;" />
                         }
                         else
                         {
@@ -362,14 +441,20 @@
 @code {
     [Parameter] public Guid TemplateId { get; set; }
     [Parameter] public string TemplateName { get; set; } = string.Empty;
+    [Parameter] public BillLayoutFormKind FormKind { get; set; } = BillLayoutFormKind.Sea;
     [Parameter] public string UserName { get; set; } = string.Empty;
     [Parameter] public bool IsAttachMode { get; set; }
 
     const double PreviewWidthPx = 900;
     const long MaxLogoBytes = 2 * 1024 * 1024;
+    const long MaxFormBillAirBytes = 5 * 1024 * 1024;
     string? _logoDataUrl;
+    string? _formBillAirDataUrl;
     byte[]? _companyLogoBytes;
+    byte[]? _defaultBillAirImage1Bytes;
     bool _hasCustomFormLogo;
+    bool _hasCustomFormBillAir;
+    bool _showCanvasImages;
     bool _usesCustomTemplate;
     bool _loading;
     string _keyword = string.Empty;
@@ -462,7 +547,102 @@
     IEnumerable<BillSeaDesignElement> SortedElements =>
         FilteredElements.OrderBy(GetElementZIndex);
 
-    protected override async Task OnParametersSetAsync() => await LoadFormLogoAsync();
+    string GetSourceTemplateName() =>
+        BillLayoutFormKindHelper.GetDefaultTemplateFile(FormKind);
+
+    Guid _lastAssetsTemplateId = Guid.Empty;
+    readonly SemaphoreSlim _assetsLock = new(1, 1);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (TemplateId == Guid.Empty || TemplateId == _lastAssetsTemplateId)
+            return;
+
+        _lastAssetsTemplateId = TemplateId;
+        await LoadFormAssetsAsync();
+    }
+
+    void ToggleCanvasImages() => _showCanvasImages = !_showCanvasImages;
+
+    static bool IsFormBackgroundImage(BillSeaDesignElement item) =>
+        item.Kind == BillSeaElementKind.Image
+        && string.Equals(item.Name, "Image1", StringComparison.OrdinalIgnoreCase);
+
+    BillSeaDesignElement? GetFormBackgroundImage() =>
+        CurrentPage?.Elements.FirstOrDefault(IsFormBackgroundImage);
+
+    string? GetImagePreviewUrl(BillSeaDesignElement item)
+    {
+        if (string.Equals(item.Name, "Image1", StringComparison.OrdinalIgnoreCase))
+        {
+            return FormKind == BillLayoutFormKind.Air
+                ? _formBillAirDataUrl
+                : _logoDataUrl;
+        }
+
+        if (string.Equals(item.Name, "CompanyLogo", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.Name, "Text1", StringComparison.OrdinalIgnoreCase))
+        {
+            return _logoDataUrl;
+        }
+
+        return null;
+    }
+
+    async Task LoadFormAssetsAsync()
+    {
+        await _assetsLock.WaitAsync();
+        try
+        {
+            await LoadFormAssetsCoreAsync();
+        }
+        finally
+        {
+            _assetsLock.Release();
+        }
+    }
+
+    async Task LoadFormAssetsCoreAsync()
+    {
+        if (TemplateId == Guid.Empty)
+        {
+            _hasCustomFormLogo = false;
+            _hasCustomFormBillAir = false;
+            _logoDataUrl = null;
+            _formBillAirDataUrl = null;
+            return;
+        }
+
+        try
+        {
+            _companyLogoBytes ??= await FormService.GetCompanyLogoAsync();
+
+            _hasCustomFormLogo = await FormService.HasCustomFormLogoAsync(TemplateId);
+            var formLogo = await FormService.GetFormLogoAsync(TemplateId);
+            _logoDataUrl = BuildLogoDataUrl(_hasCustomFormLogo ? formLogo : _companyLogoBytes);
+
+            if (FormKind == BillLayoutFormKind.Air)
+            {
+                _defaultBillAirImage1Bytes ??= await FormService.GetDefaultBillAirImage1Async();
+                _hasCustomFormBillAir = await FormService.HasCustomFormBillAirAsync(TemplateId);
+                var formBillAir = await FormService.GetFormBillAirAsync(TemplateId);
+                _formBillAirDataUrl = BuildLogoDataUrl(_hasCustomFormBillAir ? formBillAir : _defaultBillAirImage1Bytes);
+            }
+            else
+            {
+                _hasCustomFormBillAir = false;
+                _formBillAirDataUrl = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            _hasCustomFormLogo = false;
+            _hasCustomFormBillAir = false;
+            _logoDataUrl = BuildLogoDataUrl(_companyLogoBytes);
+            _formBillAirDataUrl = BuildLogoDataUrl(_defaultBillAirImage1Bytes);
+            ShowMessage($"Không tải được logo/form bill: {ex.Message}", MudBlazor.Severity.Warning);
+        }
+    }
 
     static string? BuildLogoDataUrl(byte[]? logo)
     {
@@ -485,27 +665,68 @@
         return "image/png";
     }
 
-    async Task LoadFormLogoAsync()
+    async Task OnFormBillAirFileChanged(IBrowserFile? file)
     {
-        if (TemplateId == Guid.Empty)
+        if (file is null || TemplateId == Guid.Empty || FormKind != BillLayoutFormKind.Air)
+            return;
+
+        if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
         {
-            _hasCustomFormLogo = false;
-            _logoDataUrl = null;
+            ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
             return;
         }
 
         try
         {
-            _companyLogoBytes ??= await FormService.GetCompanyLogoAsync();
-            _hasCustomFormLogo = await FormService.HasCustomFormLogoAsync(TemplateId);
-            var formLogo = await FormService.GetFormLogoAsync(TemplateId);
-            _logoDataUrl = BuildLogoDataUrl(_hasCustomFormLogo ? formLogo : _companyLogoBytes);
+            if (file.Size > MaxFormBillAirBytes)
+            {
+                ShowMessage("Form Bill Air tối đa 5MB.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _loading = true;
+            await using var stream = file.OpenReadStream(MaxFormBillAirBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            await FormService.SaveFormBillAirAsync(TemplateId, ms.ToArray());
+            await LoadFormAssetsAsync();
+            ShowMessage($"Đã lưu Form Bill Air cho form '{TemplateName}'.", MudBlazor.Severity.Success);
         }
         catch (Exception ex)
         {
-            _hasCustomFormLogo = false;
-            _logoDataUrl = BuildLogoDataUrl(_companyLogoBytes);
-            ShowMessage($"Không tải được logo form: {ex.Message}", MudBlazor.Severity.Warning);
+            ShowMessage($"Không lưu được Form Bill Air: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task ClearFormBillAir()
+    {
+        if (TemplateId == Guid.Empty || FormKind != BillLayoutFormKind.Air)
+            return;
+
+        if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
+        {
+            ShowMessage("You have not access to edit", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _loading = true;
+            await FormService.ClearFormBillAirAsync(TemplateId);
+            await LoadFormAssetsAsync();
+            ShowMessage("Đã xóa Form Bill Air riêng. Form sẽ dùng Image1 mặc định từ BillAir.mrt.", MudBlazor.Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Không xóa được Form Bill Air: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
         }
     }
 
@@ -534,7 +755,7 @@
             await stream.CopyToAsync(ms);
             var logoBytes = ms.ToArray();
             await FormService.SaveFormLogoAsync(TemplateId, logoBytes);
-            await LoadFormLogoAsync();
+            await LoadFormAssetsAsync();
             ShowMessage($"Đã lưu logo riêng cho form '{TemplateName}'.", MudBlazor.Severity.Success);
         }
         catch (Exception ex)
@@ -562,7 +783,7 @@
         {
             _loading = true;
             await FormService.ClearFormLogoAsync(TemplateId);
-            await LoadFormLogoAsync();
+            await LoadFormAssetsAsync();
             ShowMessage("Đã xóa logo riêng. Form sẽ dùng logo công ty.", MudBlazor.Severity.Info);
         }
         catch (Exception ex)
@@ -611,7 +832,7 @@
             _sessionAddedNames.Clear();
             CancelPlacement();
 
-            await LoadFormLogoAsync();
+            await LoadFormAssetsAsync();
 
             var totalItems = _pages.Sum(p => p.Elements.Count);
             var source = _usesCustomTemplate ? "bản tùy chỉnh công ty" : (IsAttachMode ? "bản Attach mặc định" : "template mặc định");
@@ -685,7 +906,7 @@
                 IsAttachMode ? "Tạo lại form Attach" : "Khôi phục mặc định",
                 IsAttachMode
                     ? $"Bạn có chắc muốn tạo lại form Attach của '{TemplateName}' từ form chính hiện tại?\n\nMọi chỉnh sửa trên form Attach sẽ bị ghi đè."
-                    : $"Bạn có chắc muốn khôi phục form '{TemplateName}' về template gốc BillSea_NVOCC.mrt?\n\nMọi chỉnh sửa trên form này sẽ bị ghi đè.",
+                    : $"Bạn có chắc muốn khôi phục form '{TemplateName}' về template gốc {GetSourceTemplateName()}?\n\nMọi chỉnh sửa trên form này sẽ bị ghi đè.",
                 yesText: IsAttachMode ? "Tạo lại" : "Khôi phục",
                 cancelText: "Hủy");
 
@@ -1191,6 +1412,14 @@
             _ => baseStyle + "bottom:-4px;right:-4px;cursor:nwse-resize;"
         };
     }
+
+    string GetBackgroundImageLayerStyle(BillSeaDesignElement item) =>
+        "position:absolute;" +
+        $"left:{(item.Left * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+        $"top:{(item.Top * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+        $"width:{(item.Width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+        $"height:{(item.Height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+        "z-index:1;pointer-events:none;overflow:hidden;";
 
     string GetImageBoxStyle(BillSeaDesignElement item)
     {
