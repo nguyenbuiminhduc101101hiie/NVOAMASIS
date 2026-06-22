@@ -1,0 +1,596 @@
+@page "/yard/8-3-7-sp-itc-import"
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using OfficeOpenXml
+@using System.Globalization
+@using System.Security.Cryptography
+@using System.Text
+@using NVOAMASIS.Models
+@using NVOAMASIS.Data
+@inject AppDbContext Db
+@inject ISnackbar Snackbar
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+        <div>
+            <MudText Typo="Typo.h5">8.3.7 - Import SP-ITC Yard</MudText>
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                Đọc 4 sheet: IN-OUT, STUFF-UNSTUFF, YARD-FCL, YARD-MTY. Bỏ qua Summary. Import vào dbo.M_8_3_7_YARD_SP_ITC.
+            </MudText>
+        </div>
+
+        <MudChip T="string" Color="Color.Primary" Variant="Variant.Filled">DEPOT: SP-ITC</MudChip>
+    </MudStack>
+
+    <MudDivider Class="mb-4" />
+
+    <MudGrid Class="mb-3">
+        <MudItem xs="12" md="6">
+            <InputFile OnChange="PreviewExcel" accept=".xlsx,.xls" />
+        </MudItem>
+        <MudItem xs="12" md="6" Class="d-flex justify-end gap-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ClearPreview" Disabled="@(!PreviewRows.Any())">
+                Clear
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveImport" Disabled="@(IsSaving || !PreviewRows.Any())">
+                @if (IsSaving)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                }
+                Save Import
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    <MudGrid Class="mb-4">
+        <MudItem xs="6" md="2">
+            <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.caption">Preview rows</MudText>
+                <MudText Typo="Typo.h6">@PreviewRows.Count</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.caption">New rows</MudText>
+                <MudText Typo="Typo.h6" Color="Color.Success">@NewRowsCount</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.caption">Duplicate rows</MudText>
+                <MudText Typo="Typo.h6" Color="Color.Warning">@DuplicateRowsCount</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.caption">IN/OUT</MudText>
+                <MudText Typo="Typo.h6">@PreviewRows.Count(x => x.ReportType == "IN_OUT")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.caption">YARD-FCL</MudText>
+                <MudText Typo="Typo.h6">@PreviewRows.Count(x => x.ReportType == "YARD_FCL")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+                <MudText Typo="Typo.caption">YARD-MTY</MudText>
+                <MudText Typo="Typo.h6">@PreviewRows.Count(x => x.ReportType == "YARD_MTY")</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Error" Class="mb-3">@ErrorMessage</MudAlert>
+    }
+
+    @if (PreviewRows.Any())
+    {
+        <MudTable Items="@PreviewRows" Filter="new Func<M_8_3_7_YARD_SP_ITC, bool>(IsVisible)" Dense="true" Hover="true" Bordered="true" Striped="true" FixedHeader="true" Height="560px">
+            <ToolBarContent>
+                <MudText Typo="Typo.subtitle1">Preview SP-ITC Yard Import</MudText>
+                <MudSpacer />
+                <MudTextField @bind-Value="SearchText" Placeholder="Search cont / booking / vessel" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Margin="Margin.Dense" />
+            </ToolBarContent>
+            <HeaderContent>
+                <MudTh>Sheet</MudTh>
+                <MudTh>Row</MudTh>
+                <MudTh>Cont No</MudTh>
+                <MudTh>Type/Size</MudTh>
+                <MudTh>Movement</MudTh>
+                <MudTh>Status</MudTh>
+                <MudTh>Date In</MudTh>
+                <MudTh>Date Out</MudTh>
+                <MudTh>Days</MudTh>
+                <MudTh>Booking/BKBL</MudTh>
+                <MudTh>Vessel</MudTh>
+                <MudTh>Voy In</MudTh>
+                <MudTh>Location</MudTh>
+                <MudTh>Duplicate</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Sheet">@context.SourceSheet</MudTd>
+                <MudTd DataLabel="Row">@context.RowNo</MudTd>
+                <MudTd DataLabel="Cont No">@context.ContrNo</MudTd>
+                <MudTd DataLabel="Type/Size">@(context.ContainerType ?? context.Size)</MudTd>
+                <MudTd DataLabel="Movement">@context.Movement</MudTd>
+                <MudTd DataLabel="Status">@context.Status</MudTd>
+                <MudTd DataLabel="Date In">@FmtDate(context.DateIn ?? context.DateInStuff)</MudTd>
+                <MudTd DataLabel="Date Out">@FmtDate(context.DateOut)</MudTd>
+                <MudTd DataLabel="Days">@context.Days</MudTd>
+                <MudTd DataLabel="Booking/BKBL">@(context.Booking ?? context.BKBLNo)</MudTd>
+                <MudTd DataLabel="Vessel">@(context.Vessel ?? context.VesselVoyage)</MudTd>
+                <MudTd DataLabel="Voy In">@context.VoyIn</MudTd>
+                <MudTd DataLabel="Location">@context.Location</MudTd>
+                <MudTd DataLabel="Duplicate">
+                    @if (ExistingHashes.Contains(context.RowHash ?? string.Empty))
+                    {
+                        <MudChip T="string" Color="Color.Warning" Size="Size.Small">Duplicate</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small">New</MudChip>
+                    }
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText>No rows</MudText>
+            </NoRecordsContent>
+            <PagerContent>
+                <MudTablePager PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
+        </MudTable>
+    }
+</MudPaper>
+
+@code {
+    // IMPORTANT: nếu namespace AppDbContext khác NVOAMASIS.Data thì đổi dòng @using ở trên theo namespace thật trong AppDbContext.cs.
+
+    private readonly List<M_8_3_7_YARD_SP_ITC> PreviewRows = new();
+    private readonly HashSet<string> ExistingHashes = new(StringComparer.OrdinalIgnoreCase);
+    private string? SearchText;
+    private string? ErrorMessage;
+    private bool IsSaving;
+
+    private int DuplicateRowsCount => PreviewRows.Count(x => !string.IsNullOrWhiteSpace(x.RowHash) && ExistingHashes.Contains(x.RowHash));
+    private int NewRowsCount => PreviewRows.Count - DuplicateRowsCount;
+
+    private async Task PreviewExcel(InputFileChangeEventArgs e)
+    {
+        ErrorMessage = null;
+        PreviewRows.Clear();
+        ExistingHashes.Clear();
+
+        try
+        {
+            var file = e.File;
+            if (file == null)
+            {
+                return;
+            }
+
+            // EPPlus 5/6/7 license fix. If your project uses EPPlus 8, use:
+            // ExcelPackage.License.SetNonCommercialOrganization("LMS");
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+            await using var ms = new MemoryStream();
+            await file.OpenReadStream(50 * 1024 * 1024).CopyToAsync(ms);
+            ms.Position = 0;
+
+            using var package = new ExcelPackage(ms);
+            var batchNo = $"SPITC-{DateTime.Now:yyyyMMddHHmmss}";
+
+            foreach (var ws in package.Workbook.Worksheets)
+            {
+                var sheetName = (ws.Name ?? string.Empty).Trim().ToUpperInvariant();
+                if (sheetName == "SUMMARY")
+                {
+                    continue;
+                }
+
+                if (sheetName == "IN-OUT")
+                {
+                    ReadInOut(ws, file.Name, batchNo);
+                }
+                else if (sheetName == "STUFF-UNSTUFF")
+                {
+                    ReadStuffUnstuff(ws, file.Name, batchNo);
+                }
+                else if (sheetName == "YARD-FCL")
+                {
+                    ReadYardFcl(ws, file.Name, batchNo);
+                }
+                else if (sheetName == "YARD-MTY")
+                {
+                    ReadYardMty(ws, file.Name, batchNo);
+                }
+            }
+
+            // Remove duplicate rows inside the same uploaded file preview.
+            var distinctRows = PreviewRows
+                .Where(x => !string.IsNullOrWhiteSpace(x.ContrNo))
+                .GroupBy(x => x.RowHash ?? Guid.NewGuid().ToString(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+
+            PreviewRows.Clear();
+            PreviewRows.AddRange(distinctRows);
+
+            await LoadExistingHashes();
+
+            Snackbar.Add($"Preview xong {PreviewRows.Count} dòng. New: {NewRowsCount}, Duplicate: {DuplicateRowsCount}", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            Snackbar.Add($"Import preview lỗi: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task LoadExistingHashes()
+    {
+        ExistingHashes.Clear();
+        var hashes = PreviewRows
+            .Select(x => x.RowHash)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!hashes.Any())
+        {
+            return;
+        }
+
+        var existing = await Db.M_8_3_7_YARD_SP_ITC
+            .AsNoTracking()
+            .Where(x => x.RowHash != null && hashes.Contains(x.RowHash))
+            .Select(x => x.RowHash!)
+            .ToListAsync();
+
+        foreach (var h in existing)
+        {
+            ExistingHashes.Add(h);
+        }
+    }
+
+    private async Task SaveImport()
+    {
+        if (!PreviewRows.Any())
+        {
+            Snackbar.Add("Chưa có dữ liệu preview.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        IsSaving = true;
+        ErrorMessage = null;
+
+        try
+        {
+            await LoadExistingHashes();
+
+            var rowsToSave = PreviewRows
+                .Where(x => !string.IsNullOrWhiteSpace(x.RowHash) && !ExistingHashes.Contains(x.RowHash))
+                .ToList();
+
+            if (!rowsToSave.Any())
+            {
+                Snackbar.Add("Không có dòng mới để import. Toàn bộ đã trùng.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            await Db.M_8_3_7_YARD_SP_ITC.AddRangeAsync(rowsToSave);
+            await Db.SaveChangesAsync();
+
+            Snackbar.Add($"Đã import {rowsToSave.Count} dòng mới vào M_8_3_7_YARD_SP_ITC.", MudBlazor.Severity.Success);
+            await LoadExistingHashes();
+        }
+        catch (DbUpdateException ex)
+        {
+            ErrorMessage = ex.InnerException?.Message ?? ex.Message;
+            Snackbar.Add($"Save lỗi: {ErrorMessage}", MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            Snackbar.Add($"Save lỗi: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
+
+    private void ClearPreview()
+    {
+        PreviewRows.Clear();
+        ExistingHashes.Clear();
+        ErrorMessage = null;
+        SearchText = null;
+    }
+
+    private void ReadInOut(ExcelWorksheet ws, string fileName, string batchNo)
+    {
+        var line = Text(ws, 4, 2); // B4 = JNL
+        var endRow = ws.Dimension?.End.Row ?? 0;
+
+        for (var r = 6; r <= endRow; r++)
+        {
+            var item = NewBase(fileName, batchNo, ws.Name, "IN_OUT", r, line);
+            item.STT = Int(ws, r, 1);
+            item.ContrNo = Text(ws, r, 2);
+            item.DateIn = Date(ws, r, 3);
+            item.DateOut = Date(ws, r, 4);
+            item.ContainerType = Text(ws, r, 5);
+            item.Movement = Text(ws, r, 6);
+            item.Status = Text(ws, r, 7);
+            item.Booking = Text(ws, r, 8);
+            item.Days = Dec(ws, r, 9);
+            item.Vessel = Text(ws, r, 10);
+            item.Shipper = Text(ws, r, 11);
+            item.Remark = Text(ws, r, 12);
+            item.Oper = Text(ws, r, 13);
+            item.Seal = Text(ws, r, 14);
+            item.TruckBarge = Text(ws, r, 15);
+            item.Move = Text(ws, r, 16);
+            item.Vent = Text(ws, r, 17);
+            item.VGM = Dec(ws, r, 18);
+            item.SoXe = Text(ws, r, 19);
+            AddIfValid(item);
+        }
+    }
+
+    private void ReadStuffUnstuff(ExcelWorksheet ws, string fileName, string batchNo)
+    {
+        var lineHeader = Text(ws, 4, 2); // B4 = JNL
+        var endRow = ws.Dimension?.End.Row ?? 0;
+
+        for (var r = 6; r <= endRow; r++)
+        {
+            var item = NewBase(fileName, batchNo, ws.Name, "STUFF_UNSTUFF", r, lineHeader);
+            item.STT = Int(ws, r, 1);
+            item.ContrNo = Text(ws, r, 2);
+            item.Size = Text(ws, r, 3);
+            item.Shipper = Text(ws, r, 4);
+            item.Line = Text(ws, r, 5) ?? lineHeader;
+            item.Seal = Text(ws, r, 6);
+            item.BKBLNo = Text(ws, r, 7);
+            item.FE = Text(ws, r, 8);
+            item.VesselVoyage = Text(ws, r, 9);
+            item.StuffingDate = Date(ws, r, 10);
+            item.UnStuffingDate = Date(ws, r, 11);
+            item.Truck = Text(ws, r, 12);
+            item.Remark = Text(ws, r, 13);
+            item.ImpDays = Dec(ws, r, 14);
+            item.DateIn = Date(ws, r, 15);
+            item.DateOut = Date(ws, r, 16);
+            AddIfValid(item);
+        }
+    }
+
+    private void ReadYardFcl(ExcelWorksheet ws, string fileName, string batchNo)
+    {
+        var line = Text(ws, 4, 2); // B4 = JNL
+        var endRow = ws.Dimension?.End.Row ?? 0;
+
+        for (var r = 6; r <= endRow; r++)
+        {
+            var item = NewBase(fileName, batchNo, ws.Name, "YARD_FCL", r, line);
+            item.STT = Int(ws, r, 1);
+            item.ContrNo = Text(ws, r, 2);
+            item.ContainerType = Text(ws, r, 3);
+            item.Category = Text(ws, r, 4);
+            item.PortCD = Text(ws, r, 5);
+            item.POD = Text(ws, r, 6);
+            item.FPOD = Text(ws, r, 7);
+            item.DateInStuff = Date(ws, r, 8);
+            item.DateIn = item.DateInStuff;
+            item.Status = Text(ws, r, 9);
+            item.Days = Dec(ws, r, 10);
+            item.Location = Text(ws, r, 11);
+            item.Remark = Text(ws, r, 12);
+            item.IO = Text(ws, r, 13);
+            item.BKBLNo = Text(ws, r, 14);
+            item.Vessel = Text(ws, r, 15);
+            item.VoyIn = Text(ws, r, 16);
+            item.VoyOut = Text(ws, r, 17);
+            item.GW = Dec(ws, r, 18);
+            item.VGM = Dec(ws, r, 19);
+            item.CustomsClear = Text(ws, r, 20);
+            AddIfValid(item);
+        }
+    }
+
+    private void ReadYardMty(ExcelWorksheet ws, string fileName, string batchNo)
+    {
+        var line = Text(ws, 4, 2); // B4 = JNL
+        var endRow = ws.Dimension?.End.Row ?? 0;
+
+        for (var r = 6; r <= endRow; r++)
+        {
+            var item = NewBase(fileName, batchNo, ws.Name, "YARD_MTY", r, line);
+            item.STT = Int(ws, r, 1);
+            item.ContrNo = Text(ws, r, 2);
+            item.ContainerType = Text(ws, r, 3);
+            item.Movement = Text(ws, r, 4);
+            item.DateInStuff = Date(ws, r, 5);
+            item.DateIn = item.DateInStuff;
+            item.Status = Text(ws, r, 6);
+            item.Dwell = Text(ws, r, 7);
+            item.TTSC = Text(ws, r, 8);
+            item.Days = Dec(ws, r, 9);
+            item.Location = Text(ws, r, 10);
+            item.Remark = Text(ws, r, 11);
+            item.IO = Text(ws, r, 12);
+            item.FE = Text(ws, r, 13);
+            item.BKBLNo = Text(ws, r, 14);
+            item.Vessel = Text(ws, r, 15);
+            item.VoyIn = Text(ws, r, 16);
+            item.VoyOut = Text(ws, r, 17);
+            item.GW = Dec(ws, r, 18);
+            item.VGM = Dec(ws, r, 19);
+            item.CustomsClear = Text(ws, r, 20);
+            item.AVDM = Text(ws, r, 21);
+            AddIfValid(item);
+        }
+    }
+
+    private M_8_3_7_YARD_SP_ITC NewBase(string fileName, string batchNo, string sheetName, string reportType, int rowNo, string? line)
+    {
+        return new M_8_3_7_YARD_SP_ITC
+        {
+            Id = Guid.NewGuid(),
+            ImportBatchNo = batchNo,
+            ImportFileName = fileName,
+            SourceSheet = sheetName,
+            ReportType = reportType,
+            Depot = "SP-ITC",
+            Line = line,
+            RowNo = rowNo,
+            CreatedAt = DateTime.Now,
+            CreatedBy = "system"
+        };
+    }
+
+    private void AddIfValid(M_8_3_7_YARD_SP_ITC item)
+    {
+        if (string.IsNullOrWhiteSpace(item.ContrNo))
+        {
+            return;
+        }
+
+        var bad = item.ContrNo.Trim().ToUpperInvariant();
+        if (bad.Contains("CONTR NO") || bad.Contains("GRAND TOTAL") || bad == "TOTAL")
+        {
+            return;
+        }
+
+        item.ContrNo = item.ContrNo.Trim().ToUpperInvariant();
+        item.RowHash = MakeHash(item);
+        PreviewRows.Add(item);
+    }
+
+    private static string MakeHash(M_8_3_7_YARD_SP_ITC x)
+    {
+        var raw = string.Join("|", new[]
+        {
+            Norm(x.Depot),
+            Norm(x.SourceSheet),
+            Norm(x.ReportType),
+            Norm(x.ContrNo),
+            Norm(x.ContainerType ?? x.Size),
+            Norm(x.Movement),
+            Norm(x.Status),
+            DateKey(x.DateIn ?? x.DateInStuff),
+            DateKey(x.DateOut),
+            DateKey(x.StuffingDate),
+            DateKey(x.UnStuffingDate),
+            Norm(x.Booking),
+            Norm(x.BKBLNo),
+            Norm(x.Seal),
+            Norm(x.Vessel ?? x.VesselVoyage),
+            Norm(x.VoyIn),
+            Norm(x.VoyOut),
+            Norm(x.Location)
+        });
+
+        using var sha = SHA256.Create();
+        return Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(raw)));
+    }
+
+    private static string Norm(string? value)
+    {
+        return (value ?? string.Empty).Trim().ToUpperInvariant();
+    }
+
+    private static string DateKey(DateTime? value)
+    {
+        return value?.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) ?? string.Empty;
+    }
+
+    private static string? Text(ExcelWorksheet ws, int r, int c)
+    {
+        var text = ws.Cells[r, c].Text?.Trim();
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    private static int? Int(ExcelWorksheet ws, int r, int c)
+    {
+        var text = Text(ws, r, c);
+        if (int.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+        {
+            return value;
+        }
+        return null;
+    }
+
+    private static decimal? Dec(ExcelWorksheet ws, int r, int c)
+    {
+        var text = Text(ws, r, c);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        text = text.Replace(",", string.Empty);
+        if (decimal.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+        {
+            return value;
+        }
+        return null;
+    }
+
+    private static DateTime? Date(ExcelWorksheet ws, int r, int c)
+    {
+        var value = ws.Cells[r, c].Value;
+        if (value == null)
+        {
+            return null;
+        }
+
+        if (value is DateTime dt)
+        {
+            return dt;
+        }
+
+        if (value is double d && d > 20000 && d < 80000)
+        {
+            return DateTime.FromOADate(d);
+        }
+
+        var text = Text(ws, r, c);
+        if (DateTime.TryParse(text, CultureInfo.CurrentCulture, DateTimeStyles.None, out var parsed))
+        {
+            return parsed;
+        }
+
+        if (DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private bool IsVisible(M_8_3_7_YARD_SP_ITC x)
+    {
+        if (string.IsNullOrWhiteSpace(SearchText))
+        {
+            return true;
+        }
+
+        var s = SearchText.Trim();
+        return (x.ContrNo?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.Booking?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.BKBLNo?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.Vessel?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (x.VesselVoyage?.Contains(s, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    private static string FmtDate(DateTime? dt)
+    {
+        return dt?.ToString("dd/MM/yyyy HH:mm") ?? string.Empty;
+    }
+}
