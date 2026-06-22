@@ -6,6 +6,76 @@ namespace NVOAMASIS.Services
 {
     public static class BillSeaLayoutMrtHelper
     {
+        public static List<BillSeaDataSource> LoadDataSources(XDocument doc)
+        {
+            var result = new List<BillSeaDataSource>();
+            var dataSourcesNode = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "DataSources");
+            if (dataSourcesNode is null)
+                return result;
+
+            foreach (var sourceNode in dataSourcesNode.Elements())
+            {
+                var name = (sourceNode.Element("Name")?.Value ?? sourceNode.Name.LocalName)?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                var alias = sourceNode.Element("Alias")?.Value?.Trim();
+                var columnsContainer = sourceNode.Element("Columns");
+                if (columnsContainer is null)
+                    continue;
+
+                var columns = new List<BillSeaDataColumn>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var col in columnsContainer.Elements("value"))
+                {
+                    var raw = col.Value?.Trim();
+                    if (string.IsNullOrWhiteSpace(raw))
+                        continue;
+
+                    var parts = raw.Split(',', StringSplitOptions.TrimEntries);
+                    string columnName;
+                    string dataType;
+
+                    if (parts.Length >= 5 && parts[0].Equals("ORIGINAL", StringComparison.OrdinalIgnoreCase))
+                    {
+                        columnName = parts[1];
+                        dataType = parts[4];
+                    }
+                    else if (parts.Length >= 2)
+                    {
+                        columnName = parts[0];
+                        dataType = parts[1];
+                    }
+                    else
+                    {
+                        continue;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(columnName) || !seen.Add(columnName))
+                        continue;
+
+                    columns.Add(new BillSeaDataColumn
+                    {
+                        Name = columnName,
+                        DataType = dataType ?? string.Empty
+                    });
+                }
+
+                if (columns.Count == 0)
+                    continue;
+
+                result.Add(new BillSeaDataSource
+                {
+                    Name = name,
+                    Alias = string.IsNullOrWhiteSpace(alias) ? name : alias!,
+                    Columns = columns.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList()
+                });
+            }
+
+            return result.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
         public static List<BillSeaPageLayout> LoadPages(XDocument doc)
         {
             var pages = new List<BillSeaPageLayout>();
@@ -245,8 +315,7 @@ namespace NVOAMASIS.Services
                     continue;
                 }
 
-                if (IsTextNode(node)
-                    && !(node.Element("Text")?.Value ?? string.Empty).Contains('{'))
+                if (IsTextNode(node))
                 {
                     node.Remove();
                     removed++;

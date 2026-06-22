@@ -8,6 +8,81 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 
+<style>
+    .bsf-grid {
+        display: grid;
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        grid-auto-flow: column;
+        grid-auto-columns: 220px;
+        gap: 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 4px 4px 10px 4px;
+        scrollbar-gutter: stable;
+    }
+
+    .bsf-grid::-webkit-scrollbar { height: 8px; }
+    .bsf-grid::-webkit-scrollbar-thumb { background: #bdbdbd; border-radius: 4px; }
+
+    .bsf-card {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 4px 6px;
+        background: #fafafa;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 56px;
+        transition: border-color .15s, box-shadow .15s;
+    }
+
+    .bsf-card:hover { border-color: #1976d2; box-shadow: 0 1px 4px rgba(25,118,210,0.15); }
+    .bsf-card--used { background: #f1f8e9; border-color: #aed581; }
+    .bsf-card--pending { background: #fff3e0; border-color: #fb8c00; box-shadow: 0 0 0 2px rgba(251,140,0,0.25); }
+
+    .bsf-card-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+    }
+    .bsf-card-row--meta { justify-content: space-between; }
+
+    .bsf-card-name {
+        font-weight: 600;
+        font-size: 12.5px;
+        color: #212121;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .bsf-card-type {
+        font-size: 10.5px;
+        color: #1976d2;
+        background: rgba(25,118,210,0.08);
+        border-radius: 3px;
+        padding: 1px 5px;
+        flex: 0 0 auto;
+        white-space: nowrap;
+    }
+
+    .bsf-badge {
+        font-size: 10.5px;
+        padding: 1px 6px;
+        border-radius: 8px;
+        white-space: nowrap;
+    }
+    .bsf-badge--used { background: #2e7d32; color: #fff; }
+    .bsf-badge--missing { background: transparent; color: #757575; border: 1px solid #bdbdbd; }
+
+    .bsf-card-actions { display: flex; gap: 2px; flex: 0 0 auto; }
+    .bsf-card-actions .mud-icon-button { padding: 3px; }
+    .bsf-card-actions .mud-icon-button .mud-icon-root { font-size: 16px; }
+</style>
+
 <MudStack Row Spacing="2" Class="pa-4" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
     <MudButton OnClick="LoadLayout"
                Size="Size.Small"
@@ -64,6 +139,14 @@
                StartIcon="@Icons.Material.Filled.TextFields"
                Disabled="_loading || CurrentPage is null">
         Label text
+    </MudButton>
+    <MudButton OnClick="ToggleFieldBrowser"
+               Size="Size.Small"
+               Color="@(_showFieldBrowser ? Color.Primary : Color.Default)"
+               Variant="@(_showFieldBrowser ? Variant.Filled : Variant.Outlined)"
+               StartIcon="@Icons.Material.Filled.TableView"
+               Disabled="_loading || _dataSources.Count == 0">
+        @(_showFieldBrowser ? "Ẩn trường DL" : "Trường dữ liệu")
     </MudButton>
     <MudButton OnClick="DeleteSelected"
                Size="Size.Small"
@@ -213,6 +296,7 @@
         else if (!IsAttachMode) { <span> Đang dùng <b>nội dung gốc</b>.</span> }
         else { <span> Đang dùng <b>bản Attach mặc định</b>.</span> }
         Bấm Line ngang / Line dọc / Label text rồi click lên canvas để đặt. Giữ Ctrl + click để chọn nhiều phần tử.
+        Bấm <b>Trường dữ liệu</b> để mở danh sách toàn bộ cột của các table đã link (HBL, MBL, Container, Customer, Job, CompanyInfomation) — bạn có thể <b>thêm cột chưa có</b> hoặc <b>ẩn cột không cần</b> ngay trên bill.
         Bấm <b>Hiện ảnh</b> để xem logo/nền form khi căn chỉnh; <b>Ẩn ảnh</b> để di chuyển các phần tử dễ hơn.
     </MudText>
 </MudPaper>
@@ -293,6 +377,117 @@
                     @GetFontSizeEditorValue().ToString("0.##", CultureInfo.InvariantCulture) pt
                 </MudText>
             </MudStack>
+        </MudStack>
+    </MudPaper>
+}
+
+@if (_showFieldBrowser && _dataSources.Any())
+{
+    <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+        <MudStack Spacing="2">
+            <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                <MudIcon Icon="@Icons.Material.Filled.TableView" Color="Color.Primary" />
+                <MudText Typo="Typo.subtitle2"><b>Trường dữ liệu sẵn có (@_dataSources.Sum(x => x.Columns.Count) cột)</b></MudText>
+                <MudTextField @bind-Value="_fieldKeyword"
+                              Label="Lọc cột"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search"
+                              Style="min-width:240px;" />
+                <MudSwitch T="bool"
+                           Value="_showOnlyMissing"
+                           ValueChanged="@((bool v) => _showOnlyMissing = v)"
+                           Label="Chỉ hiện cột chưa có trên bill"
+                           Color="Color.Primary" />
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Cuộn ngang để xem thêm cột. Click <b>+</b> để đặt cột lên bill; <b>🎯</b> highlight phần tử đang dùng; <b>🚫</b> ẩn (xóa) phần tử có Text khớp đúng cột.
+                </MudText>
+            </MudStack>
+            <MudExpansionPanels MultiExpansion="true" Dense="true">
+                @foreach (var source in _dataSources)
+                {
+                    var visibleColumns = GetFilteredColumns(source);
+                    if (visibleColumns.Count == 0)
+                    {
+                        continue;
+                    }
+                    var totalUsage = source.Columns.Sum(c => CountFieldUsage(source.Name, c.Name));
+
+                    <MudExpansionPanel IsInitiallyExpanded="@(_dataSources.Count <= 2 || totalUsage > 0)" Dense="true">
+                        <TitleContent>
+                            <MudStack Row Spacing="2" AlignItems="AlignItems.Center">
+                                <MudIcon Icon="@Icons.Material.Filled.Storage" Size="Size.Small" />
+                                <MudText Typo="Typo.body2"><b>@source.Name</b></MudText>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">@visibleColumns.Count cột</MudChip>
+                                @if (totalUsage > 0)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Success">@totalUsage đang dùng</MudChip>
+                                }
+                            </MudStack>
+                        </TitleContent>
+                        <ChildContent>
+                            <div class="bsf-grid">
+                                @foreach (var column in visibleColumns)
+                                {
+                                    var usage = CountFieldUsage(source.Name, column.Name);
+                                    var pendingExpression = BuildFieldExpression(source.Name, column.Name);
+                                    var isPending = _pendingPlacementKind == BillSeaElementKind.DataText
+                                        && string.Equals(_pendingDataExpression, pendingExpression, StringComparison.Ordinal);
+                                    var cardClass = "bsf-card" + (usage > 0 ? " bsf-card--used" : "") + (isPending ? " bsf-card--pending" : "");
+
+                                    <div class="@cardClass" title="@source.Name.@column.Name">
+                                        <div class="bsf-card-row">
+                                            <span class="bsf-card-name">@column.Name</span>
+                                            <span class="bsf-card-type">@column.FriendlyType</span>
+                                        </div>
+                                        <div class="bsf-card-row bsf-card-row--meta">
+                                            @if (usage > 0)
+                                            {
+                                                <span class="bsf-badge bsf-badge--used">Đang dùng @usage</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="bsf-badge bsf-badge--missing">Chưa có</span>
+                                            }
+                                            <div class="bsf-card-actions">
+                                                <MudTooltip Text="@(isPending ? "Bấm lại hoặc Esc để hủy" : "Click để chọn vị trí và đặt cột này trên bill")">
+                                                    <MudIconButton Icon="@(isPending ? Icons.Material.Filled.Close : Icons.Material.Filled.Add)"
+                                                                   Color="@(isPending ? Color.Warning : Color.Primary)"
+                                                                   Variant="Variant.Filled"
+                                                                   Size="Size.Small"
+                                                                   OnClick="() => BeginAddDataField(source.Name, column.Name)"
+                                                                   Disabled="_loading || CurrentPage is null" />
+                                                </MudTooltip>
+                                                @if (usage > 0)
+                                                {
+                                                    <MudTooltip Text="Chọn các phần tử đang dùng cột này trên canvas">
+                                                        <MudIconButton Icon="@Icons.Material.Filled.MyLocation"
+                                                                       Color="Color.Info"
+                                                                       Variant="Variant.Outlined"
+                                                                       Size="Size.Small"
+                                                                       OnClick="() => HighlightFieldUsage(source.Name, column.Name)"
+                                                                       Disabled="_loading" />
+                                                    </MudTooltip>
+                                                    <MudTooltip Text="Ẩn các phần tử có Text khớp đúng cột này">
+                                                        <MudIconButton Icon="@Icons.Material.Filled.VisibilityOff"
+                                                                       Color="Color.Error"
+                                                                       Variant="Variant.Outlined"
+                                                                       Size="Size.Small"
+                                                                       OnClick="() => HideFieldElements(source.Name, column.Name)"
+                                                                       Disabled="_loading" />
+                                                    </MudTooltip>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            </MudExpansionPanels>
         </MudStack>
     </MudPaper>
 }
@@ -469,6 +664,11 @@
     double _dragAnchorStartTop;
     int _designCounter;
     BillSeaElementKind? _pendingPlacementKind;
+    string? _pendingDataExpression;
+    bool _showFieldBrowser;
+    bool _showOnlyMissing;
+    string _fieldKeyword = string.Empty;
+    List<BillSeaDataSource> _dataSources = new();
     bool _placementPreviewVisible;
     double _placementPreviewLeft;
     double _placementPreviewTop;
@@ -815,6 +1015,7 @@
                 : await FormService.IsFormCustomizedAsync(TemplateId);
 
             _pages = BillSeaLayoutMrtHelper.LoadPages(doc);
+            _dataSources = BillSeaLayoutMrtHelper.LoadDataSources(doc);
             _selectedPageName = _pages.FirstOrDefault()?.PageName ?? string.Empty;
             _selectedNames.Clear();
             var firstElement = CurrentPage?.Elements.FirstOrDefault();
@@ -939,7 +1140,7 @@
         if (CurrentPage is null)
             return;
 
-        if (_pendingPlacementKind == kind)
+        if (_pendingPlacementKind == kind && _pendingDataExpression is null)
         {
             CancelPlacement();
             return;
@@ -947,13 +1148,163 @@
 
         EndInteraction();
         _pendingPlacementKind = kind;
+        _pendingDataExpression = null;
         _placementPreviewVisible = false;
     }
 
     void CancelPlacement()
     {
         _pendingPlacementKind = null;
+        _pendingDataExpression = null;
         _placementPreviewVisible = false;
+    }
+
+    void ToggleFieldBrowser() => _showFieldBrowser = !_showFieldBrowser;
+
+    static string BuildFieldExpression(string tableName, string columnName) =>
+        "{" + tableName + "." + columnName + "}";
+
+    int CountFieldUsage(string tableName, string columnName)
+    {
+        var token = tableName + "." + columnName;
+        var count = 0;
+        foreach (var page in _pages)
+        {
+            foreach (var element in page.Elements)
+            {
+                if (element.Kind != BillSeaElementKind.DataText && element.Kind != BillSeaElementKind.StaticText)
+                    continue;
+
+                if (string.IsNullOrEmpty(element.Text))
+                    continue;
+
+                if (ContainsFieldToken(element.Text, token))
+                    count++;
+            }
+        }
+
+        return count;
+    }
+
+    static bool ContainsFieldToken(string text, string token)
+    {
+        var idx = text.IndexOf(token, StringComparison.OrdinalIgnoreCase);
+        while (idx >= 0)
+        {
+            var endIdx = idx + token.Length;
+            var charBefore = idx == 0 ? '\0' : text[idx - 1];
+            var charAfter = endIdx >= text.Length ? '\0' : text[endIdx];
+            var isLeftBoundary = charBefore == '\0' || (!char.IsLetterOrDigit(charBefore) && charBefore != '_' && charBefore != '.');
+            var isRightBoundary = charAfter == '\0' || (!char.IsLetterOrDigit(charAfter) && charAfter != '_');
+            if (isLeftBoundary && isRightBoundary)
+                return true;
+
+            idx = text.IndexOf(token, endIdx, StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
+    }
+
+    List<BillSeaDataColumn> GetFilteredColumns(BillSeaDataSource source)
+    {
+        IEnumerable<BillSeaDataColumn> query = source.Columns;
+        if (!string.IsNullOrWhiteSpace(_fieldKeyword))
+            query = query.Where(c => c.Name.Contains(_fieldKeyword, StringComparison.OrdinalIgnoreCase));
+        if (_showOnlyMissing)
+            query = query.Where(c => CountFieldUsage(source.Name, c.Name) == 0);
+        return query.ToList();
+    }
+
+    void BeginAddDataField(string tableName, string columnName)
+    {
+        if (CurrentPage is null)
+            return;
+
+        var expression = BuildFieldExpression(tableName, columnName);
+        if (_pendingPlacementKind == BillSeaElementKind.DataText
+            && string.Equals(_pendingDataExpression, expression, StringComparison.Ordinal))
+        {
+            CancelPlacement();
+            return;
+        }
+
+        EndInteraction();
+        _pendingPlacementKind = BillSeaElementKind.DataText;
+        _pendingDataExpression = expression;
+        _placementPreviewVisible = false;
+    }
+
+    void HighlightFieldUsage(string tableName, string columnName)
+    {
+        if (CurrentPage is null)
+            return;
+
+        var token = tableName + "." + columnName;
+        var matches = CurrentPage.Elements
+            .Where(x => (x.Kind == BillSeaElementKind.DataText || x.Kind == BillSeaElementKind.StaticText)
+                        && !string.IsNullOrEmpty(x.Text)
+                        && ContainsFieldToken(x.Text, token))
+            .ToList();
+
+        if (matches.Count == 0)
+        {
+            ShowMessage($"Không tìm thấy phần tử nào dùng {token} trên page hiện tại.", MudBlazor.Severity.Info);
+            return;
+        }
+
+        _selectedNames.Clear();
+        foreach (var m in matches)
+            _selectedNames.Add(m.Name);
+        _selectedElement = matches[0];
+        _propertyEditUndoElementName = null;
+        ShowMessage($"Đã chọn {matches.Count} phần tử dùng {token}.", MudBlazor.Severity.Info);
+    }
+
+    void HideFieldElements(string tableName, string columnName)
+    {
+        if (CurrentPage is null)
+            return;
+
+        var expression = BuildFieldExpression(tableName, columnName);
+        var token = tableName + "." + columnName;
+
+        var exactMatches = CurrentPage.Elements
+            .Where(x => (x.Kind == BillSeaElementKind.DataText || x.Kind == BillSeaElementKind.StaticText)
+                        && string.Equals((x.Text ?? string.Empty).Trim(), expression, StringComparison.Ordinal))
+            .ToList();
+
+        var complexMatches = CurrentPage.Elements
+            .Where(x => (x.Kind == BillSeaElementKind.DataText || x.Kind == BillSeaElementKind.StaticText)
+                        && !string.IsNullOrEmpty(x.Text)
+                        && !exactMatches.Contains(x)
+                        && ContainsFieldToken(x.Text, token))
+            .ToList();
+
+        if (exactMatches.Count == 0 && complexMatches.Count == 0)
+        {
+            ShowMessage($"Không có phần tử nào để ẩn cho {token}.", MudBlazor.Severity.Info);
+            return;
+        }
+
+        if (exactMatches.Count == 0)
+        {
+            ShowMessage(
+                $"Cột {token} chỉ xuất hiện trong biểu thức phức tạp ({complexMatches.Count} phần tử). Hãy chọn phần tử trên canvas rồi bấm Xóa nếu muốn ẩn.",
+                MudBlazor.Severity.Warning);
+            return;
+        }
+
+        PushUndo();
+        var namesToRemove = exactMatches.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        CurrentPage.Elements.RemoveAll(x => namesToRemove.Contains(x.Name));
+        foreach (var name in namesToRemove)
+            _sessionAddedNames.Remove(name);
+        _selectedNames.RemoveWhere(n => namesToRemove.Contains(n));
+        _selectedElement = GetSelectedElements().FirstOrDefault();
+
+        var summary = exactMatches.Count + " phần tử đã được ẩn cho " + token;
+        if (complexMatches.Count > 0)
+            summary += $" (còn {complexMatches.Count} biểu thức phức tạp dùng cột này, không tự động ẩn).";
+        ShowMessage(summary, MudBlazor.Severity.Success);
     }
 
     void OnCanvasKeyDown(KeyboardEventArgs e)
@@ -967,6 +1318,7 @@
         BillSeaElementKind.HorizontalLine => "line ngang",
         BillSeaElementKind.VerticalLine => "line dọc",
         BillSeaElementKind.StaticText => "label text",
+        BillSeaElementKind.DataText => "trường dữ liệu " + (_pendingDataExpression ?? string.Empty),
         _ => "phần tử mới"
     };
 
@@ -1040,8 +1392,20 @@
                 Height = height,
                 Text = "Label mới"
             },
+            BillSeaElementKind.DataText => new BillSeaDesignElement
+            {
+                Name = NextName("Field"),
+                Kind = BillSeaElementKind.DataText,
+                Left = left,
+                Top = top,
+                Width = width,
+                Height = height,
+                Text = _pendingDataExpression ?? string.Empty
+            },
             _ => null
         };
+
+        _pendingDataExpression = null;
 
         if (element is null)
             return;
@@ -1054,6 +1418,7 @@
         BillSeaElementKind.HorizontalLine => (2.5, 0.01),
         BillSeaElementKind.VerticalLine => (0.01, 2),
         BillSeaElementKind.StaticText => (1.5, 0.2),
+        BillSeaElementKind.DataText => (2, 0.2),
         _ => (1, 1)
     };
 
@@ -1069,7 +1434,7 @@
     }
 
     bool HasDeletableSelection() =>
-        GetSelectedElements().Any(x => x.Kind is not (BillSeaElementKind.DataText or BillSeaElementKind.Image));
+        GetSelectedElements().Any(x => x.Kind != BillSeaElementKind.Image);
 
     List<BillSeaDesignElement> GetSelectedElements()
     {
@@ -1109,7 +1474,7 @@
 
         PushUndo();
         var namesToDelete = GetSelectedElements()
-            .Where(x => x.Kind is not (BillSeaElementKind.DataText or BillSeaElementKind.Image))
+            .Where(x => x.Kind != BillSeaElementKind.Image)
             .Select(x => x.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
