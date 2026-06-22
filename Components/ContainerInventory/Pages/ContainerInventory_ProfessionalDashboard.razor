@@ -24,7 +24,7 @@
             <div>
                 <MudText Typo="Typo.h5" Class="ci-title">8.3.3 Container Inventory</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    Statistics from all yard/import tables using one common inventory logic: Current In Yard + In/Out Yard + VSS import/export + APS Yard 8.3.6 tables.
+                    Statistics from all yard/import tables using one common inventory logic: Current In Yard + In/Out Yard + VSS import/export + APS Yard 8.3.6 + SP-ITC Yard 8.3.7 tables.
                 </MudText>
                 @if (!string.IsNullOrWhiteSpace(_sourceInfo))
                 {
@@ -58,6 +58,15 @@
                            OnClick="OpenImport836Async"
                            Disabled="_busy">
                     8.3.6 Import
+                </MudButton>
+
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Secondary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.UploadFile"
+                           OnClick="OpenImport837Async"
+                           Disabled="_busy">
+                    8.3.7 SP-ITC
                 </MudButton>
 
                 <MudButton Variant="Variant.Filled"
@@ -610,7 +619,10 @@
         // GENERAL / GENERAL_STATUS are summary tables, so they are not loaded into the distinct-container detail grid.
         "M_8_3_6_YARD_APS_STOCK",
         "M_8_3_6_YARD_APS_GATEIN",
-        "M_8_3_6_YARD_APS_GATEOUT"
+        "M_8_3_6_YARD_APS_GATEOUT",
+
+        // 8.3.7 SP-ITC Yard import table.
+        "M_8_3_7_YARD_SP_ITC"
     };
 
     private static readonly string[] SourceColumns =
@@ -634,6 +646,11 @@
         "PTI_DATE", "PTI_SETTING", "PTI_STATUS", "ESTIMATED_DATE", "APPROVAL_DATE", "REJECT_DATE", "REPAIRED_DATE", "REGISTERED_DATE",
         "NOTE", "NOTE1", "NOTE2", "NOTE3", "REMARK", "DAYS",
         "REPORT_FROM", "REPORT_TO", "REPORT_DATE", "INS_DATE",
+
+        // 8.3.7 SP-ITC Yard columns
+        "ImportBatchNo", "ImportFileName", "SourceSheet", "ReportType", "Depot", "ContrNo", "ContainerType", "Size",
+        "Movement", "IO", "DateIn", "DateOut", "DateInStuff", "StuffingDate", "UnStuffingDate", "Dwell", "ImpDays", "GW",
+        "Booking", "BKBLNo", "Seal", "Vessel", "VesselVoyage", "VoyIn", "VoyOut", "PortCD", "Oper", "TruckBarge", "SoXe", "Vent", "TTSC", "AVDM",
 
         "DateImport", "UserImport", "CreatedAt", "DATE_IMPORT", "USER_IMPORT", "CREATED_AT"
     };
@@ -738,6 +755,26 @@
     private RenderFragment RenderImport836() => builder =>
     {
         builder.OpenComponent<Components.Stock.Pages.StockInOutImportPro>(0);
+        builder.CloseComponent();
+    };
+
+    private async Task OpenImport837Async()
+    {
+        if (OnTabRequest.HasDelegate)
+        {
+            await OnTabRequest.InvokeAsync((
+                "YardSpItcImport837",
+                "8.3.7 Import SP-ITC Yard",
+                RenderImport837()));
+            return;
+        }
+
+        Navigation.NavigateTo("/yard/8-3-7-sp-itc-import");
+    }
+
+    private RenderFragment RenderImport837() => builder =>
+    {
+        builder.OpenComponent<Components.Stock.Pages._8_3_7_YardSpItcImport>(0);
         builder.CloseComponent();
     };
 
@@ -873,6 +910,10 @@ WHERE
        (EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'CONTAINER')
     AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name IN (N'ISO_SZTP', N'ISO_TYPE', N'CONTAINER_TYPE'))
     AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name IN (N'DATE_IMPORT', N'DATE_IN', N'CREATED_AT')))
+    OR
+       (EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ContrNo')
+    AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name IN (N'ContainerType', N'Size'))
+    AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name IN (N'DateIn', N'DateOut', N'CreatedAt')))
 )
 AND
 (
@@ -894,7 +935,8 @@ ORDER BY
     WHEN t.name = N'M_8_3_6_YARD_APS_STOCK' THEN 4
     WHEN t.name = N'M_8_3_6_YARD_APS_GATEIN' THEN 5
     WHEN t.name = N'M_8_3_6_YARD_APS_GATEOUT' THEN 6
-    WHEN t.name LIKE N'%Current%In%Yard%' THEN 7
+    WHEN t.name = N'M_8_3_7_YARD_SP_ITC' THEN 7
+    WHEN t.name LIKE N'%Current%In%Yard%' THEN 8
     WHEN t.name LIKE N'%IN_OUT%' THEN 7
     WHEN t.name LIKE N'%YARD%' THEN 8
     ELSE 9
@@ -974,6 +1016,12 @@ ORDER BY s.name, t.name;";
             return new TableSource(schemaName, tableName, "ApsYard");
         }
 
+        // 8.3.7 SP-ITC Yard table created from JNL-SP-ITC Excel.
+        if (columns.Contains("ContrNo") &&
+            (columns.Contains("ContainerType") || columns.Contains("Size")) &&
+            (columns.Contains("DateIn") || columns.Contains("DateOut") || columns.Contains("CreatedAt")))
+            return new TableSource(schemaName, tableName, "SpItcYard837");
+
         return null;
     }
 
@@ -1009,9 +1057,14 @@ WHERE s.name = @SchemaName AND t.name = @TableName;";
             .Select(QuoteName)
             .ToList();
 
-        var orderBy = orderColumns.Count > 0
-            ? $"COALESCE({string.Join(", ", orderColumns)}) DESC"
-            : "(SELECT NULL)";
+        // SQL Server will throw "Incorrect syntax near ')'" when COALESCE has only one argument,
+        // for example: ORDER BY COALESCE([DateImport]) DESC.
+        var orderBy = orderColumns.Count switch
+        {
+            0 => "(SELECT NULL)",
+            1 => $"{orderColumns[0]} DESC",
+            _ => $"COALESCE({string.Join(", ", orderColumns)}) DESC"
+        };
 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
@@ -1074,7 +1127,7 @@ ORDER BY {orderBy};";
                 SourceTable = source.TableName,
                 SourceType = source.SourceType,
                 EventMethod = method,
-                EventTs = FirstNonEmptyDate(execTs, arrTs, depTs, GetDateTime(reader, ordinals, "DateImport"), GetDateTime(reader, ordinals, "DATE_IMPORT"), GetDateTime(reader, ordinals, "CreatedAt"), GetDateTime(reader, ordinals, "CREATED_AT")),
+                EventTs = FirstNonEmptyDate(execTs, arrTs, depTs, GetDateTime(reader, ordinals, "DateIn"), GetDateTime(reader, ordinals, "DateOut"), GetDateTime(reader, ordinals, "DateImport"), GetDateTime(reader, ordinals, "DATE_IMPORT"), GetDateTime(reader, ordinals, "CreatedAt"), GetDateTime(reader, ordinals, "CREATED_AT")),
 
                 AGENT = FirstNonEmpty(
                     GetString(reader, ordinals, "AGENT"),
@@ -1086,7 +1139,9 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "OPR"),
                     GetString(reader, ordinals, "OPT")),
 
-                DEPOT = GetString(reader, ordinals, "DEPOT"),
+                DEPOT = FirstNonEmpty(
+                    GetString(reader, ordinals, "DEPOT"),
+                    GetString(reader, ordinals, "Depot")),
                 REPORT_FROM = GetDateTime(reader, ordinals, "REPORT_FROM"),
                 REPORT_TO = GetDateTime(reader, ordinals, "REPORT_TO"),
                 REPORT_DATE = GetDateTime(reader, ordinals, "REPORT_DATE"),
@@ -1111,27 +1166,32 @@ ORDER BY {orderBy};";
                 ITEM_NO = FirstNonEmpty(
                     GetString(reader, ordinals, "ITEM_NO"),
                     GetString(reader, ordinals, "SOCONT"),
-                    GetString(reader, ordinals, "CONTAINER")),
+                    GetString(reader, ordinals, "CONTAINER"),
+                    GetString(reader, ordinals, "ContrNo")),
 
                 ISO = FirstNonEmpty(
                     GetString(reader, ordinals, "ISO"),
                     GetString(reader, ordinals, "KICHCO"),
                     GetString(reader, ordinals, "ISO_SZTP"),
                     GetString(reader, ordinals, "ISO_TYPE"),
-                    GetString(reader, ordinals, "CONTAINER_TYPE")),
+                    GetString(reader, ordinals, "CONTAINER_TYPE"),
+                    GetString(reader, ordinals, "ContainerType"),
+                    GetString(reader, ordinals, "Size")),
 
                 FEL = FirstNonEmpty(
                     GetString(reader, ordinals, "FEL"),
                     GetString(reader, ordinals, "TRANGTHAI"),
                     GetString(reader, ordinals, "FE"),
-                    GetString(reader, ordinals, "STATUS")),
+                    GetString(reader, ordinals, "STATUS"),
+                    GetString(reader, ordinals, "Status")),
 
                 TEMP = GetDecimal(reader, ordinals, "TEMP"),
 
                 WEIGHT = FirstNonEmptyDecimal(
                     GetDecimal(reader, ordinals, "WEIGHT"),
                     GetDecimal(reader, ordinals, "TRONGLUONG"),
-                    GetDecimal(reader, ordinals, "TARE_WEIGHT")),
+                    GetDecimal(reader, ordinals, "TARE_WEIGHT"),
+                    GetDecimal(reader, ordinals, "GW")),
 
                 VGM_WEIGHT = FirstNonEmptyDecimal(
                     GetDecimal(reader, ordinals, "VGM_WEIGHT"),
@@ -1140,21 +1200,27 @@ ORDER BY {orderBy};";
 
                 BOOK_NO = FirstNonEmpty(
                     GetString(reader, ordinals, "BOOK_NO"),
-                    GetString(reader, ordinals, "BOOKING")),
+                    GetString(reader, ordinals, "BOOKING"),
+                    GetString(reader, ordinals, "Booking")),
 
                 BILL_OF_LADING = FirstNonEmpty(
                     GetString(reader, ordinals, "BILL_OF_LADING"),
-                    GetString(reader, ordinals, "BL_NO")),
+                    GetString(reader, ordinals, "BL_NO"),
+                    GetString(reader, ordinals, "BKBLNo")),
 
                 LOCATION = FirstNonEmpty(
                     GetString(reader, ordinals, "LOCATION"),
                     GetString(reader, ordinals, "POSITION"),
-                    GetString(reader, ordinals, "DEPOT")),
+                    GetString(reader, ordinals, "Location"),
+                    GetString(reader, ordinals, "DEPOT"),
+                    GetString(reader, ordinals, "Depot")),
 
                 CATEGORY = FirstNonEmpty(
                     GetString(reader, ordinals, "CATEGORY"),
                     GetString(reader, ordinals, "MOVE"),
+                    GetString(reader, ordinals, "Movement"),
                     GetString(reader, ordinals, "STATUS"),
+                    GetString(reader, ordinals, "Status"),
                     method),
 
                 ARR_BY = FirstNonEmpty(
@@ -1172,7 +1238,7 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "ENTRY_VES_NAME"),
                     GetString(reader, ordinals, "VESSEL")),
 
-                ARR_TS = arrTs,
+                ARR_TS = FirstNonEmptyDate(arrTs, GetDateTime(reader, ordinals, "DateIn"), GetDateTime(reader, ordinals, "DateInStuff"), GetDateTime(reader, ordinals, "StuffingDate")),
 
                 DEP_BY = FirstNonEmpty(
                     GetString(reader, ordinals, "DEP_BY"),
@@ -1189,17 +1255,19 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "EXIT_VES_NAME"),
                     GetString(reader, ordinals, "VESSEL")),
 
-                DEP_TS = depTs,
+                DEP_TS = FirstNonEmptyDate(depTs, GetDateTime(reader, ordinals, "DateOut"), GetDateTime(reader, ordinals, "UnStuffingDate")),
 
                 DISCH_PORT = FirstNonEmpty(
                     GetString(reader, ordinals, "DISCH_PORT"),
                     GetString(reader, ordinals, "CANGCT"),
-                    GetString(reader, ordinals, "POL")),
+                    GetString(reader, ordinals, "POL"),
+                    GetString(reader, ordinals, "PortCD")),
 
                 FINAL_DISCH_PORT = FirstNonEmpty(
                     GetString(reader, ordinals, "FINAL_DISCH_PORT"),
                     GetString(reader, ordinals, "CANGDEN"),
-                    GetString(reader, ordinals, "POD")),
+                    GetString(reader, ordinals, "POD"),
+                    GetString(reader, ordinals, "FPOD")),
 
                 PLACE_OF_RECEIPT = FirstNonEmpty(
                     GetString(reader, ordinals, "PLACE_OF_RECEIPT"),
@@ -1211,7 +1279,9 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "GIAO"),
                     GetString(reader, ordinals, "POD")),
 
-                CUSTOM_CLEARANCE = GetString(reader, ordinals, "CUSTOM_CLEARANCE"),
+                CUSTOM_CLEARANCE = FirstNonEmpty(
+                    GetString(reader, ordinals, "CUSTOM_CLEARANCE"),
+                    GetString(reader, ordinals, "CustomsClear")),
                 CC_TS = GetDateTime(reader, ordinals, "CC_TS"),
                 DGS_CLASS = GetString(reader, ordinals, "DGS_CLASS"),
                 UN_NO = GetString(reader, ordinals, "UN_NO"),
@@ -1222,15 +1292,18 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "SOSEAL"),
                     GetString(reader, ordinals, "SEAL_NO"),
                     GetString(reader, ordinals, "SEAL_NO1"),
-                    GetString(reader, ordinals, "SEAL_NO2")),
+                    GetString(reader, ordinals, "SEAL_NO2"),
+                    GetString(reader, ordinals, "Seal")),
 
                 STORAGEDAY = FirstNonEmptyInt(
                     GetInt(reader, ordinals, "STORAGEDAY"),
-                    GetInt(reader, ordinals, "DAYS")),
+                    GetInt(reader, ordinals, "DAYS"),
+                    GetInt(reader, ordinals, "Days")),
 
                 DateImport = FirstNonEmptyDate(
                     GetDateTime(reader, ordinals, "DateImport"),
-                    GetDateTime(reader, ordinals, "DATE_IMPORT")),
+                    GetDateTime(reader, ordinals, "DATE_IMPORT"),
+                    GetDateTime(reader, ordinals, "CreatedAt")),
 
                 UserImport = FirstNonEmpty(
                     GetString(reader, ordinals, "UserImport"),
