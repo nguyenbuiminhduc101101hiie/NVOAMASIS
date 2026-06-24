@@ -119,7 +119,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_Info_Company_other> Information_Comapny_Other { get; set; }
 
         public DbSet<M_CuocCont> CuocCont { get; set; }
-
+        public DbSet<M_8_3_7_YARD_SP_ITC> M_8_3_7_YARD_SP_ITC { get; set; } = default!;
         public DbSet<DebitCreditTemplate> DebitCreditTemplate { get; set; }
 
         public DbSet<WordDocument> WordDocuments { get; set; }
