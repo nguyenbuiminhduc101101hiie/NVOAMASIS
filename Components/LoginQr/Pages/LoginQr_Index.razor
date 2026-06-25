@@ -1,0 +1,92 @@
+@using NVOAMASIS.Services.MultiTenant
+@attribute [Authorize]
+@inject TenantLoginQrService LoginQrService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="py-4">
+    <MudCard Elevation="2">
+        <MudCardContent>
+            <MudText Typo="Typo.h6" Align="Align.Center" Class="mb-4">1.18 QR đăng nhập điện thoại</MudText>
+
+            @if (_loading)
+            {
+                <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="mb-3" />
+            }
+            else if (_result == null)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true">
+                    Không tạo được mã QR. Vui lòng đăng nhập lại hoặc liên hệ quản trị.
+                </MudAlert>
+            }
+            else
+            {
+                <MudStack AlignItems="AlignItems.Center" Spacing="3">
+                    <img src="@($"data:image/png;base64,{_result.QrImageBase64}")"
+                         alt="Login QR Code"
+                         style="width:280px;max-width:100%;height:auto;border:1px solid #e2e8f0;border-radius:12px;padding:12px;background:#fff;" />
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.QrCode2"
+                               Disabled="_regenerating"
+                               OnClick="RegenerateQrAsync">
+                        @if (_regenerating)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        Tạo lại QR
+                    </MudButton>
+                </MudStack>
+            }
+        </MudCardContent>
+    </MudCard>
+</MudContainer>
+
+@code {
+    private bool _loading = true;
+    private bool _regenerating;
+    private TenantLoginQrResult? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadQrAsync();
+    }
+
+    private async Task LoadQrAsync()
+    {
+        _loading = true;
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            _result = await LoginQrService.GetOrCreateActiveQrAsync(authState.User);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RegenerateQrAsync()
+    {
+        if (_regenerating) return;
+
+        _regenerating = true;
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            _result = await LoginQrService.RegenerateQrAsync(authState.User);
+            if (_result == null)
+            {
+                Snackbar.Add("Không tạo lại được mã QR.", MudBlazor.Severity.Error);
+                return;
+            }
+
+            Snackbar.Add("Đã tạo mã QR mới. Mã QR cũ không còn sử dụng được.", MudBlazor.Severity.Success);
+        }
+        finally
+        {
+            _regenerating = false;
+        }
+    }
+}

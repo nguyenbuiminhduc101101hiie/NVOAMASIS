@@ -65,6 +65,8 @@ public class TenantDatabaseProvisioningService(
                 await CopyDatabaseViaBackupRestoreAsync(
                     conn, templateDb, databaseName, backupFile, cancellationToken);
 
+                await TruncateClonedDistributedCacheAsync(conn, databaseName, cancellationToken);
+
                 try { File.Delete(backupFile); } catch { /* best effort */ }
 
                 await CreateSqlLoginAndGrantDbOwnerAsync(
@@ -408,6 +410,31 @@ public class TenantDatabaseProvisioningService(
              WITH REPLACE, RECOVERY{moveClause}, STATS = 5
              """;
         await restoreCmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// DB tenant clone từ template kèm theo bảng DistributedCache và data cache cũ.
+    /// App không đọc cache từ DB tenant (dùng DefaultConnection), nhưng xóa để tránh rác và rủi ro token cũ.
+    /// </summary>
+    private async Task TruncateClonedDistributedCacheAsync(
+        SqlConnection masterConn,
+        string databaseName,
+        CancellationToken cancellationToken)
+    {
+        var bracketDb = BracketIdentifier(databaseName);
+
+        await using var cmd = masterConn.CreateCommand();
+        cmd.CommandText =
+            $"""
+             USE {bracketDb};
+             IF OBJECT_ID(N'dbo.DistributedCache', N'U') IS NOT NULL
+                 TRUNCATE TABLE dbo.DistributedCache;
+             """;
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+
+        logger.LogInformation(
+            "Truncated dbo.DistributedCache on cloned tenant database {DatabaseName}.",
+            databaseName);
     }
 
     private static async Task<string> GetDefaultDataPathAsync(

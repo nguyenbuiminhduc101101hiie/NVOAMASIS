@@ -93,6 +93,7 @@ builder.Services.AddDbContext<RegistryDbContext>(options =>
         throw new InvalidOperationException("RegistryConnection is not configured")));
 builder.Services.AddScoped<TenantDatabaseProvisioningService>();
 builder.Services.AddScoped<TenantAuthService>();
+builder.Services.AddScoped<TenantLoginQrService>();
 
 builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 {
