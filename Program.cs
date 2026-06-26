@@ -123,6 +123,7 @@ builder.Services.AddScoped<CustomerService>();
 builder.Services.AddScoped<BookingService>();
 builder.Services.AddScoped<SupportServices>();
 builder.Services.AddScoped<ShipmentService>();
+builder.Services.AddScoped<ContainerDepotLookupService>();
 builder.Services.AddScoped<InvoicePdfImportService>();
 builder.Services.AddScoped<StockService>();
 builder.Services.AddScoped<ExcelImportCrudService>();
