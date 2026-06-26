@@ -16,7 +16,7 @@
 @inject SharedServices ssv
 @inject ISnackbar Snackbar
 
-<PageTitle>8.3.3 Import Yard Movement</PageTitle>
+<PageTitle>8.3.4 Import Yard Movement CAT LAI</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.False" Class="ym-pro-page pa-3">
     <MudPaper Class="hero-card pa-4 mb-3" Elevation="0">
@@ -27,25 +27,30 @@
                         <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" />
                     </div>
                     <div>
-                        <MudText Typo="Typo.h5" Class="page-title">8.3.3 Import Container / Yard Movement</MudText>
+                        <MudText Typo="Typo.h5" Class="page-title">8.3.4 Import Container / Yard Movement CAT LAI</MudText>
                         <MudText Typo="Typo.body2" Color="Color.Secondary">
-                            Enter depot → choose Excel → preview Sheet1/Sheet2 → check existing database rows by all business columns including DEPOT → import new rows only.
+                            Select depot → choose Excel → preview Sheet1/Sheet2 → check existing database rows by all business columns including DEPOT → import new rows only.
                         </MudText>
                     </div>
                 </MudStack>
             </MudItem>
             <MudItem xs="12" lg="4">
                 <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="flex-wrap action-bar">
-                    <MudTextField T="string"
-                                  @bind-Value="_importDepot"
-                                  Label="Depot name"
-                                  Placeholder="Enter depot before preview"
-                                  Variant="Variant.Outlined"
-                                  Margin="Margin.Dense"
-                                  Style="min-width:220px;background:#fff;border-radius:10px;"
-                                  Disabled="@(_busy || _preview is not null)"
-                                  Adornment="Adornment.Start"
-                                  AdornmentIcon="@Icons.Material.Filled.Warehouse" />
+                    <MudAutocomplete T="string"
+                                     @bind-Value="_importDepot"
+                                     Label="Depot name"
+                                     Placeholder="Select depot before preview"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Style="min-width:220px;background:#fff;border-radius:10px;"
+                                     Disabled="@(_busy || _preview is not null)"
+                                     Adornment="Adornment.Start"
+                                     AdornmentIcon="@Icons.Material.Filled.Warehouse"
+                                     SearchFunc="SearchTerminal"
+                                     CoerceText
+                                     ResetValueOnEmptyText
+                                     Clearable
+                                     MaxItems="30" />
 
                     <MudButton HtmlTag="label"
                                Variant="Variant.Filled"
@@ -326,6 +331,7 @@
     private bool _canAdd;
     private string _usr = string.Empty;
     private string _importDepot = string.Empty;
+    private List<Terminal_> _terminals = new();
     private ImportPreview? _preview;
     private byte[]? _fileBytes;
 
@@ -352,6 +358,26 @@
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
         _canAdd = await ssv.CheckPermission(_usr, "Add", PermissionMenuName);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _terminals = await db.Terminal
+            .Where(x => !string.IsNullOrEmpty(x.TermiNalName))
+            .OrderBy(x => x.TermiNalName)
+            .ToListAsync();
+    }
+
+    private Task<IEnumerable<string?>> SearchTerminal(string? text)
+    {
+        var query = _terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName));
+
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            query = query.Where(x =>
+                x.TermiNalName!.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+                (x.Code?.Contains(text, StringComparison.OrdinalIgnoreCase) == true));
+        }
+
+        return Task.FromResult<IEnumerable<string?>>(query.Select(x => x.TermiNalName).Distinct());
     }
 
     private async Task PreviewExcelAsync(InputFileChangeEventArgs e)
@@ -367,7 +393,7 @@
 
         if (string.IsNullOrWhiteSpace(_importDepot))
         {
-            Snackbar.Add("Please enter Depot name before preview/import.", MudBlazor.Severity.Warning);
+            Snackbar.Add("Please select Depot name before preview/import.", MudBlazor.Severity.Warning);
             return;
         }
 
@@ -423,7 +449,7 @@
 
         if (string.IsNullOrWhiteSpace(_importDepot))
         {
-            Snackbar.Add("Please enter Depot name before import.", MudBlazor.Severity.Warning);
+            Snackbar.Add("Please select Depot name before import.", MudBlazor.Severity.Warning);
             return;
         }
 

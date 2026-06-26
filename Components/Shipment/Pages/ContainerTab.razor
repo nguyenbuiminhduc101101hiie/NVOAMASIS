@@ -8,6 +8,7 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ShipmentService shipsv
+@inject ContainerDepotLookupService depotLookup
 @inject IStringLocalizer<SharedResource> Localizer
 @inject HistoryLogService HistoryLogService
 @using System.Text.Json;
@@ -263,7 +264,7 @@
                         <EditTemplate>
                             <MudAutocomplete Class="container-input"
                                              @bind-Value="context.Item.CONTAINER_NO"
-                                             OnBlur="@(() => OnContainerNoBlur(context.Item))"
+                                             OnBlur="@(() => OnContainerNoBlurAsync(context.Item))"
                                              Label="@Localizer["Cont. No."]"
                                              CoerceValue
                                              Margin="Margin.Dense"
@@ -749,14 +750,28 @@
             throw;
         }
     }
-    private void OnContainerNoBlur(M_Container item)
+    private async Task OnContainerNoBlurAsync(M_Container item)
     {
-        if (string.IsNullOrWhiteSpace(item?.CONTAINER_NO)) return;
-        var result = shipsv.CheckContainerNumber(item.CONTAINER_NO.Trim());
+        if (string.IsNullOrWhiteSpace(item?.CONTAINER_NO))
+            return;
+
+        var containerNo = item.CONTAINER_NO.Trim();
+        item.CONTAINER_NO = containerNo;
+
+        var result = shipsv.CheckContainerNumber(containerNo);
         if (result == "Container Number is OK!")
             CallSnackBar(result, MudBlazor.Severity.Success);
         else
             CallSnackBar(result, MudBlazor.Severity.Warning);
+
+        var lookup = await depotLookup.FindLatestDepotAsync(containerNo);
+        if (lookup is null || !lookup.Found)
+            return;
+
+        var inDepot = ContainerDepotLookupService.ResolveTerminalName(lookup.Depot, Terminals) ?? lookup.Depot;
+        item.In_Depot = inDepot;
+        CallSnackBar($"Đã gán In Depot: {inDepot} (từ {lookup.SourceTable}).", MudBlazor.Severity.Info);
+        await InvokeAsync(StateHasChanged);
     }
     private async Task<IEnumerable<string?>> SearchSeal(string? text)
     {
