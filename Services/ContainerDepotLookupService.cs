@@ -50,10 +50,10 @@ public class ContainerDepotLookupService
 
         await using var db = await _dbFactory.CreateDbContextAsync(cancellationToken);
 
-        AddCandidate(candidates, await QueryAmsCurrentAsync(db, normalized, cancellationToken));
-        AddCandidate(candidates, await QueryAmsImpAsync(db, normalized, cancellationToken));
-        AddCandidate(candidates, await QueryVssExpAsync(db, normalized, cancellationToken));
-        AddCandidate(candidates, await QuerySpItcAsync(db, normalized, cancellationToken));
+        AddCandidate(candidates, await SafeQueryAsync(() => QueryAmsCurrentAsync(db, normalized, cancellationToken)));
+        AddCandidate(candidates, await SafeQueryAsync(() => QueryAmsImpAsync(db, normalized, cancellationToken)));
+        AddCandidate(candidates, await SafeQueryAsync(() => QueryVssExpAsync(db, normalized, cancellationToken)));
+        AddCandidate(candidates, await SafeQueryAsync(() => QuerySpItcAsync(db, normalized, cancellationToken)));
 
         await using var conn = db.Database.GetDbConnection();
         if (conn.State != ConnectionState.Open)
@@ -61,7 +61,7 @@ public class ContainerDepotLookupService
 
         foreach (var (tableName, containerColumn, eventDateExpr) in ApsContainerTables)
         {
-            AddCandidate(candidates, await QueryApsTableAsync(conn, tableName, containerColumn, eventDateExpr, normalized, cancellationToken));
+            AddCandidate(candidates, await SafeQueryAsync(() => QueryApsTableAsync(conn, tableName, containerColumn, eventDateExpr, normalized, cancellationToken)));
         }
 
         return candidates
@@ -87,6 +87,19 @@ public class ContainerDepotLookupService
     {
         if (candidate is { Found: true })
             list.Add(candidate);
+    }
+
+    // Một số bảng yard chỉ được tạo khi import lần đầu; bỏ qua khi bảng chưa tồn tại (SQL error 208).
+    private static async Task<ContainerDepotLookupResult?> SafeQueryAsync(Func<Task<ContainerDepotLookupResult?>> query)
+    {
+        try
+        {
+            return await query();
+        }
+        catch (DbException)
+        {
+            return null;
+        }
     }
 
     private static async Task<ContainerDepotLookupResult?> QueryAmsCurrentAsync(AppDbContext db, string containerNo, CancellationToken cancellationToken)
