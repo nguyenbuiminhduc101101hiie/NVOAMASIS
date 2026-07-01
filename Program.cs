@@ -129,6 +129,7 @@ builder.Services.AddScoped<StockService>();
 builder.Services.AddScoped<ExcelImportCrudService>();
 builder.Services.AddScoped<DeliveryOrderQrService>();
 builder.Services.AddScoped<ArrivalNoticeQrService>();
+builder.Services.AddScoped<HblQrService>();
 builder.Services.AddScoped<QuotationService>();
 builder.Services.AddScoped<EmailService>();
 builder.Services.AddScoped<FontService>();
