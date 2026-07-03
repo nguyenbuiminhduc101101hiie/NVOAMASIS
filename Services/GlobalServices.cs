@@ -1,9 +1,9 @@
+using MailKit.Net.Smtp;
+using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using RazorLight;
 using Stimulsoft.System.Windows.Forms;
-using System.Net;
-using System.Net.Mail;
 using System.Text.Json;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
@@ -99,7 +99,11 @@ namespace NVOAMASIS.Services
             {
                 _context.ChangeTracker.Clear();
                 var rs = await _context.CompanyInfomation.FirstOrDefaultAsync();
-                return rs ?? new M_CompanyInfo();
+                if (rs == null)
+                    return new M_CompanyInfo();
+
+                rs.PasswordEmail_GuiTB = DecryptCompanyMailPassword(rs.PasswordEmail_GuiTB);
+                return rs;
             }
             catch
             {
@@ -112,6 +116,7 @@ namespace NVOAMASIS.Services
             try
             {
                 _context.ChangeTracker.Clear();
+                c.PasswordEmail_GuiTB = EncryptCompanyMailPassword(c.PasswordEmail_GuiTB);
 
                 if (c.CompanyID == Guid.Empty)
                 {
@@ -141,7 +146,8 @@ namespace NVOAMASIS.Services
             try
             {
                 _context.ChangeTracker.Clear();
-         
+                c.PasswordEmail_GuiTB = EncryptCompanyMailPassword(c.PasswordEmail_GuiTB);
+
                 _context.CompanyInfomation.Update(c);
                 await _context.SaveChangesAsync();
                 return new BoolandMessReponse(true, "Update Company Information Success");
@@ -774,39 +780,77 @@ namespace NVOAMASIS.Services
         {
             try
             {
-                // Thiết lập thông tin SMTP
-                using (var smtpClient = new SmtpClient("mail.logisticssoftware.vn", 587))
+                var companyInfo = await GetSingleCompany_info();
+                var senderEmail = companyInfo.Email_GuiTB?.Trim();
+                var senderPassword = companyInfo.PasswordEmail_GuiTB?.Trim().Replace(" ", "");
+                var smtpServer = companyInfo.SmtpServer?.Trim();
+                var smtpPort = companyInfo.SmtpPort;
+
+                if (string.IsNullOrWhiteSpace(senderEmail) ||
+                    string.IsNullOrWhiteSpace(senderPassword) ||
+                    string.IsNullOrWhiteSpace(smtpServer) ||
+                    !smtpPort.HasValue)
                 {
-                    smtpClient.EnableSsl = true;
-                    smtpClient.UseDefaultCredentials = false;
-                    smtpClient.Credentials = new NetworkCredential("vms.noreply@logisticssoftware.vn", "Noreply@1");
-
-                    // Tạo đối tượng MailMessage
-                    MailMessage mailMessage = new MailMessage();
-                    mailMessage.From = new MailAddress("vms.noreply@logisticssoftware.vn");
-                    //add mail
-                    foreach (var mail in to)
-                    {
-                        mailMessage.To.Add(mail);
-                    }
-                    foreach (var mail in toCc)
-                    {
-                        mailMessage.CC.Add(mail);
-                    }
-                    mailMessage.Subject = subject;
-                    mailMessage.IsBodyHtml = true;
-
-                    mailMessage.Body = body;
-                    ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
-                    // Gửi email
-                    await smtpClient.SendMailAsync(mailMessage);
+                    return new BoolandMessReponse(false, "Send mail failed! Missing SMTP configuration in Company Information.");
                 }
-                return new BoolandMessReponse(true, "Send mail successfully!"); ;
+
+                var message = new MimeMessage();
+                message.From.Add(new MailboxAddress("", senderEmail));
+                foreach (var mail in to.Where(x => !string.IsNullOrWhiteSpace(x)))
+                    message.To.Add(MailboxAddress.Parse(mail.Trim()));
+                foreach (var mail in toCc.Where(x => !string.IsNullOrWhiteSpace(x)))
+                    message.Cc.Add(MailboxAddress.Parse(mail.Trim()));
+                message.Subject = subject;
+                message.Body = new TextPart("html") { Text = body };
+
+                using var client = new SmtpClient();
+                client.ServerCertificateValidationCallback = (_, _, _, _) => true;
+
+                var secureSocketOptions = smtpPort.Value == 465
+                    ? SecureSocketOptions.SslOnConnect
+                    : SecureSocketOptions.StartTls;
+
+                await client.ConnectAsync(smtpServer, smtpPort.Value, secureSocketOptions);
+                await client.AuthenticateAsync(senderEmail, senderPassword);
+                await client.SendAsync(message);
+                await client.DisconnectAsync(true);
+
+                return new BoolandMessReponse(true, "Send mail successfully!");
+            }
+            catch (AuthenticationException ex)
+            {
+                Console.WriteLine(ex.ToString());
+                return new BoolandMessReponse(false,
+                    "Send mail failed! SMTP authentication failed. Gmail requires an App Password (not your normal login password). " + ex.Message);
             }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.ToString());
                 return new BoolandMessReponse(false, "Send mail failed! with error code:" + ex.Message);
+            }
+        }
+
+        private static string? EncryptCompanyMailPassword(string? plainTextPassword)
+        {
+            if (string.IsNullOrWhiteSpace(plainTextPassword))
+                return plainTextPassword;
+
+            return EncryptionHelper.Encrypt(plainTextPassword.Trim());
+        }
+
+        private static string? DecryptCompanyMailPassword(string? encryptedPassword)
+        {
+            if (string.IsNullOrWhiteSpace(encryptedPassword))
+                return encryptedPassword;
+
+            try
+            {
+                return EncryptionHelper.Decrypt(encryptedPassword);
+            }
+            catch
+            {
+                // Backward compatibility: old records may still be stored as plain text.
+                return encryptedPassword;
             }
         }
         public async Task<List<M_Duan>> GetListDuAn_request()
