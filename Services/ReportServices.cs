@@ -833,7 +833,9 @@ namespace NVOAMASIS.Services
             }
 
         }
-        public async Task<BoolandMessReponse> Emanifest(M_MBL mbl)
+        public Task<BoolandMessReponse> Emanifest(M_MBL mbl) => Emanifest(mbl, null);
+
+        public async Task<BoolandMessReponse> Emanifest(M_MBL mbl, M_HBL? hbl)
         {
             try
             {
@@ -843,9 +845,9 @@ namespace NVOAMASIS.Services
                 var ws = package.Workbook.Worksheets[0];
 
                 _context.ChangeTracker.Clear();
-                var hbls = _context.HBL
-                             .Where(h => h.mblid == mbl.MblID)
-                             .ToList();
+                var hbls = hbl != null
+                    ? _context.HBL.Where(h => h.hblID == hbl.hblID).ToList()
+                    : _context.HBL.Where(h => h.mblid == mbl.MblID).ToList();
                 var allcont = _context.Container.ToList();
                 var conts = allcont
                                .Where(c => hbls.Select(h => (Guid?)h.hblID).Contains(c.hblid))
@@ -864,6 +866,7 @@ namespace NVOAMASIS.Services
                 int currentRow = 4;
                 foreach (var h in hbls)
                 {
+                    var hblConts = conts.Where(c => c.hblid == h.hblID).ToList();
                     int col = 1;
                     ws.Cells[currentRow, col++].Value = 1;
                     ws.Cells[currentRow, col++].Value = "";
@@ -885,10 +888,9 @@ namespace NVOAMASIS.Services
                     ws.Cells[currentRow, col++].Value = mbl.DateLaden;
                     ws.Cells[currentRow, col++].Value = h.dateLaden;
 
-                    // Tổng CBM / GrossWeight toàn bộ containers của MBL
-                    ws.Cells[currentRow, col++].Value = conts.Sum(c => double.TryParse(c.cbm, out double cbm) ?  cbm : 0);
-                    ws.Cells[currentRow, col++].Value = conts.Count > 0 ? conts.First().pkgsCode : string.Empty;
-                    ws.Cells[currentRow, col++].Value = conts.Sum(c => c.GrossWeight);
+                    ws.Cells[currentRow, col++].Value = hblConts.Sum(c => double.TryParse(c.cbm, out double cbm) ?  cbm : 0);
+                    ws.Cells[currentRow, col++].Value = hblConts.Count > 0 ? hblConts.First().pkgsCode : string.Empty;
+                    ws.Cells[currentRow, col++].Value = hblConts.Sum(c => c.GrossWeight);
                     ws.Cells[currentRow, col++].Value = "KGM";
                     ws.Cells[currentRow, col++].Value = h.description;
 
@@ -928,7 +930,9 @@ namespace NVOAMASIS.Services
                 using var ms = new MemoryStream();
                 await package.SaveAsAsync(ms);
                 var base64 = Convert.ToBase64String(ms.ToArray());
-                var fileName = $"EManifest{DateTime.Now:yyyyMMddHHmmss}.xlsx";
+                var fileName = hbl != null
+                    ? $"EManifest_{hbl.hbl}_{DateTime.Now:yyyyMMddHHmmss}.xlsx"
+                    : $"EManifest{DateTime.Now:yyyyMMddHHmmss}.xlsx";
                 await JSRuntime.InvokeVoidAsync("saveAsFile", fileName, base64);
 
                 return new BoolandMessReponse(true, "Export successfully");

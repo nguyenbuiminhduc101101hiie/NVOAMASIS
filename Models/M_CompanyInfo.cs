@@ -29,6 +29,9 @@ namespace NVOAMASIS.Models
         public string? BankAddress { get; set; }
         public string? IBAN_CODE { get; set; }
 
-
+        public string? Email_GuiTB { get; set; }
+        public string? PasswordEmail_GuiTB { get; set; }
+        public string? SmtpServer { get; set; }
+        public int? SmtpPort { get; set; }
     }
 }

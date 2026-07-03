@@ -1,4 +1,5 @@
 
+@inject ReportServices rsv
 @inject CustomerService csv
 @inject SupportServices supsv
 @inject SharedServices ssv
@@ -53,6 +54,15 @@
                                 Icon="@Icons.Material.Filled.CopyAll"
                                 Class="btn-compact" />
                             </MudTooltip>
+                            <MudTooltip Text="@Localizer["EManifest"]">
+                                <MudIconButton OnClick="@(() => ExportManifestReport())"
+                                               Disabled="_processingUploadManifest"
+                                               Size="Size.Small"
+                                               Color="Color.Tertiary"
+                                               Variant="Variant.Filled"
+                                               Icon="@Icons.Material.Filled.ImportExport"
+                                               Class="btn-compact" />
+                            </MudTooltip>
                             <!-- Dropdown Export -->
                             <MudTooltip Text="@Localizer["Bills"]">
                                 @if (_processingArrival || _processingUpload || _processingDO)
@@ -100,6 +110,9 @@
                         </MudStack>
                     </HeaderTemplate>
                     <CellTemplate>
+                        <MudTooltip Text="@($"{Localizer["HBL"]} QR Code")">
+                            <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Filled.QrCode2" OnClick="@(() => OpenHblQrDialog(context.Item))" Disabled="@string.IsNullOrWhiteSpace(context.Item.hbl)" />
+                        </MudTooltip>
                         <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.EditCalendar" OnClick="@(()=>OpenImportDialog(context.Item))"  />
                         <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(() => TryStartEditing(context.Item))" />
                         <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))"  />
@@ -784,6 +797,23 @@
         await DialogService.ShowAsync<Shipment.Pages.DialogDoQr>(Localizer["D/O"] + " QR Code", parameters, options);
     }
 
+    private async Task OpenHblQrDialog(M_HBL item)
+    {
+        if (string.IsNullOrWhiteSpace(item.hbl))
+        {
+            CallSnackBar("HBL number is empty.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters
+        {
+            [nameof(Shipment.Pages.DialogHblQr.HblNo)] = item.hbl,
+            [nameof(Shipment.Pages.DialogHblQr.TitleLabel)] = Localizer["HBL"],
+        };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small };
+        await DialogService.ShowAsync<Shipment.Pages.DialogHblQr>(Localizer["HBL"] + " QR Code", parameters, options);
+    }
+
     private bool _processingBBGN = false;
     private async Task ExportBBGN()
     {
@@ -1218,5 +1248,31 @@
             }
             return tien;
         });
+    }
+
+    private bool _processingUploadManifest = false;
+    async Task ExportManifestReport()
+    {
+        try
+        {
+            if (hbldetail == null)
+            {
+                CallSnackBar("you must select 1 HBL.", MudBlazor.Severity.Warning);
+                return;
+            }
+            _processingUploadManifest = true;
+            StateHasChanged();
+            await Task.Delay(1);
+            var rs = await rsv.Emanifest(MBLDetail!, hbldetail);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUploadManifest = false;
+        }
     }
 }

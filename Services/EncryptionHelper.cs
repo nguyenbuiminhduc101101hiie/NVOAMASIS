@@ -5,8 +5,12 @@ namespace NVOAMASIS.Services
 {
     public static class EncryptionHelper
     {
-        // ⚠️ Key phải đúng 32 ký tự cho AES-256
         private static readonly string Key = "gsKeyEncryptionLogisticssoftwareQWE!@#123";
+
+        private static byte[] GetAesKey()
+        {
+            return SHA256.HashData(Encoding.UTF8.GetBytes(Key));
+        }
 
         public static string Encrypt(string? plainText)
         {
@@ -14,7 +18,7 @@ namespace NVOAMASIS.Services
                 return plainText ?? "";
 
             using var aes = Aes.Create();
-            aes.Key = Encoding.UTF8.GetBytes(Key);
+            aes.Key = GetAesKey();
             aes.GenerateIV();
 
             using var encryptor = aes.CreateEncryptor(aes.Key, aes.IV);
@@ -35,7 +39,7 @@ namespace NVOAMASIS.Services
             var cipher = full.Skip(16).ToArray();
 
             using var aes = Aes.Create();
-            aes.Key = Encoding.UTF8.GetBytes(Key);
+            aes.Key = GetAesKey();
             aes.IV = iv;
 
             using var decryptor = aes.CreateDecryptor(aes.Key, aes.IV);
