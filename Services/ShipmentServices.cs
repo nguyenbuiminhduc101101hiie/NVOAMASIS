@@ -1194,14 +1194,19 @@ namespace NVOAMASIS.Services
             return await ctx.Debit.FromSqlRaw(query, new SqlParameter("@p0", id)).AsNoTracking().ToListAsync();
         }
 
-        public async Task<List<M_HBL>> SearchHBLByHblNoLike(string? hblNo, int maxResults = 20)
+        public async Task<List<M_HBL>> SearchHBLByHblNoLike(string? hblNo, Guid? excludeHblId = null, int maxResults = 20)
         {
             if (string.IsNullOrWhiteSpace(hblNo))
                 return new List<M_HBL>();
 
             await using var ctx = await _dbFactory.CreateDbContextAsync();
-            return await ctx.HBL.AsNoTracking()
-                .Where(x => x.hbl != null && EF.Functions.Like(x.hbl, $"%{hblNo}%"))
+            var query = ctx.HBL.AsNoTracking()
+                .Where(x => x.hbl != null && EF.Functions.Like(x.hbl, $"%{hblNo}%"));
+
+            if (excludeHblId.HasValue && excludeHblId.Value != Guid.Empty)
+                query = query.Where(x => x.hblID != excludeHblId.Value);
+
+            return await query
                 .OrderBy(x => x.hbl)
                 .Take(maxResults)
                 .ToListAsync();
@@ -1213,10 +1218,14 @@ namespace NVOAMASIS.Services
             Guid? customerId,
             DateTime? etd,
             DateTime? eta,
+            Guid? excludeHblId = null,
             int maxResults = 50)
         {
             await using var ctx = await _dbFactory.CreateDbContextAsync();
             var query = ctx.HBL.AsNoTracking().AsQueryable();
+
+            if (excludeHblId.HasValue && excludeHblId.Value != Guid.Empty)
+                query = query.Where(x => x.hblID != excludeHblId.Value);
 
             if (!string.IsNullOrWhiteSpace(pol))
             {
