@@ -9,6 +9,7 @@
 @using OfficeOpenXml
 @using System.Net
 @using System.Text
+@using System.Globalization
 
 @inject IJSRuntime JS
 @inject AppDbContext _context
@@ -22,13 +23,24 @@
             </MudText>
         </MudStack>
 
-        <MudStack Row="true" Spacing="1">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudTooltip Text="Bật/tắt bộ lọc trên đầu mỗi cột">
+                <MudToggleIconButton @bind-Toggled="ShowFilters"
+                                     Icon="@Icons.Material.Filled.FilterAlt"
+                                     ToggledIcon="@Icons.Material.Filled.FilterAltOff"
+                                     Color="Color.Default"
+                                     ToggledColor="Color.Primary" />
+            </MudTooltip>
+            <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Filled.FilterListOff"
+                       Disabled="@(!HasActiveFilters)" OnClick="ClearAllFilters">
+                Xóa filter
+            </MudButton>
             <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Filled.Print"
-                       Disabled="@(!Rows.Any())" OnClick="PrintReport">
+                       Disabled="@(!FilteredRows.Any())" OnClick="PrintReport">
                 In
             </MudButton>
             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download"
-                       Disabled="@(!Rows.Any())" OnClick="ExportExcel">
+                       Disabled="@(!FilteredRows.Any())" OnClick="ExportExcel">
                 Xuất Excel
             </MudButton>
         </MudStack>
@@ -57,6 +69,9 @@
                            Disabled="@Loading" OnClick="ClearAsync">
                     Xóa lọc
                 </MudButton>
+                <MudCheckBox T="bool" @bind-Value="IsAgentOnly"
+                             Color="Color.Primary" Dense="true"
+                             Label="Đại Lý/Agent" />
                 @if (Loading)
                 {
                     <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-2" />
@@ -71,22 +86,48 @@
     }
 
     <MudGrid Class="mb-3">
-        <MudItem xs="12" sm="4">
+        <MudItem xs="12" sm="6" md="4" lg="4">
             <MudPaper Class="pa-3" Outlined="true">
-                <MudText Typo="Typo.caption" Color="Color.Secondary">Số dòng</MudText>
-                <MudText Typo="Typo.h6">@Rows.Count.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Số dòng @(HasActiveFilters ? $"(lọc / tổng {Rows.Count:N0})" : string.Empty)
+                </MudText>
+                <MudText Typo="Typo.h6">@FilteredRows.Count.ToString("N0")</MudText>
             </MudPaper>
         </MudItem>
-        <MudItem xs="12" sm="4">
+        <MudItem xs="12" sm="6" md="4" lg="4">
             <MudPaper Class="pa-3" Outlined="true">
-                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng Debit</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng Debit (sau thuế)</MudText>
                 <MudText Typo="Typo.h6">@FormatNumber(TotalDebit)</MudText>
             </MudPaper>
         </MudItem>
-        <MudItem xs="12" sm="4">
+        <MudItem xs="12" sm="6" md="4" lg="4">
             <MudPaper Class="pa-3" Outlined="true">
-                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng Credit</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng Credit (sau thuế)</MudText>
                 <MudText Typo="Typo.h6">@FormatNumber(TotalCredit)</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3" lg="3">
+            <MudPaper Class="pa-3" Outlined="true" Style="border-left: 3px solid #4caf50;">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng VND — Debit</MudText>
+                <MudText Typo="Typo.h6">@FormatNumber(TotalVndDebit)</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3" lg="3">
+            <MudPaper Class="pa-3" Outlined="true" Style="border-left: 3px solid #ff9800;">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng VND — Credit</MudText>
+                <MudText Typo="Typo.h6">@FormatNumber(TotalVndCredit)</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3" lg="3">
+            <MudPaper Class="pa-3" Outlined="true" Style="border-left: 3px solid #2196f3;">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng USD — Debit</MudText>
+                <MudText Typo="Typo.h6">@FormatNumber(TotalUsdDebit)</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3" lg="3">
+            <MudPaper Class="pa-3" Outlined="true" Style="border-left: 3px solid #9c27b0;">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng USD — Credit</MudText>
+                <MudText Typo="Typo.h6">@FormatNumber(TotalUsdCredit)</MudText>
             </MudPaper>
         </MudItem>
     </MudGrid>
@@ -96,52 +137,60 @@
             <h2>BÁO CÁO CHI TIẾT THEO TÊN PHÍ</h2>
             <div><b>Từ khóa:</b> @(string.IsNullOrWhiteSpace(Keyword) ? "Tất cả" : Keyword)</div>
             <div><b>Ngày in:</b> @DateTime.Now.ToString("dd/MM/yyyy HH:mm")</div>
-            <div><b>Số dòng:</b> @Rows.Count.ToString("N0") | <b>Tổng Debit:</b> @FormatNumber(TotalDebit) | <b>Tổng Credit:</b> @FormatNumber(TotalCredit)</div>
+            <div>
+                <b>Số dòng:</b> @FilteredRows.Count.ToString("N0")
+                | <b>VND Debit:</b> @FormatNumber(TotalVndDebit)
+                | <b>VND Credit:</b> @FormatNumber(TotalVndCredit)
+                | <b>USD Debit:</b> @FormatNumber(TotalUsdDebit)
+                | <b>USD Credit:</b> @FormatNumber(TotalUsdCredit)
+            </div>
         </div>
 
-        <MudTable Items="Rows" Dense="true" Hover="true" Bordered="true" Striped="true" FixedHeader="true"
+        <MudTable Items="FilteredRows" Dense="true" Hover="true" Bordered="true" Striped="true" FixedHeader="true"
                   Height="calc(100vh - 395px)" Class="charge-report-table">
             <HeaderContent>
-                <MudTh>Loại</MudTh>
-                <MudTh>Mã phí</MudTh>
-                <MudTh>Tên phí</MudTh>
-                <MudTh>HBL</MudTh>
-                <MudTh>BK No</MudTh>
-                <MudTh>Shipper</MudTh>
-                <MudTh>Consignee</MudTh>
-                <MudTh>POL</MudTh>
-                <MudTh>POD</MudTh>
-                <MudTh>DEL</MudTh>
-                <MudTh Align="Align.Right">Đơn giá</MudTh>
-                <MudTh Align="Align.Right">SL</MudTh>
-                <MudTh>Tiền tệ</MudTh>
-                <MudTh Align="Align.Right">Thành tiền</MudTh>
-                <MudTh Align="Align.Right">Thuế</MudTh>
-                <MudTh Align="Align.Right">Sau thuế</MudTh>
-                <MudTh>Thu/Chi hộ</MudTh>
-                <MudTh>Debit/DNTT</MudTh>
-                <MudTh>Invoice</MudTh>
-                <MudTh>Ghi chú</MudTh>
-                <MudTh>User update</MudTh>
-                <MudTh>Date update</MudTh>
-                <MudTh>Vessel</MudTh>
-                <MudTh>Voy</MudTh>
-                <MudTh>DVT</MudTh>
-                <MudTh>Type</MudTh>
-                <MudTh>Nhóm</MudTh>
-                <MudTh Align="Align.Right">Tỷ giá</MudTh>
-                <MudTh Align="Align.Right">Tỷ giá HĐ</MudTh>
-                <MudTh>TK bán</MudTh>
-                <MudTh>TK mua</MudTh>
-                <MudTh>Approve</MudTh>
-                <MudTh>Continued</MudTh>
-                <MudTh>Editable</MudTh>
-                <MudTh>Khóa</MudTh>
-                <MudTh>Đã in</MudTh>
-                <MudTh>Đã xuất HĐ</MudTh>
-                <MudTh>DNTT</MudTh>
-                <MudTh>DNTU</MudTh>
-                <MudTh>SourceId</MudTh>
+                @RenderHeader("Loại", nameof(ChargeReportRow.RowType))
+                @RenderHeader("Mã phí", nameof(ChargeReportRow.ChargeCode))
+                @RenderHeader("Tên phí", nameof(ChargeReportRow.ChargeName))
+                @RenderHeader("HBL", nameof(ChargeReportRow.HblNo))
+                @RenderHeader("BK No", nameof(ChargeReportRow.BkNo))
+                @RenderHeader("Shipper", nameof(ChargeReportRow.Shipper))
+                @RenderHeader("Consignee", nameof(ChargeReportRow.Consignee))
+                @RenderHeader("POL", nameof(ChargeReportRow.Pol))
+                @RenderHeader("POD", nameof(ChargeReportRow.Pod))
+                @RenderHeader("DEL", nameof(ChargeReportRow.Del))
+                @RenderHeader("Đơn giá", nameof(ChargeReportRow.UnitPrice), Align.Right)
+                @RenderHeader("SL", nameof(ChargeReportRow.Quantity), Align.Right)
+                @RenderHeader("Tiền tệ", nameof(ChargeReportRow.Currency))
+                @RenderHeader("Thành tiền", nameof(ChargeReportRow.Amount), Align.Right)
+                @RenderHeader("Thuế", nameof(ChargeReportRow.Tax), Align.Right)
+                @RenderHeader("Sau thuế", nameof(ChargeReportRow.AmountAfterTax), Align.Right)
+                @RenderHeader("Total VND", "TotalVnd", Align.Right)
+                @RenderHeader("Total USD", "TotalUsd", Align.Right)
+                @RenderHeader("Thu/Chi hộ", nameof(ChargeReportRow.ThuChiHo))
+                @RenderHeader("Debit/DNTT", nameof(ChargeReportRow.DocumentNo))
+                @RenderHeader("Invoice", nameof(ChargeReportRow.InvoiceNo))
+                @RenderHeader("Ghi chú", nameof(ChargeReportRow.Note))
+                @RenderHeader("User update", nameof(ChargeReportRow.UserUpdate))
+                @RenderHeader("Date update", nameof(ChargeReportRow.DateUpdate))
+                @RenderHeader("Vessel", nameof(ChargeReportRow.Vessel))
+                @RenderHeader("Voy", nameof(ChargeReportRow.Voy))
+                @RenderHeader("DVT", nameof(ChargeReportRow.Dvt))
+                @RenderHeader("Type", nameof(ChargeReportRow.Type))
+                @RenderHeader("Nhóm", nameof(ChargeReportRow.Group))
+                @RenderHeader("Tỷ giá", nameof(ChargeReportRow.ExchangeRate), Align.Right)
+                @RenderHeader("Tỷ giá HĐ", nameof(ChargeReportRow.InvoiceRate), Align.Right)
+                @RenderHeader("TK bán", nameof(ChargeReportRow.AccountSelling))
+                @RenderHeader("TK mua", nameof(ChargeReportRow.AccountBuying))
+                @RenderHeader("Approve", nameof(ChargeReportRow.Approve))
+                @RenderHeader("Continued", nameof(ChargeReportRow.Continued))
+                @RenderHeader("Editable", nameof(ChargeReportRow.Editable))
+                @RenderHeader("Khóa", nameof(ChargeReportRow.Locked))
+                @RenderHeader("Đã in", nameof(ChargeReportRow.Printed))
+                @RenderHeader("Đã xuất HĐ", nameof(ChargeReportRow.IssuedInvoice))
+                @RenderHeader("DNTT", nameof(ChargeReportRow.DNTT))
+                @RenderHeader("DNTU", nameof(ChargeReportRow.DNTU))
+                @RenderHeader("SourceId", nameof(ChargeReportRow.SourceId))
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="Loại">
@@ -164,6 +213,8 @@
                 <MudTd DataLabel="Thành tiền" Align="Align.Right">@FormatNumber(context.Amount)</MudTd>
                 <MudTd DataLabel="Thuế" Align="Align.Right">@FormatNumber(context.Tax)</MudTd>
                 <MudTd DataLabel="Sau thuế" Align="Align.Right">@FormatNumber(context.AmountAfterTax)</MudTd>
+                <MudTd DataLabel="Total VND" Align="Align.Right" Class="col-total-vnd">@FormatNumber(ComputeTotalVnd(context))</MudTd>
+                <MudTd DataLabel="Total USD" Align="Align.Right" Class="col-total-usd">@FormatNumber(ComputeTotalUsd(context))</MudTd>
                 <MudTd DataLabel="Thu/Chi hộ">@context.ThuChiHo</MudTd>
                 <MudTd DataLabel="Debit/DNTT">@context.DocumentNo</MudTd>
                 <MudTd DataLabel="Invoice">@context.InvoiceNo</MudTd>
@@ -190,7 +241,9 @@
                 <MudTd DataLabel="SourceId">@context.SourceId</MudTd>
             </RowTemplate>
             <NoRecordsContent>
-                <MudText Class="pa-4">Chưa có dữ liệu. Nhập tên phí rồi bấm Tìm.</MudText>
+                <MudText Class="pa-4">
+                    @(Rows.Any() ? "Không có dòng nào khớp bộ lọc." : "Chưa có dữ liệu. Nhập tên phí rồi bấm Tìm.")
+                </MudText>
             </NoRecordsContent>
             <PagerContent>
                 <MudTablePager PageSizeOptions="@_pageSizeOptions" />
@@ -200,98 +253,34 @@
         <table class="full-export-table">
             <thead>
                 <tr>
-                    <th>Loại</th>
-                    <th>Mã phí</th>
-                    <th>Tên phí</th>
-                    <th>HBL</th>
-                    <th>BK No</th>
-                    <th>Shipper</th>
-                    <th>Consignee</th>
-                    <th>Vessel</th>
-                    <th>Voy</th>
-                    <th>POL</th>
-                    <th>POD</th>
-                    <th>DEL</th>
-                    <th>DVT</th>
-                    <th>Đơn giá</th>
-                    <th>SL</th>
-                    <th>Tiền tệ</th>
-                    <th>Thành tiền</th>
-                    <th>Thuế</th>
-                    <th>Sau thuế</th>
-                    <th>Tỷ giá</th>
-                    <th>Tỷ giá HĐ</th>
-                    <th>Thu/Chi hộ</th>
-                    <th>Debit/DNTT</th>
-                    <th>Invoice</th>
-                    <th>Type</th>
-                    <th>Nhóm</th>
-                    <th>Ghi chú</th>
-                    <th>User update</th>
-                    <th>Date update</th>
-                    <th>TK bán</th>
-                    <th>TK mua</th>
-                    <th>Approve</th>
-                    <th>Continued</th>
-                    <th>Editable</th>
-                    <th>Khóa</th>
-                    <th>Đã in</th>
-                    <th>Đã xuất HĐ</th>
-                    <th>DNTT</th>
-                    <th>DNTU</th>
-                    <th>SourceId</th>
-                    <th>HblId</th>
-                    <th>MblId</th>
-                    <th>CustomerId</th>
+                    <th>Loại</th><th>Mã phí</th><th>Tên phí</th><th>HBL</th><th>BK No</th>
+                    <th>Shipper</th><th>Consignee</th><th>Vessel</th><th>Voy</th>
+                    <th>POL</th><th>POD</th><th>DEL</th><th>DVT</th>
+                    <th>Đơn giá</th><th>SL</th><th>Tiền tệ</th><th>Thành tiền</th><th>Thuế</th><th>Sau thuế</th>
+                    <th>Total VND</th><th>Total USD</th>
+                    <th>Tỷ giá</th><th>Tỷ giá HĐ</th><th>Thu/Chi hộ</th><th>Debit/DNTT</th><th>Invoice</th>
+                    <th>Type</th><th>Nhóm</th><th>Ghi chú</th><th>User update</th><th>Date update</th>
+                    <th>TK bán</th><th>TK mua</th><th>Approve</th><th>Continued</th><th>Editable</th>
+                    <th>Khóa</th><th>Đã in</th><th>Đã xuất HĐ</th><th>DNTT</th><th>DNTU</th>
+                    <th>SourceId</th><th>HblId</th><th>MblId</th><th>CustomerId</th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var row in Rows)
+                @foreach (var row in FilteredRows)
                 {
                     <tr>
-                        <td>@row.RowType</td>
-                        <td>@row.ChargeCode</td>
-                        <td>@row.ChargeName</td>
-                        <td>@row.HblNo</td>
-                        <td>@row.BkNo</td>
-                        <td>@row.Shipper</td>
-                        <td>@row.Consignee</td>
-                        <td>@row.Vessel</td>
-                        <td>@row.Voy</td>
-                        <td>@row.Pol</td>
-                        <td>@row.Pod</td>
-                        <td>@row.Del</td>
-                        <td>@row.Dvt</td>
-                        <td class="num">@FormatNumber(row.UnitPrice)</td>
-                        <td class="num">@FormatNumber(row.Quantity)</td>
-                        <td>@row.Currency</td>
-                        <td class="num">@FormatNumber(row.Amount)</td>
-                        <td class="num">@FormatNumber(row.Tax)</td>
-                        <td class="num">@FormatNumber(row.AmountAfterTax)</td>
-                        <td class="num">@FormatNumber(row.ExchangeRate)</td>
-                        <td class="num">@FormatNumber(row.InvoiceRate)</td>
-                        <td>@row.ThuChiHo</td>
-                        <td>@row.DocumentNo</td>
-                        <td>@row.InvoiceNo</td>
-                        <td>@row.Type</td>
-                        <td>@row.Group</td>
-                        <td>@row.Note</td>
-                        <td>@row.UserUpdate</td>
-                        <td>@row.DateUpdate</td>
-                        <td>@row.AccountSelling</td>
-                        <td>@row.AccountBuying</td>
-                        <td>@FormatBool(row.Approve)</td>
-                        <td>@FormatBool(row.Continued)</td>
-                        <td>@FormatBool(row.Editable)</td>
-                        <td>@FormatBool(row.Locked)</td>
-                        <td>@FormatBool(row.Printed)</td>
-                        <td>@FormatBool(row.IssuedInvoice)</td>
-                        <td>@FormatBool(row.DNTT)</td>
-                        <td>@FormatBool(row.DNTU)</td>
-                        <td>@row.SourceId</td>
-                        <td>@row.HblId</td>
-                        <td>@row.MblId</td>
-                        <td>@row.CustomerId</td>
+                        <td>@row.RowType</td><td>@row.ChargeCode</td><td>@row.ChargeName</td><td>@row.HblNo</td><td>@row.BkNo</td>
+                        <td>@row.Shipper</td><td>@row.Consignee</td><td>@row.Vessel</td><td>@row.Voy</td>
+                        <td>@row.Pol</td><td>@row.Pod</td><td>@row.Del</td><td>@row.Dvt</td>
+                        <td class="num">@FormatNumber(row.UnitPrice)</td><td class="num">@FormatNumber(row.Quantity)</td><td>@row.Currency</td>
+                        <td class="num">@FormatNumber(row.Amount)</td><td class="num">@FormatNumber(row.Tax)</td><td class="num">@FormatNumber(row.AmountAfterTax)</td>
+                        <td class="num">@FormatNumber(ComputeTotalVnd(row))</td><td class="num">@FormatNumber(ComputeTotalUsd(row))</td>
+                        <td class="num">@FormatNumber(row.ExchangeRate)</td><td class="num">@FormatNumber(row.InvoiceRate)</td>
+                        <td>@row.ThuChiHo</td><td>@row.DocumentNo</td><td>@row.InvoiceNo</td>
+                        <td>@row.Type</td><td>@row.Group</td><td>@row.Note</td><td>@row.UserUpdate</td><td>@row.DateUpdate</td>
+                        <td>@row.AccountSelling</td><td>@row.AccountBuying</td><td>@FormatBool(row.Approve)</td><td>@FormatBool(row.Continued)</td><td>@FormatBool(row.Editable)</td>
+                        <td>@FormatBool(row.Locked)</td><td>@FormatBool(row.Printed)</td><td>@FormatBool(row.IssuedInvoice)</td><td>@FormatBool(row.DNTT)</td><td>@FormatBool(row.DNTU)</td>
+                        <td>@row.SourceId</td><td>@row.HblId</td><td>@row.MblId</td><td>@row.CustomerId</td>
                     </tr>
                 }
             </tbody>
@@ -307,6 +296,35 @@
     .charge-report-table td,
     .charge-report-table th {
         white-space: nowrap;
+        vertical-align: top;
+    }
+
+    .charge-report-table .th-label {
+        font-weight: 600;
+        display: block;
+    }
+
+    .charge-report-table .th-filter {
+        margin-top: 4px;
+    }
+
+    .charge-report-table .th-filter .mud-input-slot,
+    .charge-report-table .th-filter .mud-input {
+        font-size: 11px;
+    }
+
+    .charge-report-table .th-filter .mud-input-control {
+        min-width: 80px;
+    }
+
+    .charge-report-table .col-total-vnd {
+        background-color: rgba(76, 175, 80, 0.06);
+        font-weight: 600;
+    }
+
+    .charge-report-table .col-total-usd {
+        background-color: rgba(33, 150, 243, 0.06);
+        font-weight: 600;
     }
 
     .full-export-table {
@@ -316,20 +334,20 @@
         font-size: 10px;
     }
 
-        .full-export-table th,
-        .full-export-table td {
-            border: 1px solid #999;
-            padding: 4px 6px;
-            white-space: nowrap;
-        }
+    .full-export-table th,
+    .full-export-table td {
+        border: 1px solid #999;
+        padding: 4px 6px;
+        white-space: nowrap;
+    }
 
-        .full-export-table th {
-            background: #eee;
-        }
+    .full-export-table th {
+        background: #eee;
+    }
 
-        .full-export-table .num {
-            text-align: right;
-        }
+    .full-export-table .num {
+        text-align: right;
+    }
 
     @@media print {
         body * {
@@ -373,10 +391,178 @@
     private string? Message { get; set; }
     private MudBlazor.Severity MessageSeverity { get; set; } = MudBlazor.Severity.Info;
 
+    private bool ShowFilters { get; set; }
+    private bool IsAgentOnly { get; set; }
+
+    private readonly Dictionary<string, string?> ColumnFilters = new();
+
     private List<ChargeReportRow> Rows { get; set; } = new();
 
-    private double TotalDebit => Rows.Where(x => x.RowType == "DEBIT").Sum(x => x.AmountAfterTax ?? x.Amount ?? 0);
-    private double TotalCredit => Rows.Where(x => x.RowType == "CREDIT").Sum(x => x.AmountAfterTax ?? x.Amount ?? 0);
+    private List<ChargeReportRow> FilteredRows => Rows.Where(PassesAllFilters).ToList();
+
+    private bool HasActiveFilters => ColumnFilters.Values.Any(v => !string.IsNullOrWhiteSpace(v));
+
+    private double TotalDebit => FilteredRows.Where(x => x.RowType == "DEBIT").Sum(x => x.AmountAfterTax ?? x.Amount ?? 0);
+    private double TotalCredit => FilteredRows.Where(x => x.RowType == "CREDIT").Sum(x => x.AmountAfterTax ?? x.Amount ?? 0);
+
+    private double TotalVndDebit => FilteredRows.Where(x => x.RowType == "DEBIT").Sum(ComputeTotalVnd);
+    private double TotalVndCredit => FilteredRows.Where(x => x.RowType == "CREDIT").Sum(ComputeTotalVnd);
+    private double TotalUsdDebit => FilteredRows.Where(x => x.RowType == "DEBIT").Sum(ComputeTotalUsd);
+    private double TotalUsdCredit => FilteredRows.Where(x => x.RowType == "CREDIT").Sum(ComputeTotalUsd);
+
+    private RenderFragment RenderHeader(string label, string key, Align align = Align.Left) => builder =>
+    {
+        builder.OpenComponent<MudTh>(0);
+        if (align == Align.Right)
+        {
+            // MudTh has no built-in Align property, so we style via CSS
+        }
+        builder.AddAttribute(1, "ChildContent", (RenderFragment)(inner =>
+        {
+            inner.OpenElement(0, "div");
+            inner.AddAttribute(1, "class", align == Align.Right ? "th-label text-right" : "th-label");
+            inner.AddAttribute(2, "style", align == Align.Right ? "text-align:right;" : null);
+            inner.AddContent(3, label);
+            inner.CloseElement();
+
+            if (ShowFilters)
+            {
+                inner.OpenComponent<MudTextField<string>>(10);
+                inner.AddAttribute(11, "Value", GetFilter(key));
+                inner.AddAttribute(12, "ValueChanged",
+                    Microsoft.AspNetCore.Components.EventCallback.Factory.Create<string>(this, v => SetFilter(key, v)));
+                inner.AddAttribute(13, "Placeholder", "Lọc...");
+                inner.AddAttribute(14, "Margin", Margin.Dense);
+                inner.AddAttribute(15, "Variant", Variant.Outlined);
+                inner.AddAttribute(16, "Immediate", true);
+                inner.AddAttribute(17, "DebounceInterval", 250.0);
+                inner.AddAttribute(18, "Clearable", true);
+                inner.AddAttribute(19, "Class", "th-filter");
+                inner.CloseComponent();
+            }
+        }));
+        builder.CloseComponent();
+    };
+
+    private string? GetFilter(string key)
+    {
+        return ColumnFilters.TryGetValue(key, out var v) ? v : null;
+    }
+
+    private void SetFilter(string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            ColumnFilters.Remove(key);
+        else
+            ColumnFilters[key] = value.Trim();
+    }
+
+    private void ClearAllFilters()
+    {
+        ColumnFilters.Clear();
+    }
+
+    private bool PassesAllFilters(ChargeReportRow row)
+    {
+        foreach (var kv in ColumnFilters)
+        {
+            var filter = kv.Value;
+            if (string.IsNullOrWhiteSpace(filter))
+                continue;
+
+            var cell = GetCellText(row, kv.Key);
+            if (cell == null || cell.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+        }
+        return true;
+    }
+
+    private string GetCellText(ChargeReportRow r, string key)
+    {
+        return key switch
+        {
+            nameof(ChargeReportRow.RowType) => r.RowType ?? string.Empty,
+            nameof(ChargeReportRow.ChargeCode) => r.ChargeCode ?? string.Empty,
+            nameof(ChargeReportRow.ChargeName) => r.ChargeName ?? string.Empty,
+            nameof(ChargeReportRow.HblNo) => r.HblNo ?? string.Empty,
+            nameof(ChargeReportRow.BkNo) => r.BkNo ?? string.Empty,
+            nameof(ChargeReportRow.Shipper) => r.Shipper ?? string.Empty,
+            nameof(ChargeReportRow.Consignee) => r.Consignee ?? string.Empty,
+            nameof(ChargeReportRow.Pol) => r.Pol ?? string.Empty,
+            nameof(ChargeReportRow.Pod) => r.Pod ?? string.Empty,
+            nameof(ChargeReportRow.Del) => r.Del ?? string.Empty,
+            nameof(ChargeReportRow.UnitPrice) => FormatNumber(r.UnitPrice),
+            nameof(ChargeReportRow.Quantity) => FormatNumber(r.Quantity),
+            nameof(ChargeReportRow.Currency) => r.Currency ?? string.Empty,
+            nameof(ChargeReportRow.Amount) => FormatNumber(r.Amount),
+            nameof(ChargeReportRow.Tax) => FormatNumber(r.Tax),
+            nameof(ChargeReportRow.AmountAfterTax) => FormatNumber(r.AmountAfterTax),
+            "TotalVnd" => FormatNumber(ComputeTotalVnd(r)),
+            "TotalUsd" => FormatNumber(ComputeTotalUsd(r)),
+            nameof(ChargeReportRow.ThuChiHo) => r.ThuChiHo ?? string.Empty,
+            nameof(ChargeReportRow.DocumentNo) => r.DocumentNo ?? string.Empty,
+            nameof(ChargeReportRow.InvoiceNo) => r.InvoiceNo ?? string.Empty,
+            nameof(ChargeReportRow.Note) => r.Note ?? string.Empty,
+            nameof(ChargeReportRow.UserUpdate) => r.UserUpdate ?? string.Empty,
+            nameof(ChargeReportRow.DateUpdate) => r.DateUpdate ?? string.Empty,
+            nameof(ChargeReportRow.Vessel) => r.Vessel ?? string.Empty,
+            nameof(ChargeReportRow.Voy) => r.Voy ?? string.Empty,
+            nameof(ChargeReportRow.Dvt) => r.Dvt ?? string.Empty,
+            nameof(ChargeReportRow.Type) => r.Type ?? string.Empty,
+            nameof(ChargeReportRow.Group) => r.Group ?? string.Empty,
+            nameof(ChargeReportRow.ExchangeRate) => FormatNumber(r.ExchangeRate),
+            nameof(ChargeReportRow.InvoiceRate) => FormatNumber(r.InvoiceRate),
+            nameof(ChargeReportRow.AccountSelling) => r.AccountSelling ?? string.Empty,
+            nameof(ChargeReportRow.AccountBuying) => r.AccountBuying ?? string.Empty,
+            nameof(ChargeReportRow.Approve) => FormatBool(r.Approve),
+            nameof(ChargeReportRow.Continued) => FormatBool(r.Continued),
+            nameof(ChargeReportRow.Editable) => FormatBool(r.Editable),
+            nameof(ChargeReportRow.Locked) => FormatBool(r.Locked),
+            nameof(ChargeReportRow.Printed) => FormatBool(r.Printed),
+            nameof(ChargeReportRow.IssuedInvoice) => FormatBool(r.IssuedInvoice),
+            nameof(ChargeReportRow.DNTT) => FormatBool(r.DNTT),
+            nameof(ChargeReportRow.DNTU) => FormatBool(r.DNTU),
+            nameof(ChargeReportRow.SourceId) => r.SourceId.ToString(),
+            _ => string.Empty
+        };
+    }
+
+    private double ComputeTotalVnd(ChargeReportRow r)
+    {
+        var amount = r.AmountAfterTax ?? r.Amount ?? 0;
+        if (amount == 0) return 0;
+
+        var currency = (r.Currency ?? "VND").Trim().ToUpperInvariant();
+        var rate = r.ExchangeRate ?? 0;
+
+        if (currency == "VND")
+            return amount;
+
+        // Với các loại tiền khác (USD, ...) dùng tỷ giá của chính dòng đó (tigiadebit/tigiacredit)
+        return rate > 0 ? amount * rate : 0;
+    }
+
+    private double ComputeTotalUsd(ChargeReportRow r)
+    {
+        var amount = r.AmountAfterTax ?? r.Amount ?? 0;
+        if (amount == 0) return 0;
+
+        var currency = (r.Currency ?? "VND").Trim().ToUpperInvariant();
+        var rate = r.ExchangeRate ?? 0;
+
+        if (currency == "USD")
+            return amount;
+
+        // Nếu dòng ở loại tiền khác (VND, ...) quy đổi qua USD dựa trên tỷ giá của dòng đó.
+        if (rate <= 0)
+            return 0;
+
+        if (currency == "VND")
+            return amount / rate;
+
+        // Loại tiền khác USD/VND: không đủ thông tin để quy đổi ra USD từ tỷ giá của dòng.
+        return 0;
+    }
 
     private async Task OnKeywordKeyDown(KeyboardEventArgs e)
     {
@@ -388,6 +574,7 @@
     {
         Keyword = null;
         Rows.Clear();
+        ColumnFilters.Clear();
         Message = null;
         await Task.CompletedTask;
     }
@@ -434,8 +621,17 @@
             var chargeMap = charges.ToDictionary(x => x.ChargeId, x => x);
             var chargeIdQuery = chargeQuery.Select(c => c.CHARGE_ID);
 
-            var debitRows = await LoadDebitRows(chargeIdQuery);
-            var creditRows = await LoadCreditRows(chargeIdQuery);
+            IQueryable<Guid>? agentCustomerIds = null;
+            if (IsAgentOnly)
+            {
+                agentCustomerIds = _context.Set<M_Customer>()
+                    .AsNoTracking()
+                    .Where(x => x.MainCode != null && x.MainCode.Contains("Agent-Network"))
+                    .Select(x => x.Customer_ID);
+            }
+
+            var debitRows = await LoadDebitRows(chargeIdQuery, agentCustomerIds);
+            var creditRows = await LoadCreditRows(chargeIdQuery, agentCustomerIds);
 
             var allRows = debitRows.Concat(creditRows).ToList();
             foreach (var row in allRows)
@@ -482,7 +678,7 @@
                 || ((c.CHARGE_CODE ?? string.Empty).ToLower().Contains(kw)));
     }
 
-    private async Task<List<ChargeReportRow>> LoadDebitRows(IQueryable<Guid> chargeIdQuery)
+    private async Task<List<ChargeReportRow>> LoadDebitRows(IQueryable<Guid> chargeIdQuery, IQueryable<Guid>? agentCustomerIds)
     {
         return await (
             from d in _context.Set<M_Debit>().AsNoTracking()
@@ -490,6 +686,7 @@
                 on d.hblid equals h.hblID into hj
             from h in hj.DefaultIfEmpty()
             where chargeIdQuery.Contains(d.itemid)
+                && (agentCustomerIds == null || agentCustomerIds.Contains(d.customerid))
             select new ChargeReportRow
             {
                 RowType = "DEBIT",
@@ -533,7 +730,7 @@
             .ToListAsync();
     }
 
-    private async Task<List<ChargeReportRow>> LoadCreditRows(IQueryable<Guid> chargeIdQuery)
+    private async Task<List<ChargeReportRow>> LoadCreditRows(IQueryable<Guid> chargeIdQuery, IQueryable<Guid>? agentCustomerIds)
     {
         return await (
             from c in _context.Set<M_Credit>().AsNoTracking()
@@ -541,6 +738,7 @@
                 on c.hblid equals h.hblID into hj
             from h in hj.DefaultIfEmpty()
             where chargeIdQuery.Contains(c.itemid)
+                && (agentCustomerIds == null || agentCustomerIds.Contains(c.customerid))
             select new ChargeReportRow
             {
                 RowType = "CREDIT",
@@ -584,7 +782,7 @@
 
     private async Task PrintReport()
     {
-        if (!Rows.Any())
+        if (!FilteredRows.Any())
             return;
 
         try
@@ -602,6 +800,8 @@
     {
         static string E(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
 
+        var rows = FilteredRows;
+
         var sb = new StringBuilder();
         sb.Append("<html><head><meta charset='utf-8'><title>Bao_cao_chi_tiet_theo_phi</title>");
         sb.Append("<style>");
@@ -617,13 +817,18 @@
         sb.Append("<h2>BÁO CÁO CHI TIẾT THEO TÊN PHÍ</h2>");
         sb.Append($"<div><b>Từ khóa:</b> {E(string.IsNullOrWhiteSpace(Keyword) ? "Tất cả" : Keyword)}</div>");
         sb.Append($"<div><b>Ngày in:</b> {DateTime.Now:dd/MM/yyyy HH:mm}</div>");
-        sb.Append($"<div><b>Số dòng:</b> {Rows.Count:N0} | <b>Tổng Debit:</b> {E(FormatNumber(TotalDebit))} | <b>Tổng Credit:</b> {E(FormatNumber(TotalCredit))}</div>");
+        sb.Append($"<div><b>Số dòng:</b> {rows.Count:N0}"
+            + $" | <b>VND Debit:</b> {E(FormatNumber(TotalVndDebit))}"
+            + $" | <b>VND Credit:</b> {E(FormatNumber(TotalVndCredit))}"
+            + $" | <b>USD Debit:</b> {E(FormatNumber(TotalUsdDebit))}"
+            + $" | <b>USD Credit:</b> {E(FormatNumber(TotalUsdCredit))}</div>");
 
         sb.Append("<table><thead><tr>");
         foreach (var header in new[]
         {
             "Loại", "Mã phí", "Tên phí", "HBL", "BK No", "Shipper", "Consignee", "Vessel", "Voy",
             "POL", "POD", "DEL", "DVT", "Đơn giá", "SL", "Tiền tệ", "Thành tiền", "Thuế", "Sau thuế",
+            "Total VND", "Total USD",
             "Tỷ giá", "Tỷ giá HĐ", "Thu/Chi hộ", "Debit/DNTT", "Invoice", "Type", "Nhóm", "Ghi chú",
             "User update", "Date update", "TK bán", "TK mua", "Approve", "Continued", "Editable",
             "Khóa", "Đã in", "Đã xuất HĐ", "DNTT", "DNTU", "SourceId", "HblId", "MblId", "CustomerId"
@@ -633,7 +838,7 @@
         }
         sb.Append("</tr></thead><tbody>");
 
-        foreach (var row in Rows)
+        foreach (var row in rows)
         {
             sb.Append("<tr>");
             sb.Append("<td>").Append(E(row.RowType)).Append("</td>");
@@ -655,6 +860,8 @@
             sb.Append("<td class='num'>").Append(E(FormatNumber(row.Amount))).Append("</td>");
             sb.Append("<td class='num'>").Append(E(FormatNumber(row.Tax))).Append("</td>");
             sb.Append("<td class='num'>").Append(E(FormatNumber(row.AmountAfterTax))).Append("</td>");
+            sb.Append("<td class='num'>").Append(E(FormatNumber(ComputeTotalVnd(row)))).Append("</td>");
+            sb.Append("<td class='num'>").Append(E(FormatNumber(ComputeTotalUsd(row)))).Append("</td>");
             sb.Append("<td class='num'>").Append(E(FormatNumber(row.ExchangeRate))).Append("</td>");
             sb.Append("<td class='num'>").Append(E(FormatNumber(row.InvoiceRate))).Append("</td>");
             sb.Append("<td>").Append(E(row.ThuChiHo)).Append("</td>");
@@ -688,7 +895,8 @@
 
     private async Task ExportExcel()
     {
-        if (!Rows.Any())
+        var rows = FilteredRows;
+        if (!rows.Any())
             return;
 
         try
@@ -701,6 +909,7 @@
             {
                 "Loại", "Mã phí", "Tên phí", "HBL", "BK No", "Shipper", "Consignee", "Vessel", "Voy",
                 "POL", "POD", "DEL", "DVT", "Đơn giá", "SL", "Tiền tệ", "Thành tiền", "Thuế", "Sau thuế",
+                "Total VND", "Total USD",
                 "Tỷ giá", "Tỷ giá HĐ", "Thu/Chi hộ", "Debit/DNTT", "Invoice", "Type", "Nhóm", "Ghi chú",
                 "User update", "Date update", "TK bán", "TK mua", "Approve", "Continued", "Editable",
                 "Khóa", "Đã in", "Đã xuất HĐ", "DNTT", "DNTU", "SourceId", "HblId", "MblId", "CustomerId"
@@ -709,9 +918,9 @@
             for (var col = 0; col < headers.Length; col++)
                 ws.Cells[1, col + 1].Value = headers[col];
 
-            for (var i = 0; i < Rows.Count; i++)
+            for (var i = 0; i < rows.Count; i++)
             {
-                var row = Rows[i];
+                var row = rows[i];
                 var r = i + 2;
                 ws.Cells[r, 1].Value = row.RowType;
                 ws.Cells[r, 2].Value = row.ChargeCode;
@@ -732,30 +941,39 @@
                 ws.Cells[r, 17].Value = row.Amount;
                 ws.Cells[r, 18].Value = row.Tax;
                 ws.Cells[r, 19].Value = row.AmountAfterTax;
-                ws.Cells[r, 20].Value = row.ExchangeRate;
-                ws.Cells[r, 21].Value = row.InvoiceRate;
-                ws.Cells[r, 22].Value = row.ThuChiHo;
-                ws.Cells[r, 23].Value = row.DocumentNo;
-                ws.Cells[r, 24].Value = row.InvoiceNo;
-                ws.Cells[r, 25].Value = row.Type;
-                ws.Cells[r, 26].Value = row.Group;
-                ws.Cells[r, 27].Value = row.Note;
-                ws.Cells[r, 28].Value = row.UserUpdate;
-                ws.Cells[r, 29].Value = row.DateUpdate;
-                ws.Cells[r, 30].Value = row.AccountSelling;
-                ws.Cells[r, 31].Value = row.AccountBuying;
-                ws.Cells[r, 32].Value = FormatBool(row.Approve);
-                ws.Cells[r, 33].Value = FormatBool(row.Continued);
-                ws.Cells[r, 34].Value = FormatBool(row.Editable);
-                ws.Cells[r, 35].Value = FormatBool(row.Locked);
-                ws.Cells[r, 36].Value = FormatBool(row.Printed);
-                ws.Cells[r, 37].Value = FormatBool(row.IssuedInvoice);
-                ws.Cells[r, 38].Value = FormatBool(row.DNTT);
-                ws.Cells[r, 39].Value = FormatBool(row.DNTU);
-                ws.Cells[r, 40].Value = row.SourceId.ToString();
-                ws.Cells[r, 41].Value = row.HblId.ToString();
-                ws.Cells[r, 42].Value = row.MblId.ToString();
-                ws.Cells[r, 43].Value = row.CustomerId.ToString();
+                ws.Cells[r, 20].Value = ComputeTotalVnd(row);
+                ws.Cells[r, 21].Value = ComputeTotalUsd(row);
+                ws.Cells[r, 22].Value = row.ExchangeRate;
+                ws.Cells[r, 23].Value = row.InvoiceRate;
+                ws.Cells[r, 24].Value = row.ThuChiHo;
+                ws.Cells[r, 25].Value = row.DocumentNo;
+                ws.Cells[r, 26].Value = row.InvoiceNo;
+                ws.Cells[r, 27].Value = row.Type;
+                ws.Cells[r, 28].Value = row.Group;
+                ws.Cells[r, 29].Value = row.Note;
+                ws.Cells[r, 30].Value = row.UserUpdate;
+                ws.Cells[r, 31].Value = row.DateUpdate;
+                ws.Cells[r, 32].Value = row.AccountSelling;
+                ws.Cells[r, 33].Value = row.AccountBuying;
+                ws.Cells[r, 34].Value = FormatBool(row.Approve);
+                ws.Cells[r, 35].Value = FormatBool(row.Continued);
+                ws.Cells[r, 36].Value = FormatBool(row.Editable);
+                ws.Cells[r, 37].Value = FormatBool(row.Locked);
+                ws.Cells[r, 38].Value = FormatBool(row.Printed);
+                ws.Cells[r, 39].Value = FormatBool(row.IssuedInvoice);
+                ws.Cells[r, 40].Value = FormatBool(row.DNTT);
+                ws.Cells[r, 41].Value = FormatBool(row.DNTU);
+                ws.Cells[r, 42].Value = row.SourceId.ToString();
+                ws.Cells[r, 43].Value = row.HblId.ToString();
+                ws.Cells[r, 44].Value = row.MblId.ToString();
+                ws.Cells[r, 45].Value = row.CustomerId.ToString();
+            }
+
+            // Định dạng số cho các cột tiền/số lượng
+            var numericColumns = new[] { 14, 15, 17, 18, 19, 20, 21, 22, 23 };
+            foreach (var col in numericColumns)
+            {
+                ws.Column(col).Style.Numberformat.Format = "#,##0.00";
             }
 
             ws.Cells.AutoFitColumns();
@@ -773,7 +991,12 @@
 
     private static string FormatNumber(double? value)
     {
-        return value.HasValue ? value.Value.ToString("N2") : string.Empty;
+        return value.HasValue ? value.Value.ToString("N2", CultureInfo.InvariantCulture) : string.Empty;
+    }
+
+    private static string FormatNumber(double value)
+    {
+        return value.ToString("N2", CultureInfo.InvariantCulture);
     }
 
     private static string FormatBool(bool? value)
