@@ -1183,11 +1183,69 @@ namespace NVOAMASIS.Services
         }
         public async Task<List<M_Debit>> GetListDebitHBL(Guid? id, bool isDuty)
         {
-            _context.ChangeTracker.Clear();
+            if (id == null || id == Guid.Empty)
+                return new List<M_Debit>();
+
+            await using var ctx = await _dbFactory.CreateDbContextAsync();
+            ctx.ChangeTracker.Clear();
+            var dutyClause = isDuty ? "like" : "not like";
             var query = $@"select c.* from debit c join CHARGE ch on c.itemid = ch.CHARGE_ID 
-                        where CHARGE_CODE {(isDuty ? string.Empty : "not")} like '%Duty%' and c.hblid = '{id}' and c.continued = 1";
-            var rs = await _context.Debit.FromSqlRaw(query).ToListAsync();
-            return rs;
+                        where CHARGE_CODE {dutyClause} '%Duty%' and c.hblid = @p0 and c.continued = 1";
+            return await ctx.Debit.FromSqlRaw(query, new SqlParameter("@p0", id)).AsNoTracking().ToListAsync();
+        }
+
+        public async Task<List<M_HBL>> SearchHBLByHblNoLike(string? hblNo, int maxResults = 20)
+        {
+            if (string.IsNullOrWhiteSpace(hblNo))
+                return new List<M_HBL>();
+
+            await using var ctx = await _dbFactory.CreateDbContextAsync();
+            return await ctx.HBL.AsNoTracking()
+                .Where(x => x.hbl != null && EF.Functions.Like(x.hbl, $"%{hblNo}%"))
+                .OrderBy(x => x.hbl)
+                .Take(maxResults)
+                .ToListAsync();
+        }
+
+        public async Task<List<M_HBL>> SearchHBLByFilter(
+            string? pol,
+            string? pod,
+            Guid? customerId,
+            DateTime? etd,
+            DateTime? eta,
+            int maxResults = 50)
+        {
+            await using var ctx = await _dbFactory.CreateDbContextAsync();
+            var query = ctx.HBL.AsNoTracking().AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(pol))
+            {
+                query = query.Where(x =>
+                    (x.polcode != null && x.polcode.Contains(pol)) ||
+                    (x.polname != null && x.polname.Contains(pol)));
+            }
+
+            if (!string.IsNullOrWhiteSpace(pod))
+            {
+                query = query.Where(x =>
+                    (x.podcode != null && x.podcode.Contains(pod)) ||
+                    (x.podname != null && x.podname.Contains(pod)));
+            }
+
+            if (customerId.HasValue && customerId.Value != Guid.Empty)
+                query = query.Where(x => x.CustomerID == customerId.Value);
+
+            if (etd.HasValue)
+                query = query.Where(x => x.ETD.HasValue && x.ETD.Value.Date == etd.Value.Date);
+
+            if (eta.HasValue)
+                query = query.Where(x => x.ETA.HasValue && x.ETA.Value.Date == eta.Value.Date);
+
+            return await query
+                .OrderByDescending(x => x.ETD)
+                .ThenBy(x => x.hbl)
+                .Take(maxResults)
+                .ToListAsync();
         }
         public async Task<List<M_Debit>> GetListDebitHBL(List<M_HBL> listhbl)
         {
