@@ -9,6 +9,7 @@ using NVOAMASIS.Response;
 using OfficeOpenXml;
 using OfficeOpenXml.Style;
 using System.Net;
+using System.Security.Claims;
 using static MudBlazor.CategoryTypes;
 
 namespace NVOAMASIS.Services
@@ -168,6 +169,25 @@ namespace NVOAMASIS.Services
             {
                 return false;
             }
+        }
+
+        public async Task<HashSet<string>> GetUserViewPermissionsForUser(ClaimsPrincipal user)
+        {
+            var username = user.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(username))
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            _context.ChangeTracker.Clear();
+            var menuNames = await _context.Permissions
+                .AsNoTracking()
+                .Where(x => x.UserName == username && x.See == true)
+                .Select(x => x.MenuName)
+                .ToListAsync();
+
+            return menuNames
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Select(m => m!.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
 
         public async Task<BoolandMessReponse> UploadfiletoFTP_DNTU(IBrowserFile file, object model)
