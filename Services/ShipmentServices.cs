@@ -4727,12 +4727,15 @@ namespace NVOAMASIS.Services
             // Trường hợp check_cur không hợp lệ thì trả về amount gốc
             return amount;
         }
-        public async Task<List<M_HBL>> GetListHBLTruckDateRange(MudBlazor.DateRange dateRange)
+        public async Task<List<M_HBL>> GetListHBLTruckDateRange(
+            MudBlazor.DateRange dateRange,
+            bool chkSI = false,
+            bool chkSE = false,
+            bool chkAI = false,
+            bool chkAE = false,
+            bool chkTruck = true,
+            bool chkCustoms = false)
         {
-            //_context.ChangeTracker.Clear();
-            //var rs = await _context.Job.Where(x => x.Continued == true).ToListAsync();
-            //rs = rs.Where(x => x.Datecreate >= dateRange.Start && x.Datecreate <= dateRange.End).OrderByDescending(x => x.Dateupdate).ToList();
-            //return rs;
             _context.ChangeTracker.Clear();
 
             var start = dateRange.Start?.Date;
@@ -4745,12 +4748,19 @@ namespace NVOAMASIS.Services
                               hbl.datereport.HasValue &&
                               hbl.datereport.Value.Date >= start &&
                               hbl.datereport.Value.Date <= end &&
-                              job.Loai.Contains("Truck")
+                              (
+                                  (!chkSI && !chkSE && !chkAI && !chkAE && !chkTruck && !chkCustoms)
+                                  || (chkSI && job.Loai == "SI")
+                                  || (chkSE && job.Loai == "SE")
+                                  || (chkAI && job.Loai == "AI")
+                                  || (chkAE && job.Loai == "AE")
+                                  || (chkTruck && job.Loai == "Truck")
+                                  || (chkCustoms && job.Loai == "Customs")
+                              )
                         select hbl;
 
             var result = await query
-
-                .Distinct() // tránh trùng nếu nhiều HBL cùng Job
+                .Distinct()
                 .OrderByDescending(j => j.datereport)
                 .ToListAsync();
             return result;

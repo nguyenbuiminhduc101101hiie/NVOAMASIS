@@ -21,6 +21,7 @@ using static MudBlazor.Icons;
 using static Stimulsoft.Report.StiOptions.Export;
 using static NVOAMASIS.Components.BaoCaoQuyTienMat.Pages.BaoCaoQuyTienMat_Index;
 using static NVOAMASIS.Components.Report.Pages.TruckingReport7_3;
+using static NVOAMASIS.Components.Report.Pages.ShippingStatisticsReport;
 
 namespace NVOAMASIS.Services
 {
@@ -1388,6 +1389,83 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, $"Export failed: {ex.Message}");
             }
         }
+        private static double? ConvertShippingAmount(double? amount = 0, string? loaitien = "USD", double? tigia = 0) =>
+            string.Equals(loaitien, "USD", StringComparison.OrdinalIgnoreCase)
+                ? amount * tigia
+                : amount;
+
+        private async Task<ShippingStatisticGridItem> BuildShippingStatisticGridItem(M_HBL hbl, List<M_HoaDonDauRa> allHoaDonDauRa)
+        {
+            Guid id_cuocvanchuyen = Guid.Parse("4BAD5BEA-4111-4EEA-8C7D-FB487736CF29");
+            var idphinang = Guid.Parse("A74FCB54-EDF8-4E58-B0A2-0CDD011EDA6F");
+            var idphiha = Guid.Parse("B7DBA4DF-1889-456A-BA83-46370D3FFA32");
+            List<Guid> idbocxep = new List<Guid> { Guid.Parse("341A1F85-C6AA-4F12-9A07-96726414E6EB"), Guid.Parse("38716C3B-F260-49EB-B032-A47F6CF2CC30") };
+            var idphican = Guid.Parse("D66E656E-5CAB-498F-B0C9-BA953370BE57");
+
+            var conts = await _context.Container.Where(c => c.hblid == hbl.hblID).ToListAsync();
+            var debts = await _context.Debit.Where(d => d.hblid == hbl.hblID).ToListAsync();
+            var credts = await _context.Credit.Where(c => c.hblid == hbl.hblID).ToListAsync();
+            var cuocvanchuyen = debts.Where(x => x.itemid == id_cuocvanchuyen).ToList();
+            var yctruck = await _context.YeuCauTrucking.FirstOrDefaultAsync(x => x.YeuCauTruckingNo == hbl.Truck_YeucauTruckingNo) ?? new();
+            var cus = await _context.Customer.FirstOrDefaultAsync(x => x.Customer_ID == hbl.CustomerID);
+
+            var totalcuocvc = cuocvanchuyen.Sum(x => ConvertShippingAmount(x.thanhtien, x.tiente, x.tigiadebit));
+            var phinang = credts.Where(x => x.itemid == idphinang && x.chiho == true).Sum(x => ConvertShippingAmount(x.thanhtiensauthue, x.tiente, x.tigiacredit));
+            var phiha = credts.Where(x => x.itemid == idphiha && x.chiho == true).Sum(x => ConvertShippingAmount(x.thanhtiensauthue, x.tiente, x.tigiacredit));
+            var sohdnang = allHoaDonDauRa.Where(x => debts.Where(d => d.itemid == idphinang && d.thuho == true).Select(h => h.sohoadondaura).Contains(x.sohoadonNoibo)).Select(x => x.sohoadonNoibo);
+            var sohdha = allHoaDonDauRa.Where(x => debts.Where(d => d.itemid == idphinang && d.thuho == true).Select(h => h.sohoadondaura).Contains(x.sohoadonNoibo)).Select(x => x.sohoadonNoibo);
+            var bocxep = credts.Where(x => idbocxep.Contains(x.itemid) && x.chiho == true).Sum(x => ConvertShippingAmount(x.thanhtiensauthue, x.tiente, x.tigiacredit));
+            var phikhac = credts
+                .Where(x => x.itemid != idphinang
+                            && x.itemid != idphiha
+                            && !idbocxep.Contains(x.itemid)
+                            && x.chiho == true)
+                .Sum(x => ConvertShippingAmount(x.thanhtiensauthue, x.tiente, x.tigiacredit));
+            var phican = credts.Where(x => x.itemid == idphican && x.chiho == true).Sum(x => ConvertShippingAmount(x.thanhtiensauthue, x.tiente, x.tigiacredit));
+            var tongTienHoaDon = cuocvanchuyen.Sum(x => ConvertShippingAmount(x.thanhtiensauthue, x.tiente, x.tigiadebit));
+            var vat = tongTienHoaDon - totalcuocvc;
+
+            return new ShippingStatisticGridItem
+            {
+                HblID = hbl.hblID,
+                CustomerName = cus?.COMPANY ?? "",
+                SoHD = "",
+                NgayDukienLayHang = yctruck.NgayDukienLayHang,
+                LoaiCont = yctruck.LoaiCont,
+                XuatNhap = "",
+                ContainerNos = string.Join(", ", conts.Select(x => x.CONTAINER_NO)),
+                HBL = hbl.hbl ?? "",
+                DiaDiemNhanHang = yctruck.DiaDiemNhanHang,
+                ContainerLocationEmpty = yctruck.ContainerLocation_empty,
+                DiaDiemTraHang = yctruck.DiaDiemTraHang,
+                CuocVanChuyen = totalcuocvc,
+                PhuThu = null,
+                VAT = vat,
+                TongTienHoaDon = tongTienHoaDon,
+                PhiNang = phinang,
+                SoHDNang = string.Join(", ", sohdnang),
+                PhiHa = phiha,
+                SoHDHa = string.Join(", ", sohdha),
+                PhiCan = phican,
+                BocXep = bocxep,
+                PhiKhac = phikhac,
+                TongPhi = phinang + phiha + bocxep + phican + phikhac
+            };
+        }
+
+        public async Task<List<ShippingStatisticGridItem>> GetShippingStatisticGridItems(List<M_HBL> hbls)
+        {
+            var allHoaDonDauRa = await _context.HoaDonDauRa.ToListAsync();
+            var items = new List<ShippingStatisticGridItem>();
+            for (var i = 0; i < hbls.Count; i++)
+            {
+                var item = await BuildShippingStatisticGridItem(hbls[i], allHoaDonDauRa);
+                item.STT = i + 1;
+                items.Add(item);
+            }
+            return items;
+        }
+
         public async Task<BoolandMessReponse> BangKeSanLuongVanChuyenExcel(List<M_HBL> hbls, DateRange dateRange)
         {
             try
@@ -1397,25 +1475,8 @@ namespace NVOAMASIS.Services
                 var templatePath = new FileInfo(Path.Combine("wwwroot", "Reports/ShippingStatisticReportSample.xlsx"));
                 using var package = new ExcelPackage(templatePath);
 
-                // Null-safe currency conversion
-                double? Convert(double? amount = 0, string? loaitien = "USD", double? tigia = 0) =>
-                    string.Equals(loaitien, "USD", StringComparison.OrdinalIgnoreCase)
-                        ? amount * tigia
-                        : amount;
-
-                //IDs
-                Guid id_cuocvanchuyen = Guid.Parse("4BAD5BEA-4111-4EEA-8C7D-FB487736CF29"); //"4BAD5BEA-4111-4EEA-8C7D-FB487736CF29"
-                Guid COMClient = Guid.Parse("C25047D1-4530-49D8-8926-DA6D0E270F89");
-                var idphinang = Guid.Parse("A74FCB54-EDF8-4E58-B0A2-0CDD011EDA6F");// phi nang
-                var idphiha = Guid.Parse("B7DBA4DF-1889-456A-BA83-46370D3FFA32");// phi ha
-                List<Guid> idbocxep = new List<Guid> { Guid.Parse("341A1F85-C6AA-4F12-9A07-96726414E6EB"), Guid.Parse("38716C3B-F260-49EB-B032-A47F6CF2CC30") };
-                var idphicauduong = Guid.Parse("4075B243-364D-4EC5-8FFC-901EA09FECCE");// phi cau duong
-                var idphican = Guid.Parse("D66E656E-5CAB-498F-B0C9-BA953370BE57");// phi can
-
-                //HOA DON
                 _context.ChangeTracker.Clear();
                 var allHoaDonDauRa = _context.HoaDonDauRa.ToList();
-                var allHoaDonDauVao = _context.HoaDonDauVao.ToList();
 
                 // 1. Lấy sheet template và đặt tên tạm
                 var templateSheet = package.Workbook.Worksheets["Template"];
@@ -1435,65 +1496,34 @@ namespace NVOAMASIS.Services
                     // chèn thêm dòng (nếu > 1 bản ghi)
                     if (listHbl.Count > 1)
                         worksheet.InsertRow(startRow + 1, listHbl.Count - 1, startRow);
-                    int row = startRow; // Ghi bắt đầu từ dòng 7
+                    int row = startRow;
                     foreach (var hbl in listHbl)
                     {
                         var idx = hbls.IndexOf(hbl);
-                        var type = await shipsv.GetTypeByMBLID(hbl!.mblid); // Sea Air Truck HQ & I or E
-                        var conts = _context.Container.Where(h => h.hblid == hbl.hblID).ToList();
-                        var debts = _context.Debit.Where(h => h.hblid == hbl.hblID).ToList();
-                        var credts = _context.Credit.Where(h => h.hblid == hbl.hblID).ToList();
-                        var cuocvanchuyen = debts.Where(x => x.itemid == id_cuocvanchuyen);
-                        //var cost = credts.Where(x => x.itemid != COMCarrier && x.itemid != COMClient);
-                        var agent = _context.Customer.FirstOrDefault(x => x.Customer_ID == hbl.AgentID);
-                        var cus = _context.Customer.FirstOrDefault(x => x.Customer_ID == hbl.CustomerID);
-                        var yctruck = _context.YeuCauTrucking.FirstOrDefault(x => x.YeuCauTruckingNo == hbl.Truck_YeucauTruckingNo) ?? new();
-                        var totalcuocvc = cuocvanchuyen.Sum(x => Convert(x.thanhtien, x.tiente, x.tigiadebit));
-                        //var totalcost = cost.Sum(x => Convert(x.thanhtien, x.tiente, x.tigiacredit));
-                        var phinang = credts.Where(x => x.itemid == idphinang && x.chiho == true).Sum(x => Convert(x.thanhtiensauthue, x.tiente, x.tigiacredit));
-                        var phiha = credts.Where(x => x.itemid == idphiha && x.chiho == true).Sum(x => Convert(x.thanhtiensauthue, x.tiente, x.tigiacredit));
-                        //phinang += debts.Where(x => x.itemid == idphinang && x.thuho == true).Sum(x => Convert(x.thanhtien, x.tiente, x.tigiadebit));
-                        //phiha += debts.Where(x => x.itemid == idphiha && x.thuho == true).Sum(x => Convert(x.thanhtien, x.tiente, x.tigiadebit));
-                        var sohdnang = allHoaDonDauRa.Where(x => debts.Where(x => x.itemid == idphinang && x.thuho == true).Select(h => h.sohoadondaura).Contains(x.sohoadonNoibo)).Select(x => x.sohoadonNoibo);
-                        var sohdha = allHoaDonDauRa.Where(x => debts.Where(x => x.itemid == idphinang && x.thuho == true).Select(h => h.sohoadondaura).Contains(x.sohoadonNoibo)).Select(x => x.sohoadonNoibo);
-                        var bocxep = credts.Where(x => idbocxep.Contains(x.itemid) && x.chiho == true).Sum(x => Convert(x.thanhtiensauthue, x.tiente, x.tigiacredit));
-                        //var bocxep = debts.Where(x => idbocxep.Contains(x.itemid) && x.thuho == true).Sum(x => Convert(x.thanhtien, x.tiente, x.tigiadebit));
-                        //bocxep += credts.Where(x => idbocxep.Contains(x.itemid) && x.chiho == true).Sum(x => Convert(x.thanhtien, x.tiente, x.tigiacredit));
-                        var phikhac = credts
-                        .Where(x => x.itemid != idphinang
-                                    && x.itemid != idphiha
-                                    && !idbocxep.Contains(x.itemid)
-                                    && x.chiho == true)
-                        .Sum(x => Convert(x.thanhtiensauthue, x.tiente, x.tigiacredit));
-
-                        //var cauduong = debts.Where(x => x.itemid == idphicauduong && x.thuho == true).Sum(x => Convert(x.thanhtien, x.tiente, x.tigiadebit));
-                        //cauduong += credts.Where(x => x.itemid == idphicauduong && x.chiho == true).Sum(x => Convert(x.thanhtien, x.tiente, x.tigiacredit));
-                        var phican = credts.Where(x => x.itemid == idphican && x.chiho == true).Sum(x => Convert(x.thanhtiensauthue, x.tiente, x.tigiacredit));
-                        //var phican = debts.Where(x => x.itemid == idphican && x.thuho == true).Sum(x => Convert(x.thanhtien, x.tiente, x.tigiadebit));
-                        //phican += credts.Where(x => x.itemid == idphican && x.chiho == true).Sum(x => Convert(x.thanhtien, x.tiente, x.tigiacredit));
+                        var item = await BuildShippingStatisticGridItem(hbl, allHoaDonDauRa);
                         var i = 1;
                         worksheet.Cells[row, i++].Value = idx + 1;
-                        worksheet.Cells[row, i++].Value = ""; // số hd
-                        worksheet.Cells[row, i++].Value = yctruck.NgayDukienLayHang;
-                        worksheet.Cells[row, i++].Value = yctruck.LoaiCont;
-                        worksheet.Cells[row, i++].Value = ""; // xuất nhập
-                        worksheet.Cells[row, i++].Value = string.Join(", ", conts.Select(x => x.CONTAINER_NO).ToList());
-                        worksheet.Cells[row, i++].Value = hbl.hbl;
-                        worksheet.Cells[row, i++].Value = yctruck.DiaDiemNhanHang;
-                        worksheet.Cells[row, i++].Value = yctruck.ContainerLocation_empty;
-                        worksheet.Cells[row, i++].Value = yctruck.DiaDiemTraHang;
-                        worksheet.Cells[row, i++].Value = totalcuocvc; // cuoc van chuyen
-                        worksheet.Cells[row, i++].Value = ""; // phụ thu
-                        worksheet.Cells[row, i++].Value = cuocvanchuyen.Sum(x => Convert(x.thanhtiensauthue, x.tiente, x.tigiadebit)) - totalcuocvc; // vat
-                        worksheet.Cells[row, i++].Value = cuocvanchuyen.Sum(x => Convert(x.thanhtiensauthue, x.tiente, x.tigiadebit)); // tong tien hoa don
-                        worksheet.Cells[row, i++].Value = phinang;
-                        worksheet.Cells[row, i++].Value = string.Join(", ", sohdnang);
-                        worksheet.Cells[row, i++].Value = phiha;
-                        worksheet.Cells[row, i++].Value = string.Join(", ", sohdha);
-                        worksheet.Cells[row, i++].Value = phican;
-                        worksheet.Cells[row, i++].Value = bocxep;
-                        worksheet.Cells[row, i++].Value = phikhac; // các phi khác total ở đây
-                        worksheet.Cells[row, i++].Value = phinang + phiha + bocxep + phican + phikhac;
+                        worksheet.Cells[row, i++].Value = item.SoHD;
+                        worksheet.Cells[row, i++].Value = item.NgayDukienLayHang;
+                        worksheet.Cells[row, i++].Value = item.LoaiCont;
+                        worksheet.Cells[row, i++].Value = item.XuatNhap;
+                        worksheet.Cells[row, i++].Value = item.ContainerNos;
+                        worksheet.Cells[row, i++].Value = item.HBL;
+                        worksheet.Cells[row, i++].Value = item.DiaDiemNhanHang;
+                        worksheet.Cells[row, i++].Value = item.ContainerLocationEmpty;
+                        worksheet.Cells[row, i++].Value = item.DiaDiemTraHang;
+                        worksheet.Cells[row, i++].Value = item.CuocVanChuyen;
+                        worksheet.Cells[row, i++].Value = item.PhuThu;
+                        worksheet.Cells[row, i++].Value = item.VAT;
+                        worksheet.Cells[row, i++].Value = item.TongTienHoaDon;
+                        worksheet.Cells[row, i++].Value = item.PhiNang;
+                        worksheet.Cells[row, i++].Value = item.SoHDNang;
+                        worksheet.Cells[row, i++].Value = item.PhiHa;
+                        worksheet.Cells[row, i++].Value = item.SoHDHa;
+                        worksheet.Cells[row, i++].Value = item.PhiCan;
+                        worksheet.Cells[row, i++].Value = item.BocXep;
+                        worksheet.Cells[row, i++].Value = item.PhiKhac;
+                        worksheet.Cells[row, i++].Value = item.TongPhi;
                         row++;
                     }
                     var endMonthSanLuong = dateRange.End ?? DateTime.Today;
