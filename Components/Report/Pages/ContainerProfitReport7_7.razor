@@ -1,0 +1,340 @@
+@attribute [Authorize]
+@using System.Globalization
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
+@using Microsoft.EntityFrameworkCore
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+@inject IDbContextFactory<NVOAMASIS.Data.AppDbContext> DbFactory
+
+<PageTitle>7.7 Report Container</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="7.7 Report Container" Subtitle="Debit, credit and profit by container" />
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudStack Spacing="2">
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="flex-wrap">
+                <MudAutocomplete T="string"
+                                 @bind-Value="_containerNo"
+                                 SearchFunc="SearchContainerNoAsync"
+                                 Label="Container No"
+                                 Placeholder="Nhập hoặc chọn số container"
+                                 Clearable="true"
+                                 CoerceText="true"
+                                 CoerceValue="true"
+                                 ResetValueOnEmptyText="true"
+                                 Strict="false"
+                                 Dense="true"
+                                 Style="min-width: 320px;" />
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Search"
+                           OnClick="LoadReportAsync"
+                           Disabled="_loading">
+                    Search
+                </MudButton>
+            </MudStack>
+
+            <MudGrid>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Total Debit (USD)</MudText>
+                        <MudText Typo="Typo.h6">@FormatMoney(_summary.TotalDebitUsd)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Total Credit (USD)</MudText>
+                        <MudText Typo="Typo.h6">@FormatMoney(_summary.TotalCreditUsd)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Profit (USD)</MudText>
+                        <MudText Typo="Typo.h6">@FormatMoney(_summary.ProfitUsd)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Total Debit (VND)</MudText>
+                        <MudText Typo="Typo.h6">@FormatMoney(_summary.TotalDebitVnd)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Total Credit (VND)</MudText>
+                        <MudText Typo="Typo.h6">@FormatMoney(_summary.TotalCreditVnd)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Profit (VND)</MudText>
+                        <MudText Typo="Typo.h6">@FormatMoney(_summary.ProfitVnd)</MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudDataGrid T="ContainerFeeRow"
+                         Items="_rows"
+                         Dense="true"
+                         Bordered="true"
+                         Hover="true"
+                         FixedHeader="true"
+                         Height="calc(100vh - 340px)"
+                         Loading="_loading"
+                         Filterable="true"
+                         FilterMode="DataGridFilterMode.Simple">
+                <Columns>
+                    <PropertyColumn Property="x => x.STT" Title="#" Sortable="false" Filterable="false" />
+                    <PropertyColumn Property="x => x.Source" Title="Source" />
+                    <PropertyColumn Property="x => x.ContainerNo" Title="Container No" />
+                    <PropertyColumn Property="x => x.ChargeName" Title="Charge" />
+                    <PropertyColumn Property="x => x.Type" Title="Type" />
+                    <PropertyColumn Property="x => x.Currency" Title="Currency" />
+                    <PropertyColumn Property="x => x.ExchangeRate" Title="Rate" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.OriginalAmount" Title="Original Amount" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.AmountUsd" Title="Amount USD" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.AmountVnd" Title="Amount VND" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.Note" Title="Note" />
+                </Columns>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2">Không có dữ liệu.</MudText>
+                </NoRecordsContent>
+            </MudDataGrid>
+        </MudStack>
+    </MudPaper>
+</div>
+
+@code {
+    private bool _loading;
+    private string _containerNo = string.Empty;
+    private string _usr = string.Empty;
+    private List<string> _containerSuggestions = new();
+    private List<ContainerFeeRow> _rows = new();
+    private ReportSummary _summary = new();
+    private readonly CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _usr = asv.GetAuth().Result.User.Identity?.Name ?? string.Empty;
+            await LoadContainerSuggestionsAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Error: " + ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task LoadContainerSuggestionsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var conts = await db.Container.AsNoTracking()
+            .Where(x => x.CONTAINER_NO != null && x.CONTAINER_NO.Trim() != "")
+            .Select(x => x.CONTAINER_NO!)
+            .ToListAsync();
+
+        var debits = await db.Debit.AsNoTracking()
+            .Where(x => x.ContainerNo != null && x.ContainerNo.Trim() != "")
+            .Select(x => x.ContainerNo!)
+            .ToListAsync();
+
+        var credits = await db.Credit.AsNoTracking()
+            .Where(x => x.ContainerNo != null && x.ContainerNo.Trim() != "")
+            .Select(x => x.ContainerNo!)
+            .ToListAsync();
+
+        _containerSuggestions = conts
+            .Concat(debits)
+            .Concat(credits)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private Task<IEnumerable<string>> SearchContainerNoAsync(string value)
+    {
+        IEnumerable<string> query = _containerSuggestions;
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var key = value.Trim();
+            query = query.Where(x => x.Contains(key, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return Task.FromResult(query.Take(50));
+    }
+
+    private async Task LoadReportAsync()
+    {
+        var containerNo = (_containerNo ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(containerNo))
+        {
+            CallSnackBar("Vui lòng nhập Container No.", MudBlazor.Severity.Warning);
+            _rows = new();
+            _summary = new();
+            return;
+        }
+
+        if (!await ssv.CheckPermission(_usr, "View", "ContainerDetailReport"))
+        {
+            CallSnackBar("You do not have permission to view this report", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _loading = true;
+            _rows = new();
+            _summary = new();
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var charges = await db.Charge.AsNoTracking()
+                .Select(x => new { x.CHARGE_ID, Name = (x.CHARGE_CODE ?? "") + " - " + (x.CHARGE ?? "") })
+                .ToDictionaryAsync(x => x.CHARGE_ID, x => x.Name);
+
+            var debitRows = await db.Debit.AsNoTracking()
+                .Where(x => x.ContainerNo != null && x.continued == true)
+                .ToListAsync();
+
+            var creditRows = await db.Credit.AsNoTracking()
+                .Where(x => x.ContainerNo != null && x.continued == true)
+                .ToListAsync();
+
+            var normalized = containerNo.ToUpperInvariant();
+
+            var matchedDebits = debitRows
+                .Where(x => string.Equals((x.ContainerNo ?? string.Empty).Trim(), normalized, StringComparison.OrdinalIgnoreCase)
+                         || string.Equals((x.ContainerNo ?? string.Empty).Trim().ToUpperInvariant(), normalized, StringComparison.OrdinalIgnoreCase))
+                .Select(x => BuildDebitRow(x, charges))
+                .ToList();
+
+            var matchedCredits = creditRows
+                .Where(x => string.Equals((x.ContainerNo ?? string.Empty).Trim(), normalized, StringComparison.OrdinalIgnoreCase)
+                         || string.Equals((x.ContainerNo ?? string.Empty).Trim().ToUpperInvariant(), normalized, StringComparison.OrdinalIgnoreCase))
+                .Select(x => BuildCreditRow(x, charges))
+                .ToList();
+
+            _rows = matchedDebits
+                .Concat(matchedCredits)
+                .OrderBy(x => x.Source)
+                .ThenBy(x => x.ChargeName)
+                .ToList();
+
+            for (var i = 0; i < _rows.Count; i++)
+                _rows[i].STT = i + 1;
+
+            _summary.TotalDebitUsd = matchedDebits.Sum(x => x.AmountUsd);
+            _summary.TotalDebitVnd = matchedDebits.Sum(x => x.AmountVnd);
+            _summary.TotalCreditUsd = matchedCredits.Sum(x => x.AmountUsd);
+            _summary.TotalCreditVnd = matchedCredits.Sum(x => x.AmountVnd);
+            _summary.ProfitUsd = _summary.TotalDebitUsd - _summary.TotalCreditUsd;
+            _summary.ProfitVnd = _summary.TotalDebitVnd - _summary.TotalCreditVnd;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Cannot load report: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private ContainerFeeRow BuildDebitRow(M_Debit x, Dictionary<Guid, string> charges)
+    {
+        var original = x.thanhtiensauthue ?? x.thanhtien ?? 0;
+        var rate = x.tigiadebit ?? 0;
+        var currency = (x.tiente ?? "VND").Trim().ToUpperInvariant();
+        var (usd, vnd) = ConvertAmounts(original, currency, rate);
+
+        return new ContainerFeeRow
+        {
+            Source = "Debit",
+            ContainerNo = x.ContainerNo?.Trim() ?? string.Empty,
+            ChargeName = charges.GetValueOrDefault(x.itemid, x.itemid.ToString()),
+            Type = x.type,
+            Currency = currency,
+            ExchangeRate = rate,
+            OriginalAmount = original,
+            AmountUsd = usd,
+            AmountVnd = vnd,
+            Note = string.IsNullOrWhiteSpace(x.ghichu_debit) ? x.ghichu : x.ghichu_debit
+        };
+    }
+
+    private ContainerFeeRow BuildCreditRow(M_Credit x, Dictionary<Guid, string> charges)
+    {
+        var original = x.thanhtiensauthue ?? x.thanhtien ?? 0;
+        var rate = x.tigiacredit ?? 0;
+        var currency = (x.tiente ?? "VND").Trim().ToUpperInvariant();
+        var (usd, vnd) = ConvertAmounts(original, currency, rate);
+
+        return new ContainerFeeRow
+        {
+            Source = "Credit",
+            ContainerNo = x.ContainerNo?.Trim() ?? string.Empty,
+            ChargeName = charges.GetValueOrDefault(x.itemid, x.itemid.ToString()),
+            Type = x.type,
+            Currency = currency,
+            ExchangeRate = rate,
+            OriginalAmount = original,
+            AmountUsd = usd,
+            AmountVnd = vnd,
+            Note = x.ghichu_credit
+        };
+    }
+
+    private static (double usd, double vnd) ConvertAmounts(double original, string currency, double rate)
+    {
+        if (string.Equals(currency, "USD", StringComparison.OrdinalIgnoreCase))
+        {
+            var vnd = rate > 0 ? original * rate : 0;
+            return (original, vnd);
+        }
+
+        var usd = rate > 0 ? original / rate : 0;
+        return (usd, original);
+    }
+
+    private string FormatMoney(double value) => value.ToString("#,##0.##", _en);
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private sealed class ReportSummary
+    {
+        public double TotalDebitUsd { get; set; }
+        public double TotalCreditUsd { get; set; }
+        public double ProfitUsd { get; set; }
+        public double TotalDebitVnd { get; set; }
+        public double TotalCreditVnd { get; set; }
+        public double ProfitVnd { get; set; }
+    }
+
+    private sealed class ContainerFeeRow
+    {
+        public int STT { get; set; }
+        public string Source { get; set; } = string.Empty;
+        public string ContainerNo { get; set; } = string.Empty;
+        public string ChargeName { get; set; } = string.Empty;
+        public string? Type { get; set; }
+        public string Currency { get; set; } = string.Empty;
+        public double ExchangeRate { get; set; }
+        public double OriginalAmount { get; set; }
+        public double AmountUsd { get; set; }
+        public double AmountVnd { get; set; }
+        public string? Note { get; set; }
+    }
+}
