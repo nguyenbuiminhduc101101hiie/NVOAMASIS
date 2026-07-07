@@ -272,6 +272,19 @@
                     </EditTemplate>
                 </PropertyColumn>
 
+                <PropertyColumn Property="x => x.ContainerNo" Title="@Localizer["Cont. No."]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete T="string"
+                                         @bind-Value="context.Item.ContainerNo"
+                                         Label="@Localizer["Cont. No."]"
+                                         CoerceText="true"
+                                         CoerceValue="false"
+                                         Clearable
+                                         Strict="false"
+                                         ResetValueOnEmptyText="true"
+                                         SearchFunc="SearchContainerNo" />
+                    </EditTemplate>
+                </PropertyColumn>
                 <PropertyColumn Property="x => x.ghichu" Title="@Localizer["Notes"]" Required="false">
                     <EditTemplate>
                         <MudTextField @bind-Value="context.Item.ghichu" Label="@Localizer["Notes"]" Placeholder="Notes..."
@@ -410,6 +423,7 @@
             var department = userDetail?.Department?.Trim();
             canUnlockDebit = string.Equals(department, "ACCOUNT", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(department, "ADMIN", StringComparison.OrdinalIgnoreCase);
+            Conts = shipsv.GetListContainerAll();
             await Refresh();
         }
         catch (Exception ex)
@@ -421,6 +435,7 @@
 
     bool _loading = false;
     List<M_Debit> Listdata = new List<M_Debit>();
+    List<M_Container> Conts = new();
     M_Debit detail;
     async Task Refresh()
     {
@@ -611,6 +626,7 @@
             item.mblid = MBLDetail!.MblID;
         else 
             item.hblid = HBLDetail!.hblID;
+        item.ContainerNo = string.IsNullOrWhiteSpace(item.ContainerNo) ? null : item.ContainerNo.Trim();
         item.userupdate = usr;
         item.dateupdate = DateTime.Now.ToString();
         var rs = item.debitId != Guid.Empty ? await shipsv.UpdateDebitMBL(item, detail_Debit) : await shipsv.CreateDebitMBL(item);
@@ -976,5 +992,34 @@
   
         detail_Debit = JsonSerializer.Deserialize<M_Debit>(JsonSerializer.Serialize(item));
         await mudTable.SetEditingItemAsync(item);
+    }
+
+    private Task<IEnumerable<string?>> SearchContainerNo(string? text)
+    {
+        IEnumerable<M_Container> source;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            if (isMBL && MBLDetail != null && MBLDetail.MblID != Guid.Empty)
+                source = Conts.Where(x => x.mblid == MBLDetail.MblID);
+            else if (!isMBL && HBLDetail != null)
+                source = Conts.Where(x => x.mblid == HBLDetail.mblid);
+            else
+                source = Conts;
+        }
+        else
+        {
+            source = Conts;
+        }
+
+        var items = source
+            .Where(x => !string.IsNullOrWhiteSpace(x.CONTAINER_NO))
+            .Select(x => x.CONTAINER_NO!)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        if (string.IsNullOrWhiteSpace(text))
+            return Task.FromResult<IEnumerable<string?>>(items);
+
+        var keyword = text.Trim();
+        return Task.FromResult<IEnumerable<string?>>(items.Where(x => x.Contains(keyword, StringComparison.OrdinalIgnoreCase)));
     }
 }

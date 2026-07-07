@@ -31,5 +31,6 @@ namespace NVOAMASIS.Models
         public bool? Copied { get; set; } = false;
         public string? sodntt { get; set; }
         public string? ghichu_credit { get; set; }
+        public string? ContainerNo { get; set; }
     }
 }

@@ -248,6 +248,19 @@
                     </EditTemplate>
                 </PropertyColumn>
 
+                <PropertyColumn Property="x => x.ContainerNo" Title="@Localizer["Cont. No."]" Required="false" CellClass="no-wrap-cell">
+                    <EditTemplate>
+                        <MudAutocomplete T="string"
+                                         @bind-Value="context.Item.ContainerNo"
+                                         Label="@Localizer["Cont. No."]"
+                                         CoerceText="true"
+                                         CoerceValue="false"
+                                         Clearable
+                                         Strict="false"
+                                         ResetValueOnEmptyText="true"
+                                         SearchFunc="SearchContainerNo" />
+                    </EditTemplate>
+                </PropertyColumn>
                 <PropertyColumn Property="x => x.ghichu_credit" Title="@Localizer["Notes"]" Required="false">
                     <EditTemplate>
                         <MudTextField @bind-Value="context.Item.ghichu_credit" Label="@Localizer["Notes"]" Placeholder="Notes..."
@@ -465,6 +478,7 @@
             Types = await shipsv.GetListTypeInDebitCredit();
             usr = asv.GetAuth().Result.User.Identity!.Name!;
             type = await shipsv.GetTypeByMBLID(isMBL ? MBLDetail!.MblID : HBLDetail!.mblid); // Sea Air Truck HQ
+            Conts = shipsv.GetListContainerAll();
             await Refresh();
         }
         catch (Exception ex)
@@ -482,6 +496,7 @@
     }
     bool _loading = false;
     List<M_Credit> Listdata = new List<M_Credit>();
+    List<M_Container> Conts = new();
     List<M_HoaDonDauVao> ListdataHoaDon = new List<M_HoaDonDauVao>();
     M_Credit detail;
     async Task Refresh()
@@ -562,6 +577,7 @@
             item.mblid = MBLDetail!.MblID;
         else
             item.hblid = HBLDetail!.hblID;
+        item.ContainerNo = string.IsNullOrWhiteSpace(item.ContainerNo) ? null : item.ContainerNo.Trim();
         item.userupdate = usr;
         item.dateupdate = DateTime.Now.ToString();
         var rs = item.creditid != Guid.Empty ? await shipsv.UpdateCreditMBL(item,detail_credit) : await shipsv.CreateCreditMBL(item);
@@ -923,5 +939,34 @@
     {
         double? tigia_ = await Vcbsv.Getexchange_cur(tiente);
         return tigia_;
+    }
+
+    private Task<IEnumerable<string?>> SearchContainerNo(string? text)
+    {
+        IEnumerable<M_Container> source;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            if (isMBL && MBLDetail != null && MBLDetail.MblID != Guid.Empty)
+                source = Conts.Where(x => x.mblid == MBLDetail.MblID);
+            else if (!isMBL && HBLDetail != null)
+                source = Conts.Where(x => x.mblid == HBLDetail.mblid);
+            else
+                source = Conts;
+        }
+        else
+        {
+            source = Conts;
+        }
+
+        var items = source
+            .Where(x => !string.IsNullOrWhiteSpace(x.CONTAINER_NO))
+            .Select(x => x.CONTAINER_NO!)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        if (string.IsNullOrWhiteSpace(text))
+            return Task.FromResult<IEnumerable<string?>>(items);
+
+        var keyword = text.Trim();
+        return Task.FromResult<IEnumerable<string?>>(items.Where(x => x.Contains(keyword, StringComparison.OrdinalIgnoreCase)));
     }
 }
