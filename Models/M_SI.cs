@@ -40,6 +40,7 @@ namespace NVOAMASIS.Models
         public string? freightAmount { get; set; }
         public string? forDelivery { get; set; }
         public string? Air_type { get; set; }
+        public string? Usercreate { get; set; }
 
         /// <summary>JSON mảng <see cref="SiAttachmentHistoryEntry"/> — lịch đính kèm/ghỡ file (tên file + user + thời điểm).</summary>
         public string? AttachmentHistoryJson { get; set; }

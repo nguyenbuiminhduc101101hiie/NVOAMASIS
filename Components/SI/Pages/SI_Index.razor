@@ -1,14 +1,17 @@
 @page "/SI"
-@using Microsoft.EntityFrameworkCore
-@using Microsoft.AspNetCore.Components.Forms
-@using MudBlazor
-@using NVOAMASIS.Data
-@using NVOAMASIS.Models
 @using System.Globalization
 @using System.IO
 @using System.Linq
 @using System.Text.Json
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
+@using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.Data.SqlClient
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
 @attribute [Authorize]
 @inject SharedServices ssv
 @inject AccountService asv
@@ -242,8 +245,15 @@
         {
             _busy = true;
             await using var db = await DbFactory.CreateDbContextAsync();
-            _items = await db.SI
-                .AsNoTracking()
+
+            var department = asv.GetUserDetail()?.Department?.Trim();
+            var isOpDoc = string.Equals(department, "OP DOC", StringComparison.OrdinalIgnoreCase);
+
+            var query = db.SI.AsNoTracking();
+            if (!isOpDoc)
+                query = query.Where(x => x.Usercreate == usr);
+
+            _items = await query
                 .OrderByDescending(x => x.SIID)
                 .ToListAsync();
 
@@ -336,6 +346,7 @@
         freightAmount = row.freightAmount,
         forDelivery = row.forDelivery,
         Air_type = row.Air_type,
+        Usercreate = row.Usercreate,
         AttachmentHistoryJson = row.AttachmentHistoryJson,
         AttachmentRefs = row.AttachmentRefs?.Select(r => new M_SI_AttachmentRef { AttachmentId = r.AttachmentId, FileName = r.FileName }).ToList() ?? new List<M_SI_AttachmentRef>()
     };
@@ -463,6 +474,7 @@
             if (!data.IsEdit)
             {
                 m.SIID = Guid.NewGuid();
+                m.Usercreate = usr;
                 db.SI.Add(m);
             }
             else

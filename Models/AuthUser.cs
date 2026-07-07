@@ -9,6 +9,7 @@ public class AuthUser
     public Guid UsrId { get; set; }
     public string? Usr { get; set; }
     public string? Name { get; set; }
+    [EmailAddress(ErrorMessage = "Email không hợp lệ.")]
 	public string? Email { get; set; }
     public string? Pass_viettel { get; set; } 
 	public string? Manager2 { get; set; }

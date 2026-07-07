@@ -4,6 +4,7 @@ using NVOAMASIS.Data;
 using NVOAMASIS.Interface;
 using NVOAMASIS.Models;
 using NVOAMASIS.Response;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Components.Authorization;
 
@@ -101,6 +102,11 @@ public class AccountService (IUserService userServices, AppDbContext _context, C
         {
             _context.ChangeTracker.Clear();
             if (user == null) return new BoolandMessReponse(true, "User is null!");
+            if (string.IsNullOrWhiteSpace(user.Email))
+                return new BoolandMessReponse(false, "Email is required!");
+            if (!new EmailAddressAttribute().IsValid(user.Email.Trim()))
+                return new BoolandMessReponse(false, "Email không hợp lệ.");
+            user.Email = user.Email.Trim();
             //user.Pass_viettel = HashPasswordUsingBcrypt(user.Pass_viettel!);
             user.UsrId = Guid.NewGuid();
             user.Usr = user.Name;

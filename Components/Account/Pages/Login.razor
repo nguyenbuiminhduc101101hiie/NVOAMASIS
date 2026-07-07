@@ -4,6 +4,7 @@
 @using Microsoft.AspNetCore.Authentication
 @using System.Security.Claims
 @using System.Security.Cryptography
+@using System.Text.Json
 @using System.Text
 @using System.Text.RegularExpressions
 @using System.Net
@@ -69,6 +70,8 @@
 
     @if (activeTab == Tab.Login)
     {
+        @if (loginStep < 2)
+        {
         <EditForm id="tenantLoginForm" Model="LoginInput" method="post" OnValidSubmit="LoginUser" FormName="tenant-login"
                   action="@LoginTabUrl" class="w-100" style="max-width:560px;">
             <DataAnnotationsValidator />
@@ -76,7 +79,7 @@
             <div class="card border-top-0 rounded-top-0 login-card">
                 <div class="card-body p-4">
                     <h5 class="card-title fw-bold">Đăng nhập database đã có</h5>
-                    <p class="small text-muted">Nhập thông tin SQL Server của tenant và tài khoản ứng dụng.</p>
+                    <p class="small text-muted">Nhập thông tin SQL Server của tenant và tài khoản ứng dụng. Hệ thống sẽ gửi mã OTP tới email đã đăng ký.</p>
                     <ValidationSummary class="text-danger" role="alert" />
 
                     <fieldset class="border rounded p-3 mb-3">
@@ -119,13 +122,56 @@
                         </label>
                         <div class="form-text text-muted small">Lần đăng nhập sau hệ thống sẽ tự điền Database, SQL User, SQL Password, App User và App Password trên trình duyệt này.</div>
                     </div>
-                    <button type="submit" class="w-100 btn btn-lg btn-primary" disabled="@isBusy">@(isBusy ? "Đang xử lý..." : "Log in")</button>
+                    <button type="submit" class="w-100 btn btn-lg btn-primary" disabled="@isBusy">@(isBusy ? "Đang xử lý..." : "Tiếp tục & gửi OTP")</button>
                     <div class="mt-2 text-center">
                         <NavLink class="btn btn-link" href="/AccountPass">Quên mật khẩu?</NavLink>
                     </div>
                 </div>
             </div>
         </EditForm>
+        }
+        else
+        {
+        <EditForm Model="LoginOtpInput" method="post" OnValidSubmit="VerifyLoginOtp" FormName="tenant-login-otp"
+                  action="@LoginOtpVerifyUrl" class="w-100" style="max-width:560px;">
+            <DataAnnotationsValidator />
+            <AntiForgeryToken />
+            <div class="d-none">
+                <InputText @bind-Value="LoginOtpInput.SessionId" />
+            </div>
+            <div class="card border-top-0 rounded-top-0 login-card">
+                <div class="card-body p-4">
+                    <h5 class="card-title fw-bold">Xác thực OTP đăng nhập</h5>
+                    <p class="small text-muted mb-3">
+                        Mã OTP đã gửi tới <b>@loginOtpEmail</b>. Nhập mã 6 số để hoàn tất đăng nhập.
+                    </p>
+                    <ValidationSummary class="text-danger" role="alert" />
+
+                    <div class="form-floating mb-3">
+                        <InputText @bind-Value="LoginOtpInput.Otp" class="form-control" autocomplete="one-time-code" placeholder="123456" maxlength="6" />
+                        <label>Mã OTP</label>
+                        <ValidationMessage For="() => LoginOtpInput.Otp" class="text-danger" />
+                    </div>
+
+                    <button type="submit" class="w-100 btn btn-lg btn-primary mb-2" disabled="@isBusy">
+                        @(isBusy ? "Đang xác thực..." : "Xác nhận OTP & đăng nhập")
+                    </button>
+                    <NavLink class="btn btn-link w-100" href="@LoginTabUrl">Quay lại đăng nhập</NavLink>
+                </div>
+            </div>
+        </EditForm>
+
+        <EditForm Model="LoginResendInput" method="post" OnValidSubmit="ResendLoginOtp" FormName="tenant-login-resend"
+                  action="@LoginOtpVerifyUrl" class="w-100" style="max-width:560px;">
+            <AntiForgeryToken />
+            <div class="d-none">
+                <InputText @bind-Value="LoginResendInput.SessionId" />
+            </div>
+            <button type="submit" class="w-100 btn btn-outline-secondary btn-sm" disabled="@isBusy">
+                Gửi lại mã OTP
+            </button>
+        </EditForm>
+        }
     }
     else if (registerStep < 2)
     {
@@ -441,6 +487,12 @@
     [SupplyParameterFromForm(FormName = "tenant-login")]
     private TenantLoginModel? LoginInput { get; set; }
 
+    [SupplyParameterFromForm(FormName = "tenant-login-otp")]
+    private TenantLoginOtpModel? LoginOtpInput { get; set; }
+
+    [SupplyParameterFromForm(FormName = "tenant-login-resend")]
+    private TenantLoginResendModel? LoginResendInput { get; set; }
+
     [SupplyParameterFromForm(FormName = "tenant-register")]
     private TenantEmailRegisterModel? RegisterInput { get; set; }
 
@@ -483,6 +535,15 @@
     [SupplyParameterFromQuery(Name = "otpSent")]
     private string? OtpSentFlag { get; set; }
 
+    [SupplyParameterFromQuery(Name = "loginOtpStep")]
+    private string? LoginOtpStepQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "loginSession")]
+    private string? LoginSessionQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "loginOtpSent")]
+    private string? LoginOtpSentFlag { get; set; }
+
     private enum Tab { Login, Register }
     private Tab activeTab = Tab.Login;
 
@@ -494,9 +555,13 @@
     private string? mailFailureCredentials;
     private bool isBusy;
     private int registerStep = 1;
+    private int loginStep = 1;
+    private string? loginOtpEmail;
 
     private const string RegisterOtpCachePrefix = "tenant-register-otp:";
+    private const string LoginSessionCachePrefix = "tenant-login-session:";
     private static readonly TimeSpan RegisterOtpLifetime = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan LoginOtpLifetime = TimeSpan.FromMinutes(1);
 
     private void ApplyLoginPrefillFromQuery(TenantLoginModel input)
     {
@@ -548,6 +613,66 @@
         if (!string.IsNullOrEmpty(ReturnUrl))
             q.Add($"returnUrl={Uri.EscapeDataString(ReturnUrl)}");
         return $"/Account/Login?{string.Join("&", q)}";
+    }
+
+    private string LoginOtpVerifyUrl
+    {
+        get
+        {
+            var sessionId = LoginOtpInput?.SessionId ?? LoginResendInput?.SessionId ?? LoginSessionQuery;
+            var q = new List<string> { "tab=login", "loginOtpStep=2" };
+            if (!string.IsNullOrWhiteSpace(sessionId))
+                q.Add($"loginSession={Uri.EscapeDataString(sessionId.Trim())}");
+            if (!string.IsNullOrEmpty(ReturnUrl))
+                q.Add($"returnUrl={Uri.EscapeDataString(ReturnUrl)}");
+            return $"/Account/Login?{string.Join("&", q)}";
+        }
+    }
+
+    private void ApplyLoginSession(string sessionId)
+    {
+        LoginOtpInput ??= new TenantLoginOtpModel();
+        LoginOtpInput.SessionId = sessionId;
+        LoginResendInput ??= new TenantLoginResendModel();
+        LoginResendInput.SessionId = sessionId;
+    }
+
+    private async Task SyncLoginStepAsync()
+    {
+        if (activeTab != Tab.Login)
+            return;
+
+        var sessionId = LoginSessionQuery?.Trim();
+        if (LoginOtpStepQuery == "2" && !string.IsNullOrWhiteSpace(sessionId))
+        {
+            loginStep = 2;
+            ApplyLoginSession(sessionId);
+            var session = await GetLoginSessionAsync(sessionId);
+            loginOtpEmail = session?.Email;
+            return;
+        }
+
+        if (!HttpMethods.IsGet(HttpContext.Request.Method))
+        {
+            var sessionFromOtp = LoginOtpInput?.SessionId?.Trim();
+            if (!string.IsNullOrWhiteSpace(sessionFromOtp))
+            {
+                loginStep = 2;
+                ApplyLoginSession(sessionFromOtp);
+                var session = await GetLoginSessionAsync(sessionFromOtp);
+                loginOtpEmail = session?.Email;
+                return;
+            }
+
+            var sessionFromResend = LoginResendInput?.SessionId?.Trim();
+            if (!string.IsNullOrWhiteSpace(sessionFromResend))
+            {
+                loginStep = 2;
+                ApplyLoginSession(sessionFromResend);
+                var session = await GetLoginSessionAsync(sessionFromResend);
+                loginOtpEmail = session?.Email;
+            }
+        }
     }
 
     private void ApplyRegisterEmail(string email)
@@ -602,9 +727,12 @@
         ApplyLoginPrefillFromQuery(LoginInput);
         TrimLoginInput(LoginInput);
 
+        LoginOtpInput ??= new TenantLoginOtpModel();
+        LoginResendInput ??= new TenantLoginResendModel();
         RegisterInput ??= new TenantEmailRegisterModel();
         RegisterOtpInput ??= new TenantEmailOtpRequestModel();
         RegisterResendInput ??= new TenantEmailOtpRequestModel();
+        await SyncLoginStepAsync();
         SyncRegisterStep();
 
         if (RegisteredFlag == "1")
@@ -612,6 +740,9 @@
 
         if (OtpSentFlag == "1" && registerStep == 2 && !string.IsNullOrWhiteSpace(RegisterInput.Email))
             successMessage = $"Mã OTP đã được gửi tới {RegisterInput.Email}. Mã có hiệu lực trong {RegisterOtpLifetime.TotalMinutes:0} phút.";
+
+        if (LoginOtpSentFlag == "1" && loginStep == 2 && !string.IsNullOrWhiteSpace(loginOtpEmail))
+            successMessage = $"Mã OTP đã được gửi tới {loginOtpEmail}. Mã có hiệu lực trong {LoginOtpLifetime.TotalMinutes:0} phút.";
 
         if (HttpMethods.IsGet(HttpContext.Request.Method))
             await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -640,14 +771,273 @@
             if (!result.Flag || result.AuthUser == null || result.TenantId == null)
                 return;
 
-            await SignInWithClaimsAsync(result.AuthUser, result.TenantId.Value, result.TenantDatabaseName ?? LoginInput.DatabaseName);
-            Logger.LogInformation("User {User} logged in to tenant {Db}.", result.AuthUser.Usr, result.TenantDatabaseName);
+            var email = NormalizeEmail(result.AuthUser.Email);
+            if (string.IsNullOrWhiteSpace(email) || !new EmailAddressAttribute().IsValid(email))
+            {
+                errorMessage = "Tài khoản chưa có email hợp lệ. Vui lòng liên hệ quản trị viên để cập nhật email.";
+                return;
+            }
+
+            var sessionId = Guid.NewGuid().ToString("N");
+            var otp = GenerateOtpCode();
+            var session = new LoginPendingSession
+            {
+                Otp = otp,
+                Email = email,
+                AuthUser = result.AuthUser,
+                TenantId = result.TenantId.Value,
+                DatabaseName = result.TenantDatabaseName ?? LoginInput.DatabaseName.Trim(),
+                RememberMe = LoginInput.RememberMe
+            };
+
+            await StoreLoginSessionAsync(sessionId, session);
+
+            try
+            {
+                await SendLoginOtpEmailAsync(email, otp);
+            }
+            catch (Exception mailEx)
+            {
+                Logger.LogError(mailEx, "Failed to send login OTP to {Email}.", email);
+                await ClearLoginSessionAsync(sessionId);
+                errorMessage = "Gửi mã OTP thất bại: " + BuildMailErrorMessage(mailEx);
+                return;
+            }
+
+            navSvc.NavigateTo(LoginOtpVerifyUrlForSession(sessionId) + "&loginOtpSent=1", forceLoad: true);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    [ValidateAntiForgeryToken]
+    public async Task VerifyLoginOtp()
+    {
+        if (LoginOtpInput == null) return;
+
+        var sessionId = LoginOtpInput.SessionId?.Trim();
+        var otp = (LoginOtpInput.Otp ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            errorMessage = "Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.";
+            loginStep = 1;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(otp))
+        {
+            errorMessage = "Nhập mã OTP đã gửi tới email.";
+            loginStep = 2;
+            ApplyLoginSession(sessionId);
+            var pending = await GetLoginSessionAsync(sessionId);
+            loginOtpEmail = pending?.Email;
+            return;
+        }
+
+        var session = await GetLoginSessionAsync(sessionId);
+        if (session == null)
+        {
+            errorMessage = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+            loginStep = 1;
+            return;
+        }
+
+        if (!string.Equals(session.Otp, otp, StringComparison.Ordinal))
+        {
+            errorMessage = "Mã OTP không đúng hoặc đã hết hạn. Vui lòng gửi lại mã.";
+            loginStep = 2;
+            ApplyLoginSession(sessionId);
+            loginOtpEmail = session.Email;
+            return;
+        }
+
+        isBusy = true;
+        errorMessage = null;
+        successMessage = null;
+
+        try
+        {
+            LoginInput ??= new TenantLoginModel();
+            LoginInput.RememberMe = session.RememberMe;
+
+            await SignInWithClaimsAsync(session.AuthUser, session.TenantId, session.DatabaseName);
+            await ClearLoginSessionAsync(sessionId);
+            Logger.LogInformation("User {User} logged in to tenant {Db} after OTP verification.", session.AuthUser.Usr, session.DatabaseName);
             navSvc.NavigateTo(ReturnUrl ?? "/", true);
         }
         finally
         {
             isBusy = false;
         }
+    }
+
+    [ValidateAntiForgeryToken]
+    public async Task ResendLoginOtp()
+    {
+        var sessionId = LoginResendInput?.SessionId?.Trim();
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            errorMessage = "Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.";
+            loginStep = 1;
+            return;
+        }
+
+        var session = await GetLoginSessionAsync(sessionId);
+        if (session == null)
+        {
+            errorMessage = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+            loginStep = 1;
+            return;
+        }
+
+        isBusy = true;
+        errorMessage = null;
+        successMessage = null;
+
+        try
+        {
+            var otp = GenerateOtpCode();
+            session.Otp = otp;
+            await StoreLoginSessionAsync(sessionId, session);
+
+            try
+            {
+                await SendLoginOtpEmailAsync(session.Email, otp);
+            }
+            catch (Exception mailEx)
+            {
+                Logger.LogError(mailEx, "Failed to resend login OTP to {Email}.", session.Email);
+                errorMessage = "Gửi mã OTP thất bại: " + BuildMailErrorMessage(mailEx);
+                loginStep = 2;
+                ApplyLoginSession(sessionId);
+                loginOtpEmail = session.Email;
+                return;
+            }
+
+            navSvc.NavigateTo(LoginOtpVerifyUrlForSession(sessionId) + "&loginOtpSent=1", forceLoad: true);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private string LoginOtpVerifyUrlForSession(string sessionId)
+    {
+        var q = new List<string> { "tab=login", "loginOtpStep=2", $"loginSession={Uri.EscapeDataString(sessionId)}" };
+        if (!string.IsNullOrEmpty(ReturnUrl))
+            q.Add($"returnUrl={Uri.EscapeDataString(ReturnUrl)}");
+        return $"/Account/Login?{string.Join("&", q)}";
+    }
+
+    private static string LoginSessionCacheKey(string sessionId)
+        => LoginSessionCachePrefix + sessionId;
+
+    private Task StoreLoginSessionAsync(string sessionId, LoginPendingSession session)
+    {
+        var options = new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = LoginOtpLifetime
+        };
+        var json = JsonSerializer.Serialize(session);
+        return distributedCache.SetStringAsync(LoginSessionCacheKey(sessionId), json, options);
+    }
+
+    private async Task<LoginPendingSession?> GetLoginSessionAsync(string sessionId)
+    {
+        var json = await distributedCache.GetStringAsync(LoginSessionCacheKey(sessionId));
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<LoginPendingSession>(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private Task ClearLoginSessionAsync(string sessionId)
+        => distributedCache.RemoveAsync(LoginSessionCacheKey(sessionId));
+
+    private async Task SendLoginOtpEmailAsync(string email, string otp)
+    {
+        var settings = ReadTenantSmtpSettings();
+        var message = BuildLoginOtpMessage(email, otp, settings);
+        var attempts = await BuildSmtpConnectionAttemptsAsync(settings);
+        var failures = new List<string>();
+
+        foreach (var attempt in attempts)
+        {
+            using var client = new MailKit.Net.Smtp.SmtpClient();
+            try
+            {
+                await client.ConnectAsync(attempt.Host, settings.Port, attempt.SocketOptions);
+                await client.AuthenticateAsync(settings.Username, settings.Password);
+                await client.SendAsync(message);
+                await client.DisconnectAsync(true);
+                return;
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{attempt.Host}:{settings.Port} [{attempt.SocketOptions}] - {FlattenExceptionMessage(ex)}");
+                try
+                {
+                    if (client.IsConnected)
+                        await client.DisconnectAsync(true);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        var attemptedHosts = string.Join(", ", attempts.Select(static a => a.Host).Distinct(StringComparer.OrdinalIgnoreCase));
+        var detail = string.Join(" || ", failures);
+        throw new InvalidOperationException(
+            $"Không thể gửi mã OTP. Ứng dụng đã thử các host SMTP: {attemptedHosts}. Chi tiết: {detail}");
+    }
+
+    private static MimeMessage BuildLoginOtpMessage(string email, string otp, TenantSmtpSettings settings)
+    {
+        var sender = new MailboxAddress(settings.FromName, settings.FromEmail);
+        var message = new MimeMessage();
+        message.From.Add(sender);
+        message.Sender = sender;
+        message.To.Add(MailboxAddress.Parse(email));
+        message.ReplyTo.Add(sender);
+        message.Subject = "Mã OTP xác thực đăng nhập LMS";
+        message.Body = new BodyBuilder
+        {
+            HtmlBody = BuildLoginOtpEmailHtml(email, otp)
+        }.ToMessageBody();
+        return message;
+    }
+
+    private static string BuildLoginOtpEmailHtml(string email, string otp)
+    {
+        string H(string? value) => WebUtility.HtmlEncode((value ?? string.Empty).Trim());
+
+        return $@"
+<div style='font-family:Segoe UI,Arial,sans-serif;background:#f8fafc;padding:24px;color:#0f172a;'>
+  <div style='max-width:560px;margin:0 auto;background:white;border:1px solid #e2e8f0;border-radius:18px;overflow:hidden;'>
+    <div style='padding:22px 26px;background:linear-gradient(135deg,#0f766e,#2563eb);color:white;'>
+      <h2 style='margin:0;font-size:22px;'>LMS</h2>
+      <div style='opacity:.88;margin-top:4px;'>Xác thực đăng nhập</div>
+    </div>
+    <div style='padding:24px 26px;'>
+      <p>Xin chào,</p>
+      <p>Bạn đang đăng nhập vào LMS với tài khoản liên kết email <b>{H(email)}</b>.</p>
+      <p>Mã OTP của bạn:</p>
+      <div style='font-size:28px;font-weight:800;letter-spacing:6px;color:#0f766e;margin:16px 0;'>{H(otp)}</div>
+      <p style='font-size:13px;color:#64748b;'>Mã có hiệu lực trong {LoginOtpLifetime.TotalMinutes:0} phút. Không chia sẻ mã này cho người khác.</p>
+    </div>
+  </div>
+</div>";
     }
 
     [ValidateAntiForgeryToken]
@@ -1312,6 +1702,30 @@
         [Required(ErrorMessage = "Nhập password ứng dụng.")]
         public string AppPassword { get; set; } = "";
 
+        public bool RememberMe { get; set; }
+    }
+
+    private sealed class TenantLoginOtpModel
+    {
+        public string SessionId { get; set; } = "";
+
+        [Required(ErrorMessage = "Nhập mã OTP.")]
+        [RegularExpression(@"^\d{6}$", ErrorMessage = "Mã OTP phải gồm 6 chữ số.")]
+        public string Otp { get; set; } = "";
+    }
+
+    private sealed class TenantLoginResendModel
+    {
+        public string SessionId { get; set; } = "";
+    }
+
+    private sealed class LoginPendingSession
+    {
+        public string Otp { get; set; } = "";
+        public string Email { get; set; } = "";
+        public AuthUser AuthUser { get; set; } = new();
+        public Guid TenantId { get; set; }
+        public string DatabaseName { get; set; } = "";
         public bool RememberMe { get; set; }
     }
 

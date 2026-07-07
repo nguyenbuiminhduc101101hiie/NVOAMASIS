@@ -40,5 +40,6 @@ namespace NVOAMASIS.Models
         public string? sohoadondaura { get; set; }
         public bool? Copied { get; set; } = false;
         public string? ghichu_debit { get; set; }
+        public string? ContainerNo { get; set; }
     }
 }
