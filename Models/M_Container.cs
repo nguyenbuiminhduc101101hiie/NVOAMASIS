@@ -66,6 +66,12 @@ namespace NVOAMASIS.Models
         public bool? Decommision { get; set; } = false;
         public string? OwnerName { get; set; }
         public Guid? CamketmuonCont_id { get; set; }
+        public DateTime? Empty_pickup_date { get; set; }
+        public DateTime? Full_Discharge_Date { get; set; }
+        public DateTime? Full_Delivery_Date { get; set; }
+        public DateTime? Empty_Return_Date { get; set; }
+        public DateTime? Storage_In_Date { get; set; }
+        public DateTime? Storage_Out_Date { get; set; }
         public M_Container DeepCopy()
         {
             string json = JsonSerializer.Serialize(this);
