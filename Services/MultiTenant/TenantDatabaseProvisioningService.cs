@@ -67,7 +67,7 @@ public class TenantDatabaseProvisioningService(
 
                 await TruncateClonedDistributedCacheAsync(conn, databaseName, cancellationToken);
 
-                try { File.Delete(backupFile); } catch { /* best effort */ }
+                TryDeleteLocalBackupArtifact(backupFile);
 
                 await CreateSqlLoginAndGrantDbOwnerAsync(
                     conn, databaseName, sqlUserId, sqlPassword, cancellationToken);
@@ -339,6 +339,26 @@ public class TenantDatabaseProvisioningService(
         return path + Path.DirectorySeparatorChar;
     }
 
+    private void TryDeleteLocalBackupArtifact(string backupFile)
+    {
+        try
+        {
+            if (!File.Exists(backupFile))
+            {
+                logger.LogDebug(
+                    "Skipped local backup cleanup because file is not accessible from app host: {BackupFile}",
+                    backupFile);
+                return;
+            }
+
+            File.Delete(backupFile);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to delete local backup artifact {BackupFile}", backupFile);
+        }
+    }
+
     private static async Task<bool> DatabaseExistsAsync(
         SqlConnection conn, string databaseName, CancellationToken cancellationToken)
     {
@@ -505,11 +525,11 @@ public class TenantDatabaseProvisioningService(
                 PermissionId = Guid.NewGuid(),
                 MenuId = item.MenuId,
                 MenuName = item.MenuName,
-                Add = item.canAdd,
-                See = item.canView,
-                Edit = item.canEdit,
-                Del = item.canDelete,
-                Approve = item.canApprove,
+                Add = item.canAdd ?? false,
+                See = item.canView ?? false,
+                Edit = item.canEdit ?? false,
+                Del = item.canDelete ?? false,
+                Approve = item.canApprove ?? false,
                 UserName = adminUser.Usr
             });
         }
@@ -525,11 +545,11 @@ public class TenantDatabaseProvisioningService(
                     PermissionId = Guid.NewGuid(),
                     MenuId = menu.MenuID,
                     MenuName = menu.MenuName,
-                    Add = perAll.canAdd,
-                    See = perAll.canView,
-                    Edit = perAll.canEdit,
-                    Del = perAll.canDelete,
-                    Approve = perAll.canApprove,
+                    Add = perAll.canAdd ?? false,
+                    See = perAll.canView ?? false,
+                    Edit = perAll.canEdit ?? false,
+                    Del = perAll.canDelete ?? false,
+                    Approve = perAll.canApprove ?? false,
                     UserName = adminUser.Usr
                 });
             }

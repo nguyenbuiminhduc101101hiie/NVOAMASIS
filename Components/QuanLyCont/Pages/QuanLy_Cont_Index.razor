@@ -1,0 +1,399 @@
+@page "/quan-ly-cont"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Components.Shipment.Pages
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>6.13 Quản lý container</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="6.13 Quản lý container" Subtitle="Sheet VNSGN - QUAN LY CONT">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="OpenNewDialog" Disabled="_busy">
+                    Thêm
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialog"
+                           Disabled="_selected is null || _busy">
+                    Sửa
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteSelectedAsync"
+                           Disabled="_selected is null || _busy">
+                    Xóa
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadListAsync" Disabled="_busy">
+                    Tải lại
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <MudTextField @bind-Value="_searchText"
+                          Label="Tìm container, HBL, tàu, principal..."
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true"
+                          Immediate="true"
+                          Style="max-width: 420px;" />
+        </MudStack>
+
+        <MudDataGrid T="QuanLy_Cont"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClassFunc"
+                     Height="calc(100vh - 220px)"
+                     FixedHeader="true"
+                     Loading="_busy"
+                     ColumnResizeMode="ResizeMode.Column">
+            <Columns>
+                <PropertyColumn Property="x => x.Container" Title="Container" />
+                <PropertyColumn Property="x => x.Principal" Title="Principal" />
+                <PropertyColumn Property="x => x.ChuCont" Title="Chủ cont" />
+                <PropertyColumn Property="x => x.ContSize" Title="Size" />
+                <PropertyColumn Property="x => x.ContType" Title="Type" />
+                <PropertyColumn Property="x => x.HBL_No" Title="HB/L No" />
+                <PropertyColumn Property="x => x.POL" Title="POL" />
+                <PropertyColumn Property="x => x.POD" Title="POD" />
+                <PropertyColumn Property="x => x.Vessel" Title="Tàu" />
+                <PropertyColumn Property="x => x.Voy" Title="Chuyến" />
+                <PropertyColumn Property="x => x.ETA" Title="ETA" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.GateOut" Title="Gate out" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.EmptyDate" Title="Trả rỗng" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.Yard" Title="Bãi" />
+                <PropertyColumn Property="x => x.Collect" Title="Collect" Format="N2" />
+                <PropertyColumn Property="x => x.Status" Title="Trạng thái" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="QuanLy_Cont" PageSizeOptions="new int[] { 10, 25, 50, 100 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+
+    @if (_selected is not null)
+    {
+        <MudPaper Class="product-price-card pa-3 mt-3" Elevation="0">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">
+                Debit / Credit cho container: <b>@_selected.Container</b>
+            </MudText>
+
+            <MudTabs Rounded="true" PanelClass="pa-2" Elevation="0">
+                <MudTabPanel Text="Debit">
+                    <DebitTab_QuanLy @key="@($"cont-debit-{_selected.Id}")" QuanLyCont="_selected" />
+                </MudTabPanel>
+                <MudTabPanel Text="Credit">
+                    <CreDitTab_QuanLy @key="@($"cont-credit-{_selected.Id}")" QuanLyCont="_selected" />
+                </MudTabPanel>
+            </MudTabs>
+        </MudPaper>
+    }
+</div>
+
+@code {
+    private const string PermissionMenuName = "QuanLyCont";
+
+    private bool _busy;
+    private List<QuanLy_Cont> _items = new();
+    private QuanLy_Cont? _selected;
+    private string usr = string.Empty;
+    private string _searchText = string.Empty;
+
+    private IEnumerable<QuanLy_Cont> VisibleItems
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+                return _items;
+
+            var t = _searchText.Trim();
+            return _items.Where(x =>
+                ContainsIc(x.Container, t) ||
+                ContainsIc(x.Principal, t) ||
+                ContainsIc(x.ChuCont, t) ||
+                ContainsIc(x.HBL_No, t) ||
+                ContainsIc(x.Vessel, t) ||
+                ContainsIc(x.Voy, t) ||
+                ContainsIc(x.POL, t) ||
+                ContainsIc(x.POD, t) ||
+                ContainsIc(x.Status, t) ||
+                ContainsIc(x.Yard, t));
+        }
+    }
+
+    private static bool ContainsIc(string? s, string needle) =>
+        !string.IsNullOrEmpty(s) && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadListAsync();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "View", PermissionMenuName))
+        {
+            CallSnackBar("Bạn không có quyền xem", MudBlazor.Severity.Warning);
+            _items = new List<QuanLy_Cont>();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.QuanLy_Cont
+                .AsNoTracking()
+                .OrderByDescending(x => x.ETA)
+                .ThenBy(x => x.Container)
+                .ToListAsync();
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không tải được dữ liệu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<QuanLy_Cont> args) =>
+        _selected = CloneRow(args.Item);
+
+    private static QuanLy_Cont CloneRow(QuanLy_Cont row) => new()
+    {
+        Id = row.Id,
+        Principal = row.Principal,
+        ChuCont = row.ChuCont,
+        Container = row.Container,
+        ContSize = row.ContSize,
+        ContType = row.ContType,
+        HBL_No = row.HBL_No,
+        POL = row.POL,
+        POD = row.POD,
+        Vessel = row.Vessel,
+        Voy = row.Voy,
+        Remark = row.Remark,
+        ETA = row.ETA,
+        GateOut = row.GateOut,
+        EmptyDate = row.EmptyDate,
+        Yard = row.Yard,
+        Estimate = row.Estimate,
+        Collect = row.Collect,
+        Status = row.Status
+    };
+
+    private string RowClassFunc(QuanLy_Cont row, int _) =>
+        _selected != null && _selected.Id == row.Id ? "quanlycont-selected-row" : string.Empty;
+
+    private async Task OpenNewDialog()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", PermissionMenuName))
+        {
+            CallSnackBar("Bạn không có quyền thêm", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<QuanLy_Cont_EditDialog>(
+            "Thêm container",
+            new DialogParameters
+            {
+                ["Model"] = new QuanLy_Cont { Id = Guid.Empty, Container = string.Empty },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not QuanLy_Cont_EditDialog.QuanLyContDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task OpenEditDialog()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar("Bạn không có quyền sửa", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<QuanLy_Cont_EditDialog>(
+            "Sửa container",
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not QuanLy_Cont_EditDialog.QuanLyContDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(QuanLy_Cont_EditDialog.QuanLyContDialogResult data)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (!data.IsEdit)
+            {
+                db.QuanLy_Cont.Add(new QuanLy_Cont
+                {
+                    Id = Guid.NewGuid(),
+                    Principal = data.Principal,
+                    ChuCont = data.ChuCont,
+                    Container = data.Container,
+                    ContSize = data.ContSize,
+                    ContType = data.ContType,
+                    HBL_No = data.HBL_No,
+                    POL = data.POL,
+                    POD = data.POD,
+                    Vessel = data.Vessel,
+                    Voy = data.Voy,
+                    Remark = data.Remark,
+                    ETA = data.ETA,
+                    GateOut = data.GateOut,
+                    EmptyDate = data.EmptyDate,
+                    Yard = data.Yard,
+                    Estimate = data.Estimate,
+                    Collect = data.Collect,
+                    Status = data.Status
+                });
+            }
+            else
+            {
+                var entity = await db.QuanLy_Cont.FirstOrDefaultAsync(x => x.Id == data.Id);
+                if (entity is null)
+                {
+                    CallSnackBar("Không tìm thấy bản ghi", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.Principal = data.Principal;
+                entity.ChuCont = data.ChuCont;
+                entity.Container = data.Container;
+                entity.ContSize = data.ContSize;
+                entity.ContType = data.ContType;
+                entity.HBL_No = data.HBL_No;
+                entity.POL = data.POL;
+                entity.POD = data.POD;
+                entity.Vessel = data.Vessel;
+                entity.Voy = data.Voy;
+                entity.Remark = data.Remark;
+                entity.ETA = data.ETA;
+                entity.GateOut = data.GateOut;
+                entity.EmptyDate = data.EmptyDate;
+                entity.Yard = data.Yard;
+                entity.Estimate = data.Estimate;
+                entity.Collect = data.Collect;
+                entity.Status = data.Status;
+            }
+
+            await db.SaveChangesAsync();
+            _selected = null;
+            await LoadListAsync();
+            CallSnackBar("Đã lưu", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không lưu được: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Delete", PermissionMenuName))
+        {
+            CallSnackBar("Bạn không có quyền xóa", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận",
+            $"Xóa container {_selected.Container}?",
+            yesText: "Xóa",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.QuanLy_Cont.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnackBar("Không tìm thấy bản ghi", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.QuanLy_Cont.Remove(entity);
+            await db.SaveChangesAsync();
+            _selected = null;
+            CallSnackBar("Đã xóa", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không xóa được: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
+
+<style>
+    .quanlycont-selected-row {
+        background-color: #2196f3 !important;
+        color: white;
+    }
+</style>

@@ -8,13 +8,15 @@ namespace NVOAMASIS.Models
         public Guid creditid { get; set; }
         public Guid mblid { get; set; }
         public Guid hblid { get; set; }
+        public Guid Quanly_tauid { get; set; }
+        public Guid Quanly_contid { get; set; }
         public Guid quotationid { get; set; }
         public Guid customerid { get; set; }
         public Guid itemid { get; set; }
         public double? dongia { get; set; } = 0;
         public double? soluong { get; set; } = 0;
         public double? thanhtien { get; set; }
-        public string? tiente { get; set; } 
+        public string? tiente { get; set; }
         public double? thue { get; set; } = 0;
         public double? thanhtiensauthue { get; set; }
         public bool? chiho { get; set; } = false;

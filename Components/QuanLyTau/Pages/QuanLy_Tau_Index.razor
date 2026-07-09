@@ -1,0 +1,403 @@
+@page "/quan-ly-tau"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Components.Shipment.Pages
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>6.14 Quản lý tàu / PDA</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="6.14 Quản lý tàu / PDA" Subtitle="Sheet PDA - QUAN LY TAU">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="OpenNewDialog" Disabled="_busy">
+                    Thêm
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialog"
+                           Disabled="_selected is null || _busy">
+                    Sửa
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteSelectedAsync"
+                           Disabled="_selected is null || _busy">
+                    Xóa
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadListAsync" Disabled="_busy">
+                    Tải lại
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <MudTextField @bind-Value="_searchText"
+                          Label="Tìm tàu, chuyến, khoản mục, hóa đơn..."
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true"
+                          Immediate="true"
+                          Style="max-width: 420px;" />
+        </MudStack>
+
+        <MudDataGrid T="QuanLy_Tau"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClassFunc"
+                     Height="calc(100vh - 220px)"
+                     FixedHeader="true"
+                     Loading="_busy"
+                     ColumnResizeMode="ResizeMode.Column">
+            <Columns>
+                <PropertyColumn Property="x => x.VesselName" Title="Tàu" />
+                <PropertyColumn Property="x => x.VoyageInfo" Title="Chuyến" />
+                <PropertyColumn Property="x => x.DWT" Title="DWT" Format="N2" />
+                <PropertyColumn Property="x => x.GRT" Title="GRT" Format="N2" />
+                <PropertyColumn Property="x => x.NRT" Title="NRT" Format="N2" />
+                <PropertyColumn Property="x => x.LOA" Title="LOA" Format="N2" />
+                <PropertyColumn Property="x => x.ATA" Title="ATA" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.ATB" Title="ATB" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.ATD" Title="ATD" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.EstimateHours" Title="Est. giờ" Format="N4" />
+                <PropertyColumn Property="x => x.Items" Title="Khoản mục" />
+                <PropertyColumn Property="x => x.BasedOn" Title="Cơ sở" />
+                <PropertyColumn Property="x => x.Rate" Title="Rate" />
+                <PropertyColumn Property="x => x.TurnTime" Title="Turn/Time" />
+                <PropertyColumn Property="x => x.Qty" Title="Qty" Format="N4" />
+                <PropertyColumn Property="x => x.AmountUSD" Title="USD" Format="N4" />
+                <PropertyColumn Property="x => x.AmountVND" Title="VND" Format="N0" />
+                <PropertyColumn Property="x => x.Invoice" Title="Hóa đơn" />
+                <PropertyColumn Property="x => x.Remarks" Title="Ghi chú" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="QuanLy_Tau" PageSizeOptions="new int[] { 10, 25, 50, 100 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+
+    @if (_selected is not null)
+    {
+        <MudPaper Class="product-price-card pa-3 mt-3" Elevation="0">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">
+                Debit / Credit cho tàu/PDA: <b>@(_selected.VesselName ?? _selected.Items ?? "N/A")</b>
+            </MudText>
+
+            <MudTabs Rounded="true" PanelClass="pa-2" Elevation="0">
+                <MudTabPanel Text="Debit">
+                    <DebitTab_QuanLy @key="@($"tau-debit-{_selected.Id}")" QuanLyTau="_selected" />
+                </MudTabPanel>
+                <MudTabPanel Text="Credit">
+                    <CreDitTab_QuanLy @key="@($"tau-credit-{_selected.Id}")" QuanLyTau="_selected" />
+                </MudTabPanel>
+            </MudTabs>
+        </MudPaper>
+    }
+</div>
+
+@code {
+    private const string PermissionMenuName = "QuanLyTau";
+
+    private bool _busy;
+    private List<QuanLy_Tau> _items = new();
+    private QuanLy_Tau? _selected;
+    private string usr = string.Empty;
+    private string _searchText = string.Empty;
+
+    private IEnumerable<QuanLy_Tau> VisibleItems
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+                return _items;
+
+            var t = _searchText.Trim();
+            return _items.Where(x =>
+                ContainsIc(x.VesselName, t) ||
+                ContainsIc(x.VoyageInfo, t) ||
+                ContainsIc(x.Items, t) ||
+                ContainsIc(x.BasedOn, t) ||
+                ContainsIc(x.Rate, t) ||
+                ContainsIc(x.Invoice, t) ||
+                ContainsIc(x.Remarks, t));
+        }
+    }
+
+    private static bool ContainsIc(string? s, string needle) =>
+        !string.IsNullOrEmpty(s) && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        usr = auth.User.Identity?.Name ?? string.Empty;
+        await LoadListAsync();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!await ssv.CheckPermission(usr, "View", PermissionMenuName))
+        {
+            CallSnackBar("Bạn không có quyền xem", MudBlazor.Severity.Warning);
+            _items = new List<QuanLy_Tau>();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.QuanLy_Tau
+                .AsNoTracking()
+                .OrderByDescending(x => x.ATA)
+                .ThenBy(x => x.VesselName)
+                .ThenBy(x => x.Items)
+                .ToListAsync();
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không tải được dữ liệu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<QuanLy_Tau> args) =>
+        _selected = CloneRow(args.Item);
+
+    private static QuanLy_Tau CloneRow(QuanLy_Tau row) => new()
+    {
+        Id = row.Id,
+        VesselName = row.VesselName,
+        VoyageInfo = row.VoyageInfo,
+        DWT = row.DWT,
+        GRT = row.GRT,
+        NRT = row.NRT,
+        LOA = row.LOA,
+        ATA = row.ATA,
+        ATB = row.ATB,
+        ATD = row.ATD,
+        EstimateHours = row.EstimateHours,
+        Items = row.Items,
+        BasedOn = row.BasedOn,
+        Rate = row.Rate,
+        TurnTime = row.TurnTime,
+        Qty = row.Qty,
+        AmountUSD = row.AmountUSD,
+        AmountVND = row.AmountVND,
+        Remarks = row.Remarks,
+        Invoice = row.Invoice
+    };
+
+    private string RowClassFunc(QuanLy_Tau row, int _) =>
+        _selected != null && _selected.Id == row.Id ? "quanlytau-selected-row" : string.Empty;
+
+    private async Task OpenNewDialog()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", PermissionMenuName))
+        {
+            CallSnackBar("Bạn không có quyền thêm", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<QuanLy_Tau_EditDialog>(
+            "Thêm PDA",
+            new DialogParameters
+            {
+                ["Model"] = new QuanLy_Tau { Id = Guid.Empty },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not QuanLy_Tau_EditDialog.QuanLyTauDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task OpenEditDialog()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Edit", PermissionMenuName))
+        {
+            CallSnackBar("Bạn không có quyền sửa", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<QuanLy_Tau_EditDialog>(
+            "Sửa PDA",
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not QuanLy_Tau_EditDialog.QuanLyTauDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(QuanLy_Tau_EditDialog.QuanLyTauDialogResult data)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (!data.IsEdit)
+            {
+                db.QuanLy_Tau.Add(new QuanLy_Tau
+                {
+                    Id = Guid.NewGuid(),
+                    VesselName = data.VesselName,
+                    VoyageInfo = data.VoyageInfo,
+                    DWT = data.DWT,
+                    GRT = data.GRT,
+                    NRT = data.NRT,
+                    LOA = data.LOA,
+                    ATA = data.ATA,
+                    ATB = data.ATB,
+                    ATD = data.ATD,
+                    EstimateHours = data.EstimateHours,
+                    Items = data.Items,
+                    BasedOn = data.BasedOn,
+                    Rate = data.Rate,
+                    TurnTime = data.TurnTime,
+                    Qty = data.Qty,
+                    AmountUSD = data.AmountUSD,
+                    AmountVND = data.AmountVND,
+                    Remarks = data.Remarks,
+                    Invoice = data.Invoice
+                });
+            }
+            else
+            {
+                var entity = await db.QuanLy_Tau.FirstOrDefaultAsync(x => x.Id == data.Id);
+                if (entity is null)
+                {
+                    CallSnackBar("Không tìm thấy bản ghi", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.VesselName = data.VesselName;
+                entity.VoyageInfo = data.VoyageInfo;
+                entity.DWT = data.DWT;
+                entity.GRT = data.GRT;
+                entity.NRT = data.NRT;
+                entity.LOA = data.LOA;
+                entity.ATA = data.ATA;
+                entity.ATB = data.ATB;
+                entity.ATD = data.ATD;
+                entity.EstimateHours = data.EstimateHours;
+                entity.Items = data.Items;
+                entity.BasedOn = data.BasedOn;
+                entity.Rate = data.Rate;
+                entity.TurnTime = data.TurnTime;
+                entity.Qty = data.Qty;
+                entity.AmountUSD = data.AmountUSD;
+                entity.AmountVND = data.AmountVND;
+                entity.Remarks = data.Remarks;
+                entity.Invoice = data.Invoice;
+            }
+
+            await db.SaveChangesAsync();
+            _selected = null;
+            await LoadListAsync();
+            CallSnackBar("Đã lưu", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không lưu được: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (_selected is null)
+            return;
+
+        if (!await ssv.CheckPermission(usr, "Delete", PermissionMenuName))
+        {
+            CallSnackBar("Bạn không có quyền xóa", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận",
+            $"Xóa khoản mục PDA: {_selected.Items ?? _selected.VesselName ?? "n/a"}?",
+            yesText: "Xóa",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.QuanLy_Tau.FirstOrDefaultAsync(x => x.Id == _selected.Id);
+            if (entity is null)
+            {
+                CallSnackBar("Không tìm thấy bản ghi", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.QuanLy_Tau.Remove(entity);
+            await db.SaveChangesAsync();
+            _selected = null;
+            CallSnackBar("Đã xóa", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không xóa được: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
+
+<style>
+    .quanlytau-selected-row {
+        background-color: #2196f3 !important;
+        color: white;
+    }
+</style>
