@@ -123,11 +123,11 @@ public class AccountService (IUserService userServices, AppDbContext _context, C
                 p.PermissionId = Guid.NewGuid();
                 p.MenuId = item.MenuId;
                 p.MenuName = item.MenuName;
-                p.Add = item.canAdd;
-                p.See = item.canView;
-                p.Edit = item.canEdit;
-                p.Del = item.canDelete;
-                p.Approve = item.canApprove;
+                p.Add = item.canAdd ?? false;
+                p.See = item.canView ?? false;
+                p.Edit = item.canEdit ?? false;
+                p.Del = item.canDelete ?? false;
+                p.Approve = item.canApprove ?? false;
                 p.UserName = user.Usr;
                 listpers.Add(p);
             }
@@ -143,11 +143,11 @@ public class AccountService (IUserService userServices, AppDbContext _context, C
                     p.PermissionId = Guid.NewGuid();
                     p.MenuId = menu.MenuID;
                     p.MenuName = menu.MenuName;
-                    p.Add = perdef.canAdd;
-                    p.See = perdef.canView;
-                    p.Edit = perdef.canEdit;
-                    p.Del = perdef.canDelete;
-                    p.Approve = perdef.canApprove;
+                    p.Add = perdef.canAdd ?? false;
+                    p.See = perdef.canView ?? false;
+                    p.Edit = perdef.canEdit ?? false;
+                    p.Del = perdef.canDelete ?? false;
+                    p.Approve = perdef.canApprove ?? false;
                     p.UserName = user.Usr;
                     listpers.Add(p);
                 }

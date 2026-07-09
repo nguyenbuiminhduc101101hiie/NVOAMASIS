@@ -174,6 +174,9 @@ namespace NVOAMASIS.Data
         public DbSet<FinancialReportSnapshotLine> FinancialReportSnapshotLines { get; set; }
         public DbSet<M_FinancialReportTypes> FinancialReportTypes { get; set; }
 
+        public DbSet<QuanLy_Cont> QuanLy_Cont { get; set; }
+        public DbSet<QuanLy_Tau> QuanLy_Tau { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -430,6 +433,30 @@ namespace NVOAMASIS.Data
                 entity.Property(x => x.ParentLineCode).HasMaxLength(50);
                 entity.Property(x => x.LineName).HasMaxLength(255).IsRequired();
                 entity.Property(x => x.Amount).HasColumnType("decimal(18,2)");
+            });
+
+            modelBuilder.Entity<QuanLy_Cont>(entity =>
+            {
+                entity.ToTable("QuanLy_Cont");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+                entity.Property(e => e.Container).HasMaxLength(20).IsRequired();
+                entity.Property(e => e.Collect).HasColumnType("decimal(10,2)");
+            });
+
+            modelBuilder.Entity<QuanLy_Tau>(entity =>
+            {
+                entity.ToTable("QuanLy_Tau");
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+                entity.Property(e => e.DWT).HasColumnType("decimal(12,2)");
+                entity.Property(e => e.GRT).HasColumnType("decimal(12,2)");
+                entity.Property(e => e.NRT).HasColumnType("decimal(12,2)");
+                entity.Property(e => e.LOA).HasColumnType("decimal(12,2)");
+                entity.Property(e => e.EstimateHours).HasColumnType("decimal(12,4)");
+                entity.Property(e => e.Qty).HasColumnType("decimal(12,4)");
+                entity.Property(e => e.AmountUSD).HasColumnType("decimal(18,4)");
+                entity.Property(e => e.AmountVND).HasColumnType("decimal(18,0)");
             });
         }
 
