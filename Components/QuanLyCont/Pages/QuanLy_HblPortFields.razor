@@ -1,0 +1,127 @@
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<MudItem xs="12" sm="6" md="4">
+    <MudAutocomplete T="string"
+                     Value="HblNo"
+                     ValueChanged="OnHblNoChangedAsync"
+                     Label="HB/L No"
+                     Variant="Variant.Outlined"
+                     Margin="Margin.Dense"
+                     SearchFunc="SearchHblNo"
+                     CoerceText="true"
+                     Clearable="true"
+                     ResetValueOnEmptyText="true"
+                     MaxLength="30" />
+</MudItem>
+<MudItem xs="12" sm="6" md="4">
+    <MudAutocomplete T="string"
+                     Value="Pol"
+                     ValueChanged="OnPolChangedAsync"
+                     Label="POL"
+                     Variant="Variant.Outlined"
+                     Margin="Margin.Dense"
+                     SearchFunc="SearchPort"
+                     CoerceText="true"
+                     Clearable="true"
+                     ResetValueOnEmptyText="true"
+                     MaxLength="50" />
+</MudItem>
+<MudItem xs="12" sm="6" md="4">
+    <MudAutocomplete T="string"
+                     Value="Pod"
+                     ValueChanged="OnPodChangedAsync"
+                     Label="POD"
+                     Variant="Variant.Outlined"
+                     Margin="Margin.Dense"
+                     SearchFunc="SearchPort"
+                     CoerceText="true"
+                     Clearable="true"
+                     ResetValueOnEmptyText="true"
+                     MaxLength="50" />
+</MudItem>
+
+@code {
+    [Parameter] public string? HblNo { get; set; }
+    [Parameter] public EventCallback<string?> HblNoChanged { get; set; }
+    [Parameter] public string? Pol { get; set; }
+    [Parameter] public EventCallback<string?> PolChanged { get; set; }
+    [Parameter] public string? Pod { get; set; }
+    [Parameter] public EventCallback<string?> PodChanged { get; set; }
+    [Parameter] public EventCallback<M_HBL?> OnHblSelected { get; set; }
+
+    private static string? TrimOrNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private async Task OnHblNoChangedAsync(string? value)
+    {
+        var hblNo = TrimOrNull(value);
+        await HblNoChanged.InvokeAsync(hblNo);
+
+        if (string.IsNullOrEmpty(hblNo))
+        {
+            await OnHblSelected.InvokeAsync(null);
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var match = await db.HBL.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.hbl == hblNo);
+
+        await OnHblSelected.InvokeAsync(match);
+    }
+
+    private Task OnPolChangedAsync(string? value) =>
+        PolChanged.InvokeAsync(TrimOrNull(value));
+
+    private Task OnPodChangedAsync(string? value) =>
+        PodChanged.InvokeAsync(TrimOrNull(value));
+
+    private async Task<IEnumerable<string>> SearchHblNo(string value)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var query = db.HBL.AsNoTracking()
+            .Where(x => x.hbl != null && x.hbl != string.Empty);
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var text = value.Trim();
+            query = query.Where(x => x.hbl!.Contains(text));
+        }
+
+        return await query
+            .Select(x => x.hbl!)
+            .Distinct()
+            .OrderBy(x => x)
+            .Take(30)
+            .ToListAsync();
+    }
+
+    private async Task<IEnumerable<string>> SearchPort(string value)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var query = db.Port.AsNoTracking()
+            .Where(x => x.PORT != null
+                        && x.PORT != string.Empty
+                        && (x.CONTINUED == null || x.CONTINUED == true)
+                        && x.show != false);
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var text = value.Trim();
+            query = query.Where(x =>
+                x.PORT!.Contains(text) ||
+                (x.PORT_CODE != null && x.PORT_CODE.Contains(text)));
+        }
+
+        return await query
+            .Select(x => x.PORT!)
+            .Distinct()
+            .OrderBy(x => x)
+            .Take(30)
+            .ToListAsync();
+    }
+}
