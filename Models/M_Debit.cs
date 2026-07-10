@@ -9,8 +9,8 @@ namespace NVOAMASIS.Models
         public Guid quotationid { get; set; }
         public Guid mblid { get; set; }
         public Guid hblid { get; set; }
-        public Guid Quanly_tauid { get; set; }
-        public Guid Quanly_contid { get; set; }
+        public Guid? Quanly_tauid { get; set; }
+        public Guid? Quanly_contid { get; set; }
         public Guid itemid { get; set; }
         public Guid customerid { get; set; }
         public string? debitno { get; set; }

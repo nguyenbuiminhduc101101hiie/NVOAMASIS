@@ -4,13 +4,13 @@
 @using MudBlazor
 @using NVOAMASIS.Data
 @using NVOAMASIS.Models
-@inject SupportServices supsv
-@inject SharedServices ssv
 @inject AccountService asv
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ShipmentService shipsv
+@inject SupportServices supsv
+@inject tigiaVCBservices Vcbsv
 @inject IStringLocalizer<SharedResource> Localizer
 
 <MudDataGrid T="M_Debit"
@@ -32,7 +32,7 @@
              ColumnResizeMode="ResizeMode.Column"
              Loading="_loading"
              ShowColumnOptions="false"
-             Height="420px">
+             Height="@GridHeight">
     <Columns>
         <TemplateColumn CellClass="d-flex justify-end" Filterable="false" ShowColumnOptions="false" Sortable="false">
             <HeaderTemplate>
@@ -71,7 +71,16 @@
                 <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" Disabled="context.Item.khoa == true" />
             </CellTemplate>
         </TemplateColumn>
-        <PropertyColumn Property="x => x.debitno" Title="@Localizer["Debit No."]" Required="false" />
+        <PropertyColumn Property="x => x.debitno" Title="@Localizer["Debit No."]" Required="false">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.debitno" Immediate Label="Debit No." Required ReadOnly />
+                <MudDatePicker Label="@Localizer["Selected Date Get Debit No"]"
+                               DateChanged="@(t => UpdateDebitNo(context.Item, (DateTime)t!))"
+                               ImmediateText
+                               DateFormat="MM/yyyy"
+                               Disabled="!string.IsNullOrEmpty(context.Item.debitno)" />
+            </EditTemplate>
+        </PropertyColumn>
         <PropertyColumn Property="x=>x.approve" Title="@Localizer["Approve"]" IsEditable="false" Required="false">
             <CellTemplate>
                 <MudCheckBox @bind-Checked="context.Item.approve" @bind-Value="context.Item.approve" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
@@ -130,12 +139,34 @@
         </PropertyColumn>
         <PropertyColumn Property="x => x.tigiadebit" Title="@Localizer["Exchange Rate Debit"]" Format="#,##0.##" Required="false">
             <EditTemplate>
-                <MudNumericField @bind-Value="context.Item.tigiadebit" Label="@Localizer["Exchange Rate Debit"]" Format="#,##0.##" Culture="@_en" T="double?" HideSpinButtons="true" Class="text-right" />
+                <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                               Style="min-width: 80px; height: 36px; padding: 5px 10px;"
+                               OnClick="@(() => GetTigia(context.Item))">
+                        @Localizer["gettigia"]
+                    </MudButton>
+                    <MudNumericField @bind-Value="context.Item.tigiadebit"
+                                     Label="@Localizer["Exchange Rate Debit"]"
+                                     Format="#,##0.##" Culture="@_en"
+                                     T="double?" Required="true" HideSpinButtons="true"
+                                     Class="text-right" />
+                </MudStack>
             </EditTemplate>
         </PropertyColumn>
         <PropertyColumn Property="x => x.tigiahoandondaura" Title="@Localizer["Exchange Rate Invoice"]" Format="#,##0.##" Required="false">
             <EditTemplate>
-                <MudNumericField @bind-Value="context.Item.tigiahoandondaura" Label="@Localizer["Exchange Rate Invoice"]" Format="#,##0.##" Culture="@_en" T="double?" HideSpinButtons="true" Class="text-right" />
+                <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                               Style="min-width: 80px; height: 36px; padding: 5px 10px;"
+                               OnClick="@(() => GetTigia_invoice(context.Item))">
+                        @Localizer["gettigia"]
+                    </MudButton>
+                    <MudNumericField @bind-Value="context.Item.tigiahoandondaura"
+                                     Label="@Localizer["Exchange Rate Invoice"]"
+                                     Format="#,##0.##" Culture="@_en"
+                                     T="double?" Required="true" HideSpinButtons="true"
+                                     Class="text-right" />
+                </MudStack>
             </EditTemplate>
         </PropertyColumn>
         <PropertyColumn Property="x => x.ContainerNo" Title="@Localizer["Cont. No."]" Required="false">
@@ -176,6 +207,7 @@
 @code {
     [Parameter] public QuanLy_Cont? QuanLyCont { get; set; }
     [Parameter] public QuanLy_Tau? QuanLyTau { get; set; }
+    [Parameter] public string GridHeight { get; set; } = "420px";
 
     public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
     private MudDataGrid<M_Debit> mudTable = default!;
@@ -189,28 +221,78 @@
     private bool _loading;
     private bool _initialized;
     private string usr = string.Empty;
+    private Guid _loadedContextKey = Guid.Empty;
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     private Guid CurrentContId => QuanLyCont?.Id ?? Guid.Empty;
     private Guid CurrentTauId => QuanLyTau?.Id ?? Guid.Empty;
     private bool IsContContext => CurrentContId != Guid.Empty;
     private bool IsTauContext => CurrentTauId != Guid.Empty;
     private bool _canEditContext => IsContContext || IsTauContext;
+    private string ShipmentTypeCode => IsContContext ? "CO" : IsTauContext ? "TA" : string.Empty;
 
     protected override async Task OnParametersSetAsync()
     {
-        if (!_initialized)
+        await _loadGate.WaitAsync();
+        try
         {
-            var auth = await asv.GetAuth();
-            usr = auth.User.Identity?.Name ?? string.Empty;
-            currs = await Vcbsv.GetCur();
-            Types = await shipsv.GetListTypeInDebitCredit();
-            charges = await supsv.GetListChargeDuty(false);
-            await using var db = await DbFactory.CreateDbContextAsync();
-            Customers = await db.Customer.AsNoTracking().OrderBy(x => x.shortname).ToListAsync();
-            _initialized = true;
-        }
+            if (!_initialized)
+            {
+                var auth = await asv.GetAuth();
+                usr = auth.User.Identity?.Name ?? string.Empty;
+                await LoadLookupsAsync();
+                _initialized = true;
+            }
 
-        await Refresh();
+            if (!_canEditContext)
+            {
+                Listdata = new();
+                return;
+            }
+
+            var contextKey = IsContContext ? CurrentContId : CurrentTauId;
+            if (_loadedContextKey != contextKey)
+            {
+                _loadedContextKey = contextKey;
+                await Refresh();
+            }
+        }
+        finally
+        {
+            _loadGate.Release();
+        }
+    }
+
+    private async Task LoadLookupsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        currs = await db.Currency.AsNoTracking()
+            .Select(x => x.Currency)
+            .Where(x => x != null)
+            .Distinct()
+            .ToListAsync();
+
+        charges = await db.Charge.AsNoTracking()
+            .Where(x => x.CHARGE_CODE == null || !EF.Functions.Like(x.CHARGE_CODE, "%Duty%"))
+            .OrderByDescending(x => x.UPDATETIME)
+            .ToListAsync();
+
+        var debitTypes = await db.Debit.AsNoTracking()
+            .Select(x => x.type)
+            .Where(x => x != null)
+            .ToListAsync();
+        var creditTypes = await db.Credit.AsNoTracking()
+            .Select(x => x.type)
+            .Where(x => x != null)
+            .ToListAsync();
+        Types = debitTypes
+            .Union(creditTypes)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct()
+            .ToList();
+
+        Customers = await db.Customer.AsNoTracking().OrderBy(x => x.shortname).ToListAsync();
     }
 
     private void CallSnackBar(string message, MudBlazor.Severity severity)
@@ -301,6 +383,7 @@
         SetContextIds(item);
         item.mblid = Guid.Empty;
         item.hblid = Guid.Empty;
+        item.quotationid = Guid.Empty;
         item.ContainerNo = string.IsNullOrWhiteSpace(item.ContainerNo) ? null : item.ContainerNo.Trim();
         item.userupdate = usr;
         item.dateupdate = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
@@ -315,8 +398,8 @@
 
     private void SetContextIds(M_Debit item)
     {
-        item.Quanly_contid = IsContContext ? CurrentContId : Guid.Empty;
-        item.Quanly_tauid = IsTauContext ? CurrentTauId : Guid.Empty;
+        item.Quanly_contid = IsContContext ? CurrentContId : null;
+        item.Quanly_tauid = IsTauContext ? CurrentTauId : null;
     }
 
     private void RowClicked(DataGridRowClickEventArgs<M_Debit> args)
@@ -392,6 +475,29 @@
     {
         if (item.thanhtien.HasValue && item.thue.HasValue)
             item.thanhtiensauthue = Math.Round((item.thanhtien ?? 0) * ((item.thue ?? 0) / 100 + 1), 2);
+    }
+
+    private async Task UpdateDebitNo(M_Debit item, DateTime value)
+    {
+        var refno = await supsv.GetRefNoByFunc("Debit", value.Month, value.Year, usr);
+        var tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");
+        var rs = asv.GetUserDetail();
+        var cn = rs?.Branch ?? string.Empty;
+        var flc = string.Empty;
+        item.debitno = cn + tiepdaungu + ShipmentTypeCode + flc + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D4") : "RefNoError!");
+        StateHasChanged();
+    }
+
+    private async Task GetTigia(M_Debit item)
+    {
+        item.tigiadebit = await Vcbsv.Getexchange_cur(item.tiente);
+        StateHasChanged();
+    }
+
+    private async Task GetTigia_invoice(M_Debit item)
+    {
+        item.tigiahoandondaura = await Vcbsv.Getexchange_cur(item.tiente);
+        StateHasChanged();
     }
 
     private async Task UpdatebyCheckboxClick(M_Debit item)
