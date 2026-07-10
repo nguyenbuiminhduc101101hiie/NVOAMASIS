@@ -89,6 +89,9 @@ namespace NVOAMASIS.Migrations
                     b.Property<string>("Pass_viettel")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<bool>("Send_OTP_login")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Usr")
                         .HasColumnType("nvarchar(max)");
 

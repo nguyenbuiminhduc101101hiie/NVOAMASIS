@@ -60,7 +60,8 @@ public class TenantAuthService(
             UsrId = appUser.UsrId,
             Email = appUser.Email,
             Manager2 = appUser.Manager2,
-            Department = appUser.Department
+            Department = appUser.Department,
+            Send_OTP_login = appUser.Send_OTP_login
         };
 
         return new LoginResponse(true, "Đăng nhập thành công.", authUser, tenant.TenantId, tenant.DatabaseName);
