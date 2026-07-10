@@ -19,4 +19,7 @@ public class AuthUser
     public string? Zaloid { get; set; }
     public string? Roles_Dept { get; set; }
     public string? CompanyCode { get; set; }
+
+    public bool Send_OTP_login { get; set; }
+
 }
