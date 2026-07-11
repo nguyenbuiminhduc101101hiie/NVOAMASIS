@@ -1,0 +1,1222 @@
+@page "/yard/alpine-inventory-import"
+@attribute [Authorize]
+
+@using System.Data
+@using System.Data.Common
+@using System.Globalization
+@using System.Security.Cryptography
+@using System.Text
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.EntityFrameworkCore.Storage
+@using MudBlazor
+@using OfficeOpenXml
+@using NVOAMASIS.Data
+@using NVOAMASIS.Services
+
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AccountService asv
+@inject SharedServices ssv
+@inject ISnackbar Snackbar
+
+<PageTitle>8.3.8 Import YARD Alpine Inventory</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="yard-import-page pa-3">
+    <MudPaper Class="hero-card pa-4 mb-3" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" lg="8">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+                    <div class="hero-icon">
+                        <MudIcon Icon="@Icons.Material.Filled.Warehouse" Size="Size.Large" />
+                    </div>
+                    <div>
+                        <MudText Typo="Typo.h5" Class="page-title">8.3.8 Import YARD Alpine Inventory</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            Import workbook dạng ALPINE Inventory: đọc GATE IN, GATE OUT và STOCK → preview → bỏ dòng trùng → ghi vào <b>@TableName</b>.
+                        </MudText>
+                    </div>
+                </MudStack>
+            </MudItem>
+
+            <MudItem xs="12" lg="4">
+                <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="flex-wrap action-bar">
+                    <MudTextField T="string"
+                                  @bind-Value="_importDepot"
+                                  Label="Depot"
+                                  Placeholder="PHUONG DONG DEPOT"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Style="min-width:220px;background:#fff;border-radius:12px;"
+                                  Disabled="@(_busy || _preview is not null)"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.LocationOn" />
+
+                    <MudButton HtmlTag="label"
+                               Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.FolderOpen"
+                               Disabled="@_busy">
+                        Chọn Excel
+                        <InputFile OnChange="PreviewExcelAsync" accept=".xlsx" style="display:none" />
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.CloudUpload"
+                               OnClick="ConfirmImportAsync"
+                               Disabled="@(_busy || _preview is null || ImportableTotal == 0)">
+                        Import DB
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Secondary"
+                               StartIcon="@Icons.Material.Filled.RestartAlt"
+                               OnClick="ClearPreview"
+                               Disabled="@_busy">
+                        Reset
+                    </MudButton>
+                </MudStack>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2" Class="mb-3">
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">File</MudText>
+                <MudText Typo="Typo.subtitle2" Class="fw-bold ellipsis">@(_preview?.FileName ?? "Chưa chọn")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">GATE IN</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold text-ok">@GateInCount.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Container rows</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">GATE OUT</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold text-warn">@GateOutCount.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Container rows</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">STOCK</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold text-info">@StockCount.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Current inventory</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">New / Existing</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@ImportableTotal.ToString("N0") / @ExistingTotal.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption">Ready / skipped</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">Database</MudText>
+                <MudText Typo="Typo.subtitle2" Class="fw-bold ellipsis">@TableName</MudText>
+                <MudText Typo="Typo.caption">Auto-created</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @if (_busy)
+    {
+        <MudPaper Class="process-card pa-4 mb-3" Elevation="0">
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+            <MudText Typo="Typo.body2" Class="mt-2">Đang xử lý Excel / database...</MudText>
+        </MudPaper>
+    }
+
+    @if (_preview is null)
+    {
+        <MudPaper Class="empty-card pa-6" Elevation="0">
+            <MudStack AlignItems="AlignItems.Center" Spacing="2">
+                <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" Color="Color.Primary" />
+                <MudText Typo="Typo.h6" Class="fw-bold">Chọn file ALPINE Inventory để preview</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">
+                    Hệ thống tự tìm header thật trong từng sheet, chỉ import 3 sheet container: <b>GATE IN</b>, <b>GATE OUT</b>, <b>STOCK</b>.
+                    GENERAL và GENERAL_STATUS chỉ là summary nên không import.
+                </MudText>
+            </MudStack>
+        </MudPaper>
+    }
+    else
+    {
+        <MudPaper Class="control-card pa-3 mb-3" Elevation="0">
+            <MudGrid Spacing="2" AlignItems="Center">
+                <MudItem xs="12" md="5">
+                    <MudTextField T="string"
+                                  @bind-Value="_search"
+                                  Label="Search preview"
+                                  Placeholder="Container, depot, booking, vessel, remark..."
+                                  Immediate="true"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudSelect T="int" @bind-Value="_previewLimit" Label="Rows" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelectItem T="int" Value="@(50)">50</MudSelectItem>
+                        <MudSelectItem T="int" Value="@(100)">100</MudSelectItem>
+                        <MudSelectItem T="int" Value="@(200)">200</MudSelectItem>
+                        <MudSelectItem T="int" Value="@(500)">500</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudCheckBox T="bool" @bind-Value="_onlyProblem" Label="Chỉ dòng lỗi/trùng" Color="Color.Warning" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudButton FullWidth="true"
+                               Variant="Variant.Filled"
+                               Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.DoneAll"
+                               OnClick="ConfirmImportAsync"
+                               Disabled="@(_busy || ImportableTotal == 0)">
+                        Import @ImportableTotal.ToString("N0") dòng mới
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+
+        <MudGrid Spacing="2" Class="mb-3">
+            @foreach (var sheet in _preview.Sheets)
+            {
+                <MudItem xs="12" md="4">
+                    <MudPaper Class="sheet-summary-card pa-3" Elevation="0">
+                        <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start">
+                            <div>
+                                <MudText Typo="Typo.subtitle1" Class="fw-bold">@sheet.SheetName</MudText>
+                                <MudText Typo="Typo.caption">Header row @sheet.HeaderRow · @sheet.Rows.Count.ToString("N0") rows</MudText>
+                            </div>
+                            <MudChip T="string" Color="@SheetColor(sheet)" Variant="Variant.Filled" Size="Size.Small">@SheetStatus(sheet)</MudChip>
+                        </MudStack>
+                        <MudDivider Class="my-2" />
+                        <MudGrid Spacing="1">
+                            <MudItem xs="4">
+                                <MudText Typo="Typo.caption">New</MudText>
+                                <MudText Typo="Typo.subtitle2" Class="fw-bold text-ok">@sheet.Rows.Count(CanImport).ToString("N0")</MudText>
+                            </MudItem>
+                            <MudItem xs="4">
+                                <MudText Typo="Typo.caption">Existing</MudText>
+                                <MudText Typo="Typo.subtitle2" Class="fw-bold text-info">@sheet.Rows.Count(x => x.IsExisting).ToString("N0")</MudText>
+                            </MudItem>
+                            <MudItem xs="4">
+                                <MudText Typo="Typo.caption">Invalid/Dup</MudText>
+                                <MudText Typo="Typo.subtitle2" Class="fw-bold text-error">@sheet.Rows.Count(x => x.IsInvalid || x.IsBatchDuplicate).ToString("N0")</MudText>
+                            </MudItem>
+                        </MudGrid>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+
+        <MudTabs @bind-ActivePanelIndex="_activeTab" Class="preview-tabs">
+            @foreach (var sheet in _preview.Sheets)
+            {
+                <MudTabPanel Text="@($"{sheet.SheetName} ({sheet.Rows.Count:N0})")">
+                    <MudPaper Class="preview-card pa-3" Elevation="0">
+                        <div class="preview-table-wrap">
+                            <MudTable T="PreviewRow"
+                                      Items="FilteredRows(sheet).Take(_previewLimit).ToList()"
+                                      Dense="true"
+                                      Hover="true"
+                                      Bordered="true"
+                                      Striped="true"
+                                      Class="preview-table">
+                                <HeaderContent>
+                                    <MudTh Class="sticky-col">#</MudTh>
+                                    <MudTh>Status</MudTh>
+                                    <MudTh>Container</MudTh>
+                                    <MudTh>Type</MudTh>
+                                    <MudTh>ISO</MudTh>
+                                    <MudTh>F/E</MudTh>
+                                    <MudTh>Move</MudTh>
+                                    <MudTh>Date In</MudTh>
+                                    <MudTh>Date Out</MudTh>
+                                    <MudTh>Location</MudTh>
+                                    <MudTh>Booking</MudTh>
+                                    <MudTh>Vessel</MudTh>
+                                    <MudTh>Remark</MudTh>
+                                </HeaderContent>
+                                <RowTemplate Context="row">
+                                    <MudTd Class="sticky-col">@row.ExcelRow</MudTd>
+                                    <MudTd>
+                                        @if (CanImport(row))
+                                        {
+                                            <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Outlined">New</MudChip>
+                                        }
+                                        else if (row.IsExisting)
+                                        {
+                                            <MudChip T="string" Color="Color.Info" Size="Size.Small">Existing</MudChip>
+                                        }
+                                        else if (row.IsBatchDuplicate)
+                                        {
+                                            <MudChip T="string" Color="Color.Warning" Size="Size.Small">Duplicate</MudChip>
+                                        }
+                                        else
+                                        {
+                                            <MudTooltip Text="@row.StatusMessage">
+                                                <MudChip T="string" Color="Color.Error" Size="Size.Small">Invalid</MudChip>
+                                            </MudTooltip>
+                                        }
+                                    </MudTd>
+                                    <MudTd Class="fw-bold">@row.Container</MudTd>
+                                    <MudTd>@row.ContainerType</MudTd>
+                                    <MudTd>@row.IsoType</MudTd>
+                                    <MudTd>@row.FE</MudTd>
+                                    <MudTd>@row.Move</MudTd>
+                                    <MudTd>@Fmt(row.DateIn)</MudTd>
+                                    <MudTd>@Fmt(row.DateOut)</MudTd>
+                                    <MudTd>@row.Location</MudTd>
+                                    <MudTd>@row.Booking</MudTd>
+                                    <MudTd>@row.Vessel</MudTd>
+                                    <MudTd>@row.Remark</MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                        </div>
+                    </MudPaper>
+                </MudTabPanel>
+            }
+        </MudTabs>
+    }
+</MudContainer>
+
+@code {
+    private const string PermissionMenuName = "Inventory";
+    private const string TableName = "M_8_3_8_YARD_ALPINE_INVENTORY";
+
+    private bool _busy;
+    private bool _canAdd;
+    private string _usr = string.Empty;
+    private string _importDepot = "PHUONG DONG DEPOT";
+    private ImportPreview? _preview;
+    private int _activeTab;
+    private int _previewLimit = 100;
+    private string _search = string.Empty;
+    private bool _onlyProblem;
+
+    private int GateInCount => _preview?.Sheets.Where(x => x.Target == SheetTarget.GateIn).Sum(x => x.Rows.Count) ?? 0;
+    private int GateOutCount => _preview?.Sheets.Where(x => x.Target == SheetTarget.GateOut).Sum(x => x.Rows.Count) ?? 0;
+    private int StockCount => _preview?.Sheets.Where(x => x.Target == SheetTarget.Stock).Sum(x => x.Rows.Count) ?? 0;
+    private int ImportableTotal => _preview?.Sheets.Sum(x => x.Rows.Count(CanImport)) ?? 0;
+    private int ExistingTotal => _preview?.Sheets.Sum(x => x.Rows.Count(r => r.IsExisting)) ?? 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        _canAdd = await ssv.CheckPermission(_usr, "Add", PermissionMenuName);
+    }
+
+    private async Task PreviewExcelAsync(InputFileChangeEventArgs e)
+    {
+        if (!_canAdd)
+        {
+            Snackbar.Add("Bạn không có quyền import Inventory.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (e.FileCount == 0)
+            return;
+
+        var file = e.File;
+        if (!file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            Snackbar.Add("Chỉ hỗ trợ file .xlsx.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            _preview = null;
+            _search = string.Empty;
+            _onlyProblem = false;
+
+            await using var input = file.OpenReadStream(100 * 1024 * 1024);
+            await using var ms = new MemoryStream();
+            await input.CopyToAsync(ms);
+
+            _preview = ReadPreview(ms.ToArray(), file.Name);
+            if (_preview.Sheets.Count == 0)
+                throw new InvalidOperationException("Không tìm thấy GATE IN, GATE OUT hoặc STOCK trong file.");
+
+            var detectedDepot = DetectDepot(_preview);
+            if (!string.IsNullOrWhiteSpace(detectedDepot))
+                _importDepot = detectedDepot;
+
+            foreach (var row in _preview.Sheets.SelectMany(x => x.Rows))
+                row.Signature = ComputeSignature(row, _importDepot);
+
+            await EnsureTableAsync();
+            await MarkDuplicatesAsync(_preview);
+            _activeTab = 0;
+
+            Snackbar.Add($"Preview xong: {GateInCount:N0} Gate In, {GateOutCount:N0} Gate Out, {StockCount:N0} Stock. New {ImportableTotal:N0}, existing {ExistingTotal:N0}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ConfirmImportAsync()
+    {
+        if (!_canAdd)
+        {
+            Snackbar.Add("Bạn không có quyền import Inventory.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_preview is null || ImportableTotal == 0)
+        {
+            Snackbar.Add("Không có dòng mới để import.", MudBlazor.Severity.Info);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_importDepot))
+        {
+            Snackbar.Add("Vui lòng nhập Depot.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await EnsureTableAsync();
+
+            var rows = _preview.Sheets.SelectMany(s => s.Rows).Where(CanImport).ToList();
+            var inserted = await InsertRowsAsync(rows, _preview.FileName, _importDepot.Trim());
+
+            Snackbar.Add($"Import thành công {inserted:N0} dòng vào dbo.{TableName}.", MudBlazor.Severity.Success);
+            ClearPreview();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ClearPreview()
+    {
+        _preview = null;
+        _activeTab = 0;
+        _search = string.Empty;
+        _onlyProblem = false;
+    }
+
+    private static ImportPreview ReadPreview(byte[] bytes, string fileName)
+    {
+        ConfigureEpplusLicense();
+        using var ms = new MemoryStream(bytes);
+        using var package = new ExcelPackage(ms);
+
+        var preview = new ImportPreview { FileName = fileName };
+
+        foreach (var ws in package.Workbook.Worksheets)
+        {
+            var target = DetectTarget(ws.Name);
+            if (target == SheetTarget.Ignore)
+                continue;
+
+            var sheet = ReadDetailSheet(ws, target);
+            preview.Sheets.Add(sheet);
+        }
+
+        return preview;
+    }
+
+    private static SheetPreview ReadDetailSheet(ExcelWorksheet ws, SheetTarget target)
+    {
+        var sheet = new SheetPreview { SheetName = ws.Name, Target = target };
+        ExtractReportDates(ws, sheet);
+
+        if (ws.Dimension is null)
+            return sheet;
+
+        sheet.HeaderRow = FindHeaderRow(ws);
+        if (sheet.HeaderRow <= 0)
+            return sheet;
+
+        var headers = new List<HeaderColumn>();
+        for (var col = ws.Dimension.Start.Column; col <= ws.Dimension.End.Column; col++)
+        {
+            var header = ws.Cells[sheet.HeaderRow, col].Text?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(header))
+                headers.Add(new HeaderColumn(header, NormalizeKey(header), col));
+        }
+
+        for (var rowNo = sheet.HeaderRow + 1; rowNo <= ws.Dimension.End.Row; rowNo++)
+        {
+            var first = ws.Cells[rowNo, ws.Dimension.Start.Column].Text?.Trim() ?? string.Empty;
+            if (first.Equals("Total", StringComparison.OrdinalIgnoreCase))
+                break;
+
+            var values = new Dictionary<string, ExcelRange>(StringComparer.OrdinalIgnoreCase);
+            foreach (var h in headers)
+                values[h.Key] = ws.Cells[rowNo, h.ColumnIndex];
+
+            var container = Text(values, "CONTAINER");
+            if (string.IsNullOrWhiteSpace(container))
+                continue;
+
+            var r = new PreviewRow
+            {
+                Target = target,
+                SheetName = ws.Name,
+                ExcelRow = rowNo,
+                ReportFrom = sheet.ReportFrom,
+                ReportTo = sheet.ReportTo,
+                ReportDate = sheet.ReportDate,
+                Seq = DecimalValue(values, "SEQ"),
+                Eir = Text(values, "EIR"),
+                Container = container,
+                ContainerType = Text(values, "TYPE", "CONTAINERTYPE"),
+                IsoType = Text(values, "ISOSZTP", "ISOTYPE"),
+                Opt = Text(values, "OPT"),
+                Opr = Text(values, "OPR"),
+                FE = Text(values, "FE"),
+                Move = Text(values, "MOVE"),
+                DateIn = DateValue(values, "DATEIN"),
+                TimeIn = TimeText(values, "TIME"),
+                DateOut = DateValue(values, "DATEOUT"),
+                Location = Text(values, "LOCATION"),
+                Booking = Text(values, "BOOKING"),
+                Vessel = Text(values, "VESSEL"),
+                Voyage = Text(values, "VOYAGE"),
+                Pol = Text(values, "POL"),
+                Pod = Text(values, "POD"),
+                Shipper = Text(values, "SHIPPER"),
+                Consignee = Text(values, "CONSIGNEE"),
+                Yom = Text(values, "YOM"),
+                SealNo = Text(values, "SEALNO"),
+                SealNo2 = Text(values, "SEALNO2"),
+                Note1 = Text(values, "NOTE1"),
+                Note2 = Text(values, "NOTE2"),
+                Note3 = Text(values, "NOTE3"),
+                RequiredGrade = Text(values, "REQUIREDGRADE"),
+                Vgm = DecimalValue(values, "VGM"),
+                MaxGross = DecimalValue(values, "MAXGROSS"),
+                TareWeight = DecimalValue(values, "TAREWEIGHT"),
+                TruckNo = Text(values, "TRUCKNO"),
+                TruckerPhone = Text(values, "TRUCKERPHONE"),
+                Position = Text(values, "POSITION"),
+                Days = DecimalValue(values, "DAYS"),
+                Remark = Text(values, "REMARK"),
+                Status = Text(values, "STATUS"),
+                Grade = Text(values, "GRADE"),
+                CleanMethod = Text(values, "CLEANMETHOD", "CLEAN"),
+                CleanStatus = Text(values, "CLEANSTATUS"),
+                PtiDate = DateValue(values, "PTIDATE"),
+                PtiSetting = Text(values, "PTISETTING"),
+                PtiStatus = Text(values, "PTISTATUS"),
+                EstimatedDate = DateValue(values, "ESTIMATEDDATE"),
+                ApprovalDate = DateValue(values, "APPOVALDATE", "APPROVALDATE"),
+                RejectDate = DateValue(values, "REJECTDATE"),
+                RepairedDate = DateValue(values, "REPAIREDDATE"),
+                RegisteredDate = DateValue(values, "REGISTEREDDATE"),
+                InsDate = DateValue(values, "INSDATE")
+            };
+
+            sheet.Rows.Add(r);
+        }
+
+        return sheet;
+    }
+
+    private async Task EnsureTableAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await db.Database.ExecuteSqlRawAsync(CreateTableSql);
+    }
+
+    private async Task MarkDuplicatesAsync(ImportPreview preview)
+    {
+        var fileSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allSignatures = preview.Sheets.SelectMany(x => x.Rows).Select(x => x.Signature).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var existing = await LoadExistingSignaturesAsync(allSignatures);
+
+        foreach (var row in preview.Sheets.SelectMany(x => x.Rows))
+        {
+            if (string.IsNullOrWhiteSpace(row.Container))
+            {
+                row.IsInvalid = true;
+                row.StatusMessage = "Missing Container.";
+                continue;
+            }
+
+            if (existing.Contains(row.Signature))
+            {
+                row.IsExisting = true;
+                row.StatusMessage = "Đã có trong database.";
+                continue;
+            }
+
+            if (!fileSeen.Add(row.Signature))
+            {
+                row.IsBatchDuplicate = true;
+                row.StatusMessage = "Trùng dòng khác trong cùng file.";
+            }
+        }
+    }
+
+    private async Task<HashSet<string>> LoadExistingSignaturesAsync(List<string> signatures)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (signatures.Count == 0)
+            return result;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync();
+
+        foreach (var chunk in Chunk(signatures, 200))
+        {
+            await using var cmd = conn.CreateCommand();
+            var names = new List<string>();
+            for (var i = 0; i < chunk.Count; i++)
+            {
+                var p = cmd.CreateParameter();
+                p.ParameterName = "@s" + i;
+                p.Value = chunk[i];
+                cmd.Parameters.Add(p);
+                names.Add(p.ParameterName);
+            }
+
+            cmd.CommandText = $"SELECT ROW_SIGNATURE FROM dbo.[{TableName}] WITH (NOLOCK) WHERE ROW_SIGNATURE IN ({string.Join(",", names)});";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+                result.Add(reader.GetString(0));
+        }
+
+        return result;
+    }
+
+    private async Task<int> InsertRowsAsync(List<PreviewRow> rows, string sourceFile, string depot)
+    {
+        var inserted = 0;
+        var now = DateTime.Now;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await using var tran = await db.Database.BeginTransactionAsync();
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync();
+
+        foreach (var r in rows)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = db.Database.CurrentTransaction!.GetDbTransaction();
+            cmd.CommandText = InsertSql;
+
+            Add(cmd, "@ID", Guid.NewGuid());
+            Add(cmd, "@DEPOT", depot);
+            Add(cmd, "@SOURCE_FILE", sourceFile);
+            Add(cmd, "@SHEET_NAME", r.SheetName);
+            Add(cmd, "@EXCEL_ROW", r.ExcelRow);
+            Add(cmd, "@REPORT_FROM", r.ReportFrom);
+            Add(cmd, "@REPORT_TO", r.ReportTo);
+            Add(cmd, "@REPORT_DATE", r.ReportDate);
+            Add(cmd, "@SEQ", r.Seq);
+            Add(cmd, "@EIR", r.Eir);
+            Add(cmd, "@CONTAINER", r.Container);
+            Add(cmd, "@CONTAINER_TYPE", r.ContainerType);
+            Add(cmd, "@ISO_SZTP", r.Target == SheetTarget.Stock ? null : r.IsoType);
+            Add(cmd, "@ISO_TYPE", r.Target == SheetTarget.Stock ? r.IsoType : null);
+            Add(cmd, "@OPT", r.Opt);
+            Add(cmd, "@OPR", r.Opr);
+            Add(cmd, "@FE", r.FE);
+            Add(cmd, "@MOVE", r.Move);
+            Add(cmd, "@DATE_IN", r.DateIn);
+            Add(cmd, "@TIME_IN", r.TimeIn);
+            Add(cmd, "@DATE_OUT", r.DateOut);
+            Add(cmd, "@LOCATION", r.Location);
+            Add(cmd, "@BOOKING", r.Booking);
+            Add(cmd, "@VESSEL", r.Vessel);
+            Add(cmd, "@VOYAGE", r.Voyage);
+            Add(cmd, "@POL", r.Pol);
+            Add(cmd, "@POD", r.Pod);
+            Add(cmd, "@SHIPPER", r.Shipper);
+            Add(cmd, "@CONSIGNEE", r.Consignee);
+            Add(cmd, "@YOM", r.Yom);
+            Add(cmd, "@SEAL_NO", r.SealNo);
+            Add(cmd, "@SEAL_NO2", r.SealNo2);
+            Add(cmd, "@NOTE1", r.Note1);
+            Add(cmd, "@NOTE2", r.Note2);
+            Add(cmd, "@NOTE3", r.Note3);
+            Add(cmd, "@REQUIRED_GRADE", r.RequiredGrade);
+            Add(cmd, "@VGM", r.Vgm);
+            Add(cmd, "@MAX_GROSS", r.MaxGross);
+            Add(cmd, "@TARE_WEIGHT", r.TareWeight);
+            Add(cmd, "@TRUCK_NO", r.TruckNo);
+            Add(cmd, "@TRUCKER_PHONE", r.TruckerPhone);
+            Add(cmd, "@POSITION", r.Position);
+            Add(cmd, "@DAYS", r.Days);
+            Add(cmd, "@REMARK", r.Remark);
+            Add(cmd, "@STATUS", r.Status);
+            Add(cmd, "@GRADE", r.Grade);
+            Add(cmd, "@CLEAN_METHOD", r.CleanMethod);
+            Add(cmd, "@CLEAN_STATUS", r.CleanStatus);
+            Add(cmd, "@PTI_DATE", r.PtiDate);
+            Add(cmd, "@PTI_SETTING", r.PtiSetting);
+            Add(cmd, "@PTI_STATUS", r.PtiStatus);
+            Add(cmd, "@ESTIMATED_DATE", r.EstimatedDate);
+            Add(cmd, "@APPROVAL_DATE", r.ApprovalDate);
+            Add(cmd, "@REJECT_DATE", r.RejectDate);
+            Add(cmd, "@REPAIRED_DATE", r.RepairedDate);
+            Add(cmd, "@REGISTERED_DATE", r.RegisteredDate);
+            Add(cmd, "@INS_DATE", r.InsDate);
+            Add(cmd, "@ROW_SIGNATURE", r.Signature);
+            Add(cmd, "@DATE_IMPORT", now);
+            Add(cmd, "@USER_IMPORT", _usr);
+            Add(cmd, "@CREATED_AT", now);
+
+            inserted += await cmd.ExecuteNonQueryAsync();
+        }
+
+        await tran.CommitAsync();
+        return inserted;
+    }
+
+    private IEnumerable<PreviewRow> FilteredRows(SheetPreview sheet)
+    {
+        IEnumerable<PreviewRow> rows = sheet.Rows;
+
+        if (_onlyProblem)
+            rows = rows.Where(x => !CanImport(x));
+
+        if (!string.IsNullOrWhiteSpace(_search))
+        {
+            var q = _search.Trim();
+            rows = rows.Where(x =>
+                x.Container.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.ContainerType.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.IsoType.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.Location.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.Booking.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.Vessel.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.Remark.Contains(q, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return rows;
+    }
+
+    private static bool CanImport(PreviewRow row) => !row.IsExisting && !row.IsBatchDuplicate && !row.IsInvalid;
+
+    private static SheetTarget DetectTarget(string sheetName)
+    {
+        var key = NormalizeKey(sheetName);
+        if (key == "GATEIN") return SheetTarget.GateIn;
+        if (key == "GATEOUT") return SheetTarget.GateOut;
+        if (key == "STOCK") return SheetTarget.Stock;
+        return SheetTarget.Ignore;
+    }
+
+    private static int FindHeaderRow(ExcelWorksheet ws)
+    {
+        if (ws.Dimension is null)
+            return -1;
+
+        for (var row = ws.Dimension.Start.Row; row <= Math.Min(ws.Dimension.End.Row, 60); row++)
+        {
+            var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var col = ws.Dimension.Start.Column; col <= ws.Dimension.End.Column; col++)
+            {
+                var text = ws.Cells[row, col].Text?.Trim();
+                if (!string.IsNullOrWhiteSpace(text))
+                    keys.Add(NormalizeKey(text));
+            }
+
+            if (keys.Contains("CONTAINER") && keys.Count >= 6)
+                return row;
+        }
+
+        return -1;
+    }
+
+    private static void ExtractReportDates(ExcelWorksheet ws, SheetPreview sheet)
+    {
+        if (ws.Dimension is null)
+            return;
+
+        for (var row = ws.Dimension.Start.Row; row <= Math.Min(ws.Dimension.End.Row, 12); row++)
+        {
+            for (var col = ws.Dimension.Start.Column; col <= Math.Min(ws.Dimension.End.Column, 16); col++)
+            {
+                var key = NormalizeKey(ws.Cells[row, col].Text);
+                if (key == "FROM") sheet.ReportFrom = CellDate(ws.Cells[row, col + 1]);
+                if (key == "TO") sheet.ReportTo = CellDate(ws.Cells[row, col + 1]);
+                if (key == "DATE") sheet.ReportDate = CellDate(ws.Cells[row, col + 2]) ?? CellDate(ws.Cells[row, col + 1]);
+            }
+        }
+
+        sheet.ReportDate ??= sheet.ReportTo ?? sheet.ReportFrom;
+    }
+
+    private static string DetectDepot(ImportPreview preview)
+    {
+        var location = preview.Sheets.SelectMany(x => x.Rows)
+            .Select(x => x.Location)
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && x.Contains("DEPOT", StringComparison.OrdinalIgnoreCase));
+
+        return string.IsNullOrWhiteSpace(location) ? string.Empty : location.Trim();
+    }
+
+    private static string ComputeSignature(PreviewRow r, string depot)
+    {
+        var values = new[]
+        {
+            N(depot), r.Target.ToString(), N(r.Container), N(r.ContainerType), N(r.IsoType), N(r.FE), N(r.Move), N(r.DateIn), N(r.TimeIn), N(r.DateOut),
+            N(r.Location), N(r.Booking), N(r.Vessel), N(r.Voyage), N(r.Pol), N(r.Pod), N(r.Shipper), N(r.Consignee), N(r.Yom), N(r.SealNo),
+            N(r.Vgm), N(r.MaxGross), N(r.TareWeight), N(r.Remark), N(r.Status), N(r.Grade), N(r.CleanMethod), N(r.CleanStatus), N(r.PtiDate),
+            N(r.PtiSetting), N(r.PtiStatus), N(r.EstimatedDate), N(r.ApprovalDate), N(r.RejectDate), N(r.RepairedDate), N(r.RegisteredDate)
+        };
+
+        using var sha = SHA256.Create();
+        return Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("␟", values))));
+    }
+
+    private static string Text(Dictionary<string, ExcelRange> cells, params string[] keys)
+    {
+        foreach (var key in keys.Select(NormalizeKey))
+        {
+            if (cells.TryGetValue(key, out var cell))
+            {
+                var value = cell.Text?.Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                    return value;
+            }
+        }
+        return string.Empty;
+    }
+
+    private static decimal? DecimalValue(Dictionary<string, ExcelRange> cells, params string[] keys)
+    {
+        foreach (var key in keys.Select(NormalizeKey))
+        {
+            if (!cells.TryGetValue(key, out var cell) || cell.Value is null)
+                continue;
+
+            if (cell.Value is decimal dec) return dec;
+            if (cell.Value is double d) return Convert.ToDecimal(d);
+            if (cell.Value is int i) return i;
+            if (cell.Value is long l) return l;
+
+            var text = cell.Text?.Trim().Replace(",", "");
+            if (decimal.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value))
+                return value;
+        }
+        return null;
+    }
+
+    private static DateTime? DateValue(Dictionary<string, ExcelRange> cells, params string[] keys)
+    {
+        foreach (var key in keys.Select(NormalizeKey))
+            if (cells.TryGetValue(key, out var cell))
+            {
+                var dt = CellDate(cell);
+                if (dt.HasValue)
+                    return dt;
+            }
+        return null;
+    }
+
+    private static DateTime? CellDate(ExcelRange cell)
+    {
+        if (cell.Value is DateTime dt)
+            return dt;
+        if (cell.Value is double d && d > 20000 && d < 90000)
+            return DateTime.FromOADate(d);
+
+        var text = cell.Text?.Trim();
+        if (DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out dt))
+            return dt;
+        if (DateTime.TryParse(text, new CultureInfo("vi-VN"), DateTimeStyles.None, out dt))
+            return dt;
+        return null;
+    }
+
+    private static string TimeText(Dictionary<string, ExcelRange> cells, params string[] keys)
+    {
+        foreach (var key in keys.Select(NormalizeKey))
+        {
+            if (!cells.TryGetValue(key, out var cell) || cell.Value is null)
+                continue;
+
+            if (cell.Value is DateTime dt)
+                return dt.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+            if (cell.Value is double d && d >= 0 && d < 1)
+                return TimeSpan.FromDays(d).ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
+
+            var text = cell.Text?.Trim();
+            if (!string.IsNullOrWhiteSpace(text))
+                return text;
+        }
+        return string.Empty;
+    }
+
+    private static void Add(DbCommand cmd, string name, object? value)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value = value ?? DBNull.Value;
+        cmd.Parameters.Add(p);
+    }
+
+    private static List<List<T>> Chunk<T>(List<T> source, int size)
+    {
+        var result = new List<List<T>>();
+        for (var i = 0; i < source.Count; i += size)
+            result.Add(source.Skip(i).Take(size).ToList());
+        return result;
+    }
+
+    private static string NormalizeKey(string? text)
+        => string.IsNullOrWhiteSpace(text) ? string.Empty : new string(text.Trim().ToUpperInvariant().Where(char.IsLetterOrDigit).ToArray());
+
+    private static string N(string? value) => value?.Trim() ?? string.Empty;
+    private static string N(decimal? value) => value?.ToString("0.####", CultureInfo.InvariantCulture) ?? string.Empty;
+    private static string N(DateTime? value) => value?.ToString("yyyy-MM-dd HH:mm:ss.fffffff", CultureInfo.InvariantCulture) ?? string.Empty;
+    private static string Fmt(DateTime? value) => value?.ToString("dd/MM/yyyy HH:mm") ?? string.Empty;
+
+    private static string RootMessage(Exception ex)
+    {
+        var root = ex;
+        while (root.InnerException is not null)
+            root = root.InnerException;
+        return root.Message;
+    }
+
+    private static Color SheetColor(SheetPreview sheet)
+    {
+        if (sheet.Rows.Count == 0) return Color.Warning;
+        if (sheet.Rows.Any(x => x.IsInvalid || x.IsBatchDuplicate)) return Color.Warning;
+        if (sheet.Rows.Any(x => x.IsExisting)) return Color.Info;
+        return Color.Success;
+    }
+
+    private static string SheetStatus(SheetPreview sheet)
+    {
+        if (sheet.Rows.Count == 0) return "No rows";
+        if (sheet.Rows.Any(x => x.IsInvalid)) return "Has invalid";
+        if (sheet.Rows.Any(x => x.IsBatchDuplicate)) return "Has duplicate";
+        if (sheet.Rows.Any(x => x.IsExisting)) return "Has existing";
+        return "Ready";
+    }
+
+    private static bool _epplusConfigured;
+    private static void ConfigureEpplusLicense()
+    {
+        if (_epplusConfigured)
+            return;
+
+        // EPPlus 5-7: this application is used in a commercial business context.
+        // A valid EPPlus commercial license is required by the EPPlus license terms.
+        ExcelPackage.LicenseContext = LicenseContext.Commercial;
+
+        _epplusConfigured = true;
+    }
+
+    private enum SheetTarget { Ignore = 0, GateIn = 1, GateOut = 2, Stock = 3 }
+
+    private sealed class ImportPreview
+    {
+        public string FileName { get; set; } = string.Empty;
+        public List<SheetPreview> Sheets { get; set; } = new();
+    }
+
+    private sealed class SheetPreview
+    {
+        public string SheetName { get; set; } = string.Empty;
+        public SheetTarget Target { get; set; }
+        public int HeaderRow { get; set; }
+        public DateTime? ReportFrom { get; set; }
+        public DateTime? ReportTo { get; set; }
+        public DateTime? ReportDate { get; set; }
+        public List<PreviewRow> Rows { get; set; } = new();
+    }
+
+    private sealed record HeaderColumn(string Header, string Key, int ColumnIndex);
+
+    private sealed class PreviewRow
+    {
+        public SheetTarget Target { get; set; }
+        public string SheetName { get; set; } = string.Empty;
+        public int ExcelRow { get; set; }
+        public DateTime? ReportFrom { get; set; }
+        public DateTime? ReportTo { get; set; }
+        public DateTime? ReportDate { get; set; }
+        public decimal? Seq { get; set; }
+        public string Eir { get; set; } = string.Empty;
+        public string Container { get; set; } = string.Empty;
+        public string ContainerType { get; set; } = string.Empty;
+        public string IsoType { get; set; } = string.Empty;
+        public string Opt { get; set; } = string.Empty;
+        public string Opr { get; set; } = string.Empty;
+        public string FE { get; set; } = string.Empty;
+        public string Move { get; set; } = string.Empty;
+        public DateTime? DateIn { get; set; }
+        public string TimeIn { get; set; } = string.Empty;
+        public DateTime? DateOut { get; set; }
+        public string Location { get; set; } = string.Empty;
+        public string Booking { get; set; } = string.Empty;
+        public string Vessel { get; set; } = string.Empty;
+        public string Voyage { get; set; } = string.Empty;
+        public string Pol { get; set; } = string.Empty;
+        public string Pod { get; set; } = string.Empty;
+        public string Shipper { get; set; } = string.Empty;
+        public string Consignee { get; set; } = string.Empty;
+        public string Yom { get; set; } = string.Empty;
+        public string SealNo { get; set; } = string.Empty;
+        public string SealNo2 { get; set; } = string.Empty;
+        public string Note1 { get; set; } = string.Empty;
+        public string Note2 { get; set; } = string.Empty;
+        public string Note3 { get; set; } = string.Empty;
+        public string RequiredGrade { get; set; } = string.Empty;
+        public decimal? Vgm { get; set; }
+        public decimal? MaxGross { get; set; }
+        public decimal? TareWeight { get; set; }
+        public string TruckNo { get; set; } = string.Empty;
+        public string TruckerPhone { get; set; } = string.Empty;
+        public string Position { get; set; } = string.Empty;
+        public decimal? Days { get; set; }
+        public string Remark { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string Grade { get; set; } = string.Empty;
+        public string CleanMethod { get; set; } = string.Empty;
+        public string CleanStatus { get; set; } = string.Empty;
+        public DateTime? PtiDate { get; set; }
+        public string PtiSetting { get; set; } = string.Empty;
+        public string PtiStatus { get; set; } = string.Empty;
+        public DateTime? EstimatedDate { get; set; }
+        public DateTime? ApprovalDate { get; set; }
+        public DateTime? RejectDate { get; set; }
+        public DateTime? RepairedDate { get; set; }
+        public DateTime? RegisteredDate { get; set; }
+        public DateTime? InsDate { get; set; }
+        public string Signature { get; set; } = string.Empty;
+        public bool IsExisting { get; set; }
+        public bool IsBatchDuplicate { get; set; }
+        public bool IsInvalid { get; set; }
+        public string StatusMessage { get; set; } = string.Empty;
+    }
+
+    private const string CreateTableSql = @"
+IF OBJECT_ID(N'dbo.M_8_3_8_YARD_ALPINE_INVENTORY', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.M_8_3_8_YARD_ALPINE_INVENTORY
+    (
+        ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_M_8_3_8_YARD_ALPINE_INVENTORY PRIMARY KEY,
+        DEPOT NVARCHAR(150) NULL,
+        SOURCE_FILE NVARCHAR(260) NULL,
+        SHEET_NAME NVARCHAR(100) NULL,
+        EXCEL_ROW INT NULL,
+        REPORT_FROM DATETIME2 NULL,
+        REPORT_TO DATETIME2 NULL,
+        REPORT_DATE DATETIME2 NULL,
+        SEQ DECIMAL(18,4) NULL,
+        EIR NVARCHAR(100) NULL,
+        CONTAINER NVARCHAR(50) NULL,
+        CONTAINER_TYPE NVARCHAR(50) NULL,
+        ISO_SZTP NVARCHAR(50) NULL,
+        ISO_TYPE NVARCHAR(50) NULL,
+        OPT NVARCHAR(50) NULL,
+        OPR NVARCHAR(50) NULL,
+        FE NVARCHAR(20) NULL,
+        MOVE NVARCHAR(50) NULL,
+        DATE_IN DATETIME2 NULL,
+        TIME_IN NVARCHAR(50) NULL,
+        DATE_OUT DATETIME2 NULL,
+        LOCATION NVARCHAR(250) NULL,
+        BOOKING NVARCHAR(200) NULL,
+        VESSEL NVARCHAR(200) NULL,
+        VOYAGE NVARCHAR(100) NULL,
+        POL NVARCHAR(100) NULL,
+        POD NVARCHAR(100) NULL,
+        SHIPPER NVARCHAR(500) NULL,
+        CONSIGNEE NVARCHAR(500) NULL,
+        YOM NVARCHAR(50) NULL,
+        SEAL_NO NVARCHAR(100) NULL,
+        SEAL_NO2 NVARCHAR(100) NULL,
+        NOTE1 NVARCHAR(1000) NULL,
+        NOTE2 NVARCHAR(1000) NULL,
+        NOTE3 NVARCHAR(1000) NULL,
+        REQUIRED_GRADE NVARCHAR(100) NULL,
+        VGM DECIMAL(18,4) NULL,
+        MAX_GROSS DECIMAL(18,4) NULL,
+        TARE_WEIGHT DECIMAL(18,4) NULL,
+        TRUCK_NO NVARCHAR(100) NULL,
+        TRUCKER_PHONE NVARCHAR(100) NULL,
+        POSITION NVARCHAR(150) NULL,
+        DAYS DECIMAL(18,4) NULL,
+        REMARK NVARCHAR(2000) NULL,
+        STATUS NVARCHAR(100) NULL,
+        GRADE NVARCHAR(50) NULL,
+        CLEAN_METHOD NVARCHAR(100) NULL,
+        CLEAN_STATUS NVARCHAR(100) NULL,
+        PTI_DATE DATETIME2 NULL,
+        PTI_SETTING NVARCHAR(100) NULL,
+        PTI_STATUS NVARCHAR(100) NULL,
+        ESTIMATED_DATE DATETIME2 NULL,
+        APPROVAL_DATE DATETIME2 NULL,
+        REJECT_DATE DATETIME2 NULL,
+        REPAIRED_DATE DATETIME2 NULL,
+        REGISTERED_DATE DATETIME2 NULL,
+        INS_DATE DATETIME2 NULL,
+        ROW_SIGNATURE CHAR(64) NOT NULL,
+        DATE_IMPORT DATETIME2 NULL,
+        USER_IMPORT NVARCHAR(100) NULL,
+        CREATED_AT DATETIME2 NULL
+    );
+
+    CREATE UNIQUE INDEX UX_M_8_3_8_YARD_ALPINE_INVENTORY_SIGNATURE
+        ON dbo.M_8_3_8_YARD_ALPINE_INVENTORY(ROW_SIGNATURE);
+
+    CREATE INDEX IX_M_8_3_8_YARD_ALPINE_INVENTORY_CONTAINER
+        ON dbo.M_8_3_8_YARD_ALPINE_INVENTORY(CONTAINER, DATE_IN, DATE_OUT);
+END;";
+
+    private const string InsertSql = @"
+IF NOT EXISTS (SELECT 1 FROM dbo.M_8_3_8_YARD_ALPINE_INVENTORY WITH (UPDLOCK, HOLDLOCK) WHERE ROW_SIGNATURE = @ROW_SIGNATURE)
+BEGIN
+    INSERT INTO dbo.M_8_3_8_YARD_ALPINE_INVENTORY
+    (
+        ID, DEPOT, SOURCE_FILE, SHEET_NAME, EXCEL_ROW, REPORT_FROM, REPORT_TO, REPORT_DATE,
+        SEQ, EIR, CONTAINER, CONTAINER_TYPE, ISO_SZTP, ISO_TYPE, OPT, OPR, FE, MOVE,
+        DATE_IN, TIME_IN, DATE_OUT, LOCATION, BOOKING, VESSEL, VOYAGE, POL, POD, SHIPPER, CONSIGNEE,
+        YOM, SEAL_NO, SEAL_NO2, NOTE1, NOTE2, NOTE3, REQUIRED_GRADE, VGM, MAX_GROSS, TARE_WEIGHT,
+        TRUCK_NO, TRUCKER_PHONE, POSITION, DAYS, REMARK, STATUS, GRADE, CLEAN_METHOD, CLEAN_STATUS,
+        PTI_DATE, PTI_SETTING, PTI_STATUS, ESTIMATED_DATE, APPROVAL_DATE, REJECT_DATE, REPAIRED_DATE,
+        REGISTERED_DATE, INS_DATE, ROW_SIGNATURE, DATE_IMPORT, USER_IMPORT, CREATED_AT
+    )
+    VALUES
+    (
+        @ID, @DEPOT, @SOURCE_FILE, @SHEET_NAME, @EXCEL_ROW, @REPORT_FROM, @REPORT_TO, @REPORT_DATE,
+        @SEQ, @EIR, @CONTAINER, @CONTAINER_TYPE, @ISO_SZTP, @ISO_TYPE, @OPT, @OPR, @FE, @MOVE,
+        @DATE_IN, @TIME_IN, @DATE_OUT, @LOCATION, @BOOKING, @VESSEL, @VOYAGE, @POL, @POD, @SHIPPER, @CONSIGNEE,
+        @YOM, @SEAL_NO, @SEAL_NO2, @NOTE1, @NOTE2, @NOTE3, @REQUIRED_GRADE, @VGM, @MAX_GROSS, @TARE_WEIGHT,
+        @TRUCK_NO, @TRUCKER_PHONE, @POSITION, @DAYS, @REMARK, @STATUS, @GRADE, @CLEAN_METHOD, @CLEAN_STATUS,
+        @PTI_DATE, @PTI_SETTING, @PTI_STATUS, @ESTIMATED_DATE, @APPROVAL_DATE, @REJECT_DATE, @REPAIRED_DATE,
+        @REGISTERED_DATE, @INS_DATE, @ROW_SIGNATURE, @DATE_IMPORT, @USER_IMPORT, @CREATED_AT
+    );
+END;";
+}
+
+<style>
+    .yard-import-page {
+        background: #f8fafc;
+        min-height: 100%;
+    }
+
+    .hero-card {
+        border: 1px solid #dbeafe;
+        border-radius: 22px;
+        background: linear-gradient(135deg, #eff6ff 0%, #ffffff 55%, #ecfeff 100%);
+        box-shadow: 0 14px 34px rgba(15, 23, 42, .06);
+    }
+
+    .hero-icon {
+        width: 58px;
+        height: 58px;
+        border-radius: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #075985;
+        background: #e0f2fe;
+        box-shadow: inset 0 0 0 1px rgba(2,132,199,.15);
+    }
+
+    .page-title {
+        font-weight: 900;
+        color: #0f3b70;
+        letter-spacing: -.02em;
+    }
+
+    .kpi-card, .control-card, .sheet-summary-card, .preview-card, .empty-card, .process-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 18px;
+        background: #fff;
+        box-shadow: 0 8px 22px rgba(15,23,42,.05);
+    }
+
+    .kpi-card {
+        min-height: 98px;
+    }
+
+    .fw-bold {
+        font-weight: 800;
+    }
+
+    .ellipsis {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .text-ok {
+        color: #047857;
+    }
+
+    .text-info {
+        color: #0369a1;
+    }
+
+    .text-warn {
+        color: #b45309;
+    }
+
+    .text-error {
+        color: #b91c1c;
+    }
+
+    .preview-table-wrap {
+        overflow: auto;
+        max-height: 65vh;
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        background: #fff;
+    }
+
+    .preview-table .mud-table-cell, .preview-table td, .preview-table th {
+        white-space: nowrap;
+        font-size: .78rem;
+        padding: 5px 8px !important;
+    }
+
+    .preview-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background: #f8fafc;
+        font-weight: 800;
+        color: #0f172a;
+    }
+
+    .sticky-col {
+        position: sticky;
+        left: 0;
+        z-index: 6;
+        background: #fff;
+        font-weight: 800;
+    }
+
+    .action-bar {
+        width: 100%;
+    }
+</style>
