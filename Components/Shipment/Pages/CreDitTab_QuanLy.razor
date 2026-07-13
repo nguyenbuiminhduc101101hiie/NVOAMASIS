@@ -26,6 +26,10 @@
              FooterClass="no-wrap"
              ReadOnly="false"
              CommittedItemChanges="@CommittedItem"
+             MultiSelection="true"
+             SelectOnRowClick="false"
+             @bind-SelectedItems="_selectedItems"
+             @bind-SelectedItems:after="FilterCopiedSelection"
              RowClassFunc="@SelectedRowClassFunc"
              RowClick="@RowClicked"
              ColumnResizeMode="ResizeMode.Column"
@@ -33,6 +37,8 @@
              ShowColumnOptions="false"
              Height="@GridHeight">
     <Columns>
+        <SelectColumn T="M_Credit" />
+
         <TemplateColumn CellClass="d-flex justify-end" Filterable="false" ShowColumnOptions="false" Sortable="false">
             <HeaderTemplate>
                 <MudStack Row="true" Justify="Justify.FlexStart" Spacing="2">
@@ -63,6 +69,18 @@
                                        Disabled="@(!_canEditContext)"
                                        Class="btn-compact" />
                     </MudTooltip>
+                    @if (IsContContext)
+                    {
+                        <MudTooltip Text="Đẩy phí đã chọn sang HBL và Quản lý cont">
+                            <MudIconButton Icon="@Icons.Material.Filled.Publish"
+                                           Color="Color.Info"
+                                           Size="Size.Small"
+                                           OnClick="PushSelectedFeesAsync"
+                                           Variant="Variant.Filled"
+                                           Disabled="@(!_canEditContext || _selectedItems.Count == 0)"
+                                           Class="btn-compact" />
+                        </MudTooltip>
+                    }
                 </MudStack>
             </HeaderTemplate>
             <CellTemplate>
@@ -200,6 +218,7 @@
     private List<string> currs = new();
     private M_Credit? detail;
     private M_Credit? detail_credit;
+    private HashSet<M_Credit> _selectedItems = new();
     private bool _loading;
     private bool _initialized;
     private string usr = string.Empty;
@@ -286,6 +305,9 @@
 
     private async Task Refresh()
     {
+        _selectedItems.Clear();
+        detail = null;
+
         if (!_canEditContext)
         {
             Listdata = new();
@@ -375,6 +397,104 @@
         item.Quanly_tauid = IsTauContext ? CurrentTauId : null;
     }
 
+    private void FilterCopiedSelection()
+    {
+        // RemoveWhere giữ cùng reference HashSet — không gán new set để tránh treo UI.
+        if (!_selectedItems.Any(x => x.Copied == true))
+            return;
+
+        _selectedItems.RemoveWhere(x => x.Copied == true);
+        CallSnackBar("Phí đã đẩy sang HBL không thể chọn lại.", MudBlazor.Severity.Warning);
+    }
+
+    private async Task PushSelectedFeesAsync()
+    {
+        if (!IsContContext || QuanLyCont is null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(QuanLyCont.HBL_No))
+        {
+            CallSnackBar("Container chưa có HB/L No.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var toPush = _selectedItems.Where(x => x.Copied != true).ToList();
+        if (toPush.Count == 0)
+        {
+            CallSnackBar("Chọn ít nhất 1 dòng phí credit chưa đẩy.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận",
+            $"Đẩy {toPush.Count} phí credit sang HB/L?\nMỗi phí tạo 1 bản ghi mới gắn hblid (giữ nguyên phí Quản lý cont).",
+            yesText: "Đẩy",
+            cancelText: "Hủy");
+        if (confirm != true)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var hblCandidates = await db.HBL.AsNoTracking()
+            .Where(x => x.hbl != null && x.hbl != string.Empty)
+            .ToListAsync();
+        var hbl = hblCandidates.FirstOrDefault(x =>
+            string.Equals(x.hbl?.Trim(), QuanLyCont.HBL_No.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (hbl is null)
+        {
+            CallSnackBar("Không tìm thấy HB/L: " + QuanLyCont.HBL_No, MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var successCount = 0;
+        foreach (var source in toPush)
+        {
+            var hblCopy = CloneCreditForPush(source);
+            hblCopy.hblid = hbl.hblID;
+            hblCopy.mblid = Guid.Empty;
+            hblCopy.Quanly_contid = null;
+            hblCopy.Quanly_tauid = null;
+            if (string.IsNullOrWhiteSpace(hblCopy.ContainerNo))
+                hblCopy.ContainerNo = TrimOrNull(QuanLyCont.Container);
+            hblCopy.userupdate = usr;
+            hblCopy.dateupdate = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
+
+            var rsHbl = await shipsv.CreateCreditMBL(hblCopy);
+            if (!rsHbl.Flag)
+            {
+                CallSnackBar(rsHbl.Message, MudBlazor.Severity.Error);
+                continue;
+            }
+
+            source.Copied = true;
+            source.userupdate = usr;
+            var rsMark = await shipsv.UpdateCreditMBL_Copy_Credit(source);
+            if (!rsMark.Flag)
+                CallSnackBar(rsMark.Message, MudBlazor.Severity.Error);
+            successCount++;
+        }
+
+        _selectedItems.Clear();
+        await Refresh();
+        CallSnackBar(successCount > 0
+            ? $"Đã đẩy {successCount} phí credit sang HB/L."
+            : "Không đẩy được phí credit.",
+            successCount > 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+    }
+
+    private static M_Credit CloneCreditForPush(M_Credit source)
+    {
+        var clone = JsonSerializer.Deserialize<M_Credit>(JsonSerializer.Serialize(source))!;
+        clone.creditid = Guid.Empty;
+        clone.approve = false;
+        clone.DNTT = false;
+        clone.DNTU = false;
+        clone.Copied = false;
+        return clone;
+    }
+
+    private static string? TrimOrNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private string CusidtoCusCode(Guid cusid)
     {
         if (cusid == Guid.Empty) return string.Empty;
@@ -434,13 +554,25 @@
 
     private async Task GetTigia(M_Credit item)
     {
-        item.tigiacredit = await Vcbsv.Getexchange_cur(item.tiente);
+        var cur = item.tiente;
+        if (cur == "VND")
+        {
+            CallSnackBar("Tiền tệ VND: lấy tỉ giá theo USD.", MudBlazor.Severity.Info);
+            cur = "USD";
+        }
+        item.tigiacredit = await Vcbsv.Getexchange_cur(cur);
         StateHasChanged();
     }
 
     private async Task GetTigia_invoice(M_Credit item)
     {
-        item.tigiahoadondauvao = await Vcbsv.Getexchange_cur(item.tiente);
+        var cur = item.tiente;
+        if (cur == "VND")
+        {
+            CallSnackBar("Tiền tệ VND: lấy tỉ giá theo USD.", MudBlazor.Severity.Info);
+            cur = "USD";
+        }
+        item.tigiahoadondauvao = await Vcbsv.Getexchange_cur(cur);
         StateHasChanged();
     }
 
@@ -455,6 +587,8 @@
 
     private string SelectedRowClassFunc(M_Credit row, int _)
     {
+        if (row.Copied == true)
+            return "fee-row-pushed";
         if (row.approve == true)
             return "custom-disable";
         if (mudTable.SelectedItem != null && mudTable.SelectedItem.Equals(row))

@@ -1,0 +1,495 @@
+@using System.IO
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IStringLocalizer<SharedResource> Localizer
+
+<style>
+    .hbl-image-tab-shell {
+        padding: 12px 14px;
+        border: 1px solid #e0e3eb;
+        border-radius: 14px;
+        background: #ffffff;
+    }
+
+    .hbl-image-tab-header {
+        padding: 2px 4px 10px 4px;
+        border-bottom: 1px solid #e5e7eb;
+        margin-bottom: 10px;
+    }
+
+    .hbl-image-title {
+        font-weight: 700;
+        color: #118AB2;
+        letter-spacing: .2px;
+    }
+
+    .hbl-image-subtitle {
+        color: #6b7280;
+        font-size: 12px;
+    }
+
+    .hbl-image-empty {
+        color: #6b7280;
+        font-size: 13px;
+        padding: 6px 4px 2px 4px;
+    }
+</style>
+
+<div class="hbl-image-tab-shell">
+    <div class="hbl-image-tab-header">
+        <MudStack Spacing="2" AlignItems="AlignItems.Start">
+            <div>
+                <div class="hbl-image-title">Image / Attachments</div>
+                <div class="hbl-image-subtitle">
+                    @(HBLDetail?.hblID == Guid.Empty || HBLDetail is null
+                        ? "Chọn một HBL để quản lý file/link."
+                        : $"HBL: {HBLDetail.hbl}")
+                </div>
+            </div>
+            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Justify="Justify.FlexStart">
+                <MudTooltip Text="@Localizer["Reload"]">
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                                   Color="Color.Success"
+                                   Size="Size.Small"
+                                   Variant="Variant.Filled"
+                                   Disabled="@(!HasParent || _busy)"
+                                   OnClick="LoadListAsync" />
+                </MudTooltip>
+                <MudTooltip Text="Upload ảnh / PDF / Excel / Word (max 25MB/file)">
+                    <MudButton HtmlTag="label"
+                               Variant="Variant.Filled"
+                               Color="Color.Tertiary"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.CloudUpload"
+                               Disabled="@(!HasParent || _busy)">
+                        Upload
+                        <InputFile OnChange="OnUploadAsync"
+                                   style="display:none"
+                                   accept="@AcceptExtensions"
+                                   multiple />
+                    </MudButton>
+                </MudTooltip>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Link"
+                           Disabled="@(!HasParent || _busy)"
+                           OnClick="OpenAddLinkDialogAsync">
+                    Add link
+                </MudButton>
+            </MudStack>
+        </MudStack>
+    </div>
+
+    @if (_busy && _items.Count == 0)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-2" />
+    }
+    else if (_items.Count == 0)
+    {
+        <div class="hbl-image-empty">
+            @(HasParent ? "Chưa có file/link." : "Chọn HBL trước.")
+        </div>
+    }
+    else
+    {
+        <MudDataGrid T="M_HBL_AttachmentListItem"
+                     Items="_items"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     Loading="_busy">
+            <Columns>
+                <TemplateColumn Title="" Filterable="false" Sortable="false" CellClass="d-flex justify-end">
+                    <CellTemplate>
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@Icons.Material.Filled.OpenInNew"
+                                       Color="Color.Success"
+                                       Title="Open"
+                                       OnClick="@(() => OpenAsync(context.Item))" />
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@Icons.Material.Outlined.Delete"
+                                       Color="Color.Error"
+                                       Title="Delete"
+                                       OnClick="@(() => DeleteAsync(context.Item))" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.FileName" Title="File / Title" />
+                <TemplateColumn Title="Type" Filterable="false">
+                    <CellTemplate>
+                        @if (context.Item.HasContent)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info">File</MudChip>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(context.Item.Link))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Secondary">Link</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default">—</MudChip>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.ContentType" Title="ContentType" />
+                <TemplateColumn Title="Link">
+                    <CellTemplate>
+                        @if (!string.IsNullOrWhiteSpace(context.Item.Link))
+                        {
+                            <MudLink Href="@context.Item.Link" Target="_blank" Typo="Typo.caption">
+                                @(context.Item.Link.Length > 60 ? context.Item.Link[..60] + "…" : context.Item.Link)
+                            </MudLink>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.UserUpload" Title="User" />
+                <PropertyColumn Property="x => x.Note" Title="Note" />
+                <PropertyColumn Property="x => x.UploadedUtc" Title="Uploaded (UTC)" Format="yyyy-MM-dd HH:mm" />
+            </Columns>
+        </MudDataGrid>
+    }
+</div>
+
+@code {
+    private const long MaxFileBytes = 25L * 1024 * 1024;
+    private const string AcceptExtensions = ".png,.jpg,.jpeg,.gif,.bmp,.webp,.pdf,.xls,.xlsx,.doc,.docx";
+
+    private static readonly HashSet<string> AllowedExt = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
+        ".pdf",
+        ".xls", ".xlsx",
+        ".doc", ".docx"
+    };
+
+    [Parameter] public M_HBL? HBLDetail { get; set; }
+
+    private List<M_HBL_AttachmentListItem> _items = new();
+    private bool _busy;
+    private string _usr = "";
+    private Guid _loadedHblId = Guid.Empty;
+
+    private bool HasParent => HBLDetail is { hblID: var id } && id != Guid.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _usr = auth.User.Identity?.Name ?? "";
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var id = HBLDetail?.hblID ?? Guid.Empty;
+        if (id == _loadedHblId)
+            return;
+        _loadedHblId = id;
+        await LoadListAsync();
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!HasParent)
+        {
+            _items = new();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var hblId = HBLDetail!.hblID;
+            // Không Select Content — chỉ cờ HasContent
+            _items = await db.HBL_Attachment.AsNoTracking()
+                .Where(x => x.hblID == hblId)
+                .OrderByDescending(x => x.UploadedUtc)
+                .Select(x => new M_HBL_AttachmentListItem
+                {
+                    AttachmentId = x.AttachmentId,
+                    hblID = x.hblID,
+                    FileName = x.FileName,
+                    ContentType = x.ContentType,
+                    Link = x.Link,
+                    UserUpload = x.UserUpload,
+                    Note = x.Note,
+                    UploadedUtc = x.UploadedUtc,
+                    HasContent = x.Content != null
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Load attachments failed: {ex.Message}", MudBlazor.Severity.Error);
+            _items = new();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnUploadAsync(InputFileChangeEventArgs e)
+    {
+        if (!HasParent || e.FileCount == 0)
+            return;
+
+        var buffers = new List<(string SafeName, string ContentType, byte[] Bytes)>();
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(30))
+            {
+                var safeName = SanitizeFileName(file.Name);
+                var ext = Path.GetExtension(safeName);
+                if (!AllowedExt.Contains(ext))
+                {
+                    CallSnackBar($"File type not allowed: {safeName}", MudBlazor.Severity.Warning);
+                    continue;
+                }
+
+                if (file.Size > MaxFileBytes)
+                {
+                    CallSnackBar($"File too large (max 25MB): {safeName}", MudBlazor.Severity.Warning);
+                    continue;
+                }
+
+                await using var stream = file.OpenReadStream(maxAllowedSize: MaxFileBytes);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                var ct = string.IsNullOrWhiteSpace(file.ContentType) ? GuessContentType(ext) : file.ContentType;
+                buffers.Add((safeName, ct!, ms.ToArray()));
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Upload failed: {ex.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        if (buffers.Count == 0)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var hblId = HBLDetail!.hblID;
+            var exists = await db.HBL.AnyAsync(x => x.hblID == hblId);
+            if (!exists)
+            {
+                CallSnackBar("HBL not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var usedNames = await db.HBL_Attachment
+                .Where(a => a.hblID == hblId)
+                .Select(a => a.FileName)
+                .ToListAsync();
+
+            foreach (var (safeName, contentType, bytes) in buffers)
+            {
+                var uniqueName = NextUniqueFileName(usedNames, safeName);
+                db.HBL_Attachment.Add(new M_HBL_Attachment
+                {
+                    AttachmentId = Guid.NewGuid(),
+                    hblID = hblId,
+                    FileName = uniqueName,
+                    Content = bytes,
+                    ContentType = contentType,
+                    Link = null,
+                    UserUpload = _usr,
+                    Note = null,
+                    UploadedUtc = DateTime.UtcNow
+                });
+            }
+
+            await db.SaveChangesAsync();
+            CallSnackBar(buffers.Count == 1 ? "File uploaded." : $"{buffers.Count} files uploaded.", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Upload failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OpenAddLinkDialogAsync()
+    {
+        if (!HasParent)
+            return;
+
+        var parameters = new DialogParameters
+        {
+            [nameof(HblAddLinkDialog.DefaultTitle)] = ""
+        };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<HblAddLinkDialog>("Add link", parameters, options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not HblAddLinkDialog.Result data)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var hblId = HBLDetail!.hblID;
+            var exists = await db.HBL.AnyAsync(x => x.hblID == hblId);
+            if (!exists)
+            {
+                CallSnackBar("HBL not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var title = string.IsNullOrWhiteSpace(data.Title) ? data.Link : data.Title.Trim();
+            title = SanitizeFileName(title);
+            if (title.Length > 500)
+                title = title[..500];
+
+            db.HBL_Attachment.Add(new M_HBL_Attachment
+            {
+                AttachmentId = Guid.NewGuid(),
+                hblID = hblId,
+                FileName = title,
+                Content = null,
+                ContentType = null,
+                Link = data.Link.Trim(),
+                UserUpload = _usr,
+                Note = string.IsNullOrWhiteSpace(data.Note) ? null : data.Note.Trim(),
+                UploadedUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+            CallSnackBar("Link added.", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Add link failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OpenAsync(M_HBL_AttachmentListItem item)
+    {
+        if (item.AttachmentId == Guid.Empty)
+            return;
+
+        // Link-only: mở trực tiếp nếu có URL tuyệt đối; còn lại qua API
+        if (!item.HasContent && !string.IsNullOrWhiteSpace(item.Link))
+        {
+            var link = item.Link.Trim();
+            if (Uri.TryCreate(link, UriKind.Absolute, out var abs)
+                && (abs.Scheme == Uri.UriSchemeHttp || abs.Scheme == Uri.UriSchemeHttps))
+            {
+                await JS.InvokeVoidAsync("open", abs.ToString(), "_blank");
+                return;
+            }
+        }
+
+        var url = Navigation.ToAbsoluteUri($"api/hbl-attachment/{item.AttachmentId}").ToString();
+        await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+
+    private async Task DeleteAsync(M_HBL_AttachmentListItem item)
+    {
+        if (item.AttachmentId == Guid.Empty || !HasParent)
+            return;
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["ChargeType_Warning"],
+            $"Xóa \"{item.FileName}\"?",
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var row = await db.HBL_Attachment
+                .FirstOrDefaultAsync(x => x.AttachmentId == item.AttachmentId && x.hblID == HBLDetail!.hblID);
+            if (row is null)
+            {
+                CallSnackBar("Attachment not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.HBL_Attachment.Remove(row);
+            await db.SaveChangesAsync();
+            CallSnackBar("Deleted.", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Delete failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private static string NextUniqueFileName(List<string> usedNames, string fileName)
+    {
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var ext = Path.GetExtension(fileName);
+        var candidate = Path.GetFileName(fileName);
+        var n = 0;
+        while (usedNames.Exists(x => string.Equals(x, candidate, StringComparison.OrdinalIgnoreCase)))
+        {
+            n++;
+            candidate = $"{name}_{n}{ext}";
+        }
+        usedNames.Add(candidate);
+        return candidate;
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var f = Path.GetFileName(name);
+        foreach (var c in Path.GetInvalidFileNameChars())
+            f = f.Replace(c, '_');
+        // Link title có thể không có extension / chứa '/'
+        if (string.IsNullOrWhiteSpace(f) || f is "." or "..")
+            f = name.Trim();
+        foreach (var c in Path.GetInvalidFileNameChars())
+            f = f.Replace(c, '_');
+        return string.IsNullOrWhiteSpace(f) ? "file.dat" : f;
+    }
+
+    private static string GuessContentType(string ext) => ext.ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".gif" => "image/gif",
+        ".bmp" => "image/bmp",
+        ".webp" => "image/webp",
+        ".pdf" => "application/pdf",
+        ".xls" => "application/vnd.ms-excel",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".doc" => "application/msword",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        _ => "application/octet-stream"
+    };
+}

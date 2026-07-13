@@ -1,5 +1,8 @@
+@using Microsoft.EntityFrameworkCore
 @using MudBlazor
+@using NVOAMASIS.Data
 @using NVOAMASIS.Models
+@inject IDbContextFactory<AppDbContext> DbFactory
 
 <MudDialog>
     <DialogContent>
@@ -11,14 +14,41 @@
                 <MudItem xs="12" sm="6" md="4">
                     <MudTextField @bind-Value="_chuCont" Label="Chủ cont" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="20" />
                 </MudItem>
+                <QuanLy_HblPortFields @bind-HblNo="_hblNo"
+                                      @bind-Pol="_pol"
+                                      @bind-Pod="_pod"
+                                      OnHblSelected="ApplyHblDetailsAsync" />
                 <MudItem xs="12" sm="6" md="4">
-                    <MudTextField @bind-Value="_container"
-                                  Label="Container"
-                                  Variant="Variant.Outlined"
-                                  Margin="Margin.Dense"
-                                  Required="true"
-                                  RequiredError="Container là bắt buộc"
-                                  MaxLength="20" />
+                    @if (UseContainerAutocomplete)
+                    {
+                        <MudAutocomplete T="string"
+                                         Value="_container"
+                                         ValueChanged="OnContainerChangedAsync"
+                                         Label="Container"
+                                         Variant="Variant.Outlined"
+                                         Margin="Margin.Dense"
+                                         SearchFunc="SearchContainerNoAsync"
+                                         CoerceText="true"
+                                         CoerceValue="true"
+                                         ResetValueOnEmptyText="true"
+                                         Strict="false"
+                                         Clearable="true"
+                                         Required="true"
+                                         RequiredError="Container là bắt buộc"
+                                         MaxLength="20"
+                                         HelperText="@GetContainerHelperText()" />
+                    }
+                    else
+                    {
+                        <MudTextField @bind-Value="_container"
+                                      Label="Container"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Required="true"
+                                      RequiredError="Container là bắt buộc"
+                                      MaxLength="20"
+                                      HelperText="@GetContainerHelperText()" />
+                    }
                 </MudItem>
                 <MudItem xs="12" sm="6" md="4">
                     <MudNumericField @bind-Value="_contSize" Label="Size" Variant="Variant.Outlined" Margin="Margin.Dense" />
@@ -26,13 +56,6 @@
                 <MudItem xs="12" sm="6" md="4">
                     <MudTextField @bind-Value="_contType" Label="Type" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="10" />
                 </MudItem>
-                <QuanLy_HblPortFields HblNo="_hblNo"
-                                      HblNoChanged="OnHblNoChangedAsync"
-                                      Pol="_pol"
-                                      PolChanged="OnPolChangedAsync"
-                                      Pod="_pod"
-                                      PodChanged="OnPodChangedAsync"
-                                      OnHblSelected="ApplyHblDetailsAsync" />
                 <MudItem xs="12" sm="6" md="4">
                     <MudTextField @bind-Value="_vessel" Label="Tàu" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="50" />
                 </MudItem>
@@ -120,8 +143,12 @@
     private string? _estimate;
     private decimal? _collect;
     private string? _status;
+    private Guid? _hblId;
+    private List<M_Container> _hblContainers = new();
 
-    protected override void OnParametersSet()
+    private bool UseContainerAutocomplete => _hblContainers.Count > 0;
+
+    protected override async Task OnParametersSetAsync()
     {
         if (Model is null)
             return;
@@ -144,6 +171,11 @@
         _estimate = Model.Estimate;
         _collect = Model.Collect;
         _status = Model.Status;
+
+        if (!string.IsNullOrWhiteSpace(_hblNo))
+            await LoadContainersForHblAsync(null, _hblNo);
+        else
+            await LoadContainersForHblAsync(null, null);
     }
 
     private void Cancel() => MudDialog.Cancel();
@@ -207,20 +239,137 @@
         return Task.CompletedTask;
     }
 
-    private Task ApplyHblDetailsAsync(M_HBL? match)
+    private async Task ApplyHblDetailsAsync(M_HBL? match)
     {
+        if (match is null && !string.IsNullOrWhiteSpace(_hblNo))
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            match = await db.HBL.AsNoTracking()
+                .Where(x => x.hbl != null && x.hbl != string.Empty)
+                .FirstOrDefaultAsync(x => x.hbl!.Trim() == _hblNo.Trim());
+        }
+
         if (match is null)
+        {
+            await LoadContainersForHblAsync(null, null);
+            return;
+        }
+
+        await LoadContainersForHblAsync(match.hblID, match.hbl);
+
+        _vessel = TrimOrNull(match.vessel);
+        _voy = TrimOrNull(match.voy);
+        _eta = match.ETA;
+
+        if (_hblContainers.Count > 0)
+            ApplyFirstContainerForHbl();
+        else
+        {
+            _container = string.Empty;
+            _contSize = null;
+            _contType = null;
+        }
+    }
+
+    private void ApplyFirstContainerForHbl()
+    {
+        var first = _hblContainers.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.CONTAINER_NO));
+        if (first is null)
+            return;
+
+        _container = first.CONTAINER_NO!.Trim();
+        ApplyContainerSizeType(first);
+    }
+
+    private async Task LoadContainersForHblAsync(Guid? hblId, string? hblNo)
+    {
+        if ((hblId is null || hblId == Guid.Empty) && string.IsNullOrWhiteSpace(hblNo))
+        {
+            _hblId = null;
+            _hblContainers = new List<M_Container>();
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        if ((hblId is null || hblId == Guid.Empty) && !string.IsNullOrWhiteSpace(hblNo))
+        {
+            var hbl = await db.HBL.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.hbl == hblNo.Trim());
+            hblId = hbl?.hblID;
+        }
+
+        if (hblId is null || hblId == Guid.Empty)
+        {
+            _hblId = null;
+            _hblContainers = new List<M_Container>();
+            return;
+        }
+
+        _hblId = hblId;
+        _hblContainers = await db.Container.AsNoTracking()
+            .Where(x => x.hblid == hblId
+                        && (x.CONTINUED == null || x.CONTINUED == true)
+                        && x.CONTAINER_NO != null
+                        && x.CONTAINER_NO != string.Empty)
+            .OrderBy(x => x.CONTAINER_NO)
+            .ToListAsync();
+    }
+
+    private Task<IEnumerable<string>> SearchContainerNoAsync(string value)
+    {
+        IEnumerable<M_Container> query = _hblContainers.Where(x => !string.IsNullOrWhiteSpace(x.CONTAINER_NO));
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var k = value.Trim();
+            query = query.Where(x => x.CONTAINER_NO!.Contains(k, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return Task.FromResult(query
+            .Select(x => x.CONTAINER_NO!.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .Take(50));
+    }
+
+    private Task OnContainerChangedAsync(string? value)
+    {
+        _container = value?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(_container))
             return Task.CompletedTask;
 
-        if (string.IsNullOrWhiteSpace(_pol))
-            _pol = TrimOrNull(match.polname) ?? TrimOrNull(match.polcode);
-        if (string.IsNullOrWhiteSpace(_pod))
-            _pod = TrimOrNull(match.podname) ?? TrimOrNull(match.podcode);
-        if (string.IsNullOrWhiteSpace(_vessel))
-            _vessel = TrimOrNull(match.vessel);
-        if (string.IsNullOrWhiteSpace(_voy))
-            _voy = TrimOrNull(match.voy);
+        var container = _hblContainers.FirstOrDefault(x =>
+            string.Equals(x.CONTAINER_NO?.Trim(), _container, StringComparison.OrdinalIgnoreCase));
+        if (container is not null)
+            ApplyContainerSizeType(container);
 
         return Task.CompletedTask;
+    }
+
+    private void ApplyContainerSizeType(M_Container container)
+    {
+        if (string.IsNullOrWhiteSpace(container.CTN_SIZE_TYPE))
+            return;
+
+        var sizeType = container.CTN_SIZE_TYPE.Trim();
+        var digitLength = 0;
+        while (digitLength < sizeType.Length && char.IsDigit(sizeType[digitLength]))
+            digitLength++;
+
+        if (digitLength > 0 && int.TryParse(sizeType[..digitLength], out var size))
+            _contSize = size;
+        if (digitLength < sizeType.Length)
+            _contType = TrimOrNull(sizeType[digitLength..]);
+    }
+
+    private string? GetContainerHelperText()
+    {
+        if (_hblId is null || _hblId == Guid.Empty)
+            return "Chưa chọn HB/L — nhập thủ công số container, size, type";
+
+        return _hblContainers.Count == 0
+            ? "HB/L chưa có container — nhập thủ công số container, size, type"
+            : $"Có {_hblContainers.Count} container thuộc HB/L — chọn từ danh sách";
     }
 }
