@@ -153,6 +153,7 @@ namespace NVOAMASIS.Data
 
         public DbSet<M_SI> SI { get; set; }
         public DbSet<M_SI_Attachment> SI_Attachment { get; set; }
+        public DbSet<M_HBL_Attachment> HBL_Attachment { get; set; }
 
         public DbSet<M_TransactionTypes> TransactionTypes { get; set; }
         public DbSet<M_TransactionTypeMappings> TransactionTypeMappings { get; set; }
@@ -255,6 +256,15 @@ namespace NVOAMASIS.Data
                 .WithMany()
                 .HasForeignKey(x => x.SIID)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<M_HBL_Attachment>().ToTable("HBL_Attachment");
+            modelBuilder.Entity<M_HBL_Attachment>()
+                .HasOne<M_HBL>()
+                .WithMany()
+                .HasForeignKey(x => x.hblID)
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<M_HBL_Attachment>()
+                .HasIndex(x => x.hblID);
 
             modelBuilder.Entity<M_TransactionTypeMappings>()
                 .HasOne<M_TransactionTypes>()

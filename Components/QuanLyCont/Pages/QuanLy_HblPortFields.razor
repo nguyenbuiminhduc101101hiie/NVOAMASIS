@@ -6,7 +6,7 @@
 
 <MudItem xs="12" sm="6" md="4">
     <MudAutocomplete T="string"
-                     Value="HblNo"
+                     Value="@_hblValue"
                      ValueChanged="OnHblNoChangedAsync"
                      Label="HB/L No"
                      Variant="Variant.Outlined"
@@ -17,28 +17,32 @@
                      ResetValueOnEmptyText="true"
                      MaxLength="30" />
 </MudItem>
+
 <MudItem xs="12" sm="6" md="4">
     <MudAutocomplete T="string"
-                     Value="Pol"
-                     ValueChanged="OnPolChangedAsync"
+                     Value="@_polValue"
+                     ValueChanged="OnPolValueChangedAsync"
                      Label="POL"
                      Variant="Variant.Outlined"
                      Margin="Margin.Dense"
                      SearchFunc="SearchPort"
                      CoerceText="true"
+                     CoerceValue="false"
                      Clearable="true"
                      ResetValueOnEmptyText="true"
                      MaxLength="50" />
 </MudItem>
+
 <MudItem xs="12" sm="6" md="4">
     <MudAutocomplete T="string"
-                     Value="Pod"
-                     ValueChanged="OnPodChangedAsync"
+                     Value="@_podValue"
+                     ValueChanged="OnPodValueChangedAsync"
                      Label="POD"
                      Variant="Variant.Outlined"
                      Margin="Margin.Dense"
                      SearchFunc="SearchPort"
                      CoerceText="true"
+                     CoerceValue="false"
                      Clearable="true"
                      ResetValueOnEmptyText="true"
                      MaxLength="50" />
@@ -53,32 +57,127 @@
     [Parameter] public EventCallback<string?> PodChanged { get; set; }
     [Parameter] public EventCallback<M_HBL?> OnHblSelected { get; set; }
 
+    private string? _hblValue;
+    private string? _polValue;
+    private string? _podValue;
+    private bool _localPortUpdate;
+
+    protected override void OnParametersSet()
+    {
+        _hblValue = HblNo;
+
+        if (_localPortUpdate)
+        {
+            if (string.Equals(Pol, _polValue, StringComparison.Ordinal)
+                && string.Equals(Pod, _podValue, StringComparison.Ordinal))
+            {
+                _localPortUpdate = false;
+            }
+
+            return;
+        }
+
+        if (!string.Equals(Pol, _polValue, StringComparison.Ordinal))
+            _polValue = Pol;
+        if (!string.Equals(Pod, _podValue, StringComparison.Ordinal))
+            _podValue = Pod;
+    }
+
     private static string? TrimOrNull(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task OnHblNoChangedAsync(string? value)
     {
-        var hblNo = TrimOrNull(value);
-        await HblNoChanged.InvokeAsync(hblNo);
+        _hblValue = TrimOrNull(value);
+        await HblNoChanged.InvokeAsync(_hblValue);
 
-        if (string.IsNullOrEmpty(hblNo))
+        if (string.IsNullOrEmpty(_hblValue))
         {
+            await ApplyPortValuesAsync(null, null);
             await OnHblSelected.InvokeAsync(null);
             return;
         }
 
         await using var db = await DbFactory.CreateDbContextAsync();
-        var match = await db.HBL.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.hbl == hblNo);
+        var match = await FindHblAsync(db, _hblValue);
+
+        if (match is not null)
+        {
+            var pol = await ResolvePortDisplayAsync(db, match.polname, match.polcode);
+            var pod = await ResolvePortDisplayAsync(db, match.podname, match.podcode);
+            await ApplyPortValuesAsync(pol, pod);
+        }
 
         await OnHblSelected.InvokeAsync(match);
     }
 
-    private Task OnPolChangedAsync(string? value) =>
-        PolChanged.InvokeAsync(TrimOrNull(value));
+    private async Task ApplyPortValuesAsync(string? pol, string? pod)
+    {
+        _localPortUpdate = true;
+        _polValue = pol;
+        _podValue = pod;
+        await PolChanged.InvokeAsync(pol);
+        await PodChanged.InvokeAsync(pod);
+    }
 
-    private Task OnPodChangedAsync(string? value) =>
-        PodChanged.InvokeAsync(TrimOrNull(value));
+    private static async Task<M_HBL?> FindHblAsync(AppDbContext db, string hblNo)
+    {
+        var candidates = await db.HBL.AsNoTracking()
+            .Where(x => x.hbl != null && x.hbl != string.Empty)
+            .ToListAsync();
+
+        return candidates.FirstOrDefault(x =>
+            string.Equals(x.hbl?.Trim(), hblNo, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<string?> ResolvePortDisplayAsync(AppDbContext db, string? portName, string? portCode)
+    {
+        var name = TrimOrNull(portName);
+        var code = TrimOrNull(portCode);
+
+        if (!string.IsNullOrEmpty(name))
+        {
+            var byName = await db.Port.AsNoTracking()
+                .Where(x => x.PORT == name
+                            && x.PORT != string.Empty
+                            && (x.CONTINUED == null || x.CONTINUED == true)
+                            && x.show != false)
+                .Select(x => x.PORT)
+                .FirstOrDefaultAsync();
+            if (!string.IsNullOrWhiteSpace(byName))
+                return byName.Trim();
+
+            return name;
+        }
+
+        if (string.IsNullOrEmpty(code))
+            return null;
+
+        var byCode = await db.Port.AsNoTracking()
+            .Where(x => x.PORT_CODE == code
+                        && x.PORT != null
+                        && x.PORT != string.Empty
+                        && (x.CONTINUED == null || x.CONTINUED == true)
+                        && x.show != false)
+            .Select(x => x.PORT)
+            .FirstOrDefaultAsync();
+
+        return !string.IsNullOrWhiteSpace(byCode) ? byCode.Trim() : code;
+    }
+
+    private async Task OnPolValueChangedAsync(string? value)
+    {
+        _localPortUpdate = true;
+        _polValue = TrimOrNull(value);
+        await PolChanged.InvokeAsync(_polValue);
+    }
+
+    private async Task OnPodValueChangedAsync(string? value)
+    {
+        _localPortUpdate = true;
+        _podValue = TrimOrNull(value);
+        await PodChanged.InvokeAsync(_podValue);
+    }
 
     private async Task<IEnumerable<string>> SearchHblNo(string value)
     {
