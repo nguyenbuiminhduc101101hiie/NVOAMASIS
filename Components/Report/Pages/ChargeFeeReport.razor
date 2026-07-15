@@ -19,7 +19,7 @@
         <MudStack Spacing="0">
             <MudText Typo="Typo.h5">Báo cáo chi tiết theo tên phí</MudText>
             <MudText Typo="Typo.body2" Color="Color.Secondary">
-                Nhập tên phí hoặc mã phí để tìm toàn bộ Debit/Credit theo HBL.
+                Chọn tên phí hoặc mã phí để tìm toàn bộ Debit/Credit theo HBL.
             </MudText>
         </MudStack>
 
@@ -48,16 +48,20 @@
 
     <MudGrid Class="mb-3">
         <MudItem xs="12" md="6" lg="5">
-            <MudTextField @bind-Value="Keyword"
-                          Label="Tên phí / mã phí"
-                          Placeholder="VD: THC, LOCAL CHARGE, DOC FEE..."
-                          Variant="Variant.Outlined"
-                          Margin="Margin.Dense"
-                          Immediate="true"
-                          Clearable="true"
-                          Adornment="Adornment.Start"
-                          AdornmentIcon="@Icons.Material.Filled.Search"
-                          OnKeyDown="OnKeywordKeyDown" />
+            <MudAutocomplete T="Guid"
+                             @bind-Value="SelectedChargeId"
+                             Label="Tên phí / mã phí"
+                             Placeholder="VD: THC, LOCAL CHARGE, DOC FEE..."
+                             Variant="Variant.Outlined"
+                             Margin="Margin.Dense"
+                             SearchFunc="SearchCharge"
+                             ToStringFunc="Charidtocharge"
+                             Clearable="true"
+                             ResetValueOnEmptyText="true"
+                             Adornment="Adornment.Start"
+                             AdornmentIcon="@Icons.Material.Filled.Search"
+                             MaxItems="50"
+                             Dense="true" />
         </MudItem>
         <MudItem xs="12" md="6" lg="7">
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mt-1">
@@ -135,7 +139,7 @@
     <div id="charge-fee-report-print-area">
         <div class="print-header">
             <h2>BÁO CÁO CHI TIẾT THEO TÊN PHÍ</h2>
-            <div><b>Từ khóa:</b> @(string.IsNullOrWhiteSpace(Keyword) ? "Tất cả" : Keyword)</div>
+            <div><b>Từ khóa:</b> @(SelectedChargeId == Guid.Empty ? "Tất cả" : Charidtocharge(SelectedChargeId))</div>
             <div><b>Ngày in:</b> @DateTime.Now.ToString("dd/MM/yyyy HH:mm")</div>
             <div>
                 <b>Số dòng:</b> @FilteredRows.Count.ToString("N0")
@@ -386,7 +390,8 @@
 @code {
     private readonly int[] _pageSizeOptions = { 25, 50, 100, 300, 500 };
 
-    private string? Keyword { get; set; }
+    private Guid SelectedChargeId { get; set; }
+    private List<ChargeModel> Charges { get; set; } = new();
     private bool Loading { get; set; }
     private string? Message { get; set; }
     private MudBlazor.Severity MessageSeverity { get; set; } = MudBlazor.Severity.Info;
@@ -397,6 +402,45 @@
     private readonly Dictionary<string, string?> ColumnFilters = new();
 
     private List<ChargeReportRow> Rows { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Charges = await _context.Set<ChargeModel>()
+            .AsNoTracking()
+            .OrderBy(c => c.CHARGE_CODE)
+            .ThenBy(c => c.CHARGE)
+            .ToListAsync();
+    }
+
+    private Task<IEnumerable<Guid>> SearchCharge(string text)
+    {
+        IEnumerable<Guid> result;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            result = Charges.Select(x => x.CHARGE_ID).Take(50);
+        }
+        else
+        {
+            result = Charges
+                .Where(x =>
+                    (x.CHARGE_CODE ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || (x.CHARGE ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || $"{x.CHARGE_CODE}_{x.CHARGE}".Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.CHARGE_ID)
+                .Take(50);
+        }
+
+        return Task.FromResult(result);
+    }
+
+    private string Charidtocharge(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+
+        var rs = Charges.FirstOrDefault(x => x.CHARGE_ID == id);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}";
+    }
 
     private List<ChargeReportRow> FilteredRows => Rows.Where(PassesAllFilters).ToList();
 
@@ -564,15 +608,9 @@
         return 0;
     }
 
-    private async Task OnKeywordKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter")
-            await SearchAsync();
-    }
-
     private async Task ClearAsync()
     {
-        Keyword = null;
+        SelectedChargeId = Guid.Empty;
         Rows.Clear();
         ColumnFilters.Clear();
         Message = null;
@@ -586,16 +624,15 @@
 
         try
         {
-            if (string.IsNullOrWhiteSpace(Keyword))
+            if (SelectedChargeId == Guid.Empty)
             {
                 Rows = new();
                 MessageSeverity = MudBlazor.Severity.Warning;
-                Message = "Nhập tên phí hoặc mã phí trước khi tìm.";
+                Message = "Chọn tên phí hoặc mã phí trước khi tìm.";
                 return;
             }
 
-            var kw = (Keyword ?? string.Empty).Trim().ToLower();
-            var chargeQuery = BuildMatchingChargeQuery(kw);
+            var chargeQuery = BuildMatchingChargeQuery(SelectedChargeId);
 
             var charges = await chargeQuery
                 .Select(c => new ChargeInfo
@@ -669,13 +706,11 @@
         }
     }
 
-    private IQueryable<ChargeModel> BuildMatchingChargeQuery(string kw)
+    private IQueryable<ChargeModel> BuildMatchingChargeQuery(Guid chargeId)
     {
         return _context.Set<ChargeModel>()
             .AsNoTracking()
-            .Where(c => string.IsNullOrWhiteSpace(kw)
-                || ((c.CHARGE ?? string.Empty).ToLower().Contains(kw))
-                || ((c.CHARGE_CODE ?? string.Empty).ToLower().Contains(kw)));
+            .Where(c => c.CHARGE_ID == chargeId);
     }
 
     private async Task<List<ChargeReportRow>> LoadDebitRows(IQueryable<Guid> chargeIdQuery, IQueryable<Guid>? agentCustomerIds)
@@ -815,7 +850,7 @@
         sb.Append("</style></head><body>");
 
         sb.Append("<h2>BÁO CÁO CHI TIẾT THEO TÊN PHÍ</h2>");
-        sb.Append($"<div><b>Từ khóa:</b> {E(string.IsNullOrWhiteSpace(Keyword) ? "Tất cả" : Keyword)}</div>");
+        sb.Append($"<div><b>Từ khóa:</b> {E(SelectedChargeId == Guid.Empty ? "Tất cả" : Charidtocharge(SelectedChargeId))}</div>");
         sb.Append($"<div><b>Ngày in:</b> {DateTime.Now:dd/MM/yyyy HH:mm}</div>");
         sb.Append($"<div><b>Số dòng:</b> {rows.Count:N0}"
             + $" | <b>VND Debit:</b> {E(FormatNumber(TotalVndDebit))}"
