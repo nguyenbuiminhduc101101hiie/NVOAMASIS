@@ -1422,6 +1422,335 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
             return ["Import Data Fail with error code: " + ex.Message, "0"];
         }
     }
+
+    /// <summary>
+    /// Preview + parse Partner List Excel (data từ dòng 8) trước khi lưu.
+    /// </summary>
+    public async Task<CustomerPublicImportPreviewResult> PreviewCustomerPublicFromExcel(IBrowserFile file)
+    {
+        var result = new CustomerPublicImportPreviewResult();
+        try
+        {
+            if (file == null)
+            {
+                result.ErrorMessage = "Import Data Fail";
+                return result;
+            }
+
+            string fileName = Path.GetFileName(file.Name);
+            string filePath = Path.Combine(Path.GetTempPath(), $"cuspub_{Guid.NewGuid():N}_{fileName}");
+            string ext = Path.GetExtension(file.Name)?.ToLowerInvariant() ?? "";
+
+            using (var stream = file.OpenReadStream(maxAllowedSize: long.MaxValue))
+            using (var fileStream = new FileStream(filePath, FileMode.Create))
+            {
+                await stream.CopyToAsync(fileStream);
+            }
+
+            if (ext != ".xlsx" && file.ContentType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            {
+                result.ErrorMessage = "Only .xlsx format is supported for this import";
+                return result;
+            }
+
+            var parsed = await ReadCustomerPublicFromExcelXlsx(filePath);
+            try { File.Delete(filePath); } catch { /* ignore */ }
+
+            if (parsed == null)
+            {
+                result.ErrorMessage = "Can't Read File";
+                return result;
+            }
+
+            return parsed;
+        }
+        catch (Exception ex)
+        {
+            result.ErrorMessage = "Import Data Fail with error code: " + ex.Message;
+            return result;
+        }
+    }
+
+    public async Task<List<string>> SaveCustomerPublicImport(List<M_Customer> customers)
+    {
+        try
+        {
+            if (customers == null || customers.Count == 0)
+                return ["Không có dữ liệu để import", "0"];
+
+            foreach (var c in customers)
+            {
+                c.SaleName = "NOMI";
+                c.thoihanmove = 30;
+            }
+
+            _context.ChangeTracker.Clear();
+            _context.Customer.AddRange(customers);
+            await _context.SaveChangesAsync();
+            return [$"Import thành công {customers.Count} khách hàng.", "1"];
+        }
+        catch (Exception ex)
+        {
+            return ["Import Data Fail with error code: " + ex.Message, "0"];
+        }
+    }
+
+    public async Task<List<string>> InsertCustomerPublicFromExcel(IBrowserFile file)
+    {
+        var preview = await PreviewCustomerPublicFromExcel(file);
+        if (!string.IsNullOrEmpty(preview.ErrorMessage))
+            return [preview.ErrorMessage, "0"];
+
+        var saveResult = await SaveCustomerPublicImport(preview.ToInsert);
+        if (saveResult[1] == "1" && preview.Skipped.Count > 0)
+        {
+            saveResult[0] += $" Bỏ qua {preview.Skipped.Count} dòng đã tồn tại (TaxCode/Company): " +
+                             string.Join("; ", preview.Skipped);
+        }
+        else if (preview.ToInsert.Count == 0 && preview.Skipped.Count > 0)
+        {
+            return [
+                $"Không import dòng nào. Bỏ qua {preview.Skipped.Count} dòng đã tồn tại: " +
+                string.Join("; ", preview.Skipped),
+                "1"
+            ];
+        }
+
+        return saveResult;
+    }
+
+    private static string MapPartnerGroupToMainCode(string? group)
+    {
+        if (string.IsNullOrWhiteSpace(group))
+            return "Customer";
+
+        var g = Regex.Replace(group.Trim(), @"\s+", " ").ToUpperInvariant();
+        return g switch
+        {
+            "CUSTOMERS" or "CONSIGNEE" or "SHIPPER" => "Customer",
+            "COLOADERS" => "MasterColoader",
+            "AGENTS" => "Agent-Network",
+            "ORTHER CONTACTS" or "OTHER CONTACTS" => "Others",
+            _ => "Customer"
+        };
+    }
+
+    private async Task<CustomerPublicImportPreviewResult?> ReadCustomerPublicFromExcelXlsx(string filePath)
+    {
+        var result = new CustomerPublicImportPreviewResult();
+        try
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage(new FileInfo(filePath));
+            var sheet = package.Workbook.Worksheets[0];
+            if (sheet?.Dimension == null)
+                return result;
+
+            _context.ChangeTracker.Clear();
+            var existing = await _context.Customer
+                .AsNoTracking()
+                .Where(x => x.Continued != false)
+                .Select(x => new { x.TaxCode, x.COMPANY, x.Customer_Code })
+                .ToListAsync();
+
+            var existingTaxCodes = new HashSet<string>(
+                existing
+                    .Where(x => !string.IsNullOrWhiteSpace(x.TaxCode))
+                    .Select(x => NormalizeTaxCodeForCompare(x.TaxCode!)),
+                StringComparer.OrdinalIgnoreCase);
+
+            var existingCompanies = new HashSet<string>(
+                existing
+                    .Where(x => !string.IsNullOrWhiteSpace(x.COMPANY))
+                    .Select(x => x.COMPANY!.Trim()),
+                StringComparer.OrdinalIgnoreCase);
+
+            var existingCustomerCodes = new HashSet<string>(
+                existing
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Customer_Code))
+                    .Select(x => x.Customer_Code!.Trim()),
+                StringComparer.OrdinalIgnoreCase);
+
+            var batchTaxCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var batchCompanies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var mainCodeCounters = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var now = DateTime.Now;
+            string? usr = null;
+            try { usr = asv.GetAuth().Result.User.Identity?.Name; } catch { /* ignore */ }
+
+            for (int row = 8; row <= sheet.Dimension.End.Row; row++)
+            {
+                string Cell(int col) => sheet.Cells[row, col].Text?.Trim() ?? "";
+
+                var company = Cell(3);          // C
+                var englishName = Cell(4);      // D
+                var tel = Cell(6);              // F
+                var email = Cell(7);            // G
+                var address = Cell(8);          // H
+                var addressTv = Cell(9);        // I
+                var fax = Cell(11);             // K
+                var taxCode = Cell(12);         // L
+                var groupM = Cell(13);          // M → DonViDoiTac_gs + map MainCode
+                var hanCongNo = Cell(16);       // P
+                var remarksSale = Cell(17);     // Q
+
+                if (string.IsNullOrWhiteSpace(company))
+                    continue;
+
+                var mappedMainCode = MapPartnerGroupToMainCode(groupM);
+                var normalizedTax = NormalizeTaxCodeForCompare(taxCode);
+                var companyKey = company.Trim();
+
+                bool taxExists = !string.IsNullOrWhiteSpace(normalizedTax) &&
+                    (existingTaxCodes.Contains(normalizedTax) || batchTaxCodes.Contains(normalizedTax));
+                bool companyExists = existingCompanies.Contains(companyKey) || batchCompanies.Contains(companyKey);
+
+                if (taxExists || companyExists)
+                {
+                    var reason = taxExists && companyExists
+                        ? $"TaxCode={taxCode}, Company={company}"
+                        : taxExists
+                            ? $"TaxCode={taxCode}"
+                            : $"Company={company}";
+                    var skipMsg = $"Dòng {row}: {reason}";
+                    result.Skipped.Add(skipMsg);
+                    result.Rows.Add(new CustomerPublicImportPreviewRow
+                    {
+                        ExcelRow = row,
+                        Company = company,
+                        ShortName = company,
+                        EnglishName = englishName,
+                        Tel = tel,
+                        Email = email,
+                        Address = address,
+                        AddressTV = addressTv,
+                        Fax = fax,
+                        TaxCode = taxCode,
+                        Customer_Code = taxCode,
+                        MainCode = mappedMainCode,
+                        DonViDoiTac_gs = groupM,
+                        SaleName = "NOMI",
+                        HanCongNo = hanCongNo,
+                        Remarks_sale = remarksSale,
+                        IsSkipped = true,
+                        SkipReason = reason
+                    });
+                    continue;
+                }
+
+                string customerCode;
+                if (!string.IsNullOrWhiteSpace(taxCode))
+                {
+                    customerCode = taxCode.Trim();
+                }
+                else
+                {
+                    var prefix = string.IsNullOrWhiteSpace(groupM) ? mappedMainCode : groupM.Trim();
+                    if (!mainCodeCounters.TryGetValue(prefix, out var stt))
+                        stt = 0;
+                    do
+                    {
+                        stt++;
+                        customerCode = $"{prefix}{stt}";
+                    }
+                    while (existingCustomerCodes.Contains(customerCode));
+                    mainCodeCounters[prefix] = stt;
+                }
+
+                if (existingCustomerCodes.Contains(customerCode))
+                {
+                    var reason = $"Customer_Code={customerCode} (TaxCode={taxCode}, Company={company}) đã tồn tại";
+                    var skipMsg = $"Dòng {row}: {reason}";
+                    result.Skipped.Add(skipMsg);
+                    result.Rows.Add(new CustomerPublicImportPreviewRow
+                    {
+                        ExcelRow = row,
+                        Company = company,
+                        ShortName = company,
+                        EnglishName = englishName,
+                        Tel = tel,
+                        Email = email,
+                        Address = address,
+                        AddressTV = addressTv,
+                        Fax = fax,
+                        TaxCode = taxCode,
+                        Customer_Code = customerCode,
+                        MainCode = mappedMainCode,
+                        DonViDoiTac_gs = groupM,
+                        SaleName = "NOMI",
+                        HanCongNo = hanCongNo,
+                        Remarks_sale = remarksSale,
+                        IsSkipped = true,
+                        SkipReason = reason
+                    });
+                    continue;
+                }
+
+                var customer = new M_Customer
+                {
+                    Customer_ID = Guid.NewGuid(),
+                    COMPANY = company,
+                    shortname = company,
+                    EnglishName = englishName,
+                    Tel = tel,
+                    Email = email,
+                    Address = address,
+                    addresstiengviet = addressTv,
+                    Fax = fax,
+                    TaxCode = string.IsNullOrWhiteSpace(taxCode) ? null : taxCode.Trim(),
+                    Customer_Code = customerCode,
+                    MainCode = mappedMainCode,
+                    DonViDoiTac_gs = string.IsNullOrWhiteSpace(groupM) ? null : groupM,
+                    hancongno = hanCongNo,
+                    Remarks_sale = string.IsNullOrWhiteSpace(remarksSale) ? "0" : remarksSale,
+                    SaleName = "NOMI",
+                    Continued = true,
+                    Approve = false,
+                    Editable = false,
+                    tilecom = 0,
+                    thoihanmove = 30,
+                    ngaythem = now,
+                    Updatetime = now,
+                    UserID = usr,
+                    strUser = usr
+                };
+
+                result.ToInsert.Add(customer);
+                result.Rows.Add(new CustomerPublicImportPreviewRow
+                {
+                    ExcelRow = row,
+                    Company = company,
+                    ShortName = company,
+                    EnglishName = englishName,
+                    Tel = tel,
+                    Email = email,
+                    Address = address,
+                    AddressTV = addressTv,
+                    Fax = fax,
+                    TaxCode = taxCode,
+                    Customer_Code = customerCode,
+                    MainCode = mappedMainCode,
+                    DonViDoiTac_gs = groupM,
+                    SaleName = "NOMI",
+                    HanCongNo = hanCongNo,
+                    Remarks_sale = remarksSale,
+                    IsSkipped = false
+                });
+
+                existingCustomerCodes.Add(customerCode);
+                batchCompanies.Add(companyKey);
+                if (!string.IsNullOrWhiteSpace(normalizedTax))
+                    batchTaxCodes.Add(normalizedTax);
+            }
+
+            return result;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public async Task<List<M_Customer>> ReadDataFromExcelXLS(string filePath, string fileName)
     {
         List<M_Customer> ListsCSV = new List<M_Customer>();
@@ -2341,4 +2670,34 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
     }
 
 
+}
+
+public class CustomerPublicImportPreviewRow
+{
+    public int ExcelRow { get; set; }
+    public string? Customer_Code { get; set; }
+    public string? MainCode { get; set; }
+    public string? DonViDoiTac_gs { get; set; }
+    public string? SaleName { get; set; } = "NOMI";
+    public string? Company { get; set; }
+    public string? ShortName { get; set; }
+    public string? EnglishName { get; set; }
+    public string? TaxCode { get; set; }
+    public string? Tel { get; set; }
+    public string? Email { get; set; }
+    public string? Address { get; set; }
+    public string? AddressTV { get; set; }
+    public string? Fax { get; set; }
+    public string? HanCongNo { get; set; }
+    public string? Remarks_sale { get; set; }
+    public bool IsSkipped { get; set; }
+    public string? SkipReason { get; set; }
+}
+
+public class CustomerPublicImportPreviewResult
+{
+    public List<M_Customer> ToInsert { get; set; } = new();
+    public List<CustomerPublicImportPreviewRow> Rows { get; set; } = new();
+    public List<string> Skipped { get; set; } = new();
+    public string? ErrorMessage { get; set; }
 }
