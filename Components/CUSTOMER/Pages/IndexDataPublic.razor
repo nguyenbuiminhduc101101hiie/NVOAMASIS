@@ -27,8 +27,6 @@
             @Localizer["reload"]
         </MudButton>
 
-
-
         <MudButton HtmlTag="label"
                    @onclick="@(() => MoveCustomer())" Disabled="CusDetail == null ? false : (CusDetail.SaleName == userdetail.Usr ? true : false)"
                    Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled"
@@ -38,17 +36,14 @@
 
         <MudButton Size="Size.Small" Color="Color.Primary"
                    Variant="Variant.Filled" HtmlTag="label"
-                   StartIcon="@Icons.Material.Filled.ImportExport">
-            <MudFileUpload T="IBrowserFile" Accept=".xls,.xlsx" Disabled="_processingUpload" FilesChanged="importExcel"
-                           MaximumFileCount="100">
-
+                   StartIcon="@Icons.Material.Filled.UploadFile"
+                   Disabled="_processingUpload">
+            <MudFileUpload T="IBrowserFile" Accept=".xlsx" Disabled="_processingUpload" FilesChanged="importExcel"
+                           MaximumFileCount="1">
                 @if (_processingUpload)
                 {
                     <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
-
                 }
-
-
             </MudFileUpload>
             @Uploadtext
         </MudButton>
@@ -187,7 +182,7 @@
             return true;
         return false;
     }
-    string Uploadtext = "Import Excel";
+    string Uploadtext = "Import Partner List Excel";
     bool f_loading = false;
     async Task HandleRefresh()
     {
@@ -642,17 +637,57 @@
             _processingUpload = true;
             Uploadtext = "Processing";
 
-            // Copy stream nếu InsertCSV cần stream
-            using var streamCopy = new MemoryStream();
-            await file.OpenReadStream(long.MaxValue).CopyToAsync(streamCopy);
-            streamCopy.Position = 0;
+            var preview = await csv.PreviewCustomerPublicFromExcel(file);
+            if (!string.IsNullOrEmpty(preview.ErrorMessage))
+            {
+                CallSnackBar(preview.ErrorMessage, MudBlazor.Severity.Error);
+                return;
+            }
 
-            // ✅ Bỏ bước preview, insert luôn
-            List<string> message = await csv.InsertCSV(file);
+            if (preview.Rows.Count == 0)
+            {
+                CallSnackBar("Không có dữ liệu hợp lệ trong file Excel (data từ dòng 8).", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var parameters = new DialogParameters<PreviewCustomerPublicDialog>
+            {
+                { x => x.PreviewResult, preview }
+            };
+            var options = new DialogOptions
+            {
+                CloseButton = true,
+                MaxWidth = MaxWidth.ExtraExtraLarge,
+                FullWidth = true,
+                CloseOnEscapeKey = true,
+                NoHeader = false
+            };
+            var dialog = await DialogService.ShowAsync<PreviewCustomerPublicDialog>(
+                "Xem trước Import Partner List", parameters, options);
+            var result = await dialog.Result;
+
+            if (result == null || result.Canceled)
+                return;
+
+            List<string> message = await csv.SaveCustomerPublicImport(preview.ToInsert);
 
             if (message[1] == "1")
             {
-                CallSnackBar(message[0], MudBlazor.Severity.Success);
+                var fullMsg = message[0];
+                if (preview.Skipped.Count > 0)
+                {
+                    fullMsg += $" Bỏ qua {preview.Skipped.Count} dòng đã tồn tại: " +
+                               string.Join("; ", preview.Skipped);
+                }
+
+                var severity = preview.Skipped.Count > 0
+                    ? MudBlazor.Severity.Warning
+                    : MudBlazor.Severity.Success;
+                CallSnackBar(fullMsg, severity);
+
+                if (preview.Skipped.Count > 0 && fullMsg.Length > 120)
+                    await DialogService.ShowMessageBox("Kết quả Import", fullMsg, yesText: "OK");
+
                 await HandleRefresh();
             }
             else
@@ -666,7 +701,7 @@
         }
         finally
         {
-            Uploadtext = "Import Excel";
+            Uploadtext = "Import Partner List Excel";
             _processingUpload = false;
         }
     }
