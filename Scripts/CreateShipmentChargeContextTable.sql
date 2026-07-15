@@ -1,6 +1,7 @@
 /*
   Bảng ngữ cảnh tính phí lô (8.7 ShipmentChargeContext).
-  DepotId / PortId: lưu Guid dạng chuỗi (format D), khớp với PORT_ID / TerminalID.
+  CustomerId: lấy từ HBL.CustomerID khi chọn HBL.
+  Chi tiết tariff (ChargeType/ShippingLine/Depot/…) lấy qua tariffcode_id → TariffHeader.
 */
 IF OBJECT_ID(N'dbo.ShipmentChargeContext', N'U') IS NULL
 BEGIN
@@ -8,13 +9,7 @@ BEGIN
         Id UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_ShipmentChargeContext PRIMARY KEY,
         ShipmentId UNIQUEIDENTIFIER NOT NULL,
         ContainerId UNIQUEIDENTIFIER NOT NULL,
-        ChargeTypeId UNIQUEIDENTIFIER NOT NULL,
         CustomerId UNIQUEIDENTIFIER NOT NULL,
-        ShippingLineId UNIQUEIDENTIFIER NOT NULL,
-        DepotId NVARCHAR(64) NULL,
-        PortId NVARCHAR(64) NULL,
-        ContainerTypeId NVARCHAR(32) NULL,
-        Direction NVARCHAR(64) NULL,
         EmptyPickupDate DATETIME2 NULL,
         FullDischargeDate DATETIME2 NULL,
         FullDeliveryDate DATETIME2 NULL,
@@ -26,7 +21,9 @@ BEGIN
         CurrencyCode NVARCHAR(16) NULL,
         Remarks NVARCHAR(MAX) NULL,
         CreatedAt DATETIME2 NOT NULL,
-        UpdatedAt DATETIME2 NULL
+        UpdatedAt DATETIME2 NULL,
+        tariffcode_id UNIQUEIDENTIFIER NULL,
+        Amount DECIMAL(18, 0) NULL
     );
 END
 GO

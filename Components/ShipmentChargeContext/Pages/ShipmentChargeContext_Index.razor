@@ -58,26 +58,12 @@
                     <TemplateColumn Title="@Localizer["Scc_Col_Container"]">
                         <CellTemplate>@LabelContainer(context.Item.ContainerId)</CellTemplate>
                     </TemplateColumn>
-                    <TemplateColumn Title="@Localizer["TariffHeader_Col_TariffCode"]">
-                        <CellTemplate>@LabelTariffCode(context.Item.tariffcode_id)</CellTemplate>
-                    </TemplateColumn>
-                    <TemplateColumn Title="@Localizer["Scc_Col_ChargeType"]">
-                        <CellTemplate>@LabelChargeType(context.Item.ChargeTypeId)</CellTemplate>
-                    </TemplateColumn>
                     <TemplateColumn Title="@Localizer["Scc_Col_Customer"]">
                         <CellTemplate>@LabelCustomer(context.Item.CustomerId)</CellTemplate>
                     </TemplateColumn>
-                    <TemplateColumn Title="@Localizer["Scc_Col_ShippingLine"]">
-                        <CellTemplate>@LabelCustomer(context.Item.ShippingLineId)</CellTemplate>
+                    <TemplateColumn Title="@Localizer["TariffHeader_Col_TariffCode"]">
+                        <CellTemplate>@LabelTariffCode(context.Item.tariffcode_id)</CellTemplate>
                     </TemplateColumn>
-                    <TemplateColumn Title="@Localizer["Scc_Col_Depot"]">
-                        <CellTemplate>@LabelDepot(context.Item.DepotId)</CellTemplate>
-                    </TemplateColumn>
-                    <TemplateColumn Title="@Localizer["Scc_Col_Terminal"]">
-                        <CellTemplate>@LabelTerminal(context.Item.PortId)</CellTemplate>
-                    </TemplateColumn>
-                    <PropertyColumn Property="x => x.ContainerTypeId" Title="@Localizer["Scc_Col_ContType"]" />
-                    <PropertyColumn Property="x => x.Direction" Title="@Localizer["Scc_Col_Direction"]" />
                     <PropertyColumn Property="x => x.FreeDays" Title="@Localizer["Scc_Col_FreeDays"]" />
                     <PropertyColumn Property="x => x.BillableDays" Title="@Localizer["Scc_Col_BillableDays"]" />
                     <PropertyColumn Property="x => x.CurrencyCode" Title="@Localizer["Scc_Col_Currency"]" />
@@ -106,10 +92,7 @@
 
     private Dictionary<Guid, string> _hblById = new();
     private Dictionary<Guid, string> _containerById = new();
-    private Dictionary<Guid, string> _chargeTypeById = new();
     private Dictionary<Guid, string> _customerById = new();
-    private Dictionary<string, string> _depotLabelByKey = new(StringComparer.OrdinalIgnoreCase);
-    private Dictionary<string, string> _terminalLabelByKey = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<Guid, string> _tariffCodeByHeaderId = new();
 
     private IEnumerable<M_ShipmentChargeContext> VisibleRows
@@ -122,14 +105,8 @@
             return _items.Where(x =>
                 ContainsIc(LabelHbl(x.ShipmentId), t) ||
                 ContainsIc(LabelContainer(x.ContainerId), t) ||
-                ContainsIc(LabelTariffCode(x.tariffcode_id), t) ||
-                ContainsIc(LabelChargeType(x.ChargeTypeId), t) ||
                 ContainsIc(LabelCustomer(x.CustomerId), t) ||
-                ContainsIc(LabelCustomer(x.ShippingLineId), t) ||
-                ContainsIc(LabelDepot(x.DepotId), t) ||
-                ContainsIc(LabelTerminal(x.PortId), t) ||
-                ContainsIc(x.ContainerTypeId, t) ||
-                ContainsIc(x.Direction, t) ||
+                ContainsIc(LabelTariffCode(x.tariffcode_id), t) ||
                 ContainsIc(x.CurrencyCode, t) ||
                 ContainsIc(x.Remarks, t) ||
                 x.FreeDays.ToString().Contains(t, StringComparison.OrdinalIgnoreCase) ||
@@ -180,7 +157,8 @@
         }
         catch (Exception ex)
         {
-            CallSnackBar(Localizer["Scc_CannotLoad", ex.Message], MudBlazor.Severity.Error);
+            var detail = ex.InnerException?.Message ?? ex.Message;
+            CallSnackBar(Localizer["Scc_CannotLoad", detail], MudBlazor.Severity.Error);
         }
         finally
         {
@@ -192,10 +170,7 @@
     {
         _hblById.Clear();
         _containerById.Clear();
-        _chargeTypeById.Clear();
         _customerById.Clear();
-        _depotLabelByKey.Clear();
-        _terminalLabelByKey.Clear();
         _tariffCodeByHeaderId.Clear();
     }
 
@@ -221,37 +196,11 @@
                 _containerById[id] = ContainerLabel(c);
         }
 
-        foreach (var id in _items.Select(x => x.ChargeTypeId).Where(x => x != Guid.Empty).Distinct())
+        foreach (var id in _items.Select(x => x.CustomerId).Where(x => x != Guid.Empty).Distinct())
         {
-            var ct = await db.ChargeType.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
-            if (ct != null)
-                _chargeTypeById[id] = ChargeTypeLabel(ct);
-        }
-
-        // Avoid Contains(list) on SqlServer: EF can emit a WITH/OPENJSON batch that triggers error 156 on some servers.
-        foreach (var id in _items.SelectMany(x => new[] { x.CustomerId, x.ShippingLineId }).Where(x => x != Guid.Empty).Distinct())
-        {
-            var c = await db.Customer.AsNoTracking().FirstOrDefaultAsync(x => x.Customer_ID == id);
-            if (c != null)
-                _customerById[c.Customer_ID] = CustomerLabel(c);
-        }
-
-        foreach (var key in _items.Select(x => x.DepotId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct())
-        {
-            if (!Guid.TryParse(key, out var g))
-                continue;
-            var p = await db.Port.AsNoTracking().FirstOrDefaultAsync(x => x.PORT_ID == g);
-            if (p != null)
-                _depotLabelByKey[key!] = PortLabel(p);
-        }
-
-        foreach (var key in _items.Select(x => x.PortId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct())
-        {
-            if (!Guid.TryParse(key, out var g))
-                continue;
-            var t = await db.Terminal.AsNoTracking().FirstOrDefaultAsync(x => x.TerminalID == g);
-            if (t != null)
-                _terminalLabelByKey[key!] = TerminalLabel(t);
+            var cu = await db.Customer.AsNoTracking().FirstOrDefaultAsync(x => x.Customer_ID == id);
+            if (cu != null)
+                _customerById[id] = CustomerCompanyLabel(cu);
         }
 
         foreach (var id in _items
@@ -286,58 +235,21 @@
         return c.CTN_ID.ToString();
     }
 
-    private static string ChargeTypeLabel(M_ChargeType x)
+    private static string CustomerCompanyLabel(M_Customer c)
     {
-        var name = x.Name?.Trim() ?? "";
-        var code = x.Code?.Trim() ?? "";
-        if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(code))
-            return $"{name} ({code})";
-        return !string.IsNullOrEmpty(name) ? name : (!string.IsNullOrEmpty(code) ? code : x.Id.ToString());
-    }
-
-    private static string CustomerLabel(M_Customer c)
-    {
-        static string? TrimOrNull(string? s) =>
-            string.IsNullOrWhiteSpace(s) ? null : s.Trim();
-
-        var name = TrimOrNull(c.EnglishName)
-                   ?? TrimOrNull(c.shortname)
-                   ?? TrimOrNull(c.BIZName)
-                   ?? TrimOrNull(c.COMPANY);
-        var code = TrimOrNull(c.Customer_Code)
-                   ?? TrimOrNull(c.MainCode)
-                   ?? TrimOrNull(c.MaDT);
-        if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(code))
-            return $"{code} – {name}";
-        if (!string.IsNullOrEmpty(name))
-            return name;
-        if (!string.IsNullOrEmpty(code))
-            return code;
+        if (!string.IsNullOrWhiteSpace(c.COMPANY))
+            return c.COMPANY.Trim();
+        if (!string.IsNullOrWhiteSpace(c.EnglishName))
+            return c.EnglishName.Trim();
+        if (!string.IsNullOrWhiteSpace(c.Customer_Code))
+            return c.Customer_Code.Trim();
         return c.Customer_ID.ToString();
-    }
-
-    private static string PortLabel(PortModel p)
-    {
-        if (!string.IsNullOrWhiteSpace(p.PORT) && !string.IsNullOrWhiteSpace(p.PORT_CODE))
-            return $"{p.PORT} ({p.PORT_CODE})";
-        return p.PORT ?? p.PORT_CODE ?? p.PORT_ID.ToString();
-    }
-
-    private static string TerminalLabel(Terminal_ t)
-    {
-        if (!string.IsNullOrWhiteSpace(t.TermiNalName))
-            return t.TermiNalName!;
-        if (!string.IsNullOrWhiteSpace(t.Code))
-            return t.Code!;
-        return t.TerminalID.ToString();
     }
 
     private string LabelHbl(Guid id) => _hblById.GetValueOrDefault(id, id.ToString());
     private string LabelContainer(Guid id) => _containerById.GetValueOrDefault(id, id.ToString());
-    private string LabelChargeType(Guid id) => _chargeTypeById.GetValueOrDefault(id, id.ToString());
-    private string LabelCustomer(Guid id) => _customerById.GetValueOrDefault(id, id.ToString());
-    private string LabelDepot(string? key) => string.IsNullOrWhiteSpace(key) ? "" : _depotLabelByKey.GetValueOrDefault(key, key);
-    private string LabelTerminal(string? key) => string.IsNullOrWhiteSpace(key) ? "" : _terminalLabelByKey.GetValueOrDefault(key, key);
+    private string LabelCustomer(Guid id) =>
+        id == Guid.Empty ? string.Empty : _customerById.GetValueOrDefault(id, id.ToString());
 
     private string LabelTariffCode(Guid? id)
     {
@@ -356,13 +268,7 @@
         Id = row.Id,
         ShipmentId = row.ShipmentId,
         ContainerId = row.ContainerId,
-        ChargeTypeId = row.ChargeTypeId,
         CustomerId = row.CustomerId,
-        ShippingLineId = row.ShippingLineId,
-        DepotId = row.DepotId,
-        PortId = row.PortId,
-        ContainerTypeId = row.ContainerTypeId,
-        Direction = row.Direction,
         EmptyPickupDate = row.EmptyPickupDate,
         FullDischargeDate = row.FullDischargeDate,
         FullDeliveryDate = row.FullDeliveryDate,
@@ -400,11 +306,8 @@
             Id = Guid.Empty,
             ShipmentId = Guid.Empty,
             ContainerId = Guid.Empty,
-            ChargeTypeId = Guid.Empty,
             CustomerId = Guid.Empty,
-            ShippingLineId = Guid.Empty,
-            FreeDays = 0,
-            ContainerTypeId = "20DC"
+            FreeDays = 0
         };
 
         var dlg = DialogService.Show<ShipmentChargeContext_EditDialog>(
@@ -479,13 +382,7 @@
 
                 entity.ShipmentId = e.ShipmentId;
                 entity.ContainerId = e.ContainerId;
-                entity.ChargeTypeId = e.ChargeTypeId;
                 entity.CustomerId = e.CustomerId;
-                entity.ShippingLineId = e.ShippingLineId;
-                entity.DepotId = e.DepotId;
-                entity.PortId = e.PortId;
-                entity.ContainerTypeId = e.ContainerTypeId;
-                entity.Direction = e.Direction;
                 entity.EmptyPickupDate = e.EmptyPickupDate;
                 entity.FullDischargeDate = e.FullDischargeDate;
                 entity.FullDeliveryDate = e.FullDeliveryDate;
@@ -508,7 +405,8 @@
         }
         catch (Exception ex)
         {
-            CallSnackBar(Localizer["Scc_CannotSave", ex.Message], MudBlazor.Severity.Error);
+            var detail = ex.InnerException?.Message ?? ex.Message;
+            CallSnackBar(Localizer["Scc_CannotSave", detail], MudBlazor.Severity.Error);
         }
         finally
         {
