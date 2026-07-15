@@ -283,6 +283,7 @@ namespace NVOAMASIS.Models
         public double? ex_rate { get; set; }
         public double? Dem { get; set; } = 0;
         public double? Det { get; set; } = 0;
+        public double? STO { get; set; } = 0;
         public double? Combine { get; set; } = 0;
         public string? IssueAt { get; set; }
         public DateTime? HanNhanCont { get; set; }

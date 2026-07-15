@@ -8,13 +8,7 @@ namespace NVOAMASIS.Models
         public Guid Id { get; set; }
         public Guid ShipmentId { get; set; }
         public Guid ContainerId { get; set; }
-        public Guid ChargeTypeId { get; set; }
         public Guid CustomerId { get; set; }
-        public Guid ShippingLineId { get; set; }
-        public string? DepotId { get; set; }
-        public string? PortId { get; set; }
-        public string? ContainerTypeId { get; set; }
-        public string? Direction { get; set; }
         public DateTime? EmptyPickupDate { get; set; }
         public DateTime? FullDischargeDate { get; set; }
         public DateTime? FullDeliveryDate { get; set; }
@@ -28,6 +22,6 @@ namespace NVOAMASIS.Models
         public DateTime CreatedAt { get; set; }
         public DateTime? UpdatedAt { get; set; }
         public Guid? tariffcode_id { get; set; }
-        public double? Amount { get; set; }
+        public decimal? Amount { get; set; }
     }
 }

@@ -246,6 +246,9 @@ namespace NVOAMASIS.Data
             modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_ShipmentChargeContext>().ToTable("ShipmentChargeContext");
+            modelBuilder.Entity<M_ShipmentChargeContext>()
+                .Property(x => x.Amount)
+                .HasColumnType("decimal(18,0)");
             modelBuilder.Entity<M_ShipmentChargeDateMapping>().ToTable("ShipmentChargeDateMapping");
             modelBuilder.Entity<M_ShipmentChargeDateMapping>().HasIndex(x => x.TargetField).IsUnique();
             modelBuilder.Entity<M_ShipmentChargeDateMapping>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
