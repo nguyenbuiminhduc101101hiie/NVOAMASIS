@@ -1,9 +1,11 @@
 @using System.Globalization
 @using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @using NVOAMASIS.Data
 @using NVOAMASIS.Models
+@using OfficeOpenXml
 @inject AccountService asv
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
@@ -24,8 +26,7 @@
              FixedFooter="true"
              HeaderClass="no-wrap"
              FooterClass="no-wrap"
-             ReadOnly="false"
-             CommittedItemChanges="@CommittedItem"
+             ReadOnly="true"
              MultiSelection="true"
              SelectOnRowClick="false"
              @bind-SelectedItems="_selectedItems"
@@ -81,6 +82,20 @@
                                            Class="btn-compact" />
                         </MudTooltip>
                     }
+                    <MudTooltip Text="Import EOR-ASR Excel">
+                        <MudButton HtmlTag="label"
+                                   Variant="Variant.Filled"
+                                   Color="Color.Warning"
+                                   Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Upload"
+                                   Disabled="@(!_canEditContext || _importing)"
+                                   Class="btn-compact"
+                                   Style="min-width: 36px; height: 30px; padding: 0 6px;">
+                            <InputFile OnChange="OnImportInputChanged"
+                                       accept=".xlsx,.xls"
+                                       style="display:none" />
+                        </MudButton>
+                    </MudTooltip>
                 </MudStack>
             </HeaderTemplate>
             <CellTemplate>
@@ -88,107 +103,46 @@
                 <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
             </CellTemplate>
         </TemplateColumn>
-        <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false" CellClass="no-wrap-cell">
-            <EditTemplate>
-                <MudAutocomplete @bind-Value="context.Item.customerid" Label="@Localizer["Customer"]" Required SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" Clearable />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => Charidtocharge(x.itemid)" Title="@Localizer["Item"]" Required="false" CellClass="no-wrap-cell">
-            <EditTemplate>
-                <MudAutocomplete @bind-Value="context.Item.itemid" Label="@Localizer["Item"]" Required SearchFunc="SearchCharge" ToStringFunc="Charidtocharge" Clearable />
-            </EditTemplate>
-        </PropertyColumn>
+        <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false" CellClass="no-wrap-cell" />
+        <PropertyColumn Property="x => Charidtocharge(x.itemid)" Title="@Localizer["Item"]" Required="false" CellClass="no-wrap-cell" />
         <PropertyColumn Property="x=>x.approve" Title="@Localizer["Approve"]" IsEditable="false" Required="false">
             <CellTemplate>
                 <MudCheckBox @bind-Checked="context.Item.approve" @bind-Value="context.Item.approve" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
             </CellTemplate>
-            <EditTemplate></EditTemplate>
         </PropertyColumn>
         <PropertyColumn Property="x => x.DNTT" Title="@Localizer["DNTT"]" IsEditable="false" Required="false">
             <CellTemplate>
-                <MudCheckBox @bind-Checked="context.Item.DNTT" />
+                <MudCheckBox @bind-Checked="context.Item.DNTT" ReadOnly="true" />
             </CellTemplate>
-            <EditTemplate></EditTemplate>
         </PropertyColumn>
-        <PropertyColumn Property="x => x.dongia" Title="@Localizer["Unit Price"]" Format="#,##0.##" Required="false">
-            <EditTemplate>
-                <MudNumericField @bind-Value="context.Item.dongia" Class="text-right" Label="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" T="double?" TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x=>x.type" Title="@Localizer["Type"]" Required="false">
-            <EditTemplate>
-                <MudAutocomplete @bind-Value="context.Item.type" Label="@Localizer["Type"]" Required SearchFunc="SearchType" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" Required="false">
-            <EditTemplate>
-                <MudNumericField @bind-Value="context.Item.soluong" Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" T="double?" TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["Total Price"]" Format="#,##0.##" Required="false">
-            <EditTemplate>
-                <MudNumericField @bind-Value="context.Item.thanhtien" Label="@Localizer["Total Price"]" Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" Required="false">
-            <EditTemplate>
-                <MudAutocomplete @bind-Value="context.Item.tiente" Label="@Localizer["Currency"]" Required="true" CoerceValue SearchFunc="SearchCurr" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.thue" Title="@Localizer["VAT"]" Format="#,##0.##" Required="false">
-            <EditTemplate>
-                <MudNumericField @bind-Value="context.Item.thue" Label="@Localizer["VAT"]" Format="#,##0.##" Culture="@_en" T="double?" TextChanged="@(e => CalculateThanhtiensauthue(context.Item))" HideSpinButtons="true" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" Required="false">
-            <EditTemplate>
-                <MudNumericField @bind-Value="context.Item.thanhtiensauthue" Label="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.tigiacredit" Title="@Localizer["Exchange Rate Credit"]" Format="#,##0.##" Required="false">
-            <EditTemplate>
-                <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
-                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
-                               Style="min-width: 80px; height: 36px; padding: 5px 10px;"
-                               OnClick="@(() => GetTigia(context.Item))">
-                        @Localizer["gettigia"]
-                    </MudButton>
-                    <MudNumericField @bind-Value="context.Item.tigiacredit"
-                                     Label="@Localizer["Exchange Rate Credit"]"
-                                     Format="#,##0.##" Culture="@_en"
-                                     T="double?" Required="true" HideSpinButtons="true"
-                                     Class="text-right" />
-                </MudStack>
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.tigiahoadondauvao" Title="@Localizer["Exchange Rate Invoice"]" Format="#,##0.##" Required="false">
-            <EditTemplate>
-                <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
-                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
-                               Style="min-width: 80px; height: 36px; padding: 5px 10px;"
-                               OnClick="@(() => GetTigia_invoice(context.Item))">
-                        @Localizer["gettigia"]
-                    </MudButton>
-                    <MudNumericField @bind-Value="context.Item.tigiahoadondauvao"
-                                     Label="@Localizer["Exchange Rate Invoice"]"
-                                     Format="#,##0.##" Culture="@_en"
-                                     T="double?" Required="true" HideSpinButtons="true"
-                                     Class="text-right" />
-                </MudStack>
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.ContainerNo" Title="@Localizer["Cont. No."]" Required="false">
-            <EditTemplate>
-                <MudTextField @bind-Value="context.Item.ContainerNo" Label="@Localizer["Cont. No."]" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.ghichu_credit" Title="@Localizer["Notes"]" Required="false">
-            <EditTemplate>
-                <MudTextField @bind-Value="context.Item.ghichu_credit" Label="@Localizer["Notes"]" Lines="3" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
-        <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+        <PropertyColumn Property="x => x.dongia" Title="@Localizer["Unit Price"]" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["Total Price"]" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" Required="false" />
+        <PropertyColumn Property="x => x.ContainerNo" Title="@Localizer["Cont. No."]" Required="false" />
+        <PropertyColumn Property="x => x.Date_Of_EST" Title="Date Of EST" Format="dd/MM/yyyy" Required="false" />
+        <PropertyColumn Property="x => x.Size" Title="Size" Required="false" />
+        <PropertyColumn Property="x => x.Date_In_Yard" Title="Date In Yard" Format="dd/MM/yyyy" Required="false" />
+        <PropertyColumn Property="x => x.Manufacturing_Date" Title="Manufacturing Date" Required="false" />
+        <PropertyColumn Property="x => x.IT" Title="IT" Required="false" />
+        <PropertyColumn Property="x => x.Com_Code" Title="Com Code" Required="false" />
+        <PropertyColumn Property="x => x.COMPONENTS_DETAILS" Title="Components Details" Required="false" />
+        <PropertyColumn Property="x => x.LOC" Title="LOC" Required="false" />
+        <PropertyColumn Property="x => x.DM_Code" Title="DM Code" Required="false" />
+        <PropertyColumn Property="x => x.RP_Code" Title="RP Code" Required="false" />
+        <PropertyColumn Property="x => x.LHT" Title="LHT" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.WDT" Title="WDT" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.R" Title="R" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.Hours" Title="Hours" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.Labor_Cost" Title="Labor Cost" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.Material_Cost" Title="Material Cost" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.Labor_Rate" Title="Labor Rate" Format="#,##0.##" Required="false" />
+        <PropertyColumn Property="x => x.Billing" Title="Billing" Required="false" />
+        <PropertyColumn Property="x => x.Owner" Title="Owner" Required="false" />
+        <PropertyColumn Property="x => x.Location" Title="Location" Required="false" />
+        <PropertyColumn Property="x => x.ghichu_credit" Title="@Localizer["Notes"]" Required="false" />
+        <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false" />
+        <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false" />
     </Columns>
 </MudDataGrid>
 
@@ -196,10 +150,10 @@
 {
     <MudStack Row Justify="Justify.FlexStart" Class="pa-4">
         <MudText Typo="Typo.subtitle2" Align="Align.Center" GutterBottom="true" Style="margin-right:20px;">
-            Total Inc. VAT: @(Listdata.Sum(x => x.thanhtiensauthue / (x.tiente == "VND" ? x.tigiacredit : 1))!.Value.ToString("#,##0.##", _en)) USD
+            Total: @(Listdata.Sum(x => x.thanhtien / (x.tiente == "VND" ? x.tigiacredit : 1))!.Value.ToString("#,##0.##", _en)) USD
         </MudText>
         <MudText Typo="Typo.subtitle2" Align="Align.Center" GutterBottom="true">
-            Total Inc. VAT: @(Listdata.Sum(x => x.thanhtiensauthue * (x.tiente == "USD" ? x.tigiacredit : 1))!.Value.ToString("#,##0.##", _en)) VND
+            Total: @(Listdata.Sum(x => x.thanhtien * (x.tiente == "USD" ? x.tigiacredit : 1))!.Value.ToString("#,##0.##", _en)) VND
         </MudText>
     </MudStack>
 }
@@ -214,12 +168,12 @@
     private List<M_Credit> Listdata = new();
     private List<M_Customer> Customers = new();
     private List<ChargeModel> charges = new();
-    private List<string> Types = new();
     private List<string> currs = new();
     private M_Credit? detail;
     private M_Credit? detail_credit;
     private HashSet<M_Credit> _selectedItems = new();
     private bool _loading;
+    private bool _importing;
     private bool _initialized;
     private string usr = string.Empty;
     private Guid _loadedContextKey = Guid.Empty;
@@ -277,21 +231,6 @@
             .OrderByDescending(x => x.UPDATETIME)
             .ToListAsync();
 
-        var debitTypes = await db.Debit.AsNoTracking()
-            .Select(x => x.type)
-            .Where(x => x != null)
-            .ToListAsync();
-        var creditTypes = await db.Credit.AsNoTracking()
-            .Select(x => x.type)
-            .Where(x => x != null)
-            .ToListAsync();
-        Types = debitTypes
-            .Union(creditTypes)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x!)
-            .Distinct()
-            .ToList();
-
         Customers = await db.Customer.AsNoTracking().OrderBy(x => x.shortname).ToListAsync();
     }
 
@@ -340,8 +279,7 @@
         SetContextIds(item);
         if (IsContContext && !string.IsNullOrWhiteSpace(QuanLyCont?.Container))
             item.ContainerNo = QuanLyCont.Container;
-        Listdata.Add(item);
-        await mudTable.SetEditingItemAsync(item);
+        await OpenEditDialogAsync(item, isNew: true);
     }
 
     private async Task AddItem()
@@ -354,8 +292,37 @@
             item.ContainerNo = detail.ContainerNo;
         }
         SetContextIds(item);
-        Listdata.Add(item);
-        await mudTable.SetEditingItemAsync(item);
+        await OpenEditDialogAsync(item, isNew: true);
+    }
+
+    private async Task OpenEditDialogAsync(M_Credit model, bool isNew)
+    {
+        if (!_canEditContext)
+            return;
+
+        var parameters = new DialogParameters
+        {
+            ["Model"] = model,
+            ["IsNew"] = isNew,
+            ["Customers"] = Customers,
+            ["Charges"] = charges,
+            ["Currencies"] = currs
+        };
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.ExtraLarge,
+            FullWidth = true
+        };
+        var dialog = await DialogService.ShowAsync<CreDitTab_QuanLy_EditDialog>(
+            isNew ? "Thêm Credit" : "Sửa Credit",
+            parameters,
+            options);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not M_Credit item)
+            return;
+
+        await CommittedItem(item);
     }
 
     private async Task DeleteItem(M_Credit item)
@@ -382,6 +349,7 @@
         item.hblid = Guid.Empty;
         item.quotationid = Guid.Empty;
         item.ContainerNo = string.IsNullOrWhiteSpace(item.ContainerNo) ? null : item.ContainerNo.Trim();
+        await ApplyCreditDefaultsAsync(item);
         item.userupdate = usr;
         item.dateupdate = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
         var rs = item.creditid != Guid.Empty
@@ -389,6 +357,16 @@
             : await shipsv.CreateCreditMBL(item);
         CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         await Refresh();
+    }
+
+    private async Task ApplyCreditDefaultsAsync(M_Credit item)
+    {
+        item.type = "CONT";
+        item.thue = 0;
+        item.thanhtiensauthue = item.thanhtien;
+        var usdRate = await Vcbsv.Getexchange_cur("USD");
+        item.tigiacredit = usdRate;
+        item.tigiahoadondauvao = usdRate;
     }
 
     private void SetContextIds(M_Credit item)
@@ -523,59 +501,6 @@
         return charges.Where(x => (x.CHARGE_CODE + "_" + x.CHARGE).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.CHARGE_ID);
     }
 
-    private async Task<IEnumerable<string>> SearchType(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return Types;
-        return Types.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private async Task<IEnumerable<string>> SearchCurr(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return currs;
-        return currs.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private void CalculateTotal(M_Credit item)
-    {
-        if (item.soluong.HasValue && item.dongia.HasValue)
-        {
-            item.thanhtien = Math.Round((item.soluong ?? 0) * (item.dongia ?? 0), 2);
-            CalculateThanhtiensauthue(item);
-        }
-    }
-
-    private void CalculateThanhtiensauthue(M_Credit item)
-    {
-        if (item.thanhtien.HasValue && item.thue.HasValue)
-            item.thanhtiensauthue = Math.Round((item.thanhtien ?? 0) * ((item.thue ?? 0) / 100 + 1), 2);
-    }
-
-    private async Task GetTigia(M_Credit item)
-    {
-        var cur = item.tiente;
-        if (cur == "VND")
-        {
-            CallSnackBar("Tiền tệ VND: lấy tỉ giá theo USD.", MudBlazor.Severity.Info);
-            cur = "USD";
-        }
-        item.tigiacredit = await Vcbsv.Getexchange_cur(cur);
-        StateHasChanged();
-    }
-
-    private async Task GetTigia_invoice(M_Credit item)
-    {
-        var cur = item.tiente;
-        if (cur == "VND")
-        {
-            CallSnackBar("Tiền tệ VND: lấy tỉ giá theo USD.", MudBlazor.Severity.Info);
-            cur = "USD";
-        }
-        item.tigiahoadondauvao = await Vcbsv.Getexchange_cur(cur);
-        StateHasChanged();
-    }
-
     private async Task UpdatebyCheckboxClick(M_Credit item)
     {
         item.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", new CultureInfo("en-US"));
@@ -613,6 +538,350 @@
         }
 
         detail_credit = JsonSerializer.Deserialize<M_Credit>(JsonSerializer.Serialize(item));
-        await mudTable.SetEditingItemAsync(item);
+        await OpenEditDialogAsync(item, isNew: false);
+    }
+
+    private async Task OnImportInputChanged(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null)
+            return;
+        await ImportExcelAsync(file);
+    }
+
+    private async Task ImportExcelAsync(IBrowserFile file)
+    {
+        if (!_canEditContext)
+            return;
+
+        if (IsContContext && string.IsNullOrWhiteSpace(QuanLyCont?.HBL_No))
+        {
+            CallSnackBar("Container chưa có HB/L No — không thể import. Vui lòng nhập HBL trước.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)
+            && !file.Name.EndsWith(".xls", StringComparison.OrdinalIgnoreCase))
+        {
+            CallSnackBar("Chỉ nhận file Excel .xlsx hoặc .xls.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        // Phải đọc file vào memory TRƯỚC khi mở dialog / StateHasChanged,
+        // nếu không InputFile bị dispose → lỗi _blazorFilesById.
+        using var memoryStream = new MemoryStream();
+        try
+        {
+            await using (var uploadStream = file.OpenReadStream(50 * 1024 * 1024))
+            {
+                await uploadStream.CopyToAsync(memoryStream);
+            }
+            memoryStream.Position = 0;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không đọc được file Excel: " + ex.Message, MudBlazor.Severity.Error);
+            return;
+        }
+
+        // C8 = số container dòng data đầu — bắt buộc có trước khi import
+        try
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using (var previewPackage = new ExcelPackage(memoryStream))
+            {
+                var previewWs = previewPackage.Workbook.Worksheets.FirstOrDefault();
+                if (previewWs?.Dimension == null)
+                {
+                    CallSnackBar("File Excel không có dữ liệu.", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                var contC8 = TrimOrNull(ReadCellText(previewWs, 8, 3));
+                if (string.IsNullOrWhiteSpace(contC8))
+                {
+                    CallSnackBar("Ô C8 không có số container — không thể import.", MudBlazor.Severity.Warning);
+                    return;
+                }
+            }
+            memoryStream.Position = 0;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không đọc được file Excel: " + ex.Message, MudBlazor.Severity.Error);
+            return;
+        }
+
+        try
+        {
+            _importing = true;
+
+            var customerDialog = await DialogService.ShowAsync<CreDitTab_QuanLy_ImportCustomerDialog>(
+                "Chọn Customer",
+                new DialogParameters { ["Customers"] = Customers },
+                new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true });
+            var customerResult = await customerDialog.Result;
+            if (customerResult is null || customerResult.Canceled || customerResult.Data is not Guid customerId || customerId == Guid.Empty)
+            {
+                CallSnackBar("Đã hủy import — chưa chọn Customer.", MudBlazor.Severity.Info);
+                return;
+            }
+
+            var laborCharge = charges.FirstOrDefault(x =>
+                string.Equals(x.CHARGE?.Trim(), "LABOR COST", StringComparison.OrdinalIgnoreCase));
+            var materialCharge = charges.FirstOrDefault(x =>
+                string.Equals(x.CHARGE?.Trim(), "MATERIAL COST", StringComparison.OrdinalIgnoreCase));
+            if (laborCharge is null || materialCharge is null)
+            {
+                CallSnackBar("Không tìm thấy Charge \"LABOR COST\" hoặc \"MATERIAL COST\".", MudBlazor.Severity.Error);
+                return;
+            }
+
+            var hblId = await ResolveHblIdFromQuanLyContAsync();
+            if (IsContContext && !string.IsNullOrWhiteSpace(QuanLyCont?.HBL_No) && hblId == Guid.Empty)
+            {
+                CallSnackBar($"Không tìm thấy HBL trùng HBL_No: {QuanLyCont!.HBL_No}. Import vẫn tiếp tục với hblid trống.", MudBlazor.Severity.Warning);
+            }
+
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage(memoryStream);
+            var ws = package.Workbook.Worksheets.FirstOrDefault();
+            if (ws?.Dimension == null)
+            {
+                CallSnackBar("File Excel không có dữ liệu.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var currency = ParseCurrencyFromCell(ws.Cells[6, 9].Value); // I6
+            var laborRate = ReadCellDouble(ws, 6, 20); // T6
+            if (string.IsNullOrWhiteSpace(currency))
+                currency = "USD";
+
+            DateTime? carryDateOfEst = null;
+            string? carryContainerNo = null;
+            string? carrySize = null;
+            DateTime? carryDateInYard = null;
+            string? carryManufacturingDate = null;
+            string? carryBilling = null;
+            string? carryOwner = null;
+            string? carryLocation = null;
+
+            var successCount = 0;
+            var skipCount = 0;
+            const int dataStartRow = 8;
+
+            for (var row = dataStartRow; row <= ws.Dimension.End.Row; row++)
+            {
+                // Dòng total: không có IT/COM/COMPONENTS (cột G/H/I)
+                if (IsEorTotalRow(ws, row))
+                {
+                    skipCount++;
+                    continue;
+                }
+
+                // Carry-forward B-F, U-W
+                var dateOfEst = ReadCellDate(ws, row, 2) ?? carryDateOfEst;
+                var containerNo = TrimOrNull(ReadCellText(ws, row, 3)) ?? carryContainerNo;
+                var size = TrimOrNull(ReadCellText(ws, row, 4)) ?? carrySize;
+                var dateInYard = ReadCellDate(ws, row, 5) ?? carryDateInYard;
+                var manufacturingDate = FormatManufacturingDate(ws.Cells[row, 6].Value) ?? carryManufacturingDate;
+                var billing = TrimOrNull(ReadCellText(ws, row, 21)) ?? carryBilling;
+                var owner = TrimOrNull(ReadCellText(ws, row, 22)) ?? carryOwner;
+                var location = TrimOrNull(ReadCellText(ws, row, 23)) ?? carryLocation;
+
+                carryDateOfEst = dateOfEst;
+                carryContainerNo = containerNo;
+                carrySize = size;
+                carryDateInYard = dateInYard;
+                carryManufacturingDate = manufacturingDate;
+                carryBilling = billing;
+                carryOwner = owner;
+                carryLocation = location;
+
+                var baseCredit = new M_Credit
+                {
+                    customerid = customerId,
+                    hblid = hblId,
+                    tiente = currency,
+                    Labor_Rate = laborRate,
+                    Date_Of_EST = dateOfEst,
+                    ContainerNo = containerNo ?? (IsContContext ? TrimOrNull(QuanLyCont?.Container) : null),
+                    Size = size,
+                    Date_In_Yard = dateInYard,
+                    Manufacturing_Date = manufacturingDate,
+                    IT = TrimOrNull(ReadCellText(ws, row, 7)),
+                    Com_Code = TrimOrNull(ReadCellText(ws, row, 8)),
+                    COMPONENTS_DETAILS = TrimOrNull(ReadCellText(ws, row, 9)),
+                    LOC = TrimOrNull(ReadCellText(ws, row, 10)),
+                    DM_Code = TrimOrNull(ReadCellText(ws, row, 11)),
+                    RP_Code = TrimOrNull(ReadCellText(ws, row, 12)),
+                    LHT = ReadCellDouble(ws, row, 13),
+                    WDT = ReadCellDouble(ws, row, 14),
+                    soluong = 1,
+                    R = ReadCellDouble(ws, row, 16),
+                    Hours = ReadCellDouble(ws, row, 17),
+                    Labor_Cost = ReadCellDouble(ws, row, 18),
+                    Material_Cost = ReadCellDouble(ws, row, 19),
+                    Billing = billing,
+                    Owner = owner,
+                    Location = location
+                };
+
+                var laborCost = baseCredit.Labor_Cost;
+                var materialCost = baseCredit.Material_Cost;
+
+                if ((!laborCost.HasValue || laborCost == 0) && (!materialCost.HasValue || materialCost == 0))
+                {
+                    skipCount++;
+                    continue;
+                }
+
+                if (laborCost.HasValue && laborCost != 0)
+                {
+                    var laborFee = CloneCreditBase(baseCredit);
+                    laborFee.itemid = laborCharge.CHARGE_ID;
+                    laborFee.dongia = laborCost;
+                    laborFee.soluong = 1;
+                    laborFee.thanhtien = laborCost;
+                    if (await SaveImportedCreditAsync(laborFee))
+                        successCount++;
+                }
+
+                if (materialCost.HasValue && materialCost != 0)
+                {
+                    var materialFee = CloneCreditBase(baseCredit);
+                    materialFee.itemid = materialCharge.CHARGE_ID;
+                    materialFee.dongia = materialCost;
+                    materialFee.soluong = 1;
+                    materialFee.thanhtien = materialCost;
+                    if (await SaveImportedCreditAsync(materialFee))
+                        successCount++;
+                }
+            }
+
+            await Refresh();
+            CallSnackBar(
+                successCount > 0
+                    ? $"Import EOR-ASR thành công {successCount} phí credit.{(skipCount > 0 ? $" Bỏ qua {skipCount} dòng." : string.Empty)}"
+                    : "Không import được phí credit nào.",
+                successCount > 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Import Excel lỗi: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private async Task<bool> SaveImportedCreditAsync(M_Credit item)
+    {
+        SetContextIds(item);
+        item.mblid = Guid.Empty;
+        // hblid giữ nguyên (đã resolve từ QuanLy_Cont.HBL_No → M_HBL.hbl)
+        item.quotationid = Guid.Empty;
+        await ApplyCreditDefaultsAsync(item);
+        item.userupdate = usr;
+        item.dateupdate = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss");
+        var rs = await shipsv.CreateCreditMBL(item);
+        if (!rs.Flag)
+            CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+        return rs.Flag;
+    }
+
+    private async Task<Guid> ResolveHblIdFromQuanLyContAsync()
+    {
+        if (!IsContContext || QuanLyCont is null || string.IsNullOrWhiteSpace(QuanLyCont.HBL_No))
+            return Guid.Empty;
+
+        var hblNo = QuanLyCont.HBL_No.Trim();
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var candidates = await db.HBL.AsNoTracking()
+            .Where(x => x.hbl != null && x.hbl != string.Empty)
+            .ToListAsync();
+        var hbl = candidates.FirstOrDefault(x =>
+            string.Equals(x.hbl?.Trim(), hblNo, StringComparison.OrdinalIgnoreCase));
+        return hbl?.hblID ?? Guid.Empty;
+    }
+
+    private static M_Credit CloneCreditBase(M_Credit source) =>
+        JsonSerializer.Deserialize<M_Credit>(JsonSerializer.Serialize(source))!;
+
+    /// <summary>Dòng total: không có IT / COM CODE / COMPONENTS (G/H/I).</summary>
+    private static bool IsEorTotalRow(ExcelWorksheet ws, int row)
+    {
+        var it = ReadCellText(ws, row, 7);
+        var com = ReadCellText(ws, row, 8);
+        var components = ReadCellText(ws, row, 9);
+        return string.IsNullOrWhiteSpace(it)
+            && string.IsNullOrWhiteSpace(com)
+            && string.IsNullOrWhiteSpace(components);
+    }
+
+    private static string? ParseCurrencyFromCell(object? value)
+    {
+        var text = Convert.ToString(value)?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        var idx = text.LastIndexOf(':');
+        if (idx >= 0 && idx < text.Length - 1)
+            return text[(idx + 1)..].Trim();
+
+        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 0 ? parts[^1].Trim() : text;
+    }
+
+    private static string? FormatManufacturingDate(object? value)
+    {
+        if (value is DateTime dt)
+            return dt.ToString("MM/yyyy", CultureInfo.InvariantCulture);
+
+        var text = Convert.ToString(value)?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+
+        if (DateTime.TryParseExact(text, new[] { "MM/yyyy", "M/yyyy", "MM-yyyy", "M-yyyy" },
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            return parsed.ToString("MM/yyyy", CultureInfo.InvariantCulture);
+
+        return text;
+    }
+
+    private static string? ReadCellText(ExcelWorksheet ws, int row, int col) =>
+        Convert.ToString(ws.Cells[row, col].Value)?.Trim();
+
+    private static double? ReadCellDouble(ExcelWorksheet ws, int row, int col)
+    {
+        var value = ws.Cells[row, col].Value;
+        if (value == null) return null;
+        if (value is double d) return d;
+        if (value is decimal m) return (double)m;
+        if (value is int i) return i;
+        if (value is long l) return l;
+        var text = Convert.ToString(value)?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        return double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)
+            || double.TryParse(text, NumberStyles.Any, CultureInfo.GetCultureInfo("en-US"), out parsed)
+            ? parsed
+            : null;
+    }
+
+    private static DateTime? ReadCellDate(ExcelWorksheet ws, int row, int col)
+    {
+        var value = ws.Cells[row, col].Value;
+        if (value is DateTime dt) return dt.Date;
+        var text = Convert.ToString(value)?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (DateTime.TryParseExact(text, new[] { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "MM/dd/yyyy" },
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+            return parsed.Date;
+        if (double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var oa) && oa > 0)
+            return DateTime.FromOADate(oa).Date;
+        return DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
+            ? parsed.Date
+            : null;
     }
 }

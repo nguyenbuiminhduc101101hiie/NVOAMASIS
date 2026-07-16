@@ -453,7 +453,7 @@ namespace NVOAMASIS.Data
                 entity.ToTable("QuanLy_Cont");
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
-                entity.Property(e => e.Container).HasMaxLength(20).IsRequired();
+                entity.Property(e => e.Container).HasMaxLength(20);
                 entity.Property(e => e.Collect).HasColumnType("decimal(10,2)");
             });
 

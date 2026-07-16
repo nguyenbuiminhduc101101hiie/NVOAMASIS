@@ -1,0 +1,370 @@
+@using System.Text.Json
+@using MudBlazor
+@using NVOAMASIS.Models
+@inject ShipmentService shipsv
+@inject ContainerDepotLookupService depotLookup
+@inject GlobalServices gsv
+@inject BookingService bksv
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog Style="max-height: 92vh;">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(IsNew ? Localizer["New"] : Localizer["edit"]) — @Localizer["Container"]</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6" md="4">
+                    <MudSelect T="string"
+                               @bind-Value="_item.CTN_SIZE_TYPE"
+                               Label="@Localizer["Cont. Size Type"]"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Clearable>
+                        @foreach (var item in ContTypes)
+                        {
+                            <MudSelectItem Value="@item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudAutocomplete T="string"
+                                     @bind-Value="_item.CONTAINER_NO"
+                                     OnBlur="OnContainerNoBlurAsync"
+                                     Label="@Localizer["Cont. No."]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     CoerceValue
+                                     SearchFunc="SearchContNo"
+                                     Clearable />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudAutocomplete T="string"
+                                     @bind-Value="_item.Seal"
+                                     Label="@Localizer["Seal"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     CoerceValue
+                                     SearchFunc="SearchSeal"
+                                     Clearable />
+                </MudItem>
+
+                <MudItem xs="12" sm="6" md="3">
+                    <MudAutocomplete T="double?"
+                                     @bind-Value="_item.pkgs"
+                                     Label="@Localizer["PKGs"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     CoerceValue
+                                     SearchFunc="SearchKGs" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudSelect T="string"
+                               @bind-Value="_item.pkgsCode"
+                               Label="@Localizer["PKGs Code"]"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Clearable>
+                        @foreach (var item in PkgTypes)
+                        {
+                            <MudSelectItem Value="@item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudNumericField @bind-Value="_item.cbm"
+                                     Label="@Localizer["CBM"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     HideSpinButtons="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudNumericField @bind-Value="_item.NETWEIGHT"
+                                     Label="@Localizer["Net WT."]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     HideSpinButtons="true" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudNumericField @bind-Value="_item.GrossWeight"
+                                     Label="@Localizer["Gross WT."]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     HideSpinButtons="true" />
+                </MudItem>
+
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_item.description"
+                                  Label="@Localizer["Description"]"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Lines="3"
+                                  AutoGrow="true" />
+                </MudItem>
+
+                <MudItem xs="12" sm="6" md="4">
+                    <MudSelect T="string"
+                               @bind-Value="_item.NVOCC_Status"
+                               Label="@Localizer["NVOCC_Status"]"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Required
+                               RequiredError="@NvoccStatusRequiredMessage"
+                               Clearable>
+                        @foreach (var item in NvoccStatusOptions)
+                        {
+                            <MudSelectItem Value="@item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudSelect T="string"
+                               @bind-Value="_item.Status_Cont"
+                               Label="@Localizer["Status_Cont"]"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Required
+                               RequiredError="@StatusContRequiredMessage"
+                               Clearable>
+                        @foreach (var item in StatusContOptions)
+                        {
+                            <MudSelectItem Value="@item">@item</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4" Class="d-flex align-center">
+                    <MudCheckBox T="bool?"
+                                 @bind-Value="_item.Decommision"
+                                 Label="@Localizer["Decommision"]"
+                                 Color="Color.Primary" />
+                </MudItem>
+
+                <MudItem xs="12" sm="6" md="6">
+                    <MudAutocomplete T="string"
+                                     @bind-Value="_item.In_Depot"
+                                     Label="@($"{Localizer["In Depot"]} *")"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     CoerceValue
+                                     SearchFunc="SearchTerminal"
+                                     Required="@IsInDepotRequired"
+                                     RequiredError="@InDepotOrInPortRequiredMessage"
+                                     Clearable />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="6">
+                    <MudAutocomplete T="string"
+                                     @bind-Value="_item.In_Port"
+                                     Label="@($"{Localizer["In Port"]} *")"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     CoerceValue
+                                     SearchFunc="SearchPorts"
+                                     Required="@IsInPortRequired"
+                                     RequiredError="@InDepotOrInPortRequiredMessage"
+                                     Clearable />
+                </MudItem>
+
+                <MudItem xs="12" sm="6" md="4">
+                    <MudDatePicker @bind-Date="_item.Empty_pickup_date"
+                                   Label="Empty Pickup Date"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   DateFormat="dd/MM/yyyy"
+                                   Clearable />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudDatePicker @bind-Date="_item.Full_Discharge_Date"
+                                   Label="Full Discharge Date"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   DateFormat="dd/MM/yyyy"
+                                   Clearable />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudDatePicker @bind-Date="_item.Full_Delivery_Date"
+                                   Label="Full Delivery Date"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   DateFormat="dd/MM/yyyy"
+                                   Clearable />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudDatePicker @bind-Date="_item.Empty_Return_Date"
+                                   Label="Empty Return Date"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   DateFormat="dd/MM/yyyy"
+                                   Clearable />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudDatePicker @bind-Date="_item.Storage_In_Date"
+                                   Label="Storage In Date"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   DateFormat="dd/MM/yyyy"
+                                   Clearable />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudDatePicker @bind-Date="_item.Storage_Out_Date"
+                                   Label="Storage Out Date"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   DateFormat="dd/MM/yyyy"
+                                   Clearable />
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Hủy</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync" Disabled="_saving">
+            @if (_saving)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Lưu
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const string NvoccStatusRequiredMessage = "Vui lòng nhập NVOCC Status.";
+    private const string StatusContRequiredMessage = "Vui lòng nhập Status Cont.";
+    private const string InDepotOrInPortRequiredMessage = "Vui lòng nhập In Depot hoặc In Port (bắt buộc ít nhất một trong hai).";
+
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public M_Container? Model { get; set; }
+    [Parameter] public bool IsNew { get; set; } = true;
+    [Parameter] public bool IsMbl { get; set; }
+    [Parameter] public Guid? MblId { get; set; }
+    [Parameter] public List<string> ContTypes { get; set; } = new();
+    [Parameter] public List<string> PkgTypes { get; set; } = new();
+    [Parameter] public List<string> NvoccStatusOptions { get; set; } = new();
+    [Parameter] public List<string> StatusContOptions { get; set; } = new();
+    [Parameter] public List<M_Container> Conts { get; set; } = new();
+
+    private MudForm _form = default!;
+    private M_Container _item = new();
+    private List<Terminal_> _terminals = new();
+    private List<PortModel> _ports = new();
+    private bool _saving;
+    private bool IsInDepotRequired => string.IsNullOrWhiteSpace(_item.In_Port);
+    private bool IsInPortRequired => string.IsNullOrWhiteSpace(_item.In_Depot);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _item = Model == null
+            ? new M_Container()
+            : JsonSerializer.Deserialize<M_Container>(JsonSerializer.Serialize(Model))!;
+        _terminals = await gsv.GetList_Terminal();
+        _ports = await bksv.GetList_PORT();
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task SaveAsync()
+    {
+        await _form.Validate();
+        if (!_form.IsValid)
+            return;
+
+        if (string.IsNullOrWhiteSpace(_item.NVOCC_Status) || string.IsNullOrWhiteSpace(_item.Status_Cont))
+        {
+            Snackbar.Add("Vui lòng nhập đầy đủ NVOCC Status và Status Cont.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_item.In_Depot) && string.IsNullOrWhiteSpace(_item.In_Port))
+        {
+            Snackbar.Add(InDepotOrInPortRequiredMessage, MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            MudDialog.Close(DialogResult.Ok(_item));
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task OnContainerNoBlurAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_item.CONTAINER_NO))
+            return;
+
+        var containerNo = _item.CONTAINER_NO.Trim();
+        _item.CONTAINER_NO = containerNo;
+
+        var result = shipsv.CheckContainerNumber(containerNo);
+        Snackbar.Add(result, result == "Container Number is OK!" ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+
+        var lookup = await depotLookup.FindLatestDepotAsync(containerNo);
+        if (lookup is null || !lookup.Found)
+            return;
+
+        var inDepot = ContainerDepotLookupService.ResolveTerminalName(lookup.Depot, _terminals) ?? lookup.Depot;
+        _item.In_Depot = inDepot;
+        Snackbar.Add($"Đã gán In Depot: {inDepot} (từ {lookup.SourceTable}).", MudBlazor.Severity.Info);
+    }
+
+    private Task<IEnumerable<string?>> SearchContNo(string? text)
+    {
+        var items = !IsMbl && MblId.HasValue
+            ? Conts.Where(x => x.mblid == MblId).Select(x => x.CONTAINER_NO).Distinct()
+            : Conts.Select(x => x.CONTAINER_NO).Distinct();
+        if (string.IsNullOrEmpty(text))
+            return Task.FromResult(items);
+        return Task.FromResult(items.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private Task<IEnumerable<string?>> SearchSeal(string? text)
+    {
+        var items = !IsMbl && MblId.HasValue
+            ? Conts.Where(x => x.mblid == MblId).Select(x => x.Seal).Distinct()
+            : Conts.Select(x => x.Seal).Distinct();
+        if (string.IsNullOrEmpty(text))
+            return Task.FromResult(items);
+        return Task.FromResult(items.Where(x => !string.IsNullOrEmpty(x) && x.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private Task<IEnumerable<double?>> SearchKGs(string? text)
+    {
+        var items = Conts.Select(x => x.pkgs).Distinct();
+        if (string.IsNullOrEmpty(text))
+            return Task.FromResult(items);
+        return Task.FromResult(items.Where(x => x != null && x.Equals(Convert.ToDouble(text))));
+    }
+
+    private Task<IEnumerable<string?>> SearchTerminal(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return Task.FromResult(Enumerable.Empty<string?>());
+        var filtered = _terminals
+            .Where(t => !string.IsNullOrEmpty(t.TermiNalName))
+            .Where(t =>
+                t.TermiNalName!.Contains(text, StringComparison.OrdinalIgnoreCase)
+                || (t.Code?.Contains(text, StringComparison.OrdinalIgnoreCase) == true))
+            .Select(t => t.TermiNalName)
+            .Distinct();
+        return Task.FromResult(filtered.AsEnumerable());
+    }
+
+    private Task<IEnumerable<string?>> SearchPorts(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || _ports.Count == 0)
+            return Task.FromResult(Enumerable.Empty<string?>());
+        var filtered = _ports
+            .Where(p => !string.IsNullOrWhiteSpace(p.PORT))
+            .Where(p =>
+                p.PORT!.Contains(text, StringComparison.OrdinalIgnoreCase)
+                || (p.PORT_CODE?.Contains(text, StringComparison.OrdinalIgnoreCase) == true))
+            .Select(p => p.PORT)
+            .Distinct();
+        return Task.FromResult(filtered.AsEnumerable());
+    }
+}
