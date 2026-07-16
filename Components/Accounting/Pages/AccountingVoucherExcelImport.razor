@@ -1,0 +1,315 @@
+@page "/accounting/import-vouchers-from-debt-excel"
+@namespace NVOAMASIS.Components.Accounting.Pages
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.Extensions.DependencyInjection
+@using MudBlazor
+@using NVOAMASIS.Data
+@inject IServiceScopeFactory ScopeFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+
+<PageTitle>Import voucher từ sổ công nợ</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="pa-4 pa-md-6">
+    <MudStack Spacing="3">
+        <MudPaper Elevation="0" Class="page-header pa-5">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="gap:16px; flex-wrap:wrap;">
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.h5" Class="font-weight-bold">Import voucher từ sổ chi tiết công nợ</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Đọc file sổ 131/331, gom theo số chứng từ và tạo AccountingVouchers + AccountingVoucherLines ở trạng thái nháp.
+                    </MudText>
+                </MudStack>
+                <MudChip T="string" Variant="Variant.Outlined" Color="Color.Primary" Icon="@Icons.Material.Filled.ReceiptLong">
+                    Không tự ghi sổ
+                </MudChip>
+            </MudStack>
+        </MudPaper>
+
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="4">
+                <MudPaper Elevation="1" Class="pa-5 h-100">
+                    <MudText Typo="Typo.h6">1. Chọn file Excel</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Hỗ trợ đúng mẫu có 2 dòng tiêu đề “Ngày tháng chứng từ / Sổ phát sinh”.
+                    </MudText>
+
+                    <div class="upload-zone mt-4">
+                        <MudIcon Icon="@Icons.Material.Filled.CloudUpload" Size="Size.Large" Color="Color.Primary" />
+                        <MudText Typo="Typo.subtitle1" Class="mt-2 font-weight-medium">
+                            @(_fileName ?? "Chọn file .xlsx")
+                        </MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Tối đa 20 MB</MudText>
+                        <InputFile OnChange="OnFileChanged" accept=".xlsx" class="file-input mt-3" />
+                    </div>
+
+                    @if (_isReading)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-4" />
+                    }
+
+                    @if (_fileName is not null)
+                    {
+                        <MudDivider Class="my-4" />
+                        <MudStack Spacing="1">
+                            <MudText Typo="Typo.body2"><b>Tên file:</b> @_fileName</MudText>
+                            <MudText Typo="Typo.body2"><b>Dung lượng:</b> @FormatFileSize(_fileSize)</MudText>
+                            <MudText Typo="Typo.body2"><b>Sheet:</b> @(_sheetName ?? "-")</MudText>
+                            <MudText Typo="Typo.body2"><b>Dòng tiêu đề:</b> @(_headerRow == 0 ? "-" : _headerRow.ToString(CultureInfo.InvariantCulture))</MudText>
+                            <MudText Typo="Typo.body2"><b>Tài khoản sổ:</b> @(_meta.AccountCode ?? "-")</MudText>
+                            <MudText Typo="Typo.body2"><b>Khách hàng:</b> @(_meta.DefaultCustomerName ?? "-")</MudText>
+                        </MudStack>
+                    }
+
+                    @if (_messages.Count > 0)
+                    {
+                        <MudAlert Severity="@MudBlazor.Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mt-4">
+                            @foreach (var message in _messages)
+                            {
+                                <div>@message</div>
+                            }
+                        </MudAlert>
+                    }
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="8">
+                <MudPaper Elevation="1" Class="pa-5 h-100">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="gap:12px; flex-wrap:wrap;">
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.h6">2. Thiết lập chứng từ</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Các voucher được tạo với Status = 0, Ghiso = 0, Approve = 0.</MudText>
+                        </MudStack>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.ContentPasteSearch"
+                                   OnClick="CheckExistingAsync" Disabled="@(_vouchers.Count == 0 || _isChecking)">
+                            Kiểm tra trùng
+                        </MudButton>
+                    </MudStack>
+
+                    <MudGrid Spacing="2" Class="mt-2">
+                        <MudItem xs="12" sm="6">
+                            <MudTextField @bind-Value="_companyIdText" Label="CompanyId *" Variant="Variant.Outlined"
+                                          Margin="Margin.Dense" HelperText="Tự lấy từ claim CompanyId nếu hệ thống có." />
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            @if (_transactionTypes.Count > 0)
+                            {
+                                <MudSelect T="string" @bind-Value="_transactionTypeCode" Label="Loại chứng từ *"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                                    @foreach (var transactionType in _transactionTypes)
+                                    {
+                                        <MudSelectItem T="string" Value="@transactionType">@transactionType</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            }
+                            else
+                            {
+                                <MudTextField @bind-Value="_transactionTypeCode" Label="Loại chứng từ *"
+                                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            }
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudTextField @bind-Value="_currencyCode" Label="Tiền tệ" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudTextField @bind-Value="_customerIdText" Label="CustomerId mặc định"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                                          HelperText="Không bắt buộc vì CustomerId trên VoucherLines cho phép NULL." />
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudTextField @bind-Value="_sourceAccountCode" Label="TK công nợ" Variant="Variant.Outlined"
+                                          Margin="Margin.Dense" ReadOnly="true" HelperText="Tự nhận diện từ tiêu đề sổ Excel." />
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudNumericField T="decimal" @bind-Value="_exchangeRate" Label="Tỷ giá"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" Min="0.000001M" />
+                        </MudItem>
+
+                        <MudItem xs="12" sm="6">
+                            <MudTextField @bind-Value="_createdBy" Label="Người tạo" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <MudSwitch T="bool" @bind-Value="_isTaxBook" Color="Color.Primary">Sổ thuế</MudSwitch>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <MudSwitch T="bool" @bind-Value="_isManagementBook" Color="Color.Primary">Sổ quản trị</MudSwitch>
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudDivider Class="my-4" />
+
+                    <MudGrid Spacing="2">
+                        <MudItem xs="6" sm="3">
+                            <div class="kpi-card">
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Voucher nhận diện</MudText>
+                                <MudText Typo="Typo.h6">@_vouchers.Count.ToString("N0")</MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <div class="kpi-card">
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Voucher đã chọn</MudText>
+                                <MudText Typo="Typo.h6">@SelectedVoucherCount.ToString("N0")</MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <div class="kpi-card">
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng Nợ</MudText>
+                                <MudText Typo="Typo.h6">@SelectedDebit.ToString("N0")</MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <div class="kpi-card">
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Tổng Có</MudText>
+                                <MudText Typo="Typo.h6">@SelectedCredit.ToString("N0")</MudText>
+                            </div>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Elevation="1" Class="pa-4 pa-md-5">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="gap:12px; flex-wrap:wrap;" Class="mb-3">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Style="gap:8px; flex-wrap:wrap;">
+                    <MudText Typo="Typo.h6">3. Preview voucher</MudText>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.DoneAll" OnClick="SelectAllValid">
+                        Chọn hợp lệ
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.RemoveDone" OnClick="ClearSelection">
+                        Bỏ chọn
+                    </MudButton>
+                </MudStack>
+                <MudTextField @bind-Value="_searchText" Placeholder="Tìm voucher, hóa đơn, diễn giải..."
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" Class="search-box" />
+            </MudStack>
+
+            @if (_vouchers.Count == 0)
+            {
+                <div class="empty-state pa-8">
+                    <MudIcon Icon="@Icons.Material.Filled.ReceiptLong" Size="Size.Large" Color="Color.Default" />
+                    <MudText Typo="Typo.subtitle1" Class="mt-2">Chưa có voucher để xem trước</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Chọn file Excel ở bước 1.</MudText>
+                </div>
+            }
+            else
+            {
+                <MudTable Items="@FilteredVouchers" Dense="true" Hover="true" Bordered="true" Striped="true"
+                          FixedHeader="true" Height="330px" Elevation="0" Breakpoint="Breakpoint.None">
+                    <HeaderContent>
+                        <MudTh Style="width:45px"></MudTh>
+                        <MudTh>Số voucher</MudTh>
+                        <MudTh>Ngày</MudTh>
+                        <MudTh>Loại</MudTh>
+                        <MudTh>Khách hàng</MudTh>
+                        <MudTh>Chiều hạch toán</MudTh>
+                        <MudTh Align="Right">Dòng Excel</MudTh>
+                        <MudTh Align="Right">Dòng voucher</MudTh>
+                        <MudTh Align="Right">Tổng Nợ</MudTh>
+                        <MudTh Align="Right">Tổng Có</MudTh>
+                        <MudTh>Trạng thái</MudTh>
+                    </HeaderContent>
+                    <RowTemplate Context="voucher">
+                        <MudTd>
+                            <MudCheckBox T="bool" @bind-Value="voucher.Selected" Disabled="@(!voucher.IsValid || voucher.ExistsInDatabase)" Dense="true" />
+                        </MudTd>
+                        <MudTd DataLabel="Số voucher"><b>@voucher.VoucherNo</b></MudTd>
+                        <MudTd DataLabel="Ngày">@voucher.VoucherDate.ToString("dd/MM/yyyy")</MudTd>
+                        <MudTd DataLabel="Loại">@_transactionTypeCode</MudTd>
+                        <MudTd DataLabel="Khách hàng">@voucher.CustomerName</MudTd>
+                        <MudTd DataLabel="Chiều hạch toán">
+                            @if (voucher.IsCreditVoucher)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">
+                                    Nợ TK đối ứng / Có @_sourceAccountCode
+                                </MudChip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">
+                                    Nợ @_sourceAccountCode / Có TK đối ứng
+                                </MudChip>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Dòng Excel" Align="Right">@voucher.SourceRows.Count</MudTd>
+                        <MudTd DataLabel="Dòng voucher" Align="Right">@voucher.Lines.Count</MudTd>
+                        <MudTd DataLabel="Tổng Nợ" Align="Right">@voucher.TotalDebit.ToString("N0")</MudTd>
+                        <MudTd DataLabel="Tổng Có" Align="Right">@voucher.TotalCredit.ToString("N0")</MudTd>
+                        <MudTd DataLabel="Trạng thái">
+                            @if (voucher.ExistsInDatabase)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled">Đã tồn tại</MudChip>
+                            }
+                            else if (!voucher.IsValid)
+                            {
+                                <MudTooltip Text="@string.Join("; ", voucher.Errors)">
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">Lỗi</MudChip>
+                                </MudTooltip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Hợp lệ</MudChip>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+
+        @if (_vouchers.Count > 0)
+        {
+            <MudPaper Elevation="1" Class="pa-4 pa-md-5">
+                <MudText Typo="Typo.h6" Class="mb-3">4. Các dòng AccountingVoucherLines sẽ tạo</MudText>
+                <MudTable Items="@FilteredGeneratedLines" Dense="true" Hover="true" Bordered="true" Striped="true"
+                          FixedHeader="true" Height="390px" Elevation="0" Breakpoint="Breakpoint.None">
+                    <HeaderContent>
+                        <MudTh>Voucher</MudTh>
+                        <MudTh>Line</MudTh>
+                        <MudTh>TK</MudTh>
+                        <MudTh Align="Right">Nợ</MudTh>
+                        <MudTh Align="Right">Có</MudTh>
+                        <MudTh>Số HĐ</MudTh>
+                        <MudTh>Diễn giải</MudTh>
+                        <MudTh>Dòng Excel</MudTh>
+                    </HeaderContent>
+                    <RowTemplate Context="line">
+                        <MudTd DataLabel="Voucher">@line.VoucherNo</MudTd>
+                        <MudTd DataLabel="Line">@line.LineNo</MudTd>
+                        <MudTd DataLabel="TK"><b>@line.AccountCode</b></MudTd>
+                        <MudTd DataLabel="Nợ" Align="Right">@line.DebitAmount.ToString("N0")</MudTd>
+                        <MudTd DataLabel="Có" Align="Right">@line.CreditAmount.ToString("N0")</MudTd>
+                        <MudTd DataLabel="Số HĐ">@line.InvoiceNo</MudTd>
+                        <MudTd DataLabel="Diễn giải">@line.Description</MudTd>
+                        <MudTd DataLabel="Dòng Excel">@(line.SourceRow == 0 ? "Tổng hợp" : line.SourceRow.ToString(CultureInfo.InvariantCulture))</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudPaper>
+        }
+
+        <MudPaper Elevation="0" Class="action-bar pa-3">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="gap:12px; flex-wrap:wrap;">
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Import chỉ tạo chứng từ nháp. Sau khi kiểm tra, dùng quy trình duyệt/post hiện tại để sinh GeneralLedgerEntries.
+                </MudText>
+                <MudStack Row="true" Spacing="2">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Filled.Refresh"
+                               OnClick="Reset" Disabled="@(_isSaving)">
+                        Làm lại
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
+                               OnClick="SaveAsync" Disabled="@(SelectedVoucherCount == 0 || _isSaving)">
+                        @if (_isSaving)
+                        {
+                            <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="mr-2" />
+                        }
+                        Tạo @SelectedVoucherCount voucher nháp
+                    </MudButton>
+                </MudStack>
+            </MudStack>
+        </MudPaper>
+    </MudStack>
+</MudContainer>
