@@ -19,7 +19,6 @@ public class QuanLy_Cont
     public string? ChuCont { get; set; }
 
     /// <summary>Số container (VD: MEDU1189165).</summary>
-    [Required]
     [MaxLength(20)]
     public string Container { get; set; } = string.Empty;
 

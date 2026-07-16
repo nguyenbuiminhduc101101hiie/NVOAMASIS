@@ -34,5 +34,25 @@ namespace NVOAMASIS.Models
         public string? sodntt { get; set; }
         public string? ghichu_credit { get; set; }
         public string? ContainerNo { get; set; }
+        public DateTime? Date_Of_EST { get; set; }
+        public string? Size { get; set; }
+        public DateTime? Date_In_Yard { get; set; }
+        public string? Manufacturing_Date { get; set; }
+        public string? IT { get; set; }
+        public string? Com_Code { get; set; }
+        public string? COMPONENTS_DETAILS { get; set; }
+        public string? LOC { get; set; }
+        public string? DM_Code { get; set; }
+        public string? RP_Code { get; set; }
+        public double? LHT { get; set; }
+        public double? WDT { get; set; }
+        public double? R { get; set; }
+        public double? Hours { get; set; }
+        public double? Labor_Cost { get; set; }
+        public double? Material_Cost { get; set; }
+        public double? Labor_Rate { get; set; }
+        public string? Billing { get; set; }
+        public string? Owner { get; set; }
+        public string? Location { get; set; }
     }
 }
