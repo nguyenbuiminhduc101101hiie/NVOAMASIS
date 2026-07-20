@@ -18,7 +18,8 @@ public class PhieuApproveService(
     IHttpContextAccessor httpContextAccessor,
     ITenantContext tenantContext,
     RegistryDbContext registry,
-    NotificationService notificationService)
+    NotificationService notificationService,
+    FcmPushService fcmPushService)
 {
     public const string LoaiThu = "Thu";
     public const string LoaiChi = "Chi";
@@ -172,6 +173,27 @@ public class PhieuApproveService(
         var ids = approvers.Select(a => a.UsrId.ToString()).Distinct().ToArray();
         if (ids.Length > 0)
             await notificationService.SendNotificationQuietAsync(ids, msg);
+
+        // Push FCM HTTP v1 tới Flutter (cần Fcm.Enabled + service account + device token)
+        try
+        {
+            var kind = loai == LoaiThu ? "phiếu thu" : "phiếu chi";
+            var title = $"Yêu cầu duyệt {kind}";
+            var body = string.IsNullOrWhiteSpace(soPhieu)
+                ? $"Từ {requestedBy}"
+                : $"{soPhieu} từ {requestedBy}";
+            await fcmPushService.SendPhieuApproveAsync(
+                approvers.Select(a => a.UsrId),
+                loai,
+                token,
+                title,
+                body);
+        }
+        catch (Exception ex)
+        {
+            // Không chặn flow duyệt nếu FCM lỗi
+            System.Diagnostics.Debug.WriteLine("FCM push skipped/failed: " + ex.Message);
+        }
     }
 
     /// <summary>Chi tiết phiếu để mở dialog duyệt trong app.</summary>

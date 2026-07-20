@@ -10,16 +10,34 @@ Copy toàn bộ nội dung bên dưới gửi cho team Flutter / AI coding agent
 |---|---|
 | Code trong solution NVOAMASIS | **ĐÃ CÓ** |
 | Controllers | `Controllers/MobileAuthController.cs`, `MobileNotificationController.cs`, `MobilePhieuApproveController.cs`, `MobileDeviceController.cs` |
-| Prod `https://amasis.nvocc.vn` | **CHƯA publish** API mobile (verify 2026-07-20: `POST /api/mobile/auth/login` → `302 Location: /ErrorStatus/404`) |
-| Base URL Flutter | Dùng host **đã deploy bản có Mobile API**. Hiện `amasis.nvocc.vn` **chưa dùng được** cho mobile cho đến khi publish. |
+| Bug ISnackbar / 500 HTML | **ĐÃ FIX** — `NotificationService` không còn inject MudBlazor `ISnackbar` |
+| FCM push khi gửi duyệt | **ĐÃ CÓ** FCM HTTP v1 (`FcmPushService` + `Google.Apis.Auth`). Legacy Server Key **không dùng**. |
+| Prod `https://amasis.nvocc.vn` | **ĐÃ CÓ** Mobile API. Push prod cần đặt service account trên server + `Fcm.Enabled=true`. |
+| Local test Flutter | `https://localhost:7248` |
 
-Health check sau khi deploy:
+Health check:
 
 ```bash
-curl.exe -i "https://<HOST>/api/mobile/ping"
-# Expect: 200 + JSON {"flag":true,"message":"mobile api ok",...}
-# Fail nếu vẫn 302 → /ErrorStatus/404 (chưa deploy đúng bản)
+curl.exe -i "https://localhost:7248/api/mobile/ping"
 ```
+
+### Bật FCM HTTP v1 (push điện thoại)
+
+1. Firebase Console → project **lms-qrscan** → Service accounts → Generate new private key  
+2. Đặt file: `Secrets/firebase-service-account.json` (đã trong `.gitignore`)  
+3. Config:
+
+```json
+"Fcm": {
+  "Enabled": true,
+  "ProjectId": "lms-qrscan",
+  "ServiceAccountPath": "Secrets/firebase-service-account.json"
+}
+```
+
+- Local: `appsettings.Development.json` đã `Enabled: true` — **chỉ cần thả file service account rồi restart**.  
+- Prod (`appsettings.json`): mặc định `Enabled: false` đến khi ops đặt SA trên server rồi bật.  
+- Thiếu file / sai ProjectId → log warning/error, **không** chặn email/in-app.
 
 ---
 
