@@ -1,41 +1,47 @@
 ﻿namespace NVOAMASIS.Services
 {
+    using Microsoft.AspNetCore.Http;
     using Microsoft.AspNetCore.SignalR;
-    using NVOAMASIS.Hubs;
-    using NVOAMASIS.Data;
-    using NVOAMASIS.Models;
-    using MimeKit;
-    using Stimulsoft.System.Windows.Forms;
-    using MudBlazor;
     using Microsoft.EntityFrameworkCore;
+    using Microsoft.Extensions.Logging;
+    using NVOAMASIS.Data;
+    using NVOAMASIS.Hubs;
+    using NVOAMASIS.Models;
     using NVOAMASIS.Response;
 
-    public class NotificationService(IHubContext<NotificationHub> _hubContext, AppDbContext _context, AccountService asv,GlobalServices gsv, ISnackbar Snackbar)
+    /// <summary>
+    /// Không inject MudBlazor ISnackbar — service còn được gọi từ API/JWT
+    /// (NavigationManager chưa init → crash RemoteNavigationManager).
+    /// </summary>
+    public class NotificationService(
+        IHubContext<NotificationHub> _hubContext,
+        AppDbContext _context,
+        AccountService asv,
+        GlobalServices gsv,
+        IHttpContextAccessor httpContextAccessor,
+        ILogger<NotificationService> logger)
     {
-        
-
         public async Task SendNotificationAsync(string[] recipients, string noidung)
         {
             try
             {
-                await SendNotificationCoreAsync(recipients, noidung, showSnack: true);
+                await SendNotificationCoreAsync(recipients, noidung);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                CallSnackBar("Sent Fail ", MudBlazor.Severity.Error);
+                logger.LogError(ex, "SendNotificationAsync failed");
             }
         }
 
-        /// <summary>Gửi notification không hiện snackbar từng người (dùng cho batch duyệt phiếu).</summary>
+        /// <summary>Gửi notification batch (duyệt phiếu / API).</summary>
         public async Task SendNotificationQuietAsync(string[] recipients, string noidung)
         {
-            await SendNotificationCoreAsync(recipients, noidung, showSnack: false);
+            await SendNotificationCoreAsync(recipients, noidung);
         }
 
-        private async Task SendNotificationCoreAsync(string[] recipients, string noidung, bool showSnack)
+        private async Task SendNotificationCoreAsync(string[] recipients, string noidung)
         {
-            var UserName = asv.GetAuth().Result.User.Identity!.Name!;
-            Guid? userid_login = await gsv.GetIdfromUser(UserName);
+            Guid? userid_login = await ResolveCurrentUserIdAsync();
 
             foreach (var user_receiverid in recipients)
             {
@@ -52,9 +58,6 @@
                 _context.Notifications.Add(notify);
                 await _context.SaveChangesAsync();
 
-                if (showSnack)
-                    CallSnackBar("Sent Successfully ", MudBlazor.Severity.Success);
-
                 await _hubContext.Clients.User(user_receiverid.ToString())
                     .SendAsync("ReceiveNotification", noidung);
 
@@ -65,20 +68,34 @@
             }
         }
 
+        private async Task<Guid?> ResolveCurrentUserIdAsync()
+        {
+            var principal = httpContextAccessor.HttpContext?.User;
+            if (principal != null)
+            {
+                var jwtId = MobileJwtTokenService.GetUserId(principal);
+                if (jwtId != null && jwtId != Guid.Empty)
+                    return jwtId;
+            }
+
+            var name = principal?.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                try { name = asv.GetAuth().Result.User.Identity?.Name; }
+                catch { /* API / non-Blazor */ }
+            }
+
+            if (string.IsNullOrWhiteSpace(name))
+                return null;
+
+            return await gsv.GetIdfromUser(name);
+        }
+
         public async Task<int> GetUnreadEmailCountAsync(Guid? userId)
         {
             return await _context.Notifications
                 .Where(e => e.ReceiverUserId == userId && !e.IsRead)
                 .CountAsync();
-        }
-
-        void CallSnackBar(string message, MudBlazor.Severity severity)
-        {
-            Snackbar.Clear();
-            Snackbar.Configuration.SnackbarVariant = Variant.Filled;
-            Snackbar.Configuration.MaxDisplayedSnackbars = 3;
-            Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
-            Snackbar.Add(message, severity);
         }
 
         AuthUser user = new AuthUser();
@@ -88,8 +105,8 @@
             {
                 _context.ChangeTracker.Clear();
                 user = asv.GetUserDetail();
-                var rs = _context.Notifications.Where(x => x.ReceiverUserId == user.UsrId && x.IsRead==false)
-                    .OrderByDescending(x=>x.CreatedAt) 
+                var rs = _context.Notifications.Where(x => x.ReceiverUserId == user.UsrId && x.IsRead == false)
+                    .OrderByDescending(x => x.CreatedAt)
                     .ToList();
 
                 return rs;
@@ -117,6 +134,7 @@
                 return new List<Notification>();
             }
         }
+
         public async Task<List<Notification>> GetList_noti_nhan_all()
         {
             try
@@ -156,21 +174,19 @@
         {
             try
             {
-                
-                    _context.ChangeTracker.Clear();
+                _context.ChangeTracker.Clear();
 
-                    _context.Update(IV);
-                    await _context.SaveChangesAsync();
+                _context.Update(IV);
+                await _context.SaveChangesAsync();
 
-                    user = asv.GetUserDetail(); 
+                user = asv.GetUserDetail();
 
-                    int updatedCount = await _context.Notifications
-                           .Where(n => n.ReceiverUserId == user.UsrId && !n.IsRead)
-                           .CountAsync();
-                        await _hubContext.Clients.User(user.UsrId.ToString()).SendAsync("UpdateUnreadEmailCount", updatedCount);
+                int updatedCount = await _context.Notifications
+                       .Where(n => n.ReceiverUserId == user.UsrId && !n.IsRead)
+                       .CountAsync();
+                await _hubContext.Clients.User(user.UsrId.ToString()).SendAsync("UpdateUnreadEmailCount", updatedCount);
 
-                    return ["Seen", "1"];
-               
+                return ["Seen", "1"];
             }
             catch
             {
@@ -178,12 +194,11 @@
             }
         }
 
-        // New: Send an OutRequest (user requests to go out) -> notify all admins
         public async Task<BoolandMessReponse> SendOutRequestAsync(DateTime fromTime, DateTime toTime, string reason)
         {
             try
             {
-                var auth = asv.GetAuth().Result; // existing pattern (though ideally use await)
+                var auth = asv.GetAuth().Result;
                 var userName = auth.User.Identity!.Name!;
                 var userId = await gsv.GetIdfromUser(userName);
                 if (userId == null) return new BoolandMessReponse(false, "User not found");
@@ -204,8 +219,6 @@
                 _context.OutRequests.Add(req);
                 await _context.SaveChangesAsync();
 
-                // Find admins (assuming AuthUser has a Role or IsAdmin flag?)
-                // Try property names heuristically
                 var adminUsers = _context.UserList
                     .Where(u => EF.Property<string>(u, "Department") == "ADMIN" || EF.Property<string>(u, "Department") == "admin")
                     .Select(u => u.UsrId)
@@ -231,17 +244,15 @@
                     await _hubContext.Clients.User(adminId.ToString()).SendAsync("UpdateUnreadEmailCount", updatedCount);
                 }
 
-                CallSnackBar("Gửi yêu cầu thành công", MudBlazor.Severity.Success);
                 return new BoolandMessReponse(true, "Sent");
             }
             catch (Exception ex)
             {
-                CallSnackBar("Gửi yêu cầu thất bại", MudBlazor.Severity.Error);
+                logger.LogError(ex, "SendOutRequestAsync failed");
                 return new BoolandMessReponse(false, ex.Message);
             }
         }
 
-        // New: Review OutRequest (approve/reject) -> notify user
         public async Task<BoolandMessReponse> ReviewOutRequestAsync(Guid requestId, bool approve, string? note)
         {
             try
@@ -287,7 +298,5 @@
                 return new BoolandMessReponse(false, ex.Message);
             }
         }
-
     }
-
 }
