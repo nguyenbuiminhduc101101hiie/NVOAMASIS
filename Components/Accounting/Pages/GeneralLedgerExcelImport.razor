@@ -1,6 +1,13 @@
 @page "/accounting/import-general-ledger-excel"
 @namespace NVOAMASIS.Components.Accounting.Pages
+@using System
 @using System.Globalization
+@using System.Threading.Tasks
+@using System.Linq
+@using System.Data
+@using System.Text.RegularExpressions
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.Extensions.DependencyInjection
@@ -46,7 +53,7 @@
                             @(_fileName ?? "Chọn file .xlsx")
                         </MudText>
                         <MudText Typo="Typo.caption" Color="Color.Secondary">Tối đa 20 MB</MudText>
-                        <InputFile OnChange="OnFileChanged" accept=".xlsx" class="gl-file-input mt-3" />
+                        <InputFile OnChange="OnFileChangedAndAutoSelect" accept=".xlsx" class="gl-file-input mt-3" />
                     </div>
 
                     @if (_isReading)
@@ -101,9 +108,26 @@
                                           Margin="Margin.Dense" HelperText="Tự lấy từ claim CompanyId nếu có." />
                         </MudItem>
                         <MudItem xs="12" sm="6">
-                            <MudTextField @bind-Value="_customerIdText" Label="CustomerId mặc định"
-                                          Variant="Variant.Outlined" Margin="Margin.Dense"
-                                          HelperText="Có thể để trống vì CustomerId cho phép NULL." />
+                            <MudAutocomplete T="CustomerLookupItem"
+                                             @key="_customerAutocompleteKey"
+                                             Label="Khách hàng (tùy chọn)"
+                                             Value="_selectedCustomer"
+                                             ValueChanged="OnCustomerChanged"
+                                             SearchFunc="SearchCustomersAsync"
+                                             ToStringFunc="@(x => x?.DisplayText ?? string.Empty)"
+                                             Variant="Variant.Outlined"
+                                             Margin="Margin.Dense"
+                                             Dense="true"
+                                             Clearable="true"
+                                             DebounceInterval="300"
+                                             MaxItems="50"
+                                             Adornment="Adornment.Start"
+                                             AdornmentIcon="@Icons.Material.Filled.Business"
+                                             HelperText="@SelectedCustomerHelperText">
+                                <NoItemsTemplate>
+                                    <MudText Class="pa-2" Typo="Typo.caption">Không tìm thấy khách hàng.</MudText>
+                                </NoItemsTemplate>
+                            </MudAutocomplete>
                         </MudItem>
 
                         <MudItem xs="12" sm="4">
@@ -270,13 +294,21 @@
 
         <MudPaper Elevation="1" Class="pa-4">
             <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Style="gap:12px; flex-wrap:wrap;">
-                <MudText Typo="Typo.body2" Color="Color.Secondary">
-                    Chỉ các chứng từ được chọn, hợp lệ, chưa tồn tại và có tổng Nợ bằng tổng Có mới được import.
-                </MudText>
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Chứng từ phải hợp lệ, chưa tồn tại, cân Nợ/Có và có CompanyId. Khách hàng có thể để trống; khi đó CustomerId sẽ ghi NULL.
+                    </MudText>
+                    @if (!CanImportFixed && _vouchers.Count > 0)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">
+                            @ImportDisabledReason
+                        </MudText>
+                    }
+                </MudStack>
                 <MudStack Row="true" Style="gap:8px;">
                     <MudButton Variant="Variant.Text" Color="Color.Default" OnClick="Reset">Làm lại</MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
-                               OnClick="ImportAsync" Disabled="@(!CanImport || _isSaving)">
+                               OnClick="ImportWithOptionalCustomerAsync" Disabled="@(!CanImportFixed || _isSaving)">
                         @if (_isSaving)
                         {
                             <MudProgressCircular Indeterminate="true" Size="Size.Small" Class="mr-2" />
@@ -288,3 +320,439 @@
         </MudPaper>
     </MudStack>
 </MudContainer>
+
+@code {
+    private int _customerAutocompleteKey;
+
+    private bool CanImportFixed =>
+        ImportableVouchers.Any()
+        && Guid.TryParse(_companyIdText, out var companyId)
+        && companyId != Guid.Empty
+        && _exchangeRate > 0
+        && Math.Abs(SelectedDifference) < 0.01M;
+
+    /// <summary>
+    /// Đọc Excel bằng logic hiện có, sau đó tự dò khách hàng trong bảng Customer
+    /// theo tên khách hàng nhận diện từ file.
+    /// </summary>
+    private async Task OnFileChangedAndAutoSelect(InputFileChangeEventArgs e)
+    {
+        var hadCompanyId = Guid.TryParse(_companyIdText, out _);
+
+        // Không giữ khách hàng của file trước. @key buộc MudAutocomplete dựng lại
+        // để không còn hiển thị khách hàng cũ dù Value đã về NULL.
+        _selectedCustomer = null;
+        _customerAutocompleteKey++;
+
+        await OnFileChanged(e);
+
+        if (_vouchers.Count == 0)
+            return;
+
+        await AutoSelectCustomerFromExcelAsync();
+
+        if (!hadCompanyId && !Guid.TryParse(_companyIdText, out _))
+            await EnsureCompanyIdAsync();
+
+        // OnFileChanged chỉ kiểm tra trùng khi CompanyId đã có từ đầu.
+        // Nếu CompanyId vừa được tự lấy từ database thì kiểm tra lại ở đây.
+        if (!hadCompanyId && Guid.TryParse(_companyIdText, out _))
+            await CheckExistingAsync();
+
+        StateHasChanged();
+    }
+
+    private async Task AutoSelectCustomerFromExcelAsync()
+    {
+        var customerName = _defaultCustomerName;
+
+        if (string.IsNullOrWhiteSpace(customerName))
+        {
+            customerName = _vouchers
+                .Select(x => x.CustomerName)
+                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+        }
+
+        if (string.IsNullOrWhiteSpace(customerName))
+        {
+            _messages.Add("Không nhận diện được tên khách hàng từ file Excel.");
+            return;
+        }
+
+        try
+        {
+            var candidates = new Dictionary<Guid, CustomerLookupItem>();
+
+            foreach (var searchTerm in BuildCustomerSearchTerms(customerName))
+            {
+                var found = await SearchCustomersAsync(searchTerm);
+                foreach (var item in found)
+                    candidates[item.CustomerId] = item;
+            }
+
+            var sourceKey = NormalizeCompanyKey(customerName);
+            var matchedCustomer = candidates.Values.FirstOrDefault(x =>
+                    NormalizeCompanyKey(x.CompanyName) == sourceKey
+                    || NormalizeCompanyKey(x.EnglishName) == sourceKey)
+                ?? candidates.Values.FirstOrDefault(x =>
+                {
+                    var companyKey = NormalizeCompanyKey(x.CompanyName);
+                    var englishKey = NormalizeCompanyKey(x.EnglishName);
+
+                    return sourceKey.Length >= 5
+                           && ((companyKey.Length >= 5 &&
+                                (companyKey.Contains(sourceKey, StringComparison.Ordinal)
+                                 || sourceKey.Contains(companyKey, StringComparison.Ordinal)))
+                               || (englishKey.Length >= 5 &&
+                                   (englishKey.Contains(sourceKey, StringComparison.Ordinal)
+                                    || sourceKey.Contains(englishKey, StringComparison.Ordinal))));
+                });
+
+            if (matchedCustomer is not null)
+            {
+                _selectedCustomer = matchedCustomer;
+                Snackbar.Add(
+                    $"Đã tự chọn khách hàng: {matchedCustomer.DisplayText}",
+                    MudBlazor.Severity.Success);
+                return;
+            }
+
+            if (candidates.Count == 0)
+            {
+                _messages.Add(
+                    $"Không tìm thấy khách hàng '{customerName}' trong danh mục Customer. Hệ thống sẽ import với CustomerId = NULL; không tự gán khách hàng khác.");
+            }
+            else
+            {
+                _messages.Add(
+                    $"Không có khách hàng khớp chính xác với '{customerName}'. Hệ thống để CustomerId = NULL; có thể chọn thủ công nếu cần.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _messages.Add($"Không thể tự dò khách hàng: {ex.Message}");
+        }
+    }
+
+    private async Task EnsureCompanyIdAsync()
+    {
+        if (Guid.TryParse(_companyIdText, out var currentCompanyId)
+            && currentCompanyId != Guid.Empty)
+            return;
+
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var connection = db.Database.GetDbConnection();
+
+            if (connection.State != ConnectionState.Open)
+                await connection.OpenAsync();
+
+            Guid? companyId = null;
+
+            // 1. Ưu tiên CompanyId từng dùng với khách hàng đang chọn.
+            if (_selectedCustomer is not null)
+            {
+                await using var customerCommand = connection.CreateCommand();
+                customerCommand.CommandText = @"
+IF OBJECT_ID(N'dbo.GeneralLedgerEntries', N'U') IS NOT NULL
+BEGIN
+    SELECT TOP (1) CompanyId
+    FROM dbo.GeneralLedgerEntries
+    WHERE CustomerId = @CustomerId
+      AND CompanyId IS NOT NULL
+      AND CompanyId <> '00000000-0000-0000-0000-000000000000'
+    GROUP BY CompanyId
+    ORDER BY COUNT_BIG(*) DESC;
+END";
+                AddParameter(customerCommand, "@CustomerId", _selectedCustomer.CustomerId);
+                companyId = ParseGuid(await customerCommand.ExecuteScalarAsync());
+            }
+
+            // 2. Dò trong toàn bộ database thay vì chỉ 2 bảng sổ cái.
+            // Cách này xử lý database mới chưa có AccountingVouchers/GeneralLedgerEntries,
+            // nhưng đã có CompanyId trong bảng công ty, kỳ kế toán, báo cáo, chi nhánh...
+            if (!companyId.HasValue)
+            {
+                await using var companyCommand = connection.CreateCommand();
+                companyCommand.CommandText = @"
+DECLARE @Result UNIQUEIDENTIFIER = NULL;
+DECLARE @SchemaName SYSNAME;
+DECLARE @TableName SYSNAME;
+DECLARE @ColumnName SYSNAME;
+DECLARE @Sql NVARCHAR(MAX);
+
+DECLARE company_cursor CURSOR LOCAL FAST_FORWARD FOR
+SELECT
+    s.name,
+    t.name,
+    c.name
+FROM sys.tables t
+INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+INNER JOIN sys.columns c ON c.object_id = t.object_id
+WHERE c.name IN (N'CompanyId', N'CompanyID', N'company_id', N'COMPANY_ID')
+  AND t.is_ms_shipped = 0
+ORDER BY
+    CASE t.name
+        WHEN N'Companies' THEN 1
+        WHEN N'Company' THEN 2
+        WHEN N'COMPANY' THEN 3
+        WHEN N'AccountingPeriods' THEN 4
+        WHEN N'FinancialReportLines' THEN 5
+        WHEN N'AccountingVouchers' THEN 6
+        WHEN N'GeneralLedgerEntries' THEN 7
+        ELSE 100
+    END,
+    t.name;
+
+OPEN company_cursor;
+FETCH NEXT FROM company_cursor INTO @SchemaName, @TableName, @ColumnName;
+
+WHILE @@FETCH_STATUS = 0 AND @Result IS NULL
+BEGIN
+    SET @Sql = N'
+        SELECT TOP (1) @Output = TRY_CONVERT(uniqueidentifier, ' + QUOTENAME(@ColumnName) + N')
+        FROM ' + QUOTENAME(@SchemaName) + N'.' + QUOTENAME(@TableName) + N'
+        WHERE TRY_CONVERT(uniqueidentifier, ' + QUOTENAME(@ColumnName) + N') IS NOT NULL
+          AND TRY_CONVERT(uniqueidentifier, ' + QUOTENAME(@ColumnName) + N')
+              <> ''00000000-0000-0000-0000-000000000000'';';
+
+    BEGIN TRY
+        EXEC sys.sp_executesql
+            @Sql,
+            N'@Output uniqueidentifier OUTPUT',
+            @Output = @Result OUTPUT;
+    END TRY
+    BEGIN CATCH
+        SET @Result = NULL;
+    END CATCH;
+
+    FETCH NEXT FROM company_cursor INTO @SchemaName, @TableName, @ColumnName;
+END
+
+CLOSE company_cursor;
+DEALLOCATE company_cursor;
+
+SELECT @Result;";
+
+                companyId = ParseGuid(await companyCommand.ExecuteScalarAsync());
+            }
+
+            if (companyId.HasValue && companyId.Value != Guid.Empty)
+            {
+                _companyIdText = companyId.Value.ToString();
+                Snackbar.Add($"Đã tự lấy CompanyId: {_companyIdText}", MudBlazor.Severity.Success);
+            }
+            else
+            {
+                _messages.Add(
+                    "Không tìm thấy CompanyId ở bất kỳ bảng nào trong database. CompanyId là cột bắt buộc của GeneralLedgerEntries nên cần nhập đúng GUID trước khi import.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _messages.Add($"Không thể tự lấy CompanyId: {ex.Message}");
+        }
+    }
+
+    private static Guid? ParseGuid(object? value)
+    {
+        if (value is null || value == DBNull.Value)
+            return null;
+
+        if (value is Guid guid && guid != Guid.Empty)
+            return guid;
+
+        return Guid.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out var parsed)
+               && parsed != Guid.Empty
+            ? parsed
+            : null;
+    }
+
+    private static IEnumerable<string> BuildCustomerSearchTerms(string customerName)
+    {
+        var terms = new List<string>();
+
+        void Add(string? value)
+        {
+            var term = Regex.Replace(value ?? string.Empty, @"\s+", " ").Trim(' ', '-', ',', '.');
+            if (!string.IsNullOrWhiteSpace(term)
+                && !terms.Contains(term, StringComparer.OrdinalIgnoreCase))
+                terms.Add(term);
+        }
+
+        Add(customerName);
+
+        var shortened = Regex.Replace(
+            customerName,
+            @"(?i)\b(CÔNG\s+TY|CONG\s+TY|CỔ\s+PHẦN|CO\s+PHAN|TNHH|TRÁCH\s+NHIỆM\s+HỮU\s+HẠN|TRACH\s+NHIEM\s+HUU\s+HAN|JOINT\s+STOCK|LIMITED|COMPANY|CO\.?\s*,?\s*LTD\.?)\b",
+            " ");
+
+        Add(shortened);
+
+        var significantWords = Regex.Split(shortened, @"\s+")
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+
+        if (significantWords.Length >= 2)
+            Add(string.Join(" ", significantWords.TakeLast(2)));
+
+        if (significantWords.Length >= 1)
+            Add(significantWords[0]);
+
+        return terms;
+    }
+
+    private static string NormalizeCompanyKey(string? value)
+    {
+        var normalized = Normalize(value);
+        normalized = Regex.Replace(
+            normalized,
+            @"\b(cong\s+ty|co\s+phan|tnhh|trach\s+nhiem\s+huu\s+han|joint\s+stock|limited|company|co\s+ltd)\b",
+            " ",
+            RegexOptions.IgnoreCase);
+
+        return new string(normalized.Where(char.IsLetterOrDigit).ToArray());
+    }
+
+    private async Task ImportWithOptionalCustomerAsync()
+    {
+        if (!Guid.TryParse(_companyIdText, out var companyId) || companyId == Guid.Empty)
+        {
+            Snackbar.Add("CompanyId không hợp lệ.", MudBlazor.Severity.Error);
+            return;
+        }
+
+        // CustomerId trên GeneralLedgerEntries cho phép NULL.
+        // Tuyệt đối không lấy khách hàng đang hiển thị cũ hoặc tự gán một khách hàng khác.
+        Guid? customerId = _selectedCustomer?.CustomerId;
+
+        if (_exchangeRate <= 0)
+        {
+            Snackbar.Add("ExchangeRate phải lớn hơn 0.", MudBlazor.Severity.Error);
+            return;
+        }
+
+        var selected = ImportableVouchers.ToList();
+        if (selected.Count == 0)
+        {
+            Snackbar.Add("Không có chứng từ hợp lệ để import.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (selected.Any(x => Math.Abs(x.TotalDebit - x.TotalCredit) >= 0.01M))
+        {
+            Snackbar.Add("Có chứng từ chưa cân Nợ/Có.", MudBlazor.Severity.Error);
+            return;
+        }
+
+        _isSaving = true;
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var connection = db.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+                await connection.OpenAsync();
+
+            await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable);
+
+            var existing = await ReadExistingVoucherKeysAsync(
+                connection,
+                transaction,
+                companyId,
+                _sourceModule,
+                selected);
+
+            if (existing.Count > 0)
+            {
+                await transaction.RollbackAsync();
+                foreach (var voucher in selected)
+                {
+                    if (existing.Contains(BuildVoucherKey(voucher.VoucherDate.Year, voucher.VoucherNo)))
+                    {
+                        voucher.ExistsInDatabase = true;
+                        voucher.Selected = false;
+                    }
+                }
+
+                Snackbar.Add(
+                    "Có chứng từ vừa được import trước đó. Hệ thống đã hủy toàn bộ lần import này.",
+                    MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var insertedLines = 0;
+            foreach (var voucher in selected)
+            {
+                var voucherId = CreateDeterministicGuid(
+                    $"{companyId:N}|{voucher.VoucherDate.Year}|{voucher.VoucherNo}|{_sourceModule}");
+                var postingDate = (
+                    _useVoucherDateAsPostingDate
+                        ? voucher.VoucherDate
+                        : (_postingDate ?? DateTime.Today)).Date;
+
+                foreach (var line in voucher.Lines)
+                {
+                    await InsertLedgerLineAsync(
+                        connection,
+                        transaction,
+                        voucherId,
+                        companyId,
+                        voucher,
+                        line,
+                        postingDate,
+                        customerId);
+                    insertedLines++;
+                }
+            }
+
+            await transaction.CommitAsync();
+
+            foreach (var voucher in selected)
+            {
+                voucher.ExistsInDatabase = true;
+                voucher.Selected = false;
+            }
+
+            var customerStatus = customerId.HasValue
+                ? $"CustomerId {_selectedCustomer!.CustomerId}"
+                : "CustomerId NULL";
+
+            Snackbar.Add(
+                $"Đã import {selected.Count:N0} chứng từ / {insertedLines:N0} dòng ({customerStatus}).",
+                MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(
+                $"Import thất bại, dữ liệu đã rollback: {ex.Message}",
+                MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private string ImportDisabledReason
+    {
+        get
+        {
+            if (!ImportableVouchers.Any())
+                return "Không có chứng từ hợp lệ đang được chọn để import.";
+
+            if (!Guid.TryParse(_companyIdText, out var companyId) || companyId == Guid.Empty)
+                return "CompanyId đang trống hoặc không đúng định dạng GUID.";
+
+            if (_exchangeRate <= 0)
+                return "ExchangeRate phải lớn hơn 0.";
+
+            if (Math.Abs(SelectedDifference) >= 0.01M)
+                return $"Tổng Nợ và Tổng Có đang lệch {SelectedDifference:N2}.";
+
+            return string.Empty;
+        }
+    }
+}

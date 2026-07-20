@@ -8,6 +8,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -34,7 +35,7 @@ namespace NVOAMASIS.Components.Accounting.Pages
         private string _searchText = string.Empty;
 
         private string _companyIdText = string.Empty;
-        private string _customerIdText = string.Empty;
+        private CustomerLookupItem? _selectedCustomer;
         private string _currencyCode = "VND";
         private decimal _exchangeRate = 1M;
         private string _branchCode = string.Empty;
@@ -96,8 +97,13 @@ namespace NVOAMASIS.Components.Accounting.Pages
         private bool CanImport =>
             ImportableVouchers.Any()
             && Guid.TryParse(_companyIdText, out _)
+            && _selectedCustomer is not null
             && _exchangeRate > 0
             && Math.Abs(SelectedDifference) < 0.01M;
+
+        private string SelectedCustomerHelperText => _selectedCustomer is null
+            ? "Gõ mã hoặc tên khách hàng để tìm"
+            : $"CustomerId: {_selectedCustomer.CustomerId}";
 
         protected override async Task OnInitializedAsync()
         {
@@ -116,6 +122,60 @@ namespace NVOAMASIS.Components.Accounting.Pages
             {
                 _createdBy = "SYSTEM";
             }
+        }
+
+        private void OnCustomerChanged(CustomerLookupItem? customer)
+        {
+            _selectedCustomer = customer;
+        }
+
+        // Tương thích cả MudBlazor bản dùng SearchFunc(string)
+        // và bản dùng SearchFunc(string, CancellationToken).
+        private Task<IEnumerable<CustomerLookupItem>> SearchCustomersAsync(string value)
+            => SearchCustomersCoreAsync(value, CancellationToken.None);
+
+        private Task<IEnumerable<CustomerLookupItem>> SearchCustomersAsync(
+            string value,
+            CancellationToken cancellationToken)
+            => SearchCustomersCoreAsync(value, cancellationToken);
+
+        private async Task<IEnumerable<CustomerLookupItem>> SearchCustomersCoreAsync(
+            string value,
+            CancellationToken cancellationToken)
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var query = db.Customer
+                .AsNoTracking()
+                .AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                var keyword = value.Trim();
+
+                query = query.Where(x =>
+                    x.Customer_Code.Contains(keyword)
+                    || (x.MainCode != null && x.MainCode.Contains(keyword))
+                    || (x.MaDT != null && x.MaDT.Contains(keyword))
+                    || (x.COMPANY != null && x.COMPANY.Contains(keyword))
+                    || (x.EnglishName != null && x.EnglishName.Contains(keyword))
+                    || (x.TaxCode != null && x.TaxCode.Contains(keyword)));
+            }
+
+            return await query
+                .OrderBy(x => x.Customer_Code)
+                .Select(x => new CustomerLookupItem
+                {
+                    CustomerId = x.Customer_ID,
+                    CustomerCode = x.Customer_Code,
+                    MainCode = x.MainCode ?? string.Empty,
+                    CompanyName = x.COMPANY ?? string.Empty,
+                    EnglishName = x.EnglishName ?? string.Empty,
+                    TaxCode = x.TaxCode ?? string.Empty
+                })
+                .Take(50)
+                .ToListAsync(cancellationToken);
         }
 
         private async Task OnFileChanged(InputFileChangeEventArgs e)
@@ -437,16 +497,13 @@ namespace NVOAMASIS.Components.Accounting.Pages
                 return;
             }
 
-            Guid? customerId = null;
-            if (!string.IsNullOrWhiteSpace(_customerIdText))
+            if (_selectedCustomer is null)
             {
-                if (!Guid.TryParse(_customerIdText, out var parsedCustomerId))
-                {
-                    Snackbar.Add("CustomerId không hợp lệ.", MudBlazor.Severity.Error);
-                    return;
-                }
-                customerId = parsedCustomerId;
+                Snackbar.Add("Vui lòng chọn khách hàng trước khi import.", MudBlazor.Severity.Warning);
+                return;
             }
+
+            var customerId = _selectedCustomer.CustomerId;
 
             if (_exchangeRate <= 0)
             {
@@ -873,6 +930,38 @@ WHERE CompanyId = @CompanyId
             if (bytes < 1024 * 1024)
                 return $"{bytes / 1024D:N1} KB";
             return $"{bytes / 1024D / 1024D:N1} MB";
+        }
+
+        private sealed class CustomerLookupItem
+        {
+            public Guid CustomerId { get; set; }
+            public string CustomerCode { get; set; } = string.Empty;
+            public string MainCode { get; set; } = string.Empty;
+            public string CompanyName { get; set; } = string.Empty;
+            public string EnglishName { get; set; } = string.Empty;
+            public string TaxCode { get; set; } = string.Empty;
+
+            public string DisplayText
+            {
+                get
+                {
+                    var code = !string.IsNullOrWhiteSpace(CustomerCode)
+                        ? CustomerCode
+                        : MainCode;
+
+                    var name = !string.IsNullOrWhiteSpace(CompanyName)
+                        ? CompanyName
+                        : EnglishName;
+
+                    if (string.IsNullOrWhiteSpace(code))
+                        return name;
+
+                    if (string.IsNullOrWhiteSpace(name))
+                        return code;
+
+                    return $"{code} - {name}";
+                }
+            }
         }
 
         private sealed class LedgerSourceRow
