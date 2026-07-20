@@ -103,6 +103,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_ExportCostDetail> ExportCostDetail { get; set; }
         public DbSet<M_Duyet_DNTT> Duyet_DNTT { get; set; }
         public DbSet<Notification> Notifications { get; set; }
+        public DbSet<DevicePushToken> DevicePushTokens { get; set; }
         public DbSet<M_ImportCostRequest> ImportCostRequest { get; set; }
 
         public DbSet<M_TruckingCostRequest> TruckingCostRequest { get; set; }
@@ -470,6 +471,15 @@ namespace NVOAMASIS.Data
                 entity.Property(e => e.Qty).HasColumnType("decimal(12,4)");
                 entity.Property(e => e.AmountUSD).HasColumnType("decimal(18,4)");
                 entity.Property(e => e.AmountVND).HasColumnType("decimal(18,0)");
+            });
+
+            modelBuilder.Entity<DevicePushToken>(entity =>
+            {
+                entity.ToTable("DevicePushToken");
+                entity.HasKey(e => e.Id);
+                entity.HasIndex(e => e.Token).IsUnique();
+                entity.Property(e => e.Token).HasMaxLength(512);
+                entity.Property(e => e.Platform).HasMaxLength(32);
             });
         }
 

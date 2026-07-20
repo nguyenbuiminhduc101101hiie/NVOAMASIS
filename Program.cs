@@ -84,7 +84,41 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         cfg.Cookie.SameSite = SameSiteMode.Lax;
         cfg.Cookie.HttpOnly = true;
         cfg.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    })
+    .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
+    {
+        var jwt = builder.Configuration.GetSection("JwtSettings");
+        var secret = jwt["SecretKey"] ?? throw new InvalidOperationException("JwtSettings:SecretKey missing");
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwt["Issuer"],
+            ValidAudience = jwt["Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret)),
+            ClockSkew = TimeSpan.FromMinutes(2)
+        };
+        // SignalR: JWT từ query string access_token
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    path.StartsWithSegments("/notificationhub"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
+        };
     });
+
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
+builder.Services.AddScoped<MobileJwtTokenService>();
 
 //Setting
 builder.Services.AddScoped<ITenantContext, TenantContext>();
@@ -262,7 +296,39 @@ app.MapHub<NotificationHub>("/notificationhub");
 /// ref��https://learn.microsoft.com/zh-tw/aspnet/core/fundamentals/error-handling?view=aspnetcore-8.0#usestatuscodepages
 // Map API controllers BEFORE status code pages to avoid redirects
 app.MapControllers();
-app.UseStatusCodePagesWithRedirects("/ErrorStatus/{0}");
+
+// API (/api/*): trả JSON khi 404/401/... — không redirect HTML /ErrorStatus (Flutter cần JSON)
+app.UseWhen(
+    ctx => ctx.Request.Path.StartsWithSegments("/api"),
+    apiBranch =>
+    {
+        apiBranch.UseStatusCodePages(async statusCodeContext =>
+        {
+            var http = statusCodeContext.HttpContext;
+            if (http.Response.HasStarted) return;
+            http.Response.ContentType = "application/json; charset=utf-8";
+            var code = http.Response.StatusCode;
+            var payload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                flag = false,
+                message = code switch
+                {
+                    401 => "Unauthorized.",
+                    403 => "Forbidden.",
+                    404 => "API endpoint not found.",
+                    _ => $"HTTP {code}"
+                },
+                status = code
+            });
+            await http.Response.WriteAsync(payload);
+        });
+    });
+
+// Non-API (Blazor): giữ redirect ErrorStatus như cũ
+app.UseWhen(
+    ctx => !ctx.Request.Path.StartsWithSegments("/api"),
+    nonApi => nonApi.UseStatusCodePagesWithRedirects("/ErrorStatus/{0}"));
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
