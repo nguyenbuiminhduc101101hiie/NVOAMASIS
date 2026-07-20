@@ -22,4 +22,7 @@ public class AuthUser
 
     public bool Send_OTP_login { get; set; }
 
+    public bool? Duyet_Phieu_Thu { get; set; }
+    public bool? Duyet_Phieu_Chi { get; set; }
+
 }

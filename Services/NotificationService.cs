@@ -15,44 +15,54 @@
         
 
         public async Task SendNotificationAsync(string[] recipients, string noidung)
-
         {
             try
             {
-                var UserName = asv.GetAuth().Result.User.Identity!.Name!;
-                Guid? userid_login = await gsv.GetIdfromUser(UserName);
-
-                foreach (var user_receiverid in recipients)
-                {
-                    var receiverGuid = Guid.Parse(user_receiverid);
-                    var notify = new Notification
-                    {
-                        SenderUserId = userid_login,
-                        ReceiverUserId = receiverGuid,
-                        Message = noidung,
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    _context.Notifications.Add(notify);
-                    await _context.SaveChangesAsync(); // giữ nguyên từng lần nếu logic khác phụ thuộc Id tạo ra
-
-                    CallSnackBar("Sent Successfully ", MudBlazor.Severity.Success);
-
-                    await _hubContext.Clients.User(user_receiverid.ToString())
-                        .SendAsync("ReceiveNotification", noidung);
-
-                    // Đếm số chưa đọc của người nhận (không phải người gửi)
-                    int updatedCount = await _context.Notifications
-                       .Where(n => n.ReceiverUserId == receiverGuid && !n.IsRead)
-                       .CountAsync();
-                    await _hubContext.Clients.User(user_receiverid.ToString()).SendAsync("UpdateUnreadEmailCount", updatedCount);
-                }
+                await SendNotificationCoreAsync(recipients, noidung, showSnack: true);
             }
-            catch (Exception ex) {
+            catch (Exception)
+            {
                 CallSnackBar("Sent Fail ", MudBlazor.Severity.Error);
             }
-            
+        }
 
+        /// <summary>Gửi notification không hiện snackbar từng người (dùng cho batch duyệt phiếu).</summary>
+        public async Task SendNotificationQuietAsync(string[] recipients, string noidung)
+        {
+            await SendNotificationCoreAsync(recipients, noidung, showSnack: false);
+        }
 
+        private async Task SendNotificationCoreAsync(string[] recipients, string noidung, bool showSnack)
+        {
+            var UserName = asv.GetAuth().Result.User.Identity!.Name!;
+            Guid? userid_login = await gsv.GetIdfromUser(UserName);
+
+            foreach (var user_receiverid in recipients)
+            {
+                if (!Guid.TryParse(user_receiverid, out var receiverGuid))
+                    continue;
+
+                var notify = new Notification
+                {
+                    SenderUserId = userid_login,
+                    ReceiverUserId = receiverGuid,
+                    Message = noidung,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _context.Notifications.Add(notify);
+                await _context.SaveChangesAsync();
+
+                if (showSnack)
+                    CallSnackBar("Sent Successfully ", MudBlazor.Severity.Success);
+
+                await _hubContext.Clients.User(user_receiverid.ToString())
+                    .SendAsync("ReceiveNotification", noidung);
+
+                int updatedCount = await _context.Notifications
+                   .Where(n => n.ReceiverUserId == receiverGuid && !n.IsRead)
+                   .CountAsync();
+                await _hubContext.Clients.User(user_receiverid.ToString()).SendAsync("UpdateUnreadEmailCount", updatedCount);
+            }
         }
 
         public async Task<int> GetUnreadEmailCountAsync(Guid? userId)

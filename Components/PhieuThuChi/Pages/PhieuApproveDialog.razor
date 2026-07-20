@@ -1,0 +1,128 @@
+@using Microsoft.AspNetCore.Components
+@inject PhieuApproveService ApproveSv
+@inject AccountService Asv
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            @(Model?.Loai == PhieuApproveService.LoaiThu ? "Duyệt phiếu thu" : "Duyệt phiếu chi")
+            @if (!string.IsNullOrWhiteSpace(Model?.SoPhieu))
+            {
+                <span> — @Model!.SoPhieu</span>
+            }
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="my-4" />
+        }
+        else if (Model == null)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Error">Không tìm thấy yêu cầu duyệt.</MudAlert>
+        }
+        else if (Model.AlreadyDecided)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info" Class="mb-3">
+                Phiếu đã được @(Model.Approve == true ? "Approve" : "Deny") bởi <b>@Model.ApproveBy</b>
+                @if (Model.ApproveDate.HasValue)
+                {
+                    <text> lúc @Model.ApproveDate.Value.ToString("dd/MM/yyyy HH:mm")</text>
+                }
+                .
+                @if (Model.Approve == false && !string.IsNullOrWhiteSpace(Model.Remarks))
+                {
+                    <br />
+                    <text>Lý do Deny: @Model.Remarks</text>
+                }
+            </MudAlert>
+            <div class="phieu-approve-detail">@((MarkupString)Model.DetailHtml)</div>
+        }
+        else if (!Model.CanDecide)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Warning">Bạn không có quyền duyệt loại phiếu này.</MudAlert>
+            <div class="phieu-approve-detail">@((MarkupString)Model.DetailHtml)</div>
+        }
+        else
+        {
+            <style>
+                .phieu-approve-detail table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+                .phieu-approve-detail td { padding: 8px 6px; border-bottom: 1px solid #e2e8f0; font-size: 14px; }
+                .phieu-approve-detail td.k { width: 38%; color: #64748b; font-weight: 600; }
+            </style>
+            <div class="phieu-approve-detail">@((MarkupString)Model.DetailHtml)</div>
+            <MudTextField @bind-Value="_remarks"
+                          Label="Lý do Deny (bắt buộc khi Deny)"
+                          Lines="3"
+                          Variant="Variant.Outlined"
+                          Class="mt-2" />
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Disabled="_busy">Đóng</MudButton>
+        @if (Model is { CanDecide: true, AlreadyDecided: false })
+        {
+            <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="DenyAsync" Disabled="_busy">Deny</MudButton>
+            <MudButton Color="Color.Success" Variant="Variant.Filled" OnClick="ApproveAsync" Disabled="_busy">Approve</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public string Token { get; set; } = "";
+
+    private PhieuApproveInAppModel? Model;
+    private string? _remarks;
+    private bool _loading = true;
+    private bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var user = Asv.GetUserDetail();
+            Model = await ApproveSv.GetInAppDetailAsync(Token, user?.UsrId ?? Guid.Empty);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    void Cancel() => MudDialog.Cancel();
+
+    async Task ApproveAsync() => await DecideAsync(true);
+
+    async Task DenyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_remarks))
+        {
+            Snackbar.Add("Vui lòng nhập lý do Deny.", MudBlazor.Severity.Warning);
+            return;
+        }
+        await DecideAsync(false);
+    }
+
+    async Task DecideAsync(bool approve)
+    {
+        try
+        {
+            _busy = true;
+            var user = Asv.GetUserDetail();
+            var rs = await ApproveSv.DecideInAppAsync(Token, user?.UsrId ?? Guid.Empty, approve, _remarks);
+            Snackbar.Add(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (rs.Flag)
+                MudDialog.Close(DialogResult.Ok(true));
+            else
+            {
+                Model = await ApproveSv.GetInAppDetailAsync(Token, user?.UsrId ?? Guid.Empty);
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
