@@ -33,5 +33,7 @@ namespace NVOAMASIS.Models
         public string? PasswordEmail_GuiTB { get; set; }
         public string? SmtpServer { get; set; }
         public int? SmtpPort { get; set; }
+        public string? ListEmail_nhanTB_Approve_Thu_Chi { get; set; }
+   
     }
 }

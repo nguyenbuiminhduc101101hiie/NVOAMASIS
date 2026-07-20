@@ -35,5 +35,12 @@ namespace NVOAMASIS.Models
         public string? Trangthai { get; set; }
         public string? Quyenso { get; set; }
         public string? Mbl { get; set; }
+        public string? Remarks { get; set; }
+
+        /// <summary>Token dùng chung cho link duyệt trên email (1 phiếu = 1 token).</summary>
+        public string? ApproveToken { get; set; }
+        public string? ApproveBy { get; set; }
+        public Guid? ApproveByUserId { get; set; }
+        public DateTime? ApproveDate { get; set; }
     }
 }

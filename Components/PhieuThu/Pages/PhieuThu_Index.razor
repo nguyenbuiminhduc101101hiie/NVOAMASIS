@@ -15,6 +15,7 @@
 @inject IStringLocalizer<SharedResource> Localizer
 @inject LocalChargesServices lcsv
 @inject PhieuThu_Chi_Services thuchiSv
+@inject PhieuApproveService phieuApproveSv
 @inject CustomerService Cussv
 @inject HistoryLogService HistoryLogService
 @inject AppDbContext Db
@@ -51,15 +52,15 @@
         flex-wrap: wrap;
     }
 
-        .receipt-toolbar .mud-button-root {
-            min-height: 32px !important;
-            height: 32px !important;
-            padding: 5px 12px !important;
-            border-radius: 8px !important;
-            text-transform: none !important;
-            font-weight: 700 !important;
-            box-shadow: none !important;
-        }
+    .receipt-toolbar .mud-button-root {
+        min-height: 32px !important;
+        height: 32px !important;
+        padding: 5px 12px !important;
+        border-radius: 8px !important;
+        text-transform: none !important;
+        font-weight: 700 !important;
+        box-shadow: none !important;
+    }
 
     .receipt-search {
         width: 340px;
@@ -253,6 +254,38 @@
                     }
                 </MudButton>
 
+                <MudButton Disabled="_processingApprove"
+                           OnClick="SendApproveRequestAsync"
+                           Size="Size.Small"
+                           Color="Color.Warning"
+                           Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.Send">
+                    @if (_processingApprove)
+                    {
+                        <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                        <MudText Class="ms-2">Sending</MudText>
+                    }
+                    else
+                    {
+                        <MudText>Gửi Yêu cầu Duyệt</MudText>
+                    }
+                </MudButton>
+                <MudButton Disabled="_processingUnapprove"
+                           OnClick="UnapproveAsync"
+                           Size="Size.Small"
+                           Color="Color.Error"
+                           Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.Undo">
+                    @if (_processingUnapprove)
+                    {
+                        <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                        <MudText Class="ms-2">Processing</MudText>
+                    }
+                    else
+                    {
+                        <MudText>Bỏ Approve</MudText>
+                    }
+                </MudButton>
                 <MudButton Disabled="_processingVoucher"
                            OnClick="CreateVoucherFromSelectedReceiptAsync"
                            Size="Size.Small"
@@ -323,10 +356,27 @@
 
                 <TemplateColumn Title="@Localizer["Approve"]" Filterable="false" Sortable="false">
                     <CellTemplate>
-                        <MudCheckBox Size="Size.Small"
-                                     @bind-Checked="context.Item.Approve"
-                                     @bind-Value="context.Item.Approve"
-                                     @bind-Value:after="@(() => OnApproveCheckboxWrapper(context.Item))" />
+                        @if (context.Item.Approve == true)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success">Approved</MudChip>
+                            @if (!string.IsNullOrWhiteSpace(context.Item.ApproveBy))
+                            {
+                                <MudText Typo="Typo.caption">@context.Item.ApproveBy</MudText>
+                            }
+                        }
+                        else if (context.Item.Approve == false && !string.IsNullOrWhiteSpace(context.Item.ApproveBy))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error">Denied</MudChip>
+                            <MudText Typo="Typo.caption">@context.Item.ApproveBy</MudText>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(context.Item.ApproveToken))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning">Chờ duyệt</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default">Chưa gửi</MudChip>
+                        }
                     </CellTemplate>
                 </TemplateColumn>
 
@@ -1087,25 +1137,67 @@
         cmd.Parameters.Add(p);
     }
 
-    private async Task OnApproveCheckboxWrapper(M_PhieuThu item)
+    private async Task SendApproveRequestAsync()
     {
-        if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Approve", "Phieuthu"))
+        if (detail == null || detail.PhieuthuID == Guid.Empty)
         {
-            var rs = await thuchiSv.UpdateCreatePhieuThu(item);
-            MudBlazor.Severity severity;
-            if (rs[1] == "1")
-                severity = MudBlazor.Severity.Success;
-
-            else
-                severity = MudBlazor.Severity.Error;
-
-            CallSnackBar(rs[0], severity);
-        }
-        else
-        {
-            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            CallSnackBar("Vui lòng chọn phiếu thu cần gửi yêu cầu duyệt.", MudBlazor.Severity.Warning);
             return;
         }
 
+        try
+        {
+            _processingApprove = true;
+            var rs = await phieuApproveSv.SendApprovalRequestAsync(
+                PhieuApproveService.LoaiThu,
+                detail.PhieuthuID,
+                usr,
+                NavManager.BaseUri);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (rs.Flag)
+                await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Lỗi gửi yêu cầu duyệt: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingApprove = false;
+        }
     }
+
+    private async Task UnapproveAsync()
+    {
+        if (detail == null || detail.PhieuthuID == Guid.Empty)
+        {
+            CallSnackBar("Vui lòng chọn phiếu thu cần bỏ Approve.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _processingUnapprove = true;
+            var current = asv.GetUserDetail();
+            var rs = await phieuApproveSv.UnapproveAsync(
+                PhieuApproveService.LoaiThu,
+                detail.PhieuthuID,
+                current?.UsrId ?? Guid.Empty,
+                usr);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (rs.Flag)
+                await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Lỗi bỏ Approve: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUnapprove = false;
+        }
+    }
+
+    private bool _processingApprove = false;
+    private bool _processingUnapprove = false;
 }

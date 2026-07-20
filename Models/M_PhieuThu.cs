@@ -47,5 +47,12 @@ namespace NVOAMASIS.Models
         public string? Depoaddress { get; set; }
         public string? Customername { get; set; }
         public string? Luuycuoc { get; set; }
+        public string? Remarks { get; set; }
+
+        /// <summary>Token dùng chung cho link duyệt trên email (1 phiếu = 1 token).</summary>
+        public string? ApproveToken { get; set; }
+        public string? ApproveBy { get; set; }
+        public Guid? ApproveByUserId { get; set; }
+        public DateTime? ApproveDate { get; set; }
     }
 }

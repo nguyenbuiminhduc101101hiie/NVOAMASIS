@@ -791,7 +791,13 @@ namespace NVOAMASIS.Services
                     string.IsNullOrWhiteSpace(smtpServer) ||
                     !smtpPort.HasValue)
                 {
-                    return new BoolandMessReponse(false, "Send mail failed! Missing SMTP configuration in Company Information.");
+                    return new BoolandMessReponse(false,
+                        "Thiếu cấu hình SMTP trong Company Information (Email gửi TB / Mật khẩu / SMTP Server / SMTP Port).");
+                }
+
+                if (to == null || !to.Any(x => !string.IsNullOrWhiteSpace(x)))
+                {
+                    return new BoolandMessReponse(false, "Danh sách email nhận trống.");
                 }
 
                 var message = new MimeMessage();
