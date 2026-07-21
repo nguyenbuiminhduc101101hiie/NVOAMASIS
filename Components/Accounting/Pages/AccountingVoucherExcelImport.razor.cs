@@ -66,6 +66,7 @@ public partial class AccountingVoucherExcelImport
                 CreditAmount = l.CreditAmount,
                 Description = l.Description,
                 InvoiceNo = l.InvoiceNo,
+                SoHD = l.SoHD,
                 SourceRow = l.SourceRow,
                 SortKey = l.SortKey
             }));
@@ -288,6 +289,7 @@ public partial class AccountingVoucherExcelImport
         foreach (var contraGroup in voucher.SourceRows.GroupBy(r => r.ContraAccount, StringComparer.OrdinalIgnoreCase))
         {
             var amount = contraGroup.Sum(r => r.Amount);
+            var soHd = NullIfEmpty(contraGroup.Select(r => r.InvoiceNo).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)));
             voucher.Lines.Add(new GeneratedLine
             {
                 LineNo = (lineNo++).ToString(CultureInfo.InvariantCulture),
@@ -295,6 +297,8 @@ public partial class AccountingVoucherExcelImport
                 DebitAmount = voucher.IsCreditVoucher ? amount : 0,
                 CreditAmount = voucher.IsCreditVoucher ? 0 : amount,
                 Description = BuildContraDescription(voucher, contraGroup.Key),
+                InvoiceNo = soHd,
+                SoHD = soHd,
                 SourceRow = 0,
                 SortKey = lineNo - 1
             });
@@ -302,6 +306,7 @@ public partial class AccountingVoucherExcelImport
 
         foreach (var row in voucher.SourceRows.OrderBy(r => r.SourceRow))
         {
+            var soHd = NullIfEmpty(row.InvoiceNo);
             voucher.Lines.Add(new GeneratedLine
             {
                 LineNo = (lineNo++).ToString(CultureInfo.InvariantCulture),
@@ -309,7 +314,8 @@ public partial class AccountingVoucherExcelImport
                 DebitAmount = voucher.IsCreditVoucher ? 0 : row.Amount,
                 CreditAmount = voucher.IsCreditVoucher ? row.Amount : 0,
                 Description = row.Description,
-                InvoiceNo = NullIfEmpty(row.InvoiceNo),
+                InvoiceNo = soHd,
+                SoHD = soHd,
                 SourceRow = row.SourceRow,
                 SortKey = lineNo - 1
             });
@@ -618,7 +624,7 @@ VALUES
         AddParameter(command, "@IsTaxBook", _isTaxBook);
         AddParameter(command, "@IsManagementBook", _isManagementBook);
         AddParameter(command, "@LedgerType", CurrentBookScope);
-        AddParameter(command, "@InvoiceNo", NullIfEmpty(Truncate(line.InvoiceNo, 100)));
+        AddParameter(command, "@InvoiceNo", NullIfEmpty(Truncate(line.SoHD ?? line.InvoiceNo, 100)));
         AddParameter(command, "@SortKey", line.SortKey);
         AddParameter(command, "@DanhMucTaiKhoanID", accountId);
 
@@ -1006,7 +1012,8 @@ WHERE CAST([{codeColumn}] AS nvarchar(50)) IN ({string.Join(",", names)});";
         public decimal TotalCredit => Lines.Sum(l => l.CreditAmount);
         public string SearchText => string.Join(" ",
             new[] { VoucherNo, CustomerName, RefNo }
-                .Concat(SourceRows.SelectMany(r => new[] { r.InvoiceNo, r.Description, r.ContraAccount })));
+                .Concat(SourceRows.SelectMany(r => new[] { r.InvoiceNo, r.Description, r.ContraAccount }))
+                .Concat(Lines.Select(l => l.SoHD ?? string.Empty)));
     }
 
     private sealed class GeneratedLine
@@ -1018,9 +1025,10 @@ WHERE CAST([{codeColumn}] AS nvarchar(50)) IN ({string.Join(",", names)});";
         public decimal CreditAmount { get; set; }
         public string Description { get; set; } = string.Empty;
         public string? InvoiceNo { get; set; }
+        public string? SoHD { get; set; }
         public int SourceRow { get; set; }
         public int SortKey { get; set; }
-        public string SearchText => string.Join(" ", new[] { VoucherNo, AccountCode, InvoiceNo ?? string.Empty, Description });
+        public string SearchText => string.Join(" ", new[] { VoucherNo, AccountCode, InvoiceNo ?? string.Empty, SoHD ?? string.Empty, Description });
     }
 }
 }
