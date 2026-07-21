@@ -1,0 +1,491 @@
+@page "/accounting/voucher-lines-book-flags"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@using NVOAMASIS.Services
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>10.4.3 Sửa Tax/MGMT dòng chứng từ</PageTitle>
+
+<div class="product-price-page voucher-lines-book-page">
+    <PpScreenHeader Title="10.4.3 Dòng chứng từ · Tax / Management Book"
+                    Subtitle="Xem AccountingVoucherLines · chỉ sửa IsTaxBook / IsManagementBook trên lưới">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search"
+                           OnClick="LoadAsync"
+                           Disabled="_busy">
+                    Load
+                </MudButton>
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Info"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="ResetFilterAsync"
+                           Disabled="_busy">
+                    Reset
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Từ ngày CT"
+                               Date="_fromDate"
+                               DateChanged="d => _fromDate = d"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy"
+                               Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudDatePicker Label="Đến ngày CT"
+                               Date="_toDate"
+                               DateChanged="d => _toDate = d"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy"
+                               Clearable="true" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?"
+                                 Label="Year"
+                                 @bind-Value="_fiscalYear"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="2000"
+                                 Max="2100"
+                                 Clearable="true" />
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudNumericField T="int?"
+                                 Label="Month"
+                                 @bind-Value="_fiscalPeriod"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Min="1"
+                                 Max="12"
+                                 Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_voucherNo"
+                              Label="Số chứng từ"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Clearable="true"
+                              Immediate="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_accountCode"
+                              Label="Tài khoản"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Clearable="true"
+                              Immediate="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudTextField @bind-Value="_invoiceNo"
+                              Label="Invoice No / SoHD"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Clearable="true"
+                              Immediate="true" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudSelect T="string"
+                           Label="Book filter"
+                           @bind-Value="_bookFilter"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true">
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("TAX")">Tax only</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">Management only</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("NONE")">Chưa gán book</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudSelect T="int?"
+                           Label="Trạng thái CT"
+                           @bind-Value="_voucherStatus"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true"
+                           Clearable="true">
+                    <MudSelectItem T="int?" Value="@((int?)0)">Draft (0)</MudSelectItem>
+                    <MudSelectItem T="int?" Value="@((int?)1)">Open (1)</MudSelectItem>
+                    <MudSelectItem T="int?" Value="@((int?)2)">Posted (2)</MudSelectItem>
+                    <MudSelectItem T="int?" Value="@((int?)3)">Cancelled (3)</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudTextField @bind-Value="_search"
+                              Label="Search (số CT, diễn giải, TK, HBL, Invoice...)"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Clearable="true"
+                              Immediate="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Quyền menu <b>Modify_voucherlines</b>: View để xem · Edit để tick sửa book trên lưới.
+                    @(_canModify ? "" : " (Bạn chỉ được xem)")
+                </MudText>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Class="product-price-card pa-2" Elevation="0">
+        <MudDataGrid @key="_gridKey"
+                     T="VoucherLineRow"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Hover="true"
+                     Bordered="true"
+                     Filterable="true"
+                     FilterMode="@DataGridFilterMode.ColumnFilterRow"
+                     ColumnResizeMode="ResizeMode.Column"
+                     FixedHeader="true"
+                     Height="calc(100vh - 320px)"
+                     Class="auto-fit-grid"
+                     Loading="_busy">
+            <Columns>
+                <TemplateColumn Title="Tax" SortBy="x => x.IsTaxBook">
+                    <CellTemplate>
+                        <MudCheckBox T="bool"
+                                     Value="@context.Item.IsTaxBook"
+                                     ValueChanged="@(EventCallback.Factory.Create<bool>(this, v => OnTaxBookChangedAsync(context.Item, v)))"
+                                     Dense="true"
+                                     Disabled="@(!_canModify || _busy)"
+                                     Color="Color.Primary" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="MGMT" SortBy="x => x.IsManagementBook">
+                    <CellTemplate>
+                        <MudCheckBox T="bool"
+                                     Value="@context.Item.IsManagementBook"
+                                     ValueChanged="@(EventCallback.Factory.Create<bool>(this, v => OnManagementBookChangedAsync(context.Item, v)))"
+                                     Dense="true"
+                                     Disabled="@(!_canModify || _busy)"
+                                     Color="Color.Secondary" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.VoucherNo" Title="Số CT" />
+                <PropertyColumn Property="x => x.VoucherDate" Title="Ngày CT" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.PostingDate" Title="Ngày HT" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.FiscalYear" Title="Year" />
+                <PropertyColumn Property="x => x.FiscalPeriod" Title="Month" />
+                <PropertyColumn Property="x => x.TransactionTypeCode" Title="Loại CT" />
+                <PropertyColumn Property="x => x.VoucherStatusLabel" Title="TT CT" />
+                <PropertyColumn Property="x => x.LineNo" Title="Line" />
+                <PropertyColumn Property="x => x.AccountCode" Title="TK" />
+                <PropertyColumn Property="x => x.LineDescription" Title="Diễn giải" />
+                <PropertyColumn Property="x => x.InvoiceNo" Title="Invoice / SoHD" />
+                <PropertyColumn Property="x => x.DebitAmount" Title="Nợ" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.CreditAmount" Title="Có" Format="N0" CellClass="text-end fw-bold" HeaderClass="text-end" />
+                <PropertyColumn Property="x => x.HBLNo" Title="HBL" />
+                <PropertyColumn Property="x => x.BookingNo" Title="Booking" />
+                <PropertyColumn Property="x => x.LedgerType" Title="LedgerType" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="VoucherLineRow" PageSizeOptions="new int[] { 25, 50, 100, 200 }" />
+            </PagerContent>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4 text-center">
+                    Không có dòng chứng từ theo điều kiện lọc.
+                </MudText>
+            </NoRecordsContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    private const string PermissionMenuName = "Modify_voucherlines";
+
+    private bool _busy;
+    private bool _canModify;
+    private string _usr = string.Empty;
+    private int _gridKey;
+
+    private DateTime? _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _toDate = DateTime.Today;
+    private int? _fiscalYear;
+    private int? _fiscalPeriod;
+    private string _voucherNo = string.Empty;
+    private string _accountCode = string.Empty;
+    private string _invoiceNo = string.Empty;
+    private string _bookFilter = "ALL";
+    private int? _voucherStatus;
+    private string _search = string.Empty;
+
+    private List<VoucherLineRow> _rows = new();
+
+    private IEnumerable<VoucherLineRow> VisibleItems =>
+        _rows.Where(MatchesSearch);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        _canModify = await ssv.CheckPermission(_usr, "Edit", PermissionMenuName);
+        await LoadAsync();
+    }
+
+    private async Task ResetFilterAsync()
+    {
+        _fromDate = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        _toDate = DateTime.Today;
+        _fiscalYear = null;
+        _fiscalPeriod = null;
+        _voucherNo = string.Empty;
+        _accountCode = string.Empty;
+        _invoiceNo = string.Empty;
+        _bookFilter = "ALL";
+        _voucherStatus = null;
+        _search = string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem (Modify_voucherlines / View).", MudBlazor.Severity.Warning);
+            _rows.Clear();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            _canModify = await ssv.CheckPermission(_usr, "Edit", PermissionMenuName);
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var query =
+                from line in db.AccountingVoucherLines.AsNoTracking()
+                join voucher in db.AccountingVouchers.AsNoTracking()
+                    on line.VoucherId equals voucher.Id
+                select new { line, voucher };
+
+            if (_fromDate.HasValue)
+                query = query.Where(x => x.voucher.VoucherDate >= _fromDate.Value.Date);
+
+            if (_toDate.HasValue)
+            {
+                var toExclusive = _toDate.Value.Date.AddDays(1);
+                query = query.Where(x => x.voucher.VoucherDate < toExclusive);
+            }
+
+            if (_fiscalYear.HasValue)
+                query = query.Where(x => x.voucher.FiscalYear == _fiscalYear.Value);
+
+            if (_fiscalPeriod.HasValue)
+                query = query.Where(x => x.voucher.FiscalPeriod == _fiscalPeriod.Value);
+
+            if (!string.IsNullOrWhiteSpace(_voucherNo))
+            {
+                var no = _voucherNo.Trim();
+                query = query.Where(x => x.voucher.VoucherNo != null && x.voucher.VoucherNo.Contains(no));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_accountCode))
+            {
+                var acc = _accountCode.Trim();
+                query = query.Where(x => x.line.AccountCode != null && x.line.AccountCode.StartsWith(acc));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_invoiceNo))
+            {
+                var inv = _invoiceNo.Trim();
+                query = query.Where(x => x.line.InvoiceNo != null && x.line.InvoiceNo.Contains(inv));
+            }
+
+            if (_voucherStatus.HasValue)
+                query = query.Where(x => x.voucher.Status == _voucherStatus.Value);
+
+            if (string.Equals(_bookFilter, "TAX", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.line.IsTaxBook);
+            else if (string.Equals(_bookFilter, "MGMT", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => x.line.IsManagementBook);
+            else if (string.Equals(_bookFilter, "NONE", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(x => !x.line.IsTaxBook && !x.line.IsManagementBook);
+
+            var data = await query
+                .OrderByDescending(x => x.voucher.VoucherDate)
+                .ThenByDescending(x => x.voucher.VoucherNo)
+                .ThenBy(x => x.line.SortKey)
+                .ThenBy(x => x.line.LineNo_)
+                .Take(5000)
+                .Select(x => new VoucherLineRow
+                {
+                    Id = x.line.Id,
+                    VoucherId = x.line.VoucherId,
+                    IsTaxBook = x.line.IsTaxBook,
+                    IsManagementBook = x.line.IsManagementBook,
+                    LineNo = x.line.LineNo_ ?? string.Empty,
+                    AccountCode = x.line.AccountCode ?? string.Empty,
+                    LineDescription = x.line.LineDescription ?? string.Empty,
+                    InvoiceNo = x.line.InvoiceNo ?? string.Empty,
+                    DebitAmount = x.line.DebitAmount,
+                    CreditAmount = x.line.CreditAmount,
+                    HBLNo = x.line.HBLNo ?? string.Empty,
+                    BookingNo = x.line.BookingNo ?? string.Empty,
+                    LedgerType = x.line.LedgerType ?? string.Empty,
+                    VoucherNo = x.voucher.VoucherNo ?? string.Empty,
+                    VoucherDate = x.voucher.VoucherDate,
+                    PostingDate = x.voucher.PostingDate,
+                    FiscalYear = x.voucher.FiscalYear,
+                    FiscalPeriod = x.voucher.FiscalPeriod,
+                    TransactionTypeCode = x.voucher.TransactionTypeCode ?? string.Empty,
+                    VoucherStatus = x.voucher.Status,
+                    VoucherDescription = x.voucher.Description ?? string.Empty,
+                    ReferenceNo = x.voucher.ReferenceNo ?? string.Empty
+                })
+                .ToListAsync();
+
+            _rows = data;
+            _gridKey++;
+            Snackbar.Add($"Loaded {_rows.Count:N0} voucher lines.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private bool MatchesSearch(VoucherLineRow x)
+    {
+        if (string.IsNullOrWhiteSpace(_search))
+            return true;
+
+        var key = _search.Trim();
+        return x.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.AccountCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.LineDescription.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.InvoiceNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.HBLNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.BookingNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.TransactionTypeCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.VoucherDescription.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.ReferenceNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.LineNo.Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.DebitAmount.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
+            || x.CreditAmount.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task OnTaxBookChangedAsync(VoucherLineRow row, bool value)
+    {
+        if (!_canModify)
+        {
+            Snackbar.Add("Bạn không có quyền Edit trên Modify_voucherlines.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var old = row.IsTaxBook;
+        row.IsTaxBook = value;
+        if (!await SaveBookFlagsAsync(row))
+            row.IsTaxBook = old;
+    }
+
+    private async Task OnManagementBookChangedAsync(VoucherLineRow row, bool value)
+    {
+        if (!_canModify)
+        {
+            Snackbar.Add("Bạn không có quyền Edit trên Modify_voucherlines.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var old = row.IsManagementBook;
+        row.IsManagementBook = value;
+        if (!await SaveBookFlagsAsync(row))
+            row.IsManagementBook = old;
+    }
+
+    private async Task<bool> SaveBookFlagsAsync(VoucherLineRow row)
+    {
+        if (!await ssv.CheckPermission(_usr, "Edit", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền Edit (Modify_voucherlines).", MudBlazor.Severity.Warning);
+            _canModify = false;
+            return false;
+        }
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.AccountingVoucherLines.FirstOrDefaultAsync(x => x.Id == row.Id);
+            if (entity is null)
+            {
+                Snackbar.Add("Không tìm thấy dòng chứng từ.", MudBlazor.Severity.Warning);
+                return false;
+            }
+
+            entity.IsTaxBook = row.IsTaxBook;
+            entity.IsManagementBook = row.IsManagementBook;
+            await db.SaveChangesAsync();
+            Snackbar.Add($"Đã cập nhật book: {row.VoucherNo} / line {row.LineNo}.", MudBlazor.Severity.Success);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+            return false;
+        }
+    }
+
+    private sealed class VoucherLineRow
+    {
+        public Guid Id { get; set; }
+        public Guid VoucherId { get; set; }
+        public bool IsTaxBook { get; set; }
+        public bool IsManagementBook { get; set; }
+        public string LineNo { get; set; } = string.Empty;
+        public string AccountCode { get; set; } = string.Empty;
+        public string LineDescription { get; set; } = string.Empty;
+        public string InvoiceNo { get; set; } = string.Empty;
+        public decimal DebitAmount { get; set; }
+        public decimal CreditAmount { get; set; }
+        public string HBLNo { get; set; } = string.Empty;
+        public string BookingNo { get; set; } = string.Empty;
+        public string LedgerType { get; set; } = string.Empty;
+        public string VoucherNo { get; set; } = string.Empty;
+        public DateTime VoucherDate { get; set; }
+        public DateTime PostingDate { get; set; }
+        public int FiscalYear { get; set; }
+        public int FiscalPeriod { get; set; }
+        public string TransactionTypeCode { get; set; } = string.Empty;
+        public int VoucherStatus { get; set; }
+        public string VoucherDescription { get; set; } = string.Empty;
+        public string ReferenceNo { get; set; } = string.Empty;
+
+        public string VoucherStatusLabel => VoucherStatus switch
+        {
+            0 => "Draft",
+            1 => "Open",
+            2 => "Posted",
+            3 => "Cancelled",
+            _ => VoucherStatus.ToString()
+        };
+    }
+}
