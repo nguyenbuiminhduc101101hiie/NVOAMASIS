@@ -46,6 +46,8 @@ namespace NVOAMASIS.Models
         public bool? IsManagementBook { get; set; }
 
         public string? LedgerType { get; set; }
+        public string? SoHD { get; set; }
+
 
     }
 }

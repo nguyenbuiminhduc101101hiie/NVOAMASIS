@@ -360,6 +360,8 @@ namespace NVOAMASIS.Components.Accounting.Pages
                             Debit = amount,
                             Credit = 0,
                             CustomerName = voucher.CustomerName,
+                            InvoiceNo = contraGroup.Select(x => x.InvoiceNo).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty,
+                            SoHD = contraGroup.Select(x => x.InvoiceNo).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty,
                             Description = Truncate($"Đối ứng thu/giảm công nợ TK {_sourceAccountCode} - CT {voucher.VoucherNo}", 500),
                             SourceRow = 0,
                             SourceKey = $"CONTRA|{contraGroup.Key}"
@@ -390,6 +392,8 @@ namespace NVOAMASIS.Components.Accounting.Pages
                             Debit = 0,
                             Credit = amount,
                             CustomerName = voucher.CustomerName,
+                            InvoiceNo = contraGroup.Select(x => x.InvoiceNo).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty,
+                            SoHD = contraGroup.Select(x => x.InvoiceNo).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty,
                             Description = Truncate($"Đối ứng ghi tăng công nợ TK {_sourceAccountCode} - CT {voucher.VoucherNo}", 500),
                             SourceRow = 0,
                             SourceKey = $"CONTRA|{contraGroup.Key}"
@@ -423,6 +427,7 @@ namespace NVOAMASIS.Components.Accounting.Pages
                 Credit = credit,
                 CustomerName = sourceRow.CustomerName,
                 InvoiceNo = sourceRow.InvoiceNo,
+                SoHD = sourceRow.InvoiceNo,
                 Description = Truncate(description, 500),
                 SourceRow = sourceRow.ExcelRow,
                 SourceKey = $"ROW|{sourceRow.ExcelRow}|{sourceRow.InvoiceNo}|{sourceRow.ReferenceNo}"
@@ -612,7 +617,7 @@ INSERT INTO dbo.GeneralLedgerEntries
     AccountCode, Debit, Credit, CurrencyCode, ExchangeRate, DebitFC, CreditFC,
     CustomerId, SupplierId, EmployeeId, ShipmentId, ContractId,
     BranchCode, Description, SourceModule, SourceId, CreatedBy,
-    IsTaxBook, IsManagementBook, LedgerType
+    IsTaxBook, IsManagementBook, LedgerType, SoHD
 )
 VALUES
 (
@@ -621,7 +626,7 @@ VALUES
     @AccountCode, @Debit, @Credit, @CurrencyCode, @ExchangeRate, @DebitFC, @CreditFC,
     @CustomerId, NULL, NULL, NULL, NULL,
     @BranchCode, @Description, @SourceModule, @SourceId, @CreatedBy,
-    @IsTaxBook, @IsManagementBook, @LedgerType
+    @IsTaxBook, @IsManagementBook, @LedgerType, @SoHD
 );";
 
             AddParameter(command, "@Id", Guid.NewGuid());
@@ -648,6 +653,7 @@ VALUES
             AddParameter(command, "@IsTaxBook", _isTaxBook);
             AddParameter(command, "@IsManagementBook", _isManagementBook);
             AddParameter(command, "@LedgerType", CurrentLedgerType);
+            AddParameter(command, "@SoHD", DbNullIfEmpty(Truncate(line.SoHD, 200)));
 
             await command.ExecuteNonQueryAsync();
         }
@@ -1005,10 +1011,11 @@ WHERE CompanyId = @CompanyId
             public decimal Credit { get; set; }
             public string CustomerName { get; set; } = string.Empty;
             public string InvoiceNo { get; set; } = string.Empty;
+            public string SoHD { get; set; } = string.Empty;
             public string Description { get; set; } = string.Empty;
             public int SourceRow { get; set; }
             public string SourceKey { get; set; } = string.Empty;
-            public string SearchText => $"{VoucherNo} {AccountCode} {InvoiceNo} {Description} {CustomerName}";
+            public string SearchText => $"{VoucherNo} {AccountCode} {InvoiceNo} {SoHD} {Description} {CustomerName}";
         }
     }
 }
