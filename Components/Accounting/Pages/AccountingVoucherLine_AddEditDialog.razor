@@ -126,7 +126,13 @@
                     <MudDatePicker Date="@_line.DueDate" DateChanged="OnDueDateChanged" Label="Due Date" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
                 </MudItem>
                 <MudItem xs="12" md="6">
-                    <MudTextField @bind-Value="_line.InvoiceNo" Label="Invoice No" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudTextField T="string"
+                                  Value="@(_line.InvoiceNo ?? string.Empty)"
+                                  ValueChanged="OnInvoiceNoChanged"
+                                  Label="Invoice No"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  HelperText="Có Invoice No → set Tax Book = true; trống → set Management Book = true (không đổi cờ còn lại)" />
                 </MudItem>
                 <MudItem xs="12" md="6">
                     <MudSelect T="string"
@@ -273,6 +279,7 @@
             }
 
             await EnsureContainersForHblAsync(_line.ShipmentId, _line.HBLNo, db);
+            ApplyBookFlagsFromInvoiceNo();
         }
         else
         {
@@ -294,9 +301,10 @@
                 DebitAmountFC = 0,
                 CreditAmountFC = 0,
                 IsTaxBook = false,
-                IsManagementBook = false
+                IsManagementBook = true
             };
             _selectedDmId = _danhMucs.FirstOrDefault()?.Id ?? Guid.Empty;
+            ApplyBookFlagsFromInvoiceNo();
         }
 
         if (_selectedDmId != Guid.Empty)
@@ -368,6 +376,22 @@
         _line.InvoiceDate = date;
         return Task.CompletedTask;
     }
+
+    private Task OnInvoiceNoChanged(string value)
+    {
+        _line.InvoiceNo = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        ApplyBookFlagsFromInvoiceNo();
+        return Task.CompletedTask;
+    }
+
+    private void ApplyBookFlagsFromInvoiceNo()
+    {
+        if (!string.IsNullOrWhiteSpace(_line.InvoiceNo))
+            _line.IsTaxBook = true;
+        else
+            _line.IsManagementBook = true;
+    }
+
     private Task OnDueDateChanged(DateTime? date)
     {
         _line.DueDate = date;
@@ -616,6 +640,9 @@
             Snackbar.Add("Một dòng chỉ ghi Nợ hoặc Có.", MudBlazor.Severity.Warning);
             return;
         }
+
+        // InvoiceNo có giá trị → chỉ set IsTaxBook = true; trống → chỉ set IsManagementBook = true
+        ApplyBookFlagsFromInvoiceNo();
 
         _line.DebitAmountFC = _line.DebitAmount;
         _line.CreditAmountFC = _line.CreditAmount;
