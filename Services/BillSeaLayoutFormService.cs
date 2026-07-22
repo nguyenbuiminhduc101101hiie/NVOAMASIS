@@ -2,6 +2,7 @@ using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
+using Stimulsoft.Report;
 
 namespace NVOAMASIS.Services
 {
@@ -10,25 +11,67 @@ namespace NVOAMASIS.Services
         public const string Main = "BillSea_NVOCC.mrt";
         public const string Attach = "BillSea_NVOCC_Att_1.mrt";
         public const string Air = "BillAir.mrt";
+        public const string AnSea = "BillArrivalNoticeNVOCC.mrt";
+        public const string AnAir = "BillArrivalNotice_Air.mrt";
+        public const string Do = "BillDeliveryOrderNVOCC.mrt";
     }
 
     public static class BillLayoutFormKindHelper
     {
-        public static string GetDefaultTemplateFile(BillLayoutFormKind kind) =>
-            kind == BillLayoutFormKind.Air
-                ? BillSeaReportTemplateNames.Air
-                : BillSeaReportTemplateNames.Main;
+        public static string GetDefaultTemplateFile(BillLayoutFormKind kind) => kind switch
+        {
+            BillLayoutFormKind.Air => BillSeaReportTemplateNames.Air,
+            BillLayoutFormKind.AnSea => BillSeaReportTemplateNames.AnSea,
+            BillLayoutFormKind.AnAir => BillSeaReportTemplateNames.AnAir,
+            BillLayoutFormKind.Do => BillSeaReportTemplateNames.Do,
+            _ => BillSeaReportTemplateNames.Main
+        };
 
-        public static BillLayoutFormKind ParseFormKind(string? value) =>
-            string.Equals(value, nameof(BillLayoutFormKind.Air), StringComparison.OrdinalIgnoreCase)
-                ? BillLayoutFormKind.Air
-                : BillLayoutFormKind.Sea;
+        public static BillLayoutFormKind ParseFormKind(string? value)
+        {
+            if (string.Equals(value, nameof(BillLayoutFormKind.Air), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.Air;
+            if (string.Equals(value, nameof(BillLayoutFormKind.AnSea), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.AnSea;
+            if (string.Equals(value, nameof(BillLayoutFormKind.AnAir), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.AnAir;
+            if (string.Equals(value, nameof(BillLayoutFormKind.Do), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.Do;
+            return BillLayoutFormKind.Sea;
+        }
 
-        public static string ToStorageValue(BillLayoutFormKind kind) =>
-            kind == BillLayoutFormKind.Air ? nameof(BillLayoutFormKind.Air) : nameof(BillLayoutFormKind.Sea);
+        public static string ToStorageValue(BillLayoutFormKind kind) => kind switch
+        {
+            BillLayoutFormKind.Air => nameof(BillLayoutFormKind.Air),
+            BillLayoutFormKind.AnSea => nameof(BillLayoutFormKind.AnSea),
+            BillLayoutFormKind.AnAir => nameof(BillLayoutFormKind.AnAir),
+            BillLayoutFormKind.Do => nameof(BillLayoutFormKind.Do),
+            _ => nameof(BillLayoutFormKind.Sea)
+        };
 
-        public static string GetDisplayName(BillLayoutFormKind kind) =>
-            kind == BillLayoutFormKind.Air ? "Air" : "Sea";
+        public static string GetDisplayName(BillLayoutFormKind kind) => kind switch
+        {
+            BillLayoutFormKind.Air => "Air",
+            BillLayoutFormKind.AnSea => "AN Sea",
+            BillLayoutFormKind.AnAir => "AN Air",
+            BillLayoutFormKind.Do => "DO",
+            _ => "Sea"
+        };
+
+        public static string GetLongDisplayName(BillLayoutFormKind kind) => kind switch
+        {
+            BillLayoutFormKind.Air => "Bill Air",
+            BillLayoutFormKind.AnSea => "AN Sea",
+            BillLayoutFormKind.AnAir => "AN Air",
+            BillLayoutFormKind.Do => "DO",
+            _ => "Bill Sea"
+        };
+
+        public static bool SupportsAttach(BillLayoutFormKind kind) => kind == BillLayoutFormKind.Sea;
+
+        public static bool SupportsFormBillAir(BillLayoutFormKind kind) => kind == BillLayoutFormKind.Air;
+
+        public static bool UsesImage1AsLogo(BillLayoutFormKind kind) => kind == BillLayoutFormKind.AnAir;
     }
 
     public sealed class BillSeaLayoutFormSummary
@@ -68,7 +111,70 @@ namespace NVOAMASIS.Services
             if (!File.Exists(defaultPath))
                 throw new FileNotFoundException($"Không tìm thấy template mặc định: {reportFileName}", defaultPath);
 
-            return await File.ReadAllBytesAsync(defaultPath, cancellationToken);
+            var bytes = await File.ReadAllBytesAsync(defaultPath, cancellationToken);
+            // Giữ nguyên bytes gốc (JSON hoặc XML). StiReport.Load đọc được cả hai.
+            // Chỉ convert JSON→XML khi editor cần XDocument (xem LoadFormDocumentAsync).
+            return bytes;
+        }
+
+        /// <summary>
+        /// Bảo đảm nội dung MRT ở định dạng XML. Nếu là JSON (Stimulsoft 2023) thì load bằng
+        /// StiReport rồi lưu lại dạng XML để tương thích với trình chỉnh layout (XDocument).
+        /// </summary>
+        public static byte[] EnsureXmlMrt(byte[] mrtBytes)
+        {
+            if (mrtBytes is not { Length: > 0 } || LooksLikeXml(mrtBytes))
+                return mrtBytes;
+
+            var report = new StiReport();
+            using (var input = new MemoryStream(mrtBytes))
+                report.Load(input); // tự nhận diện JSON
+
+            // Stimulsoft 2023 mặc định serialize JSON; ép về XML để editor (XDocument) đọc được.
+            // IsJsonReport chỉ có getter công khai nên phải set qua reflection (setter non-public).
+            ForceXmlReportFormat(report);
+
+            using var output = new MemoryStream();
+            report.Save(output); // giờ ghi ở định dạng XML (StiSerializer)
+            return output.ToArray();
+        }
+
+        private static void ForceXmlReportFormat(StiReport report)
+        {
+            var type = report.GetType();
+            // Ưu tiên setter non-public của property IsJsonReport.
+            var prop = type.GetProperty("IsJsonReport",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            var setter = prop?.GetSetMethod(nonPublic: true);
+            if (setter != null)
+            {
+                setter.Invoke(report, new object[] { false });
+                return;
+            }
+
+            // Dự phòng: set trực tiếp backing field nếu có.
+            var field = type.GetField("<IsJsonReport>k__BackingField",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            field?.SetValue(report, false);
+        }
+
+        private static bool LooksLikeXml(byte[] bytes)
+        {
+            var start = 0;
+            // Bỏ qua UTF-8 BOM
+            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+                start = 3;
+
+            for (var i = start; i < bytes.Length; i++)
+            {
+                var c = (char)bytes[i];
+                if (c is ' ' or '\t' or '\r' or '\n' or '\uFEFF')
+                    continue;
+
+                return c == '<';
+            }
+
+            return false;
         }
 
         public async Task<List<BillSeaLayoutFormSummary>> ListFormsAsync(BillLayoutFormKind? formKind = null, CancellationToken cancellationToken = default)
@@ -90,14 +196,25 @@ namespace NVOAMASIS.Services
                     .ToListAsync(ct);
             }, cancellationToken);
 
-            var defaultSeaBytes = await GetDefaultTemplateBytesAsync(BillSeaReportTemplateNames.Main, cancellationToken);
-            var defaultAirBytes = await GetDefaultTemplateBytesAsync(BillSeaReportTemplateNames.Air, cancellationToken);
+            var defaultCache = new Dictionary<BillLayoutFormKind, byte[]>();
+            async Task<byte[]> GetDefaultCachedAsync(BillLayoutFormKind kind)
+            {
+                if (defaultCache.TryGetValue(kind, out var cached))
+                    return cached;
 
-            return forms.Select(x =>
+                var bytes = await GetDefaultTemplateBytesAsync(
+                    BillLayoutFormKindHelper.GetDefaultTemplateFile(kind),
+                    cancellationToken);
+                defaultCache[kind] = bytes;
+                return bytes;
+            }
+
+            var result = new List<BillSeaLayoutFormSummary>(forms.Count);
+            foreach (var x in forms)
             {
                 var kind = BillLayoutFormKindHelper.ParseFormKind(x.FormKind);
-                var defaultBytes = kind == BillLayoutFormKind.Air ? defaultAirBytes : defaultSeaBytes;
-                return new BillSeaLayoutFormSummary
+                var defaultBytes = await GetDefaultCachedAsync(kind);
+                result.Add(new BillSeaLayoutFormSummary
                 {
                     BillSeaLayoutFormId = x.BillSeaLayoutFormId,
                     FormName = x.FormName,
@@ -105,8 +222,10 @@ namespace NVOAMASIS.Services
                     UpdatedAt = x.UpdatedAt,
                     IsCustomized = !ContentEquals(x.MrtContent, defaultBytes),
                     HasAttachForm = x.AttachMrtContent is { Length: > 0 }
-                };
-            }).ToList();
+                });
+            }
+
+            return result;
         }
 
         public Task<M_BillSeaLayoutForm?> GetFormAsync(Guid formId, CancellationToken cancellationToken = default) =>
@@ -121,12 +240,15 @@ namespace NVOAMASIS.Services
             if (form is null)
                 throw new InvalidOperationException("Không tìm thấy form Bill Sea.");
 
-            return form.MrtContent;
+            // Trả bytes gốc cho Stimulsoft export (JSON/XML đều Load được).
+            // Editor parse XDocument qua LoadFormDocumentAsync → EnsureXmlMrt tại đó.
+            return form.MrtContent ?? Array.Empty<byte>();
         }
 
         public async Task<XDocument> LoadFormDocumentAsync(Guid formId, CancellationToken cancellationToken = default)
         {
             var bytes = await GetFormBytesAsync(formId, cancellationToken);
+            bytes = EnsureXmlMrt(bytes);
             using var stream = new MemoryStream(bytes);
             return XDocument.Load(stream);
         }
@@ -235,7 +357,9 @@ namespace NVOAMASIS.Services
 
             var kindValue = BillLayoutFormKindHelper.ToStorageValue(formKind);
             var templateFile = BillLayoutFormKindHelper.GetDefaultTemplateFile(formKind);
-            var defaultBytes = await GetDefaultTemplateBytesAsync(templateFile, cancellationToken);
+            // Form lưu trong DB nên chuẩn hoá XML để editor (XDocument) mở được ngay.
+            var defaultBytes = EnsureXmlMrt(
+                await GetDefaultTemplateBytesAsync(templateFile, cancellationToken));
 
             return await WithDbAsync(async (context, ct) =>
             {
@@ -285,7 +409,8 @@ namespace NVOAMASIS.Services
                 if (form is null)
                     throw new InvalidOperationException("Không tìm thấy form Bill Sea.");
 
-                form.MrtContent = await GetDefaultTemplateBytesAsync(form.SourceTemplate, ct);
+                form.MrtContent = EnsureXmlMrt(
+                    await GetDefaultTemplateBytesAsync(form.SourceTemplate, ct));
                 form.UpdatedAt = DateTime.UtcNow;
                 await context.SaveChangesAsync(ct);
             }, cancellationToken);
@@ -326,8 +451,8 @@ namespace NVOAMASIS.Services
                 if (form is null)
                     throw new InvalidOperationException("Không tìm thấy form Bill Sea.");
 
-                if (BillLayoutFormKindHelper.ParseFormKind(form.FormKind) != BillLayoutFormKind.Sea)
-                    throw new InvalidOperationException("Form Attach chỉ áp dụng cho loại Sea.");
+                if (!BillLayoutFormKindHelper.SupportsAttach(BillLayoutFormKindHelper.ParseFormKind(form.FormKind)))
+                    throw new InvalidOperationException("Form Attach chỉ áp dụng cho Bill Sea.");
 
                 if (form.AttachMrtContent is { Length: > 0 })
                     throw new InvalidOperationException($"Form '{form.FormName}' đã có form Attach.");

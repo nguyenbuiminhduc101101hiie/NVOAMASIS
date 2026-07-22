@@ -9,8 +9,8 @@
 @inject IDialogService DialogService
 @inject BillSeaLayoutFormService FormService
 
-<PageTitle>Chỉnh layout Bill</PageTitle>
-<MudText Class="pa-2" Typo="Typo.h6">Chỉnh layout Bill Sea / Air</MudText>
+<PageTitle>Chỉnh layout form</PageTitle>
+<MudText Class="pa-2" Typo="Typo.h6">Chỉnh layout Bill / AN / DO</MudText>
 
 @if (_loading)
 {
@@ -20,19 +20,41 @@
 <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
     <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
         <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
-            <MudButton Color="@(_listFormKind == BillLayoutFormKind.Sea ? Color.Primary : Color.Default)"
-                       Variant="@(_listFormKind == BillLayoutFormKind.Sea ? Variant.Filled : Variant.Outlined)"
-                       OnClick="() => OnListFormKindChanged(BillLayoutFormKind.Sea)">
-                Sea
+            <MudButton Color="@(_documentGroup == LayoutDocumentGroup.Bill ? Color.Primary : Color.Default)"
+                       Variant="@(_documentGroup == LayoutDocumentGroup.Bill ? Variant.Filled : Variant.Outlined)"
+                       OnClick="() => OnDocumentGroupChanged(LayoutDocumentGroup.Bill)">
+                Bill
             </MudButton>
-            <MudButton Color="@(_listFormKind == BillLayoutFormKind.Air ? Color.Primary : Color.Default)"
-                       Variant="@(_listFormKind == BillLayoutFormKind.Air ? Variant.Filled : Variant.Outlined)"
-                       OnClick="() => OnListFormKindChanged(BillLayoutFormKind.Air)">
-                Air
+            <MudButton Color="@(_documentGroup == LayoutDocumentGroup.An ? Color.Primary : Color.Default)"
+                       Variant="@(_documentGroup == LayoutDocumentGroup.An ? Variant.Filled : Variant.Outlined)"
+                       OnClick="() => OnDocumentGroupChanged(LayoutDocumentGroup.An)">
+                AN
+            </MudButton>
+            <MudButton Color="@(_documentGroup == LayoutDocumentGroup.Do ? Color.Primary : Color.Default)"
+                       Variant="@(_documentGroup == LayoutDocumentGroup.Do ? Variant.Filled : Variant.Outlined)"
+                       OnClick="() => OnDocumentGroupChanged(LayoutDocumentGroup.Do)">
+                DO
             </MudButton>
         </MudButtonGroup>
+
+        @if (_documentGroup != LayoutDocumentGroup.Do)
+        {
+            <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+                <MudButton Color="@(IsSeaSideSelected ? Color.Primary : Color.Default)"
+                           Variant="@(IsSeaSideSelected ? Variant.Filled : Variant.Outlined)"
+                           OnClick="() => OnListFormKindChanged(GetSeaKind())">
+                    Sea
+                </MudButton>
+                <MudButton Color="@(IsAirSideSelected ? Color.Primary : Color.Default)"
+                           Variant="@(IsAirSideSelected ? Variant.Filled : Variant.Outlined)"
+                           OnClick="() => OnListFormKindChanged(GetAirKind())">
+                    Air
+                </MudButton>
+            </MudButtonGroup>
+        }
+
         <MudSelect T="Guid?"
-                   Label="Chọn form Bill"
+                   Label="@($"Chọn form {BillLayoutFormKindHelper.GetLongDisplayName(_listFormKind)}")"
                    Value="_selectedFormId"
                    ValueChanged="OnSelectedFormChanged"
                    ToStringFunc="FormIdToName"
@@ -71,7 +93,7 @@
                    Disabled="_loading">
             Tải lại danh sách
         </MudButton>
-        @if (_selectedForm is not null && _selectedForm.FormKind == BillLayoutFormKind.Sea)
+        @if (_selectedForm is not null && BillLayoutFormKindHelper.SupportsAttach(_selectedForm.FormKind))
         {
             <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
                 <MudButton Color="@(!_editAttachMode ? Color.Primary : Color.Default)"
@@ -111,7 +133,18 @@
         }
     </MudStack>
     <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
-        <b>Sea</b> từ <b>BillSea_NVOCC.mrt</b> (có thể tạo form Attach). <b>Air</b> từ <b>BillAir.mrt</b>.
+        @switch (_documentGroup)
+        {
+            case LayoutDocumentGroup.An:
+                <span><b>AN Sea</b> từ <b>BillArrivalNoticeNVOCC.mrt</b>. <b>AN Air</b> từ <b>BillArrivalNotice_Air.mrt</b>. Có thể chọn logo thay thế.</span>
+                break;
+            case LayoutDocumentGroup.Do:
+                <span><b>DO</b> từ <b>BillDeliveryOrderNVOCC.mrt</b> (không tách Sea/Air). Có thể chọn logo thay thế.</span>
+                break;
+            default:
+                <span><b>Bill Sea</b> từ <b>BillSea_NVOCC.mrt</b> (có thể tạo form Attach). <b>Bill Air</b> từ <b>BillAir.mrt</b>.</span>
+                break;
+        }
     </MudText>
 </MudPaper>
 
@@ -133,11 +166,13 @@ else if (_selectedForm is not null && _editAttachMode && !_selectedForm.HasAttac
 else if (!_loading)
 {
     <MudAlert Class="mx-4" Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
-        Chưa có form Bill @BillLayoutFormKindHelper.GetDisplayName(_listFormKind). Bấm <b>Tạo form mới</b> để bắt đầu.
+        Chưa có form @BillLayoutFormKindHelper.GetLongDisplayName(_listFormKind). Bấm <b>Tạo form mới</b> để bắt đầu.
     </MudAlert>
 }
 
 @code {
+    enum LayoutDocumentGroup { Bill, An, Do }
+
     M_CompanyInfo _company = new();
     string _userName = string.Empty;
     bool _loading;
@@ -146,6 +181,19 @@ else if (!_loading)
     List<BillSeaLayoutFormSummary> _forms = new();
     bool _editAttachMode;
     BillLayoutFormKind _listFormKind = BillLayoutFormKind.Sea;
+    LayoutDocumentGroup _documentGroup = LayoutDocumentGroup.Bill;
+
+    bool IsSeaSideSelected =>
+        _listFormKind is BillLayoutFormKind.Sea or BillLayoutFormKind.AnSea;
+
+    bool IsAirSideSelected =>
+        _listFormKind is BillLayoutFormKind.Air or BillLayoutFormKind.AnAir;
+
+    BillLayoutFormKind GetSeaKind() =>
+        _documentGroup == LayoutDocumentGroup.An ? BillLayoutFormKind.AnSea : BillLayoutFormKind.Sea;
+
+    BillLayoutFormKind GetAirKind() =>
+        _documentGroup == LayoutDocumentGroup.An ? BillLayoutFormKind.AnAir : BillLayoutFormKind.Air;
 
     protected override async Task OnInitializedAsync()
     {
@@ -192,12 +240,33 @@ else if (!_loading)
         _editAttachMode = false;
     }
 
+    async Task OnDocumentGroupChanged(LayoutDocumentGroup group)
+    {
+        if (_documentGroup == group)
+            return;
+
+        _documentGroup = group;
+        var kind = group switch
+        {
+            LayoutDocumentGroup.An => BillLayoutFormKind.AnSea,
+            LayoutDocumentGroup.Do => BillLayoutFormKind.Do,
+            _ => BillLayoutFormKind.Sea
+        };
+        await OnListFormKindChanged(kind);
+    }
+
     async Task OnListFormKindChanged(BillLayoutFormKind kind)
     {
         if (_listFormKind == kind)
             return;
 
         _listFormKind = kind;
+        _documentGroup = kind switch
+        {
+            BillLayoutFormKind.AnSea or BillLayoutFormKind.AnAir => LayoutDocumentGroup.An,
+            BillLayoutFormKind.Do => LayoutDocumentGroup.Do,
+            _ => LayoutDocumentGroup.Bill
+        };
         _editAttachMode = false;
         _selectedFormId = null;
         _selectedForm = null;
@@ -230,6 +299,13 @@ else if (!_loading)
     string FormIdToName(Guid? id) =>
         id is null ? string.Empty : _forms.FirstOrDefault(x => x.BillSeaLayoutFormId == id)?.FormName ?? string.Empty;
 
+    List<BillLayoutFormKind> GetAllowedKindsForCreate() => _documentGroup switch
+    {
+        LayoutDocumentGroup.An => new List<BillLayoutFormKind> { BillLayoutFormKind.AnSea, BillLayoutFormKind.AnAir },
+        LayoutDocumentGroup.Do => new List<BillLayoutFormKind> { BillLayoutFormKind.Do },
+        _ => new List<BillLayoutFormKind> { BillLayoutFormKind.Sea, BillLayoutFormKind.Air }
+    };
+
     async Task CreateNewForm()
     {
         if (!await ssv.CheckPermission(_userName, "Edit", "Companyinformation"))
@@ -240,8 +316,9 @@ else if (!_loading)
 
         var parameters = new DialogParameters
         {
-            ["Title"] = $"Tạo form Bill {BillLayoutFormKindHelper.GetDisplayName(_listFormKind)} mới",
-            ["DefaultFormKind"] = _listFormKind
+            ["Title"] = $"Tạo form {BillLayoutFormKindHelper.GetLongDisplayName(_listFormKind)} mới",
+            ["DefaultFormKind"] = _listFormKind,
+            ["AllowedKinds"] = GetAllowedKindsForCreate()
         };
         var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
         var dialog = await DialogService.ShowAsync<BillSeaLayoutFormNameDialog>("Tạo form mới", parameters, options);
@@ -254,6 +331,12 @@ else if (!_loading)
             _loading = true;
             var created = await FormService.CreateFormAsync(request.FormName, request.FormKind, _userName);
             _listFormKind = request.FormKind;
+            _documentGroup = request.FormKind switch
+            {
+                BillLayoutFormKind.AnSea or BillLayoutFormKind.AnAir => LayoutDocumentGroup.An,
+                BillLayoutFormKind.Do => LayoutDocumentGroup.Do,
+                _ => LayoutDocumentGroup.Bill
+            };
             await ReloadForms();
             _selectedFormId = created.BillSeaLayoutFormId;
             _selectedForm = _forms.FirstOrDefault(x => x.BillSeaLayoutFormId == created.BillSeaLayoutFormId);
@@ -281,7 +364,7 @@ else if (!_loading)
         }
 
         var confirmed = await DialogService.ShowMessageBox(
-            "Xóa form Bill Sea",
+            $"Xóa form {BillLayoutFormKindHelper.GetLongDisplayName(_selectedForm.FormKind)}",
             $"Bạn có chắc muốn xóa form '{_selectedForm.FormName}'?" + (_selectedForm.HasAttachForm ? "\n\nForm Attach đi kèm cũng sẽ bị xóa." : ""),
             yesText: "Xóa",
             cancelText: "Hủy");

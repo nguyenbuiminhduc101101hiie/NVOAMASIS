@@ -99,23 +99,15 @@ namespace NVOAMASIS.Services
                     pageHeightInches = pageHeight;
 
                 var componentsParent = FindDesignComponentsParent(pageNode);
-                var pageComponents = pageNode.Element("Components");
+                var (marginLeft, marginTop, marginRight, marginBottom) = ParsePageMargins(pageNode);
+                var headerRect = ParseClientRectangle(componentsParent.Element("ClientRectangle")?.Value);
                 var elements = new List<BillSeaDesignElement>();
                 var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                foreach (var node in componentsParent.Descendants())
-                    TryParseDesignNode(node, elements, seenNames);
-
-                if (pageComponents is not null)
-                {
-                    foreach (var node in pageComponents.Elements())
-                    {
-                        if (node.Name.LocalName.Equals("PageHeaderBand1", StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        TryParseDesignNode(node, elements, seenNames);
-                    }
-                }
+                // Load EVERY designable component on the page (all bands), not only PageHeaderBand1.
+                // AN/DO templates place most fields in HeaderBand / DataBand / FooterBand.
+                foreach (var node in pageNode.Descendants())
+                    TryParseDesignNode(node, pageNode, elements, seenNames);
 
                 pages.Add(new BillSeaPageLayout
                 {
@@ -124,7 +116,13 @@ namespace NVOAMASIS.Services
                     ComponentsParentRef = componentsParent.Attribute("Ref")?.Value ?? pageRef,
                     PageWidthInches = pageWidthInches,
                     PageHeightInches = pageHeightInches,
-                    Elements = elements.OrderBy(x => x.Name).ToList()
+                    MarginLeft = marginLeft,
+                    MarginTop = marginTop,
+                    MarginRight = marginRight,
+                    MarginBottom = marginBottom,
+                    DefaultParentOffsetLeft = marginLeft + (headerRect?.Left ?? 0),
+                    DefaultParentOffsetTop = marginTop + (headerRect?.Top ?? 0),
+                    Elements = elements.OrderBy(x => x.Top).ThenBy(x => x.Left).ThenBy(x => x.Name).ToList()
                 });
             }
 
@@ -155,13 +153,33 @@ namespace NVOAMASIS.Services
                     if (!map.TryGetValue(name, out var element))
                         continue;
 
+                    if (element.Kind == BillSeaElementKind.Band && IsBandNode(node))
+                    {
+                        // Chỉ cập nhật Height — giữ nguyên Left/Top/Width gốc.
+                        var rectElement = node.Element("ClientRectangle");
+                        if (rectElement is not null)
+                        {
+                            var existing = ParseClientRectangle(rectElement.Value);
+                            if (existing is not null)
+                            {
+                                rectElement.Value = string.Join(",",
+                                    existing.Value.Left.ToString("0.####", CultureInfo.InvariantCulture),
+                                    existing.Value.Top.ToString("0.####", CultureInfo.InvariantCulture),
+                                    existing.Value.Width.ToString("0.####", CultureInfo.InvariantCulture),
+                                    Math.Max(0.1, element.Height).ToString("0.####", CultureInfo.InvariantCulture));
+                            }
+                        }
+                        updated++;
+                        continue;
+                    }
+
                     if (IsHorizontalLineNode(node))
                     {
                         var rectElement = node.Element("ClientRectangle");
                         if (rectElement is null)
                             continue;
 
-                        rectElement.Value = BuildClientRectangle(element);
+                        rectElement.Value = BuildRelativeClientRectangle(element);
                         ApplyLineSize(node, element.LineSize);
                         updated++;
                         continue;
@@ -184,7 +202,7 @@ namespace NVOAMASIS.Services
 
                         var rectElement = node.Element("ClientRectangle");
                         if (rectElement is not null)
-                            rectElement.Value = BuildClientRectangle(element);
+                            rectElement.Value = BuildRelativeClientRectangle(element);
 
                         ApplyLineSize(node, element.LineSize);
                         var lineGuid = EnsureLineGuid(element, node);
@@ -204,7 +222,7 @@ namespace NVOAMASIS.Services
                     {
                         var rectElement = node.Element("ClientRectangle");
                         if (rectElement is not null)
-                            rectElement.Value = BuildClientRectangle(element);
+                            rectElement.Value = BuildRelativeClientRectangle(element);
                         updated++;
                         continue;
                     }
@@ -213,7 +231,7 @@ namespace NVOAMASIS.Services
                     {
                         var rectElement = node.Element("ClientRectangle");
                         if (rectElement is not null)
-                            rectElement.Value = BuildClientRectangle(element);
+                            rectElement.Value = BuildRelativeClientRectangle(element);
 
                         if (element.Kind == BillSeaElementKind.StaticText)
                         {
@@ -223,6 +241,7 @@ namespace NVOAMASIS.Services
                         }
 
                         WriteFontToNode(node, element);
+                        WriteAlignmentToNode(node, element);
                         updated++;
                     }
                 }
@@ -365,7 +384,7 @@ namespace NVOAMASIS.Services
             node.SetAttributeValue("Ref", nextRef.ToString(CultureInfo.InvariantCulture));
             node.SetAttributeValue("type", elementLocalName);
             node.SetAttributeValue("isKey", "true");
-            node.Add(new XElement("ClientRectangle", BuildClientRectangle(element)));
+            node.Add(new XElement("ClientRectangle", BuildRelativeClientRectangle(element)));
 
             if (IsLineKind(element.Kind))
             {
@@ -509,9 +528,28 @@ namespace NVOAMASIS.Services
             string.Equals(GetComponentType(node), "VerticalLinePrimitive", StringComparison.OrdinalIgnoreCase)
             || node.Name.LocalName.StartsWith("VerticalLinePrimitive", StringComparison.OrdinalIgnoreCase);
 
-        private static bool IsImageNode(XElement node) =>
-            string.Equals(GetComponentType(node), "Image", StringComparison.OrdinalIgnoreCase)
-            || node.Name.LocalName.StartsWith("Image", StringComparison.OrdinalIgnoreCase);
+        private static bool IsBandNode(XElement node)
+        {
+            var type = node.Attribute("type")?.Value;
+            return !string.IsNullOrWhiteSpace(type)
+                && type.EndsWith("Band", StringComparison.OrdinalIgnoreCase)
+                && node.Element("ClientRectangle") is not null;
+        }
+
+        private static bool IsImageNode(XElement node)
+        {
+            var type = GetComponentType(node);
+            if (string.Equals(type, "Image", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Avoid matching nested elements like ImageBytes / ImageURL.
+            var localName = node.Name.LocalName;
+            return localName.Equals("Image1", StringComparison.OrdinalIgnoreCase)
+                || localName.Equals("CompanyLogo", StringComparison.OrdinalIgnoreCase)
+                || (localName.StartsWith("Image", StringComparison.OrdinalIgnoreCase)
+                    && node.Element("ClientRectangle") is not null
+                    && node.Element("Name") is not null);
+        }
 
         private static bool IsTextNode(XElement node)
         {
@@ -531,11 +569,9 @@ namespace NVOAMASIS.Services
 
         private static string GetImageDisplayLabel(string name, XElement node)
         {
-            if (string.Equals(name, "Image1", StringComparison.OrdinalIgnoreCase))
-                return "Form Bill";
-
-            if (string.Equals(name, "CompanyLogo", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(name, "Text1", StringComparison.OrdinalIgnoreCase))
+            // Image1 trên AN Air = logo; trên Bill Air bị ẩn như nền form nên nhãn này ít khi hiện.
+            if (string.Equals(name, "Image1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "CompanyLogo", StringComparison.OrdinalIgnoreCase))
             {
                 return "Logo";
             }
@@ -546,11 +582,40 @@ namespace NVOAMASIS.Services
 
         private static string? GetComponentType(XElement node) => node.Attribute("type")?.Value;
 
-        private static void TryParseDesignNode(XElement node, List<BillSeaDesignElement> elements, HashSet<string> seenNames)
+        private static void TryParseDesignNode(
+            XElement node,
+            XElement pageNode,
+            List<BillSeaDesignElement> elements,
+            HashSet<string> seenNames)
         {
             var name = node.Element("Name")?.Value?.Trim();
             if (string.IsNullOrWhiteSpace(name) || !seenNames.Add(name))
                 return;
+
+            var (offsetLeft, offsetTop) = GetParentOffsets(node, pageNode);
+
+            if (IsBandNode(node))
+            {
+                var bandRect = ParseClientRectangle(node.Element("ClientRectangle")?.Value);
+                if (bandRect is null)
+                    return;
+
+                var bandType = node.Attribute("type")?.Value ?? "Band";
+                elements.Add(new BillSeaDesignElement
+                {
+                    Name = name,
+                    Kind = BillSeaElementKind.Band,
+                    Left = bandRect.Value.Left + offsetLeft,
+                    Top = bandRect.Value.Top + offsetTop,
+                    Width = bandRect.Value.Width,
+                    Height = bandRect.Value.Height,
+                    ParentOffsetLeft = offsetLeft,
+                    ParentOffsetTop = offsetTop,
+                    BandType = bandType,
+                    Text = bandType
+                });
+                return;
+            }
 
             if (IsHorizontalLineNode(node))
             {
@@ -562,10 +627,12 @@ namespace NVOAMASIS.Services
                 {
                     Name = name,
                     Kind = BillSeaElementKind.HorizontalLine,
-                    Left = rect.Value.Left,
-                    Top = rect.Value.Top,
+                    Left = rect.Value.Left + offsetLeft,
+                    Top = rect.Value.Top + offsetTop,
                     Width = rect.Value.Width,
                     Height = rect.Value.Height,
+                    ParentOffsetLeft = offsetLeft,
+                    ParentOffsetTop = offsetTop,
                     LineSize = ParseLineSize(node)
                 });
                 return;
@@ -581,10 +648,12 @@ namespace NVOAMASIS.Services
                 {
                     Name = name,
                     Kind = BillSeaElementKind.VerticalLine,
-                    Left = rect.Value.Left,
-                    Top = rect.Value.Top,
+                    Left = rect.Value.Left + offsetLeft,
+                    Top = rect.Value.Top + offsetTop,
                     Width = rect.Value.Width,
                     Height = rect.Value.Height,
+                    ParentOffsetLeft = offsetLeft,
+                    ParentOffsetTop = offsetTop,
                     LineSize = ParseLineSize(node),
                     LineGuid = node.Element("Guid")?.Value?.Trim() ?? string.Empty
                 });
@@ -601,10 +670,12 @@ namespace NVOAMASIS.Services
                 {
                     Name = name,
                     Kind = BillSeaElementKind.Image,
-                    Left = rect.Value.Left,
-                    Top = rect.Value.Top,
+                    Left = rect.Value.Left + offsetLeft,
+                    Top = rect.Value.Top + offsetTop,
                     Width = rect.Value.Width,
                     Height = rect.Value.Height,
+                    ParentOffsetLeft = offsetLeft,
+                    ParentOffsetTop = offsetTop,
                     ImageUrl = node.Element("ImageURL")?.Value?.Trim() ?? string.Empty,
                     Text = GetImageDisplayLabel(name, node)
                 });
@@ -627,15 +698,140 @@ namespace NVOAMASIS.Services
             {
                 Name = name,
                 Kind = textValue.Contains('{') ? BillSeaElementKind.DataText : BillSeaElementKind.StaticText,
-                Left = textRect.Value.Left,
-                Top = textRect.Value.Top,
+                Left = textRect.Value.Left + offsetLeft,
+                Top = textRect.Value.Top + offsetTop,
                 Width = textRect.Value.Width,
                 Height = textRect.Value.Height,
-                Text = textValue
+                ParentOffsetLeft = offsetLeft,
+                ParentOffsetTop = offsetTop,
+                Text = textValue,
+                HorAlignment = NormalizeHorAlignment(node.Element("HorAlignment")?.Value),
+                VertAlignment = NormalizeVertAlignment(node.Element("VertAlignment")?.Value)
             };
             ParseFontFromNode(node, textElement);
             elements.Add(textElement);
         }
+
+        private static string NormalizeHorAlignment(string? value) =>
+            value?.Trim() switch
+            {
+                "Center" => "Center",
+                "Right" => "Right",
+                "Width" => "Width",
+                _ => "Left"
+            };
+
+        private static string NormalizeVertAlignment(string? value) =>
+            value?.Trim() switch
+            {
+                "Center" => "Center",
+                "Bottom" => "Bottom",
+                _ => "Top"
+            };
+
+        private static void WriteAlignmentToNode(XElement node, BillSeaDesignElement element)
+        {
+            if (element.Kind is not (BillSeaElementKind.StaticText or BillSeaElementKind.DataText))
+                return;
+
+            var hor = NormalizeHorAlignment(element.HorAlignment);
+            if (!string.Equals(hor, "Left", StringComparison.OrdinalIgnoreCase))
+            {
+                var horNode = node.Element("HorAlignment");
+                if (horNode is null)
+                    node.Add(new XElement("HorAlignment", hor));
+                else
+                    horNode.Value = hor;
+            }
+
+            var vert = NormalizeVertAlignment(element.VertAlignment);
+            if (!string.Equals(vert, "Top", StringComparison.OrdinalIgnoreCase))
+            {
+                var vertNode = node.Element("VertAlignment");
+                if (vertNode is null)
+                    node.Add(new XElement("VertAlignment", vert));
+                else
+                    vertNode.Value = vert;
+            }
+        }
+
+        /// <summary>
+        /// Stimulsoft ClientRectangle is relative to the printable area (inside page Margins)
+        /// and then to the parent band/panel/table.
+        /// Sum page margins + ancestor container positions so the editor canvas (full page) matches print layout.
+        /// </summary>
+        private static (double Left, double Top) GetParentOffsets(XElement node, XElement pageNode)
+        {
+            var (marginLeft, marginTop, _, _) = ParsePageMargins(pageNode);
+            double left = marginLeft;
+            double top = marginTop;
+
+            foreach (var ancestor in node.Ancestors())
+            {
+                if (ReferenceEquals(ancestor, pageNode)
+                    || string.Equals(ancestor.Attribute("type")?.Value, "Page", StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+
+                if (!IsCoordinateContainer(ancestor))
+                    continue;
+
+                var rect = ParseClientRectangle(ancestor.Element("ClientRectangle")?.Value);
+                if (rect is null)
+                    continue;
+
+                left += rect.Value.Left;
+                top += rect.Value.Top;
+            }
+
+            return (left, top);
+        }
+
+        /// <summary>Stimulsoft page Margins format: Left, Top, Right, Bottom (inches).</summary>
+        private static (double Left, double Top, double Right, double Bottom) ParsePageMargins(XElement pageNode)
+        {
+            var raw = pageNode.Element("Margins")?.Value?.Trim();
+            if (string.IsNullOrWhiteSpace(raw))
+                return (0, 0, 0, 0);
+
+            var parts = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 4)
+                return (0, 0, 0, 0);
+
+            if (!double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var left))
+                left = 0;
+            if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var top))
+                top = 0;
+            if (!double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var right))
+                right = 0;
+            if (!double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var bottom))
+                bottom = 0;
+
+            return (left, top, right, bottom);
+        }
+
+        private static bool IsCoordinateContainer(XElement node)
+        {
+            var type = node.Attribute("type")?.Value ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(type))
+                return false;
+
+            return type.Contains("Band", StringComparison.OrdinalIgnoreCase)
+                || type.Equals("Panel", StringComparison.OrdinalIgnoreCase)
+                || type.Equals("Table", StringComparison.OrdinalIgnoreCase)
+                || type.Equals("TableCell", StringComparison.OrdinalIgnoreCase)
+                || type.Equals("ChildBand", StringComparison.OrdinalIgnoreCase)
+                || type.Equals("Overlay", StringComparison.OrdinalIgnoreCase)
+                || type.Equals("SubReport", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string BuildRelativeClientRectangle(BillSeaDesignElement element) =>
+            string.Join(",",
+                (element.Left - element.ParentOffsetLeft).ToString("0.####", CultureInfo.InvariantCulture),
+                (element.Top - element.ParentOffsetTop).ToString("0.####", CultureInfo.InvariantCulture),
+                element.Width.ToString("0.####", CultureInfo.InvariantCulture),
+                element.Height.ToString("0.####", CultureInfo.InvariantCulture));
 
         private static bool IsInsideHeaderBand(XElement node, XElement headerBand) =>
             node.Ancestors().Any(x => x == headerBand);
@@ -677,8 +873,10 @@ namespace NVOAMASIS.Services
 
             pageComponents.Add(lineNode);
 
-            var startPoint = CreatePointPrimitive(refAllocator, isStart: true, pageRef, headerParentRef, guid, element.Left, element.Top);
-            var endPoint = CreatePointPrimitive(refAllocator, isStart: false, pageRef, headerParentRef, guid, element.Left, element.Top + element.Height);
+            var relativeLeft = element.Left - element.ParentOffsetLeft;
+            var relativeTop = element.Top - element.ParentOffsetTop;
+            var startPoint = CreatePointPrimitive(refAllocator, isStart: true, pageRef, headerParentRef, guid, relativeLeft, relativeTop);
+            var endPoint = CreatePointPrimitive(refAllocator, isStart: false, pageRef, headerParentRef, guid, relativeLeft, relativeTop + element.Height);
             headerComponents.Add(startPoint);
             headerComponents.Add(endPoint);
         }
@@ -721,11 +919,13 @@ namespace NVOAMASIS.Services
         private static void SyncVerticalLinePoints(XElement pageNode, BillSeaDesignElement element)
         {
             var guid = EnsureLineGuid(element);
+            var relativeLeft = element.Left - element.ParentOffsetLeft;
+            var relativeTop = element.Top - element.ParentOffsetTop;
             foreach (var point in pageNode.Descendants().Where(x => x.Element("ReferenceToGuid")?.Value == guid))
             {
                 var isStart = IsStartPointNode(point);
-                var x = element.Left;
-                var y = isStart ? element.Top : element.Top + element.Height;
+                var x = relativeLeft;
+                var y = isStart ? relativeTop : relativeTop + element.Height;
                 var rectElement = point.Element("ClientRectangle");
                 if (rectElement is null)
                     point.Add(new XElement("ClientRectangle", BuildPointRectangle(x, y)));
@@ -747,8 +947,10 @@ namespace NVOAMASIS.Services
                 return;
 
             var headerComponents = headerParent.Element("Components") ?? headerParent;
-            headerComponents.Add(CreatePointPrimitive(refAllocator, isStart: true, pageRef, headerParentRef, guid, element.Left, element.Top));
-            headerComponents.Add(CreatePointPrimitive(refAllocator, isStart: false, pageRef, headerParentRef, guid, element.Left, element.Top + element.Height));
+            var relativeLeft = element.Left - element.ParentOffsetLeft;
+            var relativeTop = element.Top - element.ParentOffsetTop;
+            headerComponents.Add(CreatePointPrimitive(refAllocator, isStart: true, pageRef, headerParentRef, guid, relativeLeft, relativeTop));
+            headerComponents.Add(CreatePointPrimitive(refAllocator, isStart: false, pageRef, headerParentRef, guid, relativeLeft, relativeTop + element.Height));
         }
 
         private static bool IsStartPointNode(XElement node) =>
