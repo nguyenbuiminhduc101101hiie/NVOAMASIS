@@ -19,7 +19,7 @@ namespace NVOAMASIS.Models
 
         public byte[]? FormBillAir { get; set; }
 
-        [MaxLength(10)]
+        [MaxLength(20)]
         public string FormKind { get; set; } = nameof(BillLayoutFormKind.Sea);
 
         [MaxLength(260)]

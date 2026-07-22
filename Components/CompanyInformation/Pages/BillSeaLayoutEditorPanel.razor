@@ -164,6 +164,14 @@
                Disabled="_loading || CurrentPage is null">
         @(_showCanvasImages ? "Ẩn ảnh" : "Hiện ảnh")
     </MudButton>
+    <MudButton OnClick="ToggleBands"
+               Size="Size.Small"
+               Color="@(_showBands ? Color.Primary : Color.Default)"
+               Variant="@(_showBands ? Variant.Filled : Variant.Outlined)"
+               StartIcon="@Icons.Material.Filled.ViewDay"
+               Disabled="_loading || CurrentPage is null">
+        @(_showBands ? "Ẩn band" : "Hiện band")
+    </MudButton>
     @if (_pages.Count > 1)
     {
         <MudSelect T="string"
@@ -190,7 +198,7 @@
 
 <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
     <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
-        <MudText Typo="Typo.subtitle2"><b>@(FormKind == BillLayoutFormKind.Air ? "Logo (CompanyLogo)" : "Logo form")</b></MudText>
+        <MudText Typo="Typo.subtitle2"><b>@GetLogoSectionTitle()</b></MudText>
         @if (_logoDataUrl is not null)
         {
             <MudImage Src="@_logoDataUrl" Alt="Logo form" Style="max-height:72px; max-width:180px;" ObjectFit="ObjectFit.Contain" />
@@ -231,7 +239,7 @@
     </MudStack>
 </MudPaper>
 
-@if (FormKind == BillLayoutFormKind.Air)
+@if (BillLayoutFormKindHelper.SupportsFormBillAir(FormKind))
 {
     <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
         <MudStack Row Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
@@ -290,7 +298,7 @@
         }
         else
         {
-            <span>Layout form <b>@BillLayoutFormKindHelper.GetDisplayName(FormKind)</b> <b>@TemplateName</b> từ template <b>@GetSourceTemplateName()</b>.</span>
+            <span>Layout form <b>@BillLayoutFormKindHelper.GetLongDisplayName(FormKind)</b> <b>@TemplateName</b> từ template <b>@GetSourceTemplateName()</b>.</span>
         }
         @if (_usesCustomTemplate) { <span> Đang dùng <b>bản đã chỉnh</b>.</span> }
         else if (!IsAttachMode) { <span> Đang dùng <b>nội dung gốc</b>.</span> }
@@ -298,6 +306,7 @@
         Bấm Line ngang / Line dọc / Label text rồi click lên canvas để đặt. Giữ Ctrl + click để chọn nhiều phần tử.
         Bấm <b>Trường dữ liệu</b> để mở danh sách toàn bộ cột của các table đã link (HBL, MBL, Container, Customer, Job, CompanyInfomation) — bạn có thể <b>thêm cột chưa có</b> hoặc <b>ẩn cột không cần</b> ngay trên bill.
         Bấm <b>Hiện ảnh</b> để xem logo/nền form khi căn chỉnh; <b>Ẩn ảnh</b> để di chuyển các phần tử dễ hơn.
+        Bấm <b>Hiện band</b> để xem các dải band (PageHeader / ReportTitle / Data / ReportSummary...) — chọn 1 band rồi kéo cạnh dưới hoặc nhập số để đổi <b>chiều cao band</b>.
     </MudText>
 </MudPaper>
 
@@ -331,6 +340,31 @@
                        Style="min-width:220px;max-width:360px;" />
             <MudText Typo="Typo.caption" Color="Color.Secondary">
                 @_selectedElement.LineSize.ToString("0.##", CultureInfo.InvariantCulture) pt
+            </MudText>
+        </MudStack>
+    </MudPaper>
+}
+
+@if (_selectedNames.Count == 1 && _selectedElement is { Kind: BillSeaElementKind.Band })
+{
+    <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
+        <MudStack Row Spacing="3" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            <MudText Typo="Typo.subtitle2" Style="color:#6a1b9a;font-weight:700;">
+                Band: @GetBandLabel(_selectedElement)
+            </MudText>
+            <MudNumericField T="double"
+                             Value="_selectedElement.Height"
+                             ValueChanged="OnSelectedBandHeightChanged"
+                             Label="Chiều cao band (inch)"
+                             Variant="Variant.Outlined"
+                             Margin="Margin.Dense"
+                             Min="@MinBoxSizeInches"
+                             Max="@PageHeightInches"
+                             Step="0.05"
+                             Format="0.##"
+                             Style="max-width:200px;" />
+            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                Kéo cạnh dưới band trên canvas hoặc nhập số để đổi chiều cao (tối đa ~3.5 inch).
             </MudText>
         </MudStack>
     </MudPaper>
@@ -502,6 +536,11 @@
     else
     {
         <div style="@GetCanvasStyle()" tabindex="0" @onkeydown="OnCanvasKeyDown">
+            @if (CurrentPage.MarginLeft > 0 || CurrentPage.MarginTop > 0 || CurrentPage.MarginRight > 0 || CurrentPage.MarginBottom > 0)
+            {
+                <div style="@GetPageMarginGuideStyle()" title="Vùng lề trang (Margins)"></div>
+            }
+
             @if (_selectedNames.Count > 1)
             {
                 <MudText Typo="Typo.caption" Color="Color.Primary" Style="position:absolute;top:4px;right:8px;z-index:120;">
@@ -535,7 +574,26 @@
                     continue;
                 }
 
-                @if (item.Kind is BillSeaElementKind.HorizontalLine or BillSeaElementKind.VerticalLine)
+                @if (item.Kind == BillSeaElementKind.Band)
+                {
+                    @if (_showBands)
+                    {
+                        <div style="@GetBandStyle(item)"
+                             @onmousedown="(e => OnElementMouseDown(item, e))"
+                             @onmousedown:preventDefault="true">
+                            <span style="@GetBandLabelStyle(item)">@GetBandLabel(item)</span>
+
+                            @if (IsSelected(item) && _selectedNames.Count == 1)
+                            {
+                                <div style="@GetBandResizeHandleStyle()"
+                                     @onmousedown="(e => BeginBoxResize(item, BoxResizeHandle.South, e))"
+                                     @onmousedown:preventDefault="true"
+                                     @onmousedown:stopPropagation="true"></div>
+                            }
+                        </div>
+                    }
+                }
+                else if (item.Kind is BillSeaElementKind.HorizontalLine or BillSeaElementKind.VerticalLine)
                 {
                     <div style="@GetLineContainerStyle(item)"
                          @onmousedown="(e => OnElementMouseDown(item, e))"
@@ -650,6 +708,7 @@
     bool _hasCustomFormLogo;
     bool _hasCustomFormBillAir;
     bool _showCanvasImages;
+    bool _showBands = true;
     bool _usesCustomTemplate;
     bool _loading;
     string _keyword = string.Empty;
@@ -750,6 +809,14 @@
     string GetSourceTemplateName() =>
         BillLayoutFormKindHelper.GetDefaultTemplateFile(FormKind);
 
+    string GetLogoSectionTitle() => FormKind switch
+    {
+        BillLayoutFormKind.Air => "Logo (CompanyLogo)",
+        BillLayoutFormKind.AnAir => "Logo (Image1)",
+        BillLayoutFormKind.AnSea or BillLayoutFormKind.Do => "Logo (CompanyLogo)",
+        _ => "Logo form"
+    };
+
     Guid _lastAssetsTemplateId = Guid.Empty;
     readonly SemaphoreSlim _assetsLock = new(1, 1);
 
@@ -764,8 +831,12 @@
 
     void ToggleCanvasImages() => _showCanvasImages = !_showCanvasImages;
 
-    static bool IsFormBackgroundImage(BillSeaDesignElement item) =>
-        item.Kind == BillSeaElementKind.Image
+    void ToggleBands() => _showBands = !_showBands;
+
+    // Chỉ Bill Air dùng Image1 làm nền form. AN Air dùng Image1 làm logo — phải hiện ô để kéo/chọn.
+    bool IsFormBackgroundImage(BillSeaDesignElement item) =>
+        BillLayoutFormKindHelper.SupportsFormBillAir(FormKind)
+        && item.Kind == BillSeaElementKind.Image
         && string.Equals(item.Name, "Image1", StringComparison.OrdinalIgnoreCase);
 
     BillSeaDesignElement? GetFormBackgroundImage() =>
@@ -775,7 +846,7 @@
     {
         if (string.Equals(item.Name, "Image1", StringComparison.OrdinalIgnoreCase))
         {
-            return FormKind == BillLayoutFormKind.Air
+            return BillLayoutFormKindHelper.SupportsFormBillAir(FormKind)
                 ? _formBillAirDataUrl
                 : _logoDataUrl;
         }
@@ -821,7 +892,7 @@
             var formLogo = await FormService.GetFormLogoAsync(TemplateId);
             _logoDataUrl = BuildLogoDataUrl(_hasCustomFormLogo ? formLogo : _companyLogoBytes);
 
-            if (FormKind == BillLayoutFormKind.Air)
+            if (BillLayoutFormKindHelper.SupportsFormBillAir(FormKind))
             {
                 _defaultBillAirImage1Bytes ??= await FormService.GetDefaultBillAirImage1Async();
                 _hasCustomFormBillAir = await FormService.HasCustomFormBillAirAsync(TemplateId);
@@ -867,7 +938,7 @@
 
     async Task OnFormBillAirFileChanged(IBrowserFile? file)
     {
-        if (file is null || TemplateId == Guid.Empty || FormKind != BillLayoutFormKind.Air)
+        if (file is null || TemplateId == Guid.Empty || !BillLayoutFormKindHelper.SupportsFormBillAir(FormKind))
             return;
 
         if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
@@ -904,7 +975,7 @@
 
     async Task ClearFormBillAir()
     {
-        if (TemplateId == Guid.Empty || FormKind != BillLayoutFormKind.Air)
+        if (TemplateId == Guid.Empty || !BillLayoutFormKindHelper.SupportsFormBillAir(FormKind))
             return;
 
         if (!await ssv.CheckPermission(UserName, "Edit", "Companyinformation"))
@@ -1360,6 +1431,9 @@
         var left = _placementPreviewLeft;
         var top = _placementPreviewTop;
 
+        var parentOffsetLeft = CurrentPage?.DefaultParentOffsetLeft ?? 0;
+        var parentOffsetTop = CurrentPage?.DefaultParentOffsetTop ?? 0;
+
         var element = kind switch
         {
             BillSeaElementKind.HorizontalLine => new BillSeaDesignElement
@@ -1370,6 +1444,8 @@
                 Top = top,
                 Width = width,
                 Height = height,
+                ParentOffsetLeft = parentOffsetLeft,
+                ParentOffsetTop = parentOffsetTop,
                 LineSize = 1
             },
             BillSeaElementKind.VerticalLine => new BillSeaDesignElement
@@ -1380,6 +1456,8 @@
                 Top = top,
                 Width = width,
                 Height = height,
+                ParentOffsetLeft = parentOffsetLeft,
+                ParentOffsetTop = parentOffsetTop,
                 LineSize = 1
             },
             BillSeaElementKind.StaticText => new BillSeaDesignElement
@@ -1390,6 +1468,8 @@
                 Top = top,
                 Width = width,
                 Height = height,
+                ParentOffsetLeft = parentOffsetLeft,
+                ParentOffsetTop = parentOffsetTop,
                 Text = "Label mới"
             },
             BillSeaElementKind.DataText => new BillSeaDesignElement
@@ -1400,6 +1480,8 @@
                 Top = top,
                 Width = width,
                 Height = height,
+                ParentOffsetLeft = parentOffsetLeft,
+                ParentOffsetTop = parentOffsetTop,
                 Text = _pendingDataExpression ?? string.Empty
             },
             _ => null
@@ -1434,7 +1516,7 @@
     }
 
     bool HasDeletableSelection() =>
-        GetSelectedElements().Any(x => x.Kind != BillSeaElementKind.Image);
+        GetSelectedElements().Any(x => x.Kind is not (BillSeaElementKind.Image or BillSeaElementKind.Band));
 
     List<BillSeaDesignElement> GetSelectedElements()
     {
@@ -1474,7 +1556,7 @@
 
         PushUndo();
         var namesToDelete = GetSelectedElements()
-            .Where(x => x.Kind != BillSeaElementKind.Image)
+            .Where(x => x.Kind is not (BillSeaElementKind.Image or BillSeaElementKind.Band))
             .Select(x => x.Name)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -1547,6 +1629,12 @@
 
         if (!IsSelected(item))
             SetSingleSelection(item);
+        else
+            _selectedElement = item;
+
+        // Band chỉ cho chỉnh chiều cao (kéo cạnh dưới / nhập số), không kéo di chuyển.
+        if (item.Kind == BillSeaElementKind.Band)
+            return;
 
         BeginMove(item, e);
     }
@@ -1615,7 +1703,14 @@
         var fontSizePx = (item.FontSize / 72d * Scale).ToString("0.##", CultureInfo.InvariantCulture);
         var fontWeight = item.FontBold ? "bold" : "normal";
         var fontFamily = string.IsNullOrWhiteSpace(item.FontFamily) ? "Times New Roman" : item.FontFamily;
-        return $"font-family:{fontFamily};font-size:{fontSizePx}px;font-weight:{fontWeight};line-height:1.1;overflow:hidden;pointer-events:none;";
+        var textAlign = item.HorAlignment switch
+        {
+            "Center" => "center",
+            "Right" => "right",
+            "Width" => "justify",
+            _ => "left"
+        };
+        return $"font-family:{fontFamily};font-size:{fontSizePx}px;font-weight:{fontWeight};line-height:1.1;overflow:hidden;pointer-events:none;width:100%;text-align:{textAlign};white-space:pre-wrap;";
     }
 
     void OnSelectedTextChanged(string value)
@@ -1637,6 +1732,7 @@
             BillSeaElementKind.Image => 35,
             BillSeaElementKind.DataText => 30,
             BillSeaElementKind.StaticText => 25,
+            BillSeaElementKind.Band => 2,
             _ => 20
         };
     }
@@ -1651,6 +1747,20 @@
                "background-color:#fff;" +
                "background-image:linear-gradient(to right,#f3f3f3 1px,transparent 1px),linear-gradient(to bottom,#f3f3f3 1px,transparent 1px);" +
                $"background-size:{(Scale / 4).ToString("0.##", CultureInfo.InvariantCulture)}px {(Scale / 4).ToString("0.##", CultureInfo.InvariantCulture)}px;";
+    }
+
+    string GetPageMarginGuideStyle()
+    {
+        if (CurrentPage is null)
+            return "display:none;";
+
+        var left = (CurrentPage.MarginLeft * Scale).ToString("0.##", CultureInfo.InvariantCulture);
+        var top = (CurrentPage.MarginTop * Scale).ToString("0.##", CultureInfo.InvariantCulture);
+        var right = (CurrentPage.MarginRight * Scale).ToString("0.##", CultureInfo.InvariantCulture);
+        var bottom = (CurrentPage.MarginBottom * Scale).ToString("0.##", CultureInfo.InvariantCulture);
+        return "position:absolute;pointer-events:none;z-index:5;" +
+               $"left:{left}px;top:{top}px;right:{right}px;bottom:{bottom}px;" +
+               "border:1px dashed rgba(25,118,210,0.45);box-shadow:0 0 0 9999px rgba(0,0,0,0.04);";
     }
 
     string GetPlacementOverlayStyle() =>
@@ -1813,6 +1923,18 @@
         var backgroundColor = selected
             ? "rgba(25,118,210,0.18)"
             : isData ? "rgba(46,125,50,0.12)" : "rgba(158,158,158,0.10)";
+        var justify = item.HorAlignment switch
+        {
+            "Center" => "center",
+            "Right" => "flex-end",
+            _ => "flex-start"
+        };
+        var alignItems = item.VertAlignment switch
+        {
+            "Center" => "center",
+            "Bottom" => "flex-end",
+            _ => "flex-start"
+        };
 
         return "position:absolute;" +
                $"left:{(item.Left * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
@@ -1821,7 +1943,51 @@
                $"height:{Math.Max(16, item.Height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
                $"border:1px dashed {borderColor};" +
                $"background:{backgroundColor};" +
-               $"z-index:{GetElementZIndex(item)};cursor:grab;display:flex;align-items:flex-start;justify-content:flex-start;padding:1px;overflow:visible;";
+               $"z-index:{GetElementZIndex(item)};cursor:grab;display:flex;align-items:{alignItems};justify-content:{justify};padding:1px;overflow:visible;";
+    }
+
+    static string GetBandLabel(BillSeaDesignElement item)
+    {
+        var type = string.IsNullOrWhiteSpace(item.BandType) ? "Band" : item.BandType;
+        return string.Equals(type, item.Name, StringComparison.OrdinalIgnoreCase)
+            ? type
+            : $"{type} · {item.Name}";
+    }
+
+    string GetBandStyle(BillSeaDesignElement item)
+    {
+        var selected = IsSelected(item);
+        var borderColor = selected ? "#6a1b9a" : "rgba(106,27,154,0.55)";
+        var background = selected ? "rgba(106,27,154,0.10)" : "rgba(106,27,154,0.04)";
+
+        return "position:absolute;box-sizing:border-box;" +
+               $"left:{(item.Left * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"top:{(item.Top * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"width:{Math.Max(8, item.Width * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"height:{Math.Max(6, item.Height * Scale).ToString("0.##", CultureInfo.InvariantCulture)}px;" +
+               $"border:1px dashed {borderColor};border-left-width:3px;" +
+               $"background:{background};" +
+               $"z-index:{GetElementZIndex(item)};cursor:pointer;overflow:visible;";
+    }
+
+    static string GetBandLabelStyle(BillSeaDesignElement item) =>
+        "position:absolute;top:0;left:2px;font-size:10px;font-weight:700;color:#6a1b9a;" +
+        "background:rgba(255,255,255,0.75);padding:0 3px;border-radius:0 0 3px 0;" +
+        "line-height:1.2;pointer-events:none;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;";
+
+    static string GetBandResizeHandleStyle() =>
+        "position:absolute;left:0;right:0;bottom:-4px;height:8px;cursor:ns-resize;z-index:16;" +
+        "background:transparent;border-bottom:3px solid #6a1b9a;";
+
+    void OnSelectedBandHeightChanged(double value)
+    {
+        if (_selectedElement is null || _selectedElement.Kind != BillSeaElementKind.Band)
+            return;
+
+        EnsurePropertyEditUndo();
+        const double maxBandHeightInches = 3.5;
+        var maxHeight = Math.Min(maxBandHeightInches, Math.Max(MinBoxSizeInches, PageHeightInches - _selectedElement.Top));
+        _selectedElement.Height = Math.Clamp(value, MinBoxSizeInches, maxHeight);
     }
 
     void BeginInteractionUndo()
@@ -1886,6 +2052,9 @@
 
                 foreach (var selected in GetSelectedElements())
                 {
+                    if (selected.Kind == BillSeaElementKind.Band)
+                        continue;
+
                     if (!_dragGroupStarts.TryGetValue(selected.Name, out var start))
                         continue;
 
@@ -1933,7 +2102,16 @@
                 break;
             }
             case ElementInteraction.BoxResizeSouth:
-                _activeItem.Height = Math.Clamp(y - _activeItem.Top, MinBoxSizeInches, PageHeightInches - _activeItem.Top);
+                if (_activeItem.Kind == BillSeaElementKind.Band)
+                {
+                    const double maxBandHeightInches = 3.5;
+                    var maxH = Math.Min(maxBandHeightInches, PageHeightInches - _activeItem.Top);
+                    _activeItem.Height = Math.Clamp(y - _activeItem.Top, MinBoxSizeInches, maxH);
+                }
+                else
+                {
+                    _activeItem.Height = Math.Clamp(y - _activeItem.Top, MinBoxSizeInches, PageHeightInches - _activeItem.Top);
+                }
                 break;
             case ElementInteraction.BoxResizeNorth:
             {

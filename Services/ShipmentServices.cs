@@ -2244,17 +2244,18 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportArrivalAir(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportArrivalAir(M_HBL detail, Guid? layoutFormId = null)
         {
             try
             {
+                var (templateBytes, reportLogo) = await ResolveArrivalOrDoTemplateAsync(BillLayoutFormKind.AnAir, layoutFormId);
                 var report = new StiReport();
-                var companyLogo = await GetCompanyLogoAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
-                report.Load(rpt);
-                ApplyArrivalReportSetup(report, companyLogo);
+                report.Load(new MemoryStream(templateBytes));
+                ApplyArrivalReportSetup(report, reportLogo);
+                ApplyLogoToImageComponent(report, "Image1", reportLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
 
                 var flightdate = detail.Air_FlightDate1!.Split('/').ToList();
@@ -2292,18 +2293,17 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportArrival(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportArrival(M_HBL detail, Guid? layoutFormId = null)
         {
             try
             {
+                var (templateBytes, reportLogo) = await ResolveArrivalOrDoTemplateAsync(BillLayoutFormKind.AnSea, layoutFormId);
                 var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNoticeNVOCC.mrt");
-                var companyLogo = await GetCompanyLogoAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
-                report.Load(rpt);
-                ApplyArrivalReportSetup(report, companyLogo);
+                report.Load(new MemoryStream(templateBytes));
+                ApplyArrivalReportSetup(report, reportLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
@@ -2504,17 +2504,26 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportDO_NVOCC(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportDO_NVOCC(M_HBL detail, Guid? layoutFormId = null)
         {
             try
             {
+                // Luôn lấy cấu trúc band từ file .mrt mới (đã gộp Title/Summary).
+                // Layout form chỉ lấy logo — tránh form DB cũ còn HeaderBand lặp trang.
+                var templateBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(
+                    BillSeaReportTemplateNames.Do);
+                byte[]? reportLogo;
+                if (layoutFormId is Guid formId && formId != Guid.Empty)
+                    reportLogo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(formId);
+                else
+                    reportLogo = await GetCompanyLogoAsync();
+
                 var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrderNVOCC.mrt");
-                var companyLogo = await GetCompanyLogoAsync();
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
-                report.Load(rpt);
-                ApplyArrivalReportSetup(report, companyLogo);
+                report.Load(new MemoryStream(templateBytes));
+                ApplyArrivalReportSetup(report, reportLogo);
+                SoftenDoPageBreakSettings(report);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
@@ -2656,6 +2665,7 @@ namespace NVOAMASIS.Services
                 report = StiReport.CreateNewReport();
                 report.Load(rpt);
                 ApplyArrivalReportSetup(report, companyLogo);
+                SoftenDoPageBreakSettings(report);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
@@ -2764,11 +2774,133 @@ namespace NVOAMASIS.Services
                 .FirstOrDefaultAsync();
         }
 
+        private async Task<(byte[] TemplateBytes, byte[]? Logo)> ResolveArrivalOrDoTemplateAsync(
+            BillLayoutFormKind kind,
+            Guid? layoutFormId)
+        {
+            if (layoutFormId is Guid formId && formId != Guid.Empty)
+            {
+                var templateBytes = await billSeaLayoutFormService.GetFormBytesAsync(formId);
+                var logo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(formId);
+                return (templateBytes, logo);
+            }
+
+            var defaultBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(
+                BillLayoutFormKindHelper.GetDefaultTemplateFile(kind));
+            var companyLogo = await GetCompanyLogoAsync();
+            return (defaultBytes, companyLogo);
+        }
+
+        /// <summary>
+        /// Sửa layout DO trước khi Render:
+        /// - Tắt CanGrow/CanBreak (tránh phình band / tách dòng sang trang)
+        /// - HeaderBand không phải cột bảng: OnlyFirstPage (form cũ còn HeaderBand1..3)
+        /// - FooterBand cũ: OnlyLastPage
+        /// - ReportTitle/Summary: CanGrow=false để nhét được 1 trang
+        /// </summary>
+        private static void SoftenDoPageBreakSettings(StiReport report)
+        {
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is StiDataBand dataBand)
+                {
+                    dataBand.KeepHeaderTogether = false;
+                    dataBand.KeepFooterTogether = false;
+                    dataBand.KeepDetailsTogether = false;
+                    dataBand.StartNewPageIfLessThan = 0;
+                    dataBand.BreakIfLessThan = 0;
+                    dataBand.CanBreak = false;
+                    dataBand.NewPageBefore = false;
+                    dataBand.NewPageAfter = false;
+                    dataBand.CanGrow = true; // 1 dòng container có thể wrap nhẹ
+                }
+                else if (component is StiHeaderBand headerBand)
+                {
+                    headerBand.CanGrow = false;
+                    headerBand.CanBreak = false;
+                    headerBand.NewPageBefore = false;
+                    headerBand.NewPageAfter = false;
+                    // Form cũ: HeaderBand1..3 lặp mọi trang. Chỉ cho in trang đầu.
+                    // HeaderBand4 (cột bảng) cũng OnlyFirstPage — DO thường 1 trang data.
+                    headerBand.PrintOn = StiPrintOnType.OnlyFirstPage;
+                }
+                else if (component is StiPageHeaderBand pageHeader)
+                {
+                    pageHeader.CanGrow = false;
+                    pageHeader.CanBreak = false;
+                }
+                else if (component is StiReportTitleBand titleBand)
+                {
+                    titleBand.CanGrow = false;
+                    titleBand.CanBreak = false;
+                }
+                else if (component is StiReportSummaryBand summaryBand)
+                {
+                    summaryBand.CanGrow = false;
+                    summaryBand.CanBreak = false;
+                    summaryBand.PrintAtBottom = false;
+                    summaryBand.PrintIfEmpty = true;
+                }
+                else if (component is StiFooterBand footerBand)
+                {
+                    footerBand.CanGrow = false;
+                    footerBand.CanBreak = false;
+                    footerBand.PrintOn = StiPrintOnType.OnlyLastPage;
+                    footerBand.NewPageBefore = false;
+                    footerBand.NewPageAfter = false;
+                }
+                else if (component is StiPageFooterBand pageFooter)
+                {
+                    pageFooter.CanGrow = false;
+                    pageFooter.CanBreak = false;
+                }
+                else if (component is StiImage image)
+                {
+                    image.CanGrow = false;
+                    image.CanBreak = false;
+                }
+                else if (component is StiText text)
+                {
+                    text.CanBreak = false;
+                    text.GrowToHeight = false;
+                }
+            }
+
+            // Ẩn primitive line orphan / text ngoài trang nếu còn (tránh kéo layout).
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is StiVerticalLinePrimitive line)
+                {
+                    // Line dọc neo theo band điểm đầu/cuối; nếu Top lớn bất thường thì tắt in.
+                    if (line.Top > 6.5 || line.Height > 2)
+                        line.Enabled = false;
+                }
+
+                if (component is StiText text && text.Left > 8)
+                    text.Enabled = false;
+            }
+        }
+
         private void ApplyArrivalReportSetup(StiReport report, byte[]? companyLogo)
         {
             var connectionString = ResolveReportConnectionString();
             ApplyReportConnectionString(report, connectionString);
             ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+        }
+
+        private static void ApplyLogoToImageComponent(StiReport report, string componentName, byte[]? logo)
+        {
+            if (logo is not { Length: > 0 })
+                return;
+
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is not StiImage image)
+                    continue;
+
+                if (string.Equals(image.Name, componentName, StringComparison.OrdinalIgnoreCase))
+                    image.Image = CreateLogoImage(logo);
+            }
         }
 
         private static void ApplyReportConnectionString(StiReport report, string connectionString)

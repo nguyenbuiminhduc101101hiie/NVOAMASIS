@@ -14,6 +14,12 @@ namespace NVOAMASIS.Services
             ComponentsParentRef = page.ComponentsParentRef,
             PageWidthInches = page.PageWidthInches,
             PageHeightInches = page.PageHeightInches,
+            MarginLeft = page.MarginLeft,
+            MarginTop = page.MarginTop,
+            MarginRight = page.MarginRight,
+            MarginBottom = page.MarginBottom,
+            DefaultParentOffsetLeft = page.DefaultParentOffsetLeft,
+            DefaultParentOffsetTop = page.DefaultParentOffsetTop,
             Elements = page.Elements.Select(CloneElement).ToList()
         };
 
@@ -25,13 +31,18 @@ namespace NVOAMASIS.Services
             Top = element.Top,
             Width = element.Width,
             Height = element.Height,
+            ParentOffsetLeft = element.ParentOffsetLeft,
+            ParentOffsetTop = element.ParentOffsetTop,
             Text = element.Text,
             ImageUrl = element.ImageUrl,
             LineSize = element.LineSize,
             LineGuid = element.LineGuid,
             FontFamily = element.FontFamily,
             FontSize = element.FontSize,
-            FontBold = element.FontBold
+            FontBold = element.FontBold,
+            HorAlignment = element.HorAlignment,
+            VertAlignment = element.VertAlignment,
+            BandType = element.BandType
         };
     }
 }

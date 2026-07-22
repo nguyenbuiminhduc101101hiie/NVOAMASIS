@@ -1,15 +1,21 @@
 @using NVOAMASIS.Models
+@using NVOAMASIS.Services
 
 <MudDialog>
     <TitleContent>
         <MudText Typo="Typo.h6">@Title</MudText>
     </TitleContent>
     <DialogContent>
-        <MudText Typo="Typo.subtitle2" Class="mb-2"><b>Loại Bill</b></MudText>
-        <MudRadioGroup @bind-Value="_formKind" T="BillLayoutFormKind">
-            <MudRadio Value="BillLayoutFormKind.Sea" Color="Color.Primary">Sea (SE / SI)</MudRadio>
-            <MudRadio Value="BillLayoutFormKind.Air" Color="Color.Secondary">Air (AE / AI)</MudRadio>
-        </MudRadioGroup>
+        @if (ResolvedAllowedKinds.Count > 1)
+        {
+            <MudText Typo="Typo.subtitle2" Class="mb-2"><b>Loại form</b></MudText>
+            <MudRadioGroup @bind-Value="_formKind" T="BillLayoutFormKind">
+                @foreach (var kind in ResolvedAllowedKinds)
+                {
+                    <MudRadio Value="@kind" Color="Color.Primary">@BillLayoutFormKindHelper.GetLongDisplayName(kind)</MudRadio>
+                }
+            </MudRadioGroup>
+        }
 
         <MudTextField @bind-Value="_formName"
                       Label="Tên form"
@@ -17,7 +23,7 @@
                       Margin="Margin.Dense"
                       Class="mt-3"
                       Immediate="true"
-                      Placeholder="VD: Bill NVOCC chuẩn, Bill Air khách A..." />
+                      Placeholder="@GetPlaceholder()" />
         <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
             Form mới sẽ copy từ template gốc <b>@GetTemplateName()</b>.
         </MudText>
@@ -40,13 +46,33 @@
     [Parameter]
     public BillLayoutFormKind DefaultFormKind { get; set; } = BillLayoutFormKind.Sea;
 
+    [Parameter]
+    public List<BillLayoutFormKind>? AllowedKinds { get; set; }
+
     string _formName = string.Empty;
     BillLayoutFormKind _formKind = BillLayoutFormKind.Sea;
 
-    protected override void OnParametersSet() => _formKind = DefaultFormKind;
+    List<BillLayoutFormKind> ResolvedAllowedKinds =>
+        AllowedKinds is { Count: > 0 }
+            ? AllowedKinds
+            : new List<BillLayoutFormKind> { BillLayoutFormKind.Sea, BillLayoutFormKind.Air };
 
-    string GetTemplateName() =>
-        _formKind == BillLayoutFormKind.Air ? "BillAir.mrt" : "BillSea_NVOCC.mrt";
+    protected override void OnParametersSet()
+    {
+        var allowed = ResolvedAllowedKinds;
+        _formKind = allowed.Contains(DefaultFormKind) ? DefaultFormKind : allowed[0];
+    }
+
+    string GetTemplateName() => BillLayoutFormKindHelper.GetDefaultTemplateFile(_formKind);
+
+    string GetPlaceholder() => _formKind switch
+    {
+        BillLayoutFormKind.AnSea => "VD: AN Sea chuẩn, AN Sea khách A...",
+        BillLayoutFormKind.AnAir => "VD: AN Air chuẩn, AN Air khách A...",
+        BillLayoutFormKind.Do => "VD: DO NVOCC chuẩn, DO khách A...",
+        BillLayoutFormKind.Air => "VD: Bill Air khách A...",
+        _ => "VD: Bill NVOCC chuẩn, Bill Sea khách A..."
+    };
 
     void Submit()
     {
