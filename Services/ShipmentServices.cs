@@ -2249,7 +2249,6 @@ namespace NVOAMASIS.Services
             try
             {
                 var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNotice_Air.mrt");
                 var companyLogo = await GetCompanyLogoAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
