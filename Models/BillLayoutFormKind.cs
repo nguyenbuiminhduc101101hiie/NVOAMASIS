@@ -6,6 +6,7 @@ namespace NVOAMASIS.Models
         Air,
         AnSea,
         AnAir,
-        Do
+        Do,
+        Trang2
     }
 }

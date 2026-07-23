@@ -1008,6 +1008,104 @@ namespace NVOAMASIS.Services
                 element.Width.ToString("0.####", CultureInfo.InvariantCulture),
                 element.Height.ToString("0.####", CultureInfo.InvariantCulture));
 
+        public const string Trang2ImageName = "PageImage";
+        public const string Trang2TextName = "PageText";
+
+        public static XElement? FindNamedComponent(XDocument doc, string componentName, string? type = null)
+        {
+            return doc.Descendants().FirstOrDefault(x =>
+            {
+                if (!string.IsNullOrEmpty(type)
+                    && !string.Equals(x.Attribute("type")?.Value, type, StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                return string.Equals(x.Name.LocalName, componentName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x.Element("Name")?.Value, componentName, StringComparison.OrdinalIgnoreCase);
+            });
+        }
+
+        public static string GetTrang2PageText(XDocument doc) =>
+            FindNamedComponent(doc, Trang2TextName, "Text")?.Element("Text")?.Value ?? string.Empty;
+
+        public static bool IsTrang2ImageMode(XDocument doc)
+        {
+            var imageNode = FindNamedComponent(doc, Trang2ImageName, "Image");
+            if (imageNode is null)
+                return false;
+
+            var enabled = imageNode.Element("Enabled")?.Value;
+            return !string.Equals(enabled, "False", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static void ApplyTrang2Content(XDocument doc, bool imageMode, string? pageText)
+        {
+            var imageNode = FindNamedComponent(doc, Trang2ImageName, "Image");
+            var textNode = FindNamedComponent(doc, Trang2TextName, "Text");
+
+            if (imageNode is not null)
+                SetComponentEnabled(imageNode, imageMode);
+
+            if (textNode is not null)
+            {
+                SetComponentEnabled(textNode, !imageMode);
+                var textEl = textNode.Element("Text");
+                if (textEl is null)
+                {
+                    textEl = new XElement("Text");
+                    textNode.Add(textEl);
+                }
+
+                textEl.Value = pageText ?? string.Empty;
+            }
+        }
+
+        private static void SetComponentEnabled(XElement node, bool enabled)
+        {
+            var el = node.Element("Enabled");
+            if (el is null)
+            {
+                el = new XElement("Enabled");
+                node.Add(el);
+            }
+
+            el.Value = enabled ? "True" : "False";
+        }
+
+        private static bool IsLinePointNode(XElement node)
+        {
+            var type = node.Attribute("type")?.Value ?? string.Empty;
+            return type.Contains("StartPointPrimitive", StringComparison.OrdinalIgnoreCase)
+                || type.Contains("EndPointPrimitive", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsAnyLineRelatedNode(XElement node) =>
+            IsHorizontalLineNode(node) || IsVerticalLineNode(node) || IsLinePointNode(node);
+
+        private static bool IsComponentDisabled(XElement node) =>
+            string.Equals(node.Element("Enabled")?.Value, "False", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>Bật/tắt toàn bộ line (và point của line dọc) trong MRT.</summary>
+        public static int SetAllLinesEnabled(XDocument doc, bool enabled)
+        {
+            var count = 0;
+            foreach (var node in doc.Descendants().Where(IsAnyLineRelatedNode).ToList())
+            {
+                SetComponentEnabled(node, enabled);
+                count++;
+            }
+
+            return count;
+        }
+
+        /// <summary>True nếu form có line và tất cả line đang bị tắt (Enabled=False).</summary>
+        public static bool AreAllLinesDisabled(XDocument doc)
+        {
+            var lines = doc.Descendants()
+                .Where(n => IsHorizontalLineNode(n) || IsVerticalLineNode(n))
+                .ToList();
+            return lines.Count > 0 && lines.All(IsComponentDisabled);
+        }
+
         public static byte[]? ExtractImageBytes(byte[] mrtBytes, string imageName = "Image1")
         {
             if (mrtBytes is not { Length: > 0 })

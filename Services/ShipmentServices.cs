@@ -2163,7 +2163,11 @@ namespace NVOAMASIS.Services
                     reportLogo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(layoutForm);
                 else
                     reportLogo = await GetCompanyLogoAsync();
-                var companyBillSeaForm = await GetCompanyBillSeaFormAsync();
+
+                byte[]? customFormBackground = null;
+                if (layoutFormId is Guid bgFormId && bgFormId != Guid.Empty)
+                    customFormBackground = await billSeaLayoutFormService.GetFormBillAirAsync(bgFormId);
+                var formBackground = customFormBackground ?? await GetCompanyBillSeaFormAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
@@ -2171,7 +2175,9 @@ namespace NVOAMASIS.Services
                 report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
                 ApplyCompanyLogoToReport(report, reportLogo, showLogo: !isOriginal);
-                ApplyBillSeaFormToReport(report, companyBillSeaForm);
+                ApplyBillSeaFormToReport(report, formBackground);
+                // Watermark full-page chỉ khi form có ảnh nền riêng (tránh đổi hành vi nền công ty cũ).
+                ApplyFormBackgroundWatermark(report, customFormBackground);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["chk_show_pre_Carr"].Value = showPreCarriage ? "true" : "false";
                 // Original = không logo, Draft = có logo
@@ -2196,6 +2202,62 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
+        /// <summary>In form Trang 2 đã tạo tại layout editor (ảnh full hoặc text full) — không bind HBL.</summary>
+        public async Task<BoolandMessReponse> ExportBillTrang2(Guid? layoutFormId = null)
+        {
+            try
+            {
+                if (layoutFormId is not Guid formId || formId == Guid.Empty)
+                    return new BoolandMessReponse(false, "Chưa chọn form Trang 2.");
+
+                var form = await billSeaLayoutFormService.GetFormAsync(formId);
+                if (form is null || !form.IsActive)
+                    return new BoolandMessReponse(false, "Không tìm thấy form Trang 2.");
+
+                if (BillLayoutFormKindHelper.ParseFormKind(form.FormKind) != BillLayoutFormKind.Trang2)
+                    return new BoolandMessReponse(false, "Form đã chọn không phải loại Trang 2.");
+
+                var templateBytes = await billSeaLayoutFormService.GetFormBytesAsync(formId);
+                var pageImage = await billSeaLayoutFormService.GetFormBillAirAsync(formId);
+                var formDoc = await billSeaLayoutFormService.LoadFormDocumentAsync(formId);
+                var useImage = pageImage is { Length: > 0 }
+                    && BillSeaLayoutMrtHelper.IsTrang2ImageMode(formDoc);
+
+                StiBlazorHelper.Initialize(JSRuntime);
+                var report = StiReport.CreateNewReport();
+                report.Load(new MemoryStream(templateBytes));
+
+                foreach (StiComponent component in report.GetComponents())
+                {
+                    if (string.Equals(component.Name, BillSeaLayoutMrtHelper.Trang2ImageName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        component.Enabled = useImage;
+                        if (useImage && component is StiImage image)
+                            image.Image = CreateLogoImage(pageImage);
+                    }
+                    else if (string.Equals(component.Name, BillSeaLayoutMrtHelper.Trang2TextName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        component.Enabled = !useImage;
+                    }
+                }
+
+                report.Render();
+                using (var ms = new MemoryStream())
+                {
+                    report.ExportDocument(StiExportFormat.Pdf, ms);
+                    var pdfData = ms.ToArray();
+                    await JSRuntime.InvokeVoidAsync("openReportInNewTab", pdfData);
+                }
+
+                return new BoolandMessReponse(true, "Export Trang 2 successfully!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return new BoolandMessReponse(false, "Export Trang 2 failed!, Error code: " + ex.Message);
+            }
+        }
+
         /// <param name="isOriginal">true = Original (không logo); false = Draft (có logo)</param>
         public async Task<BoolandMessReponse> ExportBilAir(Guid id, bool isOriginal = false, Guid? layoutFormId = null)
         {
@@ -3002,6 +3064,28 @@ namespace NVOAMASIS.Services
 
             if (report.Dictionary.Resources.Contains("logo_bill"))
                 report.Dictionary.Resources["logo_bill"].Content = formBillSea;
+        }
+
+        /// <summary>Đặt ảnh nền full-page phía sau nội dung (khi form dùng ảnh scanned / form blank).</summary>
+        private static void ApplyFormBackgroundWatermark(StiReport report, byte[]? background)
+        {
+            if (background is not { Length: > 0 })
+                return;
+
+            var image = CreateLogoImage(background);
+            if (image is null)
+                return;
+
+            foreach (StiPage page in report.Pages)
+            {
+                page.Watermark.Enabled = true;
+                page.Watermark.Image = image;
+                page.Watermark.ImageStretch = true;
+                page.Watermark.AspectRatio = false;
+                page.Watermark.ImageTransparency = 0;
+                page.Watermark.ShowImageBehind = true;
+                page.Watermark.Text = string.Empty;
+            }
         }
 
         private static void ApplyBillAirFormToReport(StiReport report, byte[]? formBillAir)
