@@ -1,6 +1,7 @@
 @page "/accounting/fixed-assets"
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 
+@using System.Security.Claims
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
@@ -38,8 +39,9 @@
                            Variant="Variant.Outlined"
                            Margin="Margin.Dense"
                            Dense="true"
-                           Style="min-width:240px">
-                    @foreach (var c in _companies)
+                           Style="min-width:260px"
+                           Disabled="_loading || _saving">
+                    @foreach (var c in _customers)
                     {
                         <MudSelectItem Value="@c.Customer_ID">@CompanyLabel(c)</MudSelectItem>
                     }
@@ -48,7 +50,7 @@
                 <MudButton Variant="Variant.Filled"
                            Color="Color.Primary"
                            StartIcon="@Icons.Material.Filled.Add"
-                           Disabled="_companyId == Guid.Empty"
+                           Disabled="@(!_companyResolved)"
                            OnClick="NewAsset">
                     Tạo mới
                 </MudButton>
@@ -56,16 +58,16 @@
         </MudStack>
     </MudPaper>
 
-    @if (_companies.Count == 0)
+    @if (_customers.Count == 0)
     {
         <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Filled">
-            Không có dữ liệu công ty (Customer) để gắn tài sản cố định.
+            Không có công ty nào trong danh mục khách hàng để chọn.
         </MudAlert>
     }
-    else if (_companyId == Guid.Empty)
+    else if (!_companyResolved)
     {
-        <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
-            Chọn công ty để khai báo và xem tài sản cố định.
+        <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Filled">
+            Vui lòng chọn công ty trước khi khai báo tài sản cố định.
         </MudAlert>
     }
     else
@@ -186,7 +188,7 @@
                         <MudGrid Spacing="2">
                             <MudItem xs="12" md="3">
                                 <MudDatePicker Label="Ngày mua"
-                                               Date="_edit.PurchaseDate"
+                                               Date="@_edit.PurchaseDate"
                                                DateChanged="OnPurchaseDateChanged"
                                                DateFormat="dd/MM/yyyy"
                                                Clearable="true" />
@@ -194,7 +196,7 @@
 
                             <MudItem xs="12" md="3">
                                 <MudDatePicker Label="Ngày ghi nhận"
-                                               Date="_edit.RecognitionDate"
+                                               Date="@_recognitionDate"
                                                DateChanged="OnRecognitionDateChanged"
                                                DateFormat="dd/MM/yyyy"
                                                Required="true" />
@@ -216,7 +218,7 @@
 
                             <MudItem xs="12" md="3">
                                 <MudDatePicker Label="Ngày hóa đơn"
-                                               Date="_edit.InvoiceDate"
+                                               Date="@_edit.InvoiceDate"
                                                DateChanged="OnInvoiceDateChanged"
                                                DateFormat="dd/MM/yyyy"
                                                Clearable="true" />
@@ -231,7 +233,7 @@
 
                             <MudItem xs="12" md="3">
                                 <MudDatePicker Label="Ngày chứng từ"
-                                               Date="_edit.VoucherDate"
+                                               Date="@_edit.VoucherDate"
                                                DateChanged="OnVoucherDateChanged"
                                                DateFormat="dd/MM/yyyy"
                                                Clearable="true" />
@@ -322,7 +324,7 @@
                         <MudGrid Spacing="2">
                             <MudItem xs="12" md="3">
                                 <MudDatePicker Label="Bắt đầu khấu hao"
-                                               Date="_edit.DepreciationStartDate"
+                                               Date="@_depreciationStartDate"
                                                DateChanged="OnDepreciationStartDateChanged"
                                                DateFormat="dd/MM/yyyy"
                                                Required="true" />
@@ -475,24 +477,24 @@
                     <MudButton Variant="Variant.Filled"
                                Color="Color.Primary"
                                StartIcon="@Icons.Material.Filled.Save"
-                               Disabled="_saving"
-                               OnClick="@(() => SaveAsync(false))">
-                        Lưu
+                               Disabled="@(_saving || !_companyResolved)"
+                               OnClick="SaveDraftAsync">
+                        @(_saving ? "ĐANG LƯU..." : "LƯU")
                     </MudButton>
 
                     <MudButton Variant="Variant.Filled"
                                Color="Color.Success"
                                StartIcon="@Icons.Material.Filled.PlayArrow"
-                               Disabled="_saving"
-                               OnClick="@(() => SaveAsync(true))">
-                        Lưu & đưa vào sử dụng
+                               Disabled="@(_saving || !_companyResolved)"
+                               OnClick="PutIntoUseAsync">
+                        LƯU & ĐƯA VÀO SỬ DỤNG
                     </MudButton>
 
                     <MudButton Variant="Variant.Outlined"
                                Color="Color.Default"
                                Disabled="_saving"
                                OnClick="NewAsset">
-                        Làm mới
+                        LÀM MỚI
                     </MudButton>
                 </MudStack>
             </MudForm>
@@ -588,11 +590,14 @@
 @code {
     private MudForm? _form;
     private FixedAsset _edit = CreateDefault();
+    private DateTime? _recognitionDate = DateTime.Today;
+    private DateTime? _depreciationStartDate = DateTime.Today;
     private List<FixedAsset> _items = [];
-    private List<M_Customer> _companies = [];
+    private List<M_Customer> _customers = [];
     private Guid _companyId;
     private string _userName = "system";
     private string? _keyword;
+    private bool _companyResolved;
     private bool _loading;
     private bool _saving;
 
@@ -649,27 +654,73 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        _userName = state.User.Identity?.Name ?? "system";
-
+        await ResolveUserAsync();
         await LoadCompaniesAsync();
 
-        if (_companyId != Guid.Empty)
+        if (_companyResolved)
             await LoadAsync();
+    }
+
+    private async Task ResolveUserAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = state.User;
+        _userName = user.Identity?.Name ?? "system";
+    }
+
+    private Guid? TryGetCompanyIdFromClaims(ClaimsPrincipal user)
+    {
+        var companyClaimNames = new[]
+        {
+            "CompanyId",
+            "company_id",
+            "companyId",
+            "TenantCompanyId",
+            "tenant_company_id"
+        };
+
+        foreach (var claimName in companyClaimNames)
+        {
+            var value = user.FindFirst(claimName)?.Value;
+
+            if (Guid.TryParse(value, out var companyId) && companyId != Guid.Empty)
+                return companyId;
+        }
+
+        return null;
     }
 
     private async Task LoadCompaniesAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
 
-        _companies = await db.Customer.AsNoTracking()
+        _customers = await db.Customer.AsNoTracking()
             .Where(x => x.Customer_ID != Guid.Empty)
             .OrderBy(x => x.COMPANY)
             .ThenBy(x => x.BIZName)
             .ToListAsync();
 
-        if (_companies.Count > 0 && _companyId == Guid.Empty)
-            _companyId = _companies[0].Customer_ID;
+        if (_customers.Count == 0)
+        {
+            _companyId = Guid.Empty;
+            _companyResolved = false;
+            return;
+        }
+
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var claimedCompanyId = TryGetCompanyIdFromClaims(state.User);
+
+        if (claimedCompanyId is Guid claimId &&
+            _customers.Any(x => x.Customer_ID == claimId))
+        {
+            _companyId = claimId;
+        }
+        else
+        {
+            _companyId = _customers[0].Customer_ID;
+        }
+
+        _companyResolved = _companyId != Guid.Empty;
     }
 
     private static string CompanyLabel(M_Customer c)
@@ -690,13 +741,19 @@
     private async Task OnCompanyChangedAsync(Guid companyId)
     {
         _companyId = companyId;
+        _companyResolved = companyId != Guid.Empty;
+
         NewAsset();
-        await LoadAsync();
+
+        if (_companyResolved)
+            await LoadAsync();
+        else
+            _items = [];
     }
 
     private async Task LoadAsync()
     {
-        if (_companyId == Guid.Empty)
+        if (!_companyResolved)
             return;
 
         _loading = true;
@@ -720,6 +777,7 @@
     private void NewAsset()
     {
         _edit = CreateDefault();
+        SyncDateFieldsFromEdit();
         ApplyDefaultAccounts(_edit.AssetType, true);
         _form?.ResetValidation();
     }
@@ -737,6 +795,7 @@
             }
 
             _edit = item;
+            SyncDateFieldsFromEdit();
             _form?.ResetValidation();
         }
         catch (Exception ex)
@@ -745,8 +804,25 @@
         }
     }
 
-    private async Task SaveAsync(bool putIntoUse)
+    private Task SaveDraftAsync()
+        => SaveAssetAsync(putIntoUse: false);
+
+    private Task PutIntoUseAsync()
+        => SaveAssetAsync(putIntoUse: true);
+
+    private async Task SaveAssetAsync(bool putIntoUse)
     {
+        if (_saving)
+            return;
+
+        if (!_companyResolved || _companyId == Guid.Empty)
+        {
+            Snackbar.Add(
+                "Vui lòng chọn công ty trước khi lưu tài sản.",
+                MudBlazor.Severity.Warning);
+            return;
+        }
+
         if (_form is null)
             return;
 
@@ -755,7 +831,7 @@
         if (!_form.IsValid)
         {
             Snackbar.Add(
-                "Vui lòng kiểm tra các trường bắt buộc.",
+                "Vui lòng kiểm tra lại các trường bắt buộc.",
                 MudBlazor.Severity.Warning);
             return;
         }
@@ -764,38 +840,190 @@
 
         try
         {
-            _edit.OriginalCost = CalculatedOriginalCost;
-            _edit.RemainingValue = CalculatedRemainingValue;
+            PrepareAssetBeforeSave();
 
-            if (putIntoUse)
-                _edit.Status = FixedAssetStatus.InUse;
+            var validationMessage = ValidateAssetBeforeSave();
+            if (!string.IsNullOrWhiteSpace(validationMessage))
+            {
+                Snackbar.Add(validationMessage, MudBlazor.Severity.Warning);
+                return;
+            }
 
-            _edit = await FixedAssetService.SaveAsync(
+            // Nút LƯU luôn gửi trạng thái Nháp. Với tài sản đã sử dụng,
+            // service sẽ giữ nguyên trạng thái và chỉ cho sửa thông tin quản lý.
+            _edit.Status = putIntoUse
+                ? FixedAssetStatus.InUse
+                : FixedAssetStatus.Draft;
+
+            var savedAsset = await FixedAssetService.SaveAsync(
                 _companyId,
                 _edit,
                 _userName);
 
-            Snackbar.Add(
-                putIntoUse
-                    ? "Đã lưu và đưa tài sản vào sử dụng."
-                    : "Đã lưu tài sản cố định.",
-                MudBlazor.Severity.Success);
+            // Nhận lại Id, RowVersion và trạng thái thực tế sau khi SQL lưu xong.
+            _edit = savedAsset;
+            SyncDateFieldsFromEdit();
 
             await LoadAsync();
+
+            Snackbar.Add(
+                putIntoUse
+                    ? $"Đã lưu và đưa tài sản {_edit.AssetCode} vào sử dụng."
+                    : $"Đã lưu tài sản {_edit.AssetCode} - {_edit.AssetName}.",
+                MudBlazor.Severity.Success);
         }
         catch (DbUpdateConcurrencyException ex)
+        {
+            Snackbar.Add(
+                string.IsNullOrWhiteSpace(ex.Message)
+                    ? "Tài sản đã được người khác cập nhật. Hãy tải lại dữ liệu."
+                    : ex.Message,
+                MudBlazor.Severity.Warning);
+        }
+        catch (InvalidOperationException ex)
         {
             Snackbar.Add(ex.Message, MudBlazor.Severity.Warning);
         }
         catch (Exception ex)
         {
-            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+            Snackbar.Add(
+                $"Không thể lưu tài sản: {ex.Message}",
+                MudBlazor.Severity.Error);
         }
         finally
         {
             _saving = false;
         }
     }
+
+    private void PrepareAssetBeforeSave()
+    {
+        _edit.AssetCode = (_edit.AssetCode ?? string.Empty)
+            .Trim()
+            .ToUpperInvariant();
+
+        _edit.AssetName = (_edit.AssetName ?? string.Empty).Trim();
+        _edit.AssetGroupCode = NormalizeText(_edit.AssetGroupCode);
+        _edit.Description = NormalizeText(_edit.Description);
+        _edit.SerialNo = NormalizeText(_edit.SerialNo);
+        _edit.ModelNo = NormalizeText(_edit.ModelNo);
+        _edit.Manufacturer = NormalizeText(_edit.Manufacturer);
+        _edit.CountryOfOrigin = NormalizeText(_edit.CountryOfOrigin);
+        _edit.DepartmentCode = NormalizeText(_edit.DepartmentCode);
+        _edit.Location = NormalizeText(_edit.Location);
+        _edit.Custodian = NormalizeText(_edit.Custodian);
+        _edit.SupplierCode = NormalizeText(_edit.SupplierCode);
+        _edit.InvoiceNo = NormalizeText(_edit.InvoiceNo);
+        _edit.VoucherNo = NormalizeText(_edit.VoucherNo);
+        _edit.SourceAccount = NormalizeText(_edit.SourceAccount);
+        _edit.Notes = NormalizeText(_edit.Notes);
+
+        _edit.AssetAccount = (_edit.AssetAccount ?? string.Empty).Trim();
+        _edit.DepreciationAccount =
+            (_edit.DepreciationAccount ?? string.Empty).Trim();
+        _edit.ExpenseAccount =
+            (_edit.ExpenseAccount ?? string.Empty).Trim();
+
+        _edit.PurchaseDate = _edit.PurchaseDate?.Date;
+        _edit.RecognitionDate = (_recognitionDate ?? _edit.RecognitionDate).Date;
+        _edit.DepreciationStartDate =
+            (_depreciationStartDate ?? _edit.DepreciationStartDate).Date;
+        _edit.InvoiceDate = _edit.InvoiceDate?.Date;
+        _edit.VoucherDate = _edit.VoucherDate?.Date;
+
+        // VAT được khấu trừ không cộng vào nguyên giá.
+        _edit.OriginalCost = RoundMoney(
+            _edit.PurchasePrice +
+            _edit.NonRefundableTax +
+            _edit.TransportCost +
+            _edit.InstallationCost +
+            _edit.OtherDirectCost -
+            _edit.DiscountAmount);
+
+        _edit.RemainingValue = RoundMoney(
+            _edit.OriginalCost -
+            _edit.OpeningAccumulatedDepreciation);
+    }
+
+    private string? ValidateAssetBeforeSave()
+    {
+        if (string.IsNullOrWhiteSpace(_edit.AssetCode))
+            return "Mã tài sản không được để trống.";
+
+        if (string.IsNullOrWhiteSpace(_edit.AssetName))
+            return "Tên tài sản không được để trống.";
+
+        if (_edit.RecognitionDate == default)
+            return "Ngày ghi nhận tài sản không hợp lệ.";
+
+        if (_edit.DepreciationStartDate == default)
+            return "Ngày bắt đầu khấu hao không hợp lệ.";
+
+        if (_edit.DepreciationStartDate < _edit.RecognitionDate)
+        {
+            return "Ngày bắt đầu khấu hao không được trước ngày ghi nhận tài sản.";
+        }
+
+        var moneyValues = new[]
+        {
+            _edit.PurchasePrice,
+            _edit.NonRefundableTax,
+            _edit.TransportCost,
+            _edit.InstallationCost,
+            _edit.OtherDirectCost,
+            _edit.DiscountAmount,
+            _edit.RecoverableVat,
+            _edit.ResidualValue,
+            _edit.OpeningAccumulatedDepreciation
+        };
+
+        if (moneyValues.Any(x => x < 0))
+            return "Các giá trị tiền không được nhỏ hơn 0.";
+
+        var totalFormationCost =
+            _edit.PurchasePrice +
+            _edit.NonRefundableTax +
+            _edit.TransportCost +
+            _edit.InstallationCost +
+            _edit.OtherDirectCost;
+
+        if (_edit.DiscountAmount > totalFormationCost)
+        {
+            return "Chiết khấu/giảm giá không được lớn hơn tổng chi phí hình thành tài sản.";
+        }
+
+        if (_edit.OriginalCost <= 0)
+            return "Nguyên giá tài sản phải lớn hơn 0.";
+
+        if (_edit.ResidualValue > _edit.OriginalCost)
+            return "Giá trị thu hồi không được lớn hơn nguyên giá.";
+
+        if (_edit.OpeningAccumulatedDepreciation >
+            _edit.OriginalCost - _edit.ResidualValue)
+        {
+            return "Hao mòn lũy kế đầu kỳ vượt quá giá trị được khấu hao.";
+        }
+
+        if (_edit.DepreciationMethod != DepreciationMethod.NotDepreciated &&
+            _edit.UsefulLifeMonths <= 0)
+        {
+            return "Thời gian sử dụng phải lớn hơn 0 tháng.";
+        }
+
+        if (string.IsNullOrWhiteSpace(_edit.AssetAccount))
+            return "Tài khoản nguyên giá không được để trống.";
+
+        if (string.IsNullOrWhiteSpace(_edit.DepreciationAccount))
+            return "Tài khoản hao mòn không được để trống.";
+
+        if (string.IsNullOrWhiteSpace(_edit.ExpenseAccount))
+            return "Tài khoản chi phí khấu hao không được để trống.";
+
+        return null;
+    }
+
+    private static string? NormalizeText(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task DeleteAsync(FixedAsset asset)
     {
@@ -841,6 +1069,7 @@
 
     private Task OnRecognitionDateChanged(DateTime? date)
     {
+        _recognitionDate = date;
         if (date.HasValue)
             _edit.RecognitionDate = date.Value;
 
@@ -861,10 +1090,17 @@
 
     private Task OnDepreciationStartDateChanged(DateTime? date)
     {
+        _depreciationStartDate = date;
         if (date.HasValue)
             _edit.DepreciationStartDate = date.Value;
 
         return Task.CompletedTask;
+    }
+
+    private void SyncDateFieldsFromEdit()
+    {
+        _recognitionDate = _edit.RecognitionDate;
+        _depreciationStartDate = _edit.DepreciationStartDate;
     }
 
     private void ApplyDefaultAccounts(
