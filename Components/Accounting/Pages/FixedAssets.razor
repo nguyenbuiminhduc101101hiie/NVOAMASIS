@@ -1,0 +1,948 @@
+@page "/accounting/fixed-assets"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Models.Accounting
+@using NVOAMASIS.Services.Accounting
+
+@inject IFixedAssetService FixedAssetService
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Tài sản cố định TT99</PageTitle>
+
+<MudStack Spacing="2">
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudStack Row="true"
+                  AlignItems="AlignItems.Center"
+                  Justify="Justify.SpaceBetween"
+                  Class="flex-wrap gap-2">
+            <div>
+                <MudText Typo="Typo.h5">Tài sản cố định - TT99</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Khai báo hồ sơ tài sản, nguyên giá, tài khoản và thông tin khấu hao
+                </MudText>
+            </div>
+
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="flex-wrap">
+                <MudSelect T="Guid"
+                           Value="_companyId"
+                           ValueChanged="OnCompanyChangedAsync"
+                           Label="Công ty"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true"
+                           Style="min-width:240px">
+                    @foreach (var c in _companies)
+                    {
+                        <MudSelectItem Value="@c.Customer_ID">@CompanyLabel(c)</MudSelectItem>
+                    }
+                </MudSelect>
+
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Add"
+                           Disabled="_companyId == Guid.Empty"
+                           OnClick="NewAsset">
+                    Tạo mới
+                </MudButton>
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+
+    @if (_companies.Count == 0)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Filled">
+            Không có dữ liệu công ty (Customer) để gắn tài sản cố định.
+        </MudAlert>
+    }
+    else if (_companyId == Guid.Empty)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
+            Chọn công ty để khai báo và xem tài sản cố định.
+        </MudAlert>
+    }
+    else
+    {
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudForm @ref="_form" Model="@_edit">
+                <MudTabs Rounded="true"
+                         Border="true"
+                         ApplyEffectsToContainer="true"
+                         PanelClass="pa-4">
+
+                    <MudTabPanel Text="Thông tin chung"
+                                 Icon="@Icons.Material.Filled.Apartment">
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Mã tài sản"
+                                              @bind-Value="_edit.AssetCode"
+                                              For="@(() => _edit.AssetCode)"
+                                              Required="true"
+                                              MaxLength="50"
+                                              Immediate="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="6">
+                                <MudTextField T="string"
+                                              Label="Tên tài sản"
+                                              @bind-Value="_edit.AssetName"
+                                              For="@(() => _edit.AssetName)"
+                                              Required="true"
+                                              MaxLength="250"
+                                              Immediate="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudSelect T="FixedAssetType"
+                                           Label="Loại tài sản"
+                                           Value="_edit.AssetType"
+                                           ValueChanged="OnAssetTypeChanged"
+                                           For="@(() => _edit.AssetType)"
+                                           Required="true">
+                                    <MudSelectItem T="FixedAssetType"
+                                                   Value="@FixedAssetType.Tangible">
+                                        TSCĐ hữu hình
+                                    </MudSelectItem>
+                                    <MudSelectItem T="FixedAssetType"
+                                                   Value="@FixedAssetType.FinanceLease">
+                                        TSCĐ thuê tài chính
+                                    </MudSelectItem>
+                                    <MudSelectItem T="FixedAssetType"
+                                                   Value="@FixedAssetType.Intangible">
+                                        TSCĐ vô hình
+                                    </MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Nhóm tài sản"
+                                              @bind-Value="_edit.AssetGroupCode"
+                                              MaxLength="50" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Số serial"
+                                              @bind-Value="_edit.SerialNo"
+                                              MaxLength="100" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Model"
+                                              @bind-Value="_edit.ModelNo"
+                                              MaxLength="100" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Nhà sản xuất"
+                                              @bind-Value="_edit.Manufacturer"
+                                              MaxLength="200" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Bộ phận sử dụng"
+                                              @bind-Value="_edit.DepartmentCode"
+                                              MaxLength="50" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="5">
+                                <MudTextField T="string"
+                                              Label="Vị trí sử dụng"
+                                              @bind-Value="_edit.Location"
+                                              MaxLength="250" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="4">
+                                <MudTextField T="string"
+                                              Label="Người quản lý"
+                                              @bind-Value="_edit.Custodian"
+                                              MaxLength="200" />
+                            </MudItem>
+
+                            <MudItem xs="12">
+                                <MudTextField T="string"
+                                              Label="Mô tả tài sản"
+                                              @bind-Value="_edit.Description"
+                                              Lines="2"
+                                              MaxLength="1000" />
+                            </MudItem>
+                        </MudGrid>
+                    </MudTabPanel>
+
+                    <MudTabPanel Text="Nguyên giá & chứng từ"
+                                 Icon="@Icons.Material.Filled.ReceiptLong">
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="3">
+                                <MudDatePicker Label="Ngày mua"
+                                               Date="_edit.PurchaseDate"
+                                               DateChanged="OnPurchaseDateChanged"
+                                               DateFormat="dd/MM/yyyy"
+                                               Clearable="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudDatePicker Label="Ngày ghi nhận"
+                                               Date="_edit.RecognitionDate"
+                                               DateChanged="OnRecognitionDateChanged"
+                                               DateFormat="dd/MM/yyyy"
+                                               Required="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Mã nhà cung cấp"
+                                              @bind-Value="_edit.SupplierCode"
+                                              MaxLength="50" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Số hóa đơn"
+                                              @bind-Value="_edit.InvoiceNo"
+                                              MaxLength="50" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudDatePicker Label="Ngày hóa đơn"
+                                               Date="_edit.InvoiceDate"
+                                               DateChanged="OnInvoiceDateChanged"
+                                               DateFormat="dd/MM/yyyy"
+                                               Clearable="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="Số chứng từ"
+                                              @bind-Value="_edit.VoucherNo"
+                                              MaxLength="50" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudDatePicker Label="Ngày chứng từ"
+                                               Date="_edit.VoucherDate"
+                                               DateChanged="OnVoucherDateChanged"
+                                               DateFormat="dd/MM/yyyy"
+                                               Clearable="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudCheckBox T="bool"
+                                             Label="Số dư đầu kỳ/chuyển đổi"
+                                             @bind-Value="_edit.IsOpeningBalance" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="Giá mua"
+                                                 @bind-Value="_edit.PurchasePrice"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="Thuế không được hoàn lại"
+                                                 @bind-Value="_edit.NonRefundableTax"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="Vận chuyển"
+                                                 @bind-Value="_edit.TransportCost"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="Lắp đặt/chạy thử"
+                                                 @bind-Value="_edit.InstallationCost"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="Chi phí trực tiếp khác"
+                                                 @bind-Value="_edit.OtherDirectCost"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="Chiết khấu/giảm giá"
+                                                 @bind-Value="_edit.DiscountAmount"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="VAT được khấu trừ"
+                                                 @bind-Value="_edit.RecoverableVat"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudPaper Class="pa-3 summary-box" Outlined="true">
+                                    <MudText Typo="Typo.caption">Nguyên giá dự kiến</MudText>
+                                    <MudText Typo="Typo.h6">
+                                        @FormatMoney(CalculatedOriginalCost)
+                                    </MudText>
+                                </MudPaper>
+                            </MudItem>
+                        </MudGrid>
+                    </MudTabPanel>
+
+                    <MudTabPanel Text="Khấu hao & tài khoản"
+                                 Icon="@Icons.Material.Filled.Calculate">
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="3">
+                                <MudDatePicker Label="Bắt đầu khấu hao"
+                                               Date="_edit.DepreciationStartDate"
+                                               DateChanged="OnDepreciationStartDateChanged"
+                                               DateFormat="dd/MM/yyyy"
+                                               Required="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="int"
+                                                 Label="Thời gian sử dụng (tháng)"
+                                                 @bind-Value="_edit.UsefulLifeMonths"
+                                                 Min="0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudSelect T="DepreciationMethod"
+                                           Label="Phương pháp khấu hao"
+                                           @bind-Value="_edit.DepreciationMethod"
+                                           For="@(() => _edit.DepreciationMethod)">
+                                    <MudSelectItem T="DepreciationMethod"
+                                                   Value="@DepreciationMethod.StraightLine">
+                                        Đường thẳng
+                                    </MudSelectItem>
+                                    <MudSelectItem T="DepreciationMethod"
+                                                   Value="@DepreciationMethod.DecliningBalance">
+                                        Số dư giảm dần
+                                    </MudSelectItem>
+                                    <MudSelectItem T="DepreciationMethod"
+                                                   Value="@DepreciationMethod.UnitsOfProduction">
+                                        Theo sản lượng
+                                    </MudSelectItem>
+                                    <MudSelectItem T="DepreciationMethod"
+                                                   Value="@DepreciationMethod.NotDepreciated">
+                                        Không trích khấu hao
+                                    </MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="Giá trị thu hồi"
+                                                 @bind-Value="_edit.ResidualValue"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudNumericField T="decimal"
+                                                 Label="Hao mòn lũy kế đầu kỳ"
+                                                 @bind-Value="_edit.OpeningAccumulatedDepreciation"
+                                                 Min="0"
+                                                 Format="N0"
+                                                 HideSpinButtons="true" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="TK nguyên giá"
+                                              @bind-Value="_edit.AssetAccount"
+                                              For="@(() => _edit.AssetAccount)"
+                                              Required="true"
+                                              MaxLength="20" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="TK hao mòn"
+                                              @bind-Value="_edit.DepreciationAccount"
+                                              For="@(() => _edit.DepreciationAccount)"
+                                              Required="true"
+                                              MaxLength="20" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="TK chi phí khấu hao"
+                                              @bind-Value="_edit.ExpenseAccount"
+                                              For="@(() => _edit.ExpenseAccount)"
+                                              Required="true"
+                                              MaxLength="20" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudTextField T="string"
+                                              Label="TK đối ứng nguồn hình thành"
+                                              @bind-Value="_edit.SourceAccount"
+                                              MaxLength="20" />
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudPaper Class="pa-3 summary-box" Outlined="true">
+                                    <MudText Typo="Typo.caption">Khấu hao tháng dự kiến</MudText>
+                                    <MudText Typo="Typo.h6">
+                                        @FormatMoney(CalculatedMonthlyDepreciation)
+                                    </MudText>
+                                </MudPaper>
+                            </MudItem>
+
+                            <MudItem xs="12" md="3">
+                                <MudPaper Class="pa-3 summary-box" Outlined="true">
+                                    <MudText Typo="Typo.caption">Giá trị còn lại</MudText>
+                                    <MudText Typo="Typo.h6">
+                                        @FormatMoney(CalculatedRemainingValue)
+                                    </MudText>
+                                </MudPaper>
+                            </MudItem>
+                        </MudGrid>
+                    </MudTabPanel>
+
+                    <MudTabPanel Text="Trạng thái & ghi chú"
+                                 Icon="@Icons.Material.Filled.FactCheck">
+                        <MudGrid Spacing="2">
+                            <MudItem xs="12" md="4">
+                                <MudSelect T="FixedAssetStatus"
+                                           Label="Trạng thái"
+                                           @bind-Value="_edit.Status">
+                                    <MudSelectItem T="FixedAssetStatus"
+                                                   Value="@FixedAssetStatus.Draft">
+                                        Nháp
+                                    </MudSelectItem>
+                                    <MudSelectItem T="FixedAssetStatus"
+                                                   Value="@FixedAssetStatus.InUse">
+                                        Đang sử dụng
+                                    </MudSelectItem>
+                                    <MudSelectItem T="FixedAssetStatus"
+                                                   Value="@FixedAssetStatus.Suspended">
+                                        Tạm ngưng
+                                    </MudSelectItem>
+                                    <MudSelectItem T="FixedAssetStatus"
+                                                   Value="@FixedAssetStatus.Disposed">
+                                        Đã ghi giảm/thanh lý
+                                    </MudSelectItem>
+                                </MudSelect>
+                            </MudItem>
+
+                            <MudItem xs="12">
+                                <MudTextField T="string"
+                                              Label="Ghi chú"
+                                              @bind-Value="_edit.Notes"
+                                              Lines="4"
+                                              MaxLength="2000" />
+                            </MudItem>
+                        </MudGrid>
+                    </MudTabPanel>
+                </MudTabs>
+
+                <MudDivider Class="my-4" />
+
+                <MudStack Row="true" Spacing="2">
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Save"
+                               Disabled="_saving"
+                               OnClick="@(() => SaveAsync(false))">
+                        Lưu
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.PlayArrow"
+                               Disabled="_saving"
+                               OnClick="@(() => SaveAsync(true))">
+                        Lưu & đưa vào sử dụng
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Default"
+                               Disabled="_saving"
+                               OnClick="NewAsset">
+                        Làm mới
+                    </MudButton>
+                </MudStack>
+            </MudForm>
+        </MudPaper>
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudStack Row="true"
+                      AlignItems="AlignItems.Center"
+                      Spacing="2"
+                      Class="mb-3">
+                <MudTextField T="string"
+                              Label="Tìm mã, tên, serial, bộ phận"
+                              @bind-Value="_keyword"
+                              Immediate="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search"
+                              Class="flex-grow-1" />
+
+                <MudButton Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="LoadAsync">
+                    Tải lại
+                </MudButton>
+            </MudStack>
+
+            <MudTable T="FixedAsset"
+                      Items="@FilteredItems"
+                      Dense="true"
+                      Hover="true"
+                      Bordered="true"
+                      Loading="_loading"
+                      Breakpoint="Breakpoint.Sm">
+                <HeaderContent>
+                    <MudTh>Mã tài sản</MudTh>
+                    <MudTh>Tên tài sản</MudTh>
+                    <MudTh>Loại</MudTh>
+                    <MudTh>Ngày ghi nhận</MudTh>
+                    <MudTh Align="Right">Nguyên giá</MudTh>
+                    <MudTh Align="Right">Còn lại</MudTh>
+                    <MudTh>Trạng thái</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+
+                <RowTemplate>
+                    <MudTd DataLabel="Mã tài sản">@context.AssetCode</MudTd>
+                    <MudTd DataLabel="Tên tài sản">@context.AssetName</MudTd>
+                    <MudTd DataLabel="Loại">@GetTypeText(context.AssetType)</MudTd>
+                    <MudTd DataLabel="Ngày ghi nhận">
+                        @context.RecognitionDate.ToString("dd/MM/yyyy")
+                    </MudTd>
+                    <MudTd DataLabel="Nguyên giá" Align="Right">
+                        @FormatMoney(context.OriginalCost)
+                    </MudTd>
+                    <MudTd DataLabel="Còn lại" Align="Right">
+                        @FormatMoney(context.RemainingValue)
+                    </MudTd>
+                    <MudTd DataLabel="Trạng thái">
+                        @GetStatusText(context.Status)
+                    </MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                       Color="Color.Primary"
+                                       Size="Size.Small"
+                                       OnClick="@(() => EditAsync(context.Id))" />
+
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                       Color="Color.Error"
+                                       Size="Size.Small"
+                                       Disabled="@(context.Status != FixedAssetStatus.Draft)"
+                                       OnClick="@(() => DeleteAsync(context))" />
+                    </MudTd>
+                </RowTemplate>
+
+                <NoRecordsContent>
+                    <MudText Class="pa-4">Chưa có dữ liệu tài sản cố định.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        </MudPaper>
+    }
+</MudStack>
+
+<style>
+    .summary-box {
+        min-height: 76px;
+        background: var(--mud-palette-background-grey);
+    }
+
+    .flex-grow-1 {
+        flex-grow: 1;
+    }
+</style>
+
+@code {
+    private MudForm? _form;
+    private FixedAsset _edit = CreateDefault();
+    private List<FixedAsset> _items = [];
+    private List<M_Customer> _companies = [];
+    private Guid _companyId;
+    private string _userName = "system";
+    private string? _keyword;
+    private bool _loading;
+    private bool _saving;
+
+    private IEnumerable<FixedAsset> FilteredItems
+    {
+        get
+        {
+            var keyword = _keyword?.Trim();
+
+            if (string.IsNullOrWhiteSpace(keyword))
+                return _items;
+
+            return _items.Where(x =>
+                x.AssetCode.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                x.AssetName.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                (x.SerialNo?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.DepartmentCode?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+    }
+
+    private decimal CalculatedOriginalCost =>
+        RoundMoney(Math.Max(
+            0,
+            _edit.PurchasePrice +
+            _edit.NonRefundableTax +
+            _edit.TransportCost +
+            _edit.InstallationCost +
+            _edit.OtherDirectCost -
+            _edit.DiscountAmount));
+
+    private decimal CalculatedRemainingValue =>
+        RoundMoney(Math.Max(
+            0,
+            CalculatedOriginalCost -
+            _edit.OpeningAccumulatedDepreciation));
+
+    private decimal CalculatedMonthlyDepreciation
+    {
+        get
+        {
+            if (_edit.DepreciationMethod == DepreciationMethod.NotDepreciated ||
+                _edit.UsefulLifeMonths <= 0)
+            {
+                return 0;
+            }
+
+            var depreciable = Math.Max(
+                0,
+                CalculatedOriginalCost - _edit.ResidualValue);
+
+            return RoundMoney(depreciable / _edit.UsefulLifeMonths);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _userName = state.User.Identity?.Name ?? "system";
+
+        await LoadCompaniesAsync();
+
+        if (_companyId != Guid.Empty)
+            await LoadAsync();
+    }
+
+    private async Task LoadCompaniesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        _companies = await db.Customer.AsNoTracking()
+            .Where(x => x.Customer_ID != Guid.Empty)
+            .OrderBy(x => x.COMPANY)
+            .ThenBy(x => x.BIZName)
+            .ToListAsync();
+
+        if (_companies.Count > 0 && _companyId == Guid.Empty)
+            _companyId = _companies[0].Customer_ID;
+    }
+
+    private static string CompanyLabel(M_Customer c)
+    {
+        var a = (c.COMPANY ?? string.Empty).Trim();
+        var b = (c.BIZName ?? string.Empty).Trim();
+
+        if (!string.IsNullOrEmpty(a) &&
+            !string.IsNullOrEmpty(b) &&
+            !string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{a} ({b})";
+        }
+
+        return string.IsNullOrEmpty(a) ? b : a;
+    }
+
+    private async Task OnCompanyChangedAsync(Guid companyId)
+    {
+        _companyId = companyId;
+        NewAsset();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_companyId == Guid.Empty)
+            return;
+
+        _loading = true;
+
+        try
+        {
+            _items = (await FixedAssetService.SearchAsync(
+                _companyId,
+                null)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void NewAsset()
+    {
+        _edit = CreateDefault();
+        ApplyDefaultAccounts(_edit.AssetType, true);
+        _form?.ResetValidation();
+    }
+
+    private async Task EditAsync(Guid id)
+    {
+        try
+        {
+            var item = await FixedAssetService.GetAsync(_companyId, id);
+
+            if (item is null)
+            {
+                Snackbar.Add("Không tìm thấy tài sản.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _edit = item;
+            _form?.ResetValidation();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task SaveAsync(bool putIntoUse)
+    {
+        if (_form is null)
+            return;
+
+        await _form.Validate();
+
+        if (!_form.IsValid)
+        {
+            Snackbar.Add(
+                "Vui lòng kiểm tra các trường bắt buộc.",
+                MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+
+        try
+        {
+            _edit.OriginalCost = CalculatedOriginalCost;
+            _edit.RemainingValue = CalculatedRemainingValue;
+
+            if (putIntoUse)
+                _edit.Status = FixedAssetStatus.InUse;
+
+            _edit = await FixedAssetService.SaveAsync(
+                _companyId,
+                _edit,
+                _userName);
+
+            Snackbar.Add(
+                putIntoUse
+                    ? "Đã lưu và đưa tài sản vào sử dụng."
+                    : "Đã lưu tài sản cố định.",
+                MudBlazor.Severity.Success);
+
+            await LoadAsync();
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DeleteAsync(FixedAsset asset)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Xóa tài sản",
+            $"Xóa tài sản {asset.AssetCode} - {asset.AssetName}?",
+            yesText: "Xóa",
+            cancelText: "Hủy");
+
+        if (confirmed != true)
+            return;
+
+        try
+        {
+            await FixedAssetService.DeleteDraftAsync(
+                _companyId,
+                asset.Id);
+
+            Snackbar.Add("Đã xóa tài sản nháp.", MudBlazor.Severity.Success);
+
+            if (_edit.Id == asset.Id)
+                NewAsset();
+
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private void OnAssetTypeChanged(FixedAssetType value)
+    {
+        _edit.AssetType = value;
+        ApplyDefaultAccounts(value, false);
+    }
+
+    private Task OnPurchaseDateChanged(DateTime? date)
+    {
+        _edit.PurchaseDate = date;
+        return Task.CompletedTask;
+    }
+
+    private Task OnRecognitionDateChanged(DateTime? date)
+    {
+        if (date.HasValue)
+            _edit.RecognitionDate = date.Value;
+
+        return Task.CompletedTask;
+    }
+
+    private Task OnInvoiceDateChanged(DateTime? date)
+    {
+        _edit.InvoiceDate = date;
+        return Task.CompletedTask;
+    }
+
+    private Task OnVoucherDateChanged(DateTime? date)
+    {
+        _edit.VoucherDate = date;
+        return Task.CompletedTask;
+    }
+
+    private Task OnDepreciationStartDateChanged(DateTime? date)
+    {
+        if (date.HasValue)
+            _edit.DepreciationStartDate = date.Value;
+
+        return Task.CompletedTask;
+    }
+
+    private void ApplyDefaultAccounts(
+        FixedAssetType assetType,
+        bool force)
+    {
+        var isCurrentDefault =
+            string.IsNullOrWhiteSpace(_edit.AssetAccount) ||
+            _edit.AssetAccount is "211" or "212" or "213";
+
+        var isDepreciationDefault =
+            string.IsNullOrWhiteSpace(_edit.DepreciationAccount) ||
+            _edit.DepreciationAccount is "2141" or "2142" or "2143";
+
+        if (force || isCurrentDefault)
+        {
+            _edit.AssetAccount = assetType switch
+            {
+                FixedAssetType.Tangible => "211",
+                FixedAssetType.FinanceLease => "212",
+                FixedAssetType.Intangible => "213",
+                _ => "211"
+            };
+        }
+
+        if (force || isDepreciationDefault)
+        {
+            _edit.DepreciationAccount = assetType switch
+            {
+                FixedAssetType.Tangible => "2141",
+                FixedAssetType.FinanceLease => "2142",
+                FixedAssetType.Intangible => "2143",
+                _ => "2141"
+            };
+        }
+    }
+
+    private static FixedAsset CreateDefault()
+        => new()
+        {
+            Id = Guid.Empty,
+            RecognitionDate = DateTime.Today,
+            DepreciationStartDate = DateTime.Today,
+            AssetType = FixedAssetType.Tangible,
+            DepreciationMethod = DepreciationMethod.StraightLine,
+            UsefulLifeMonths = 36,
+            AssetAccount = "211",
+            DepreciationAccount = "2141",
+            ExpenseAccount = "642",
+            SourceAccount = "331",
+            Status = FixedAssetStatus.Draft
+        };
+
+    private static string GetTypeText(FixedAssetType type)
+        => type switch
+        {
+            FixedAssetType.Tangible => "Hữu hình",
+            FixedAssetType.FinanceLease => "Thuê tài chính",
+            FixedAssetType.Intangible => "Vô hình",
+            _ => "Khác"
+        };
+
+    private static string GetStatusText(FixedAssetStatus status)
+        => status switch
+        {
+            FixedAssetStatus.Draft => "Nháp",
+            FixedAssetStatus.InUse => "Đang sử dụng",
+            FixedAssetStatus.Suspended => "Tạm ngưng",
+            FixedAssetStatus.Disposed => "Đã ghi giảm",
+            _ => "Không xác định"
+        };
+
+    private static string FormatMoney(decimal value)
+        => value.ToString("N0");
+
+    private static decimal RoundMoney(decimal value)
+        => decimal.Round(
+            value,
+            2,
+            MidpointRounding.AwayFromZero);
+}

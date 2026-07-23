@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using NVOAMASIS.Components.Accounting.Pages;
 using NVOAMASIS.Models;
+using NVOAMASIS.Models.Accounting;
 namespace NVOAMASIS.Data
 {
     public class AppDbContext (DbContextOptions <AppDbContext> options) : DbContext(options)
@@ -178,6 +180,8 @@ namespace NVOAMASIS.Data
 
         public DbSet<QuanLy_Cont> QuanLy_Cont { get; set; }
         public DbSet<QuanLy_Tau> QuanLy_Tau { get; set; }
+
+        public DbSet<FixedAsset> FixedAssets => Set<FixedAsset>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -481,6 +485,39 @@ namespace NVOAMASIS.Data
                 entity.Property(e => e.Token).HasMaxLength(512);
                 entity.Property(e => e.Platform).HasMaxLength(32);
             });
+
+
+            modelBuilder.Entity<FixedAsset>(entity =>
+            {
+                entity.ToTable("FixedAssets", "dbo");
+                entity.HasKey(x => x.Id);
+
+                entity.HasIndex(x => new { x.CompanyId, x.AssetCode })
+                    .IsUnique()
+                    .HasDatabaseName("UX_FixedAssets_Company_AssetCode");
+
+                entity.Property(x => x.AssetType).HasConversion<byte>();
+                entity.Property(x => x.Status).HasConversion<byte>();
+                entity.Property(x => x.DepreciationMethod).HasConversion<byte>();
+
+                entity.Property(x => x.PurchasePrice).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.NonRefundableTax).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.TransportCost).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.InstallationCost).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.OtherDirectCost).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.DiscountAmount).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.RecoverableVat).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.OriginalCost).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.ResidualValue).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.OpeningAccumulatedDepreciation)
+                    .HasColumnType("decimal(18,2)");
+                entity.Property(x => x.RemainingValue).HasColumnType("decimal(18,2)");
+
+                entity.Property(x => x.RowVersion)
+                    .IsRowVersion()
+                    .IsConcurrencyToken();
+            });
+
         }
 
     }
