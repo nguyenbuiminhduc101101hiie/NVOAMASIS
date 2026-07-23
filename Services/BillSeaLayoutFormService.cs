@@ -14,6 +14,7 @@ namespace NVOAMASIS.Services
         public const string AnSea = "BillArrivalNoticeNVOCC.mrt";
         public const string AnAir = "BillArrivalNotice_Air.mrt";
         public const string Do = "BillDeliveryOrderNVOCC.mrt";
+        public const string Trang2 = "BillTrang2.mrt";
     }
 
     public static class BillLayoutFormKindHelper
@@ -24,6 +25,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnSea => BillSeaReportTemplateNames.AnSea,
             BillLayoutFormKind.AnAir => BillSeaReportTemplateNames.AnAir,
             BillLayoutFormKind.Do => BillSeaReportTemplateNames.Do,
+            BillLayoutFormKind.Trang2 => BillSeaReportTemplateNames.Trang2,
             _ => BillSeaReportTemplateNames.Main
         };
 
@@ -37,6 +39,8 @@ namespace NVOAMASIS.Services
                 return BillLayoutFormKind.AnAir;
             if (string.Equals(value, nameof(BillLayoutFormKind.Do), StringComparison.OrdinalIgnoreCase))
                 return BillLayoutFormKind.Do;
+            if (string.Equals(value, nameof(BillLayoutFormKind.Trang2), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.Trang2;
             return BillLayoutFormKind.Sea;
         }
 
@@ -46,6 +50,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnSea => nameof(BillLayoutFormKind.AnSea),
             BillLayoutFormKind.AnAir => nameof(BillLayoutFormKind.AnAir),
             BillLayoutFormKind.Do => nameof(BillLayoutFormKind.Do),
+            BillLayoutFormKind.Trang2 => nameof(BillLayoutFormKind.Trang2),
             _ => nameof(BillLayoutFormKind.Sea)
         };
 
@@ -55,6 +60,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnSea => "AN Sea",
             BillLayoutFormKind.AnAir => "AN Air",
             BillLayoutFormKind.Do => "DO",
+            BillLayoutFormKind.Trang2 => "Trang 2",
             _ => "Sea"
         };
 
@@ -64,12 +70,20 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnSea => "AN Sea",
             BillLayoutFormKind.AnAir => "AN Air",
             BillLayoutFormKind.Do => "DO",
+            BillLayoutFormKind.Trang2 => "Trang 2",
             _ => "Bill Sea"
         };
 
         public static bool SupportsAttach(BillLayoutFormKind kind) => kind == BillLayoutFormKind.Sea;
 
         public static bool SupportsFormBillAir(BillLayoutFormKind kind) => kind == BillLayoutFormKind.Air;
+
+        /// <summary>Bill Sea / Air cho phép upload ảnh nền form (lưu FormBillAir).</summary>
+        public static bool SupportsFormBackground(BillLayoutFormKind kind) =>
+            kind is BillLayoutFormKind.Sea or BillLayoutFormKind.Air;
+
+        /// <summary>Trang 2 dùng FormBillAir để lưu ảnh full-page (PageImage).</summary>
+        public static bool SupportsTrang2Content(BillLayoutFormKind kind) => kind == BillLayoutFormKind.Trang2;
 
         public static bool UsesImage1AsLogo(BillLayoutFormKind kind) => kind == BillLayoutFormKind.AnAir;
     }
@@ -344,6 +358,34 @@ namespace NVOAMASIS.Services
 
         public Task ClearFormBillAirAsync(Guid formId, CancellationToken cancellationToken = default) =>
             SaveFormBillAirAsync(formId, null, cancellationToken);
+
+        public async Task<(bool ImageMode, string PageText, bool HasImage)> GetTrang2ContentAsync(
+            Guid formId,
+            CancellationToken cancellationToken = default)
+        {
+            var doc = await LoadFormDocumentAsync(formId, cancellationToken);
+            var imageMode = BillSeaLayoutMrtHelper.IsTrang2ImageMode(doc);
+            var pageText = BillSeaLayoutMrtHelper.GetTrang2PageText(doc);
+            var hasImage = await HasCustomFormBillAirAsync(formId, cancellationToken);
+            if (!imageMode && hasImage && string.IsNullOrWhiteSpace(pageText))
+                imageMode = true;
+            return (imageMode, pageText, hasImage);
+        }
+
+        public async Task SaveTrang2ContentAsync(
+            Guid formId,
+            bool imageMode,
+            string? pageText,
+            bool clearImageWhenText = false,
+            CancellationToken cancellationToken = default)
+        {
+            var doc = await LoadFormDocumentAsync(formId, cancellationToken);
+            BillSeaLayoutMrtHelper.ApplyTrang2Content(doc, imageMode, pageText);
+            await SaveFormDocumentAsync(formId, doc, cancellationToken);
+
+            if (!imageMode && clearImageWhenText)
+                await ClearFormBillAirAsync(formId, cancellationToken);
+        }
 
         public async Task<M_BillSeaLayoutForm> CreateFormAsync(
             string formName,
