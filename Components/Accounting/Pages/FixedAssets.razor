@@ -1,6 +1,8 @@
 @page "/accounting/fixed-assets"
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 
+@using System.Data
+@using System.Data.Common
 @using System.Security.Claims
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.EntityFrameworkCore
@@ -40,10 +42,11 @@
                            Margin="Margin.Dense"
                            Dense="true"
                            Style="min-width:260px"
-                           Disabled="_loading || _saving">
+                           Disabled="_saving"
+                           ToStringFunc="CompanyIdToDisplay">
                     @foreach (var c in _customers)
                     {
-                        <MudSelectItem Value="@c.Customer_ID">@CompanyLabel(c)</MudSelectItem>
+                        <MudSelectItem T="Guid" Value="@c.Customer_ID">@CompanyLabel(c)</MudSelectItem>
                     }
                 </MudSelect>
 
@@ -188,8 +191,7 @@
                         <MudGrid Spacing="2">
                             <MudItem xs="12" md="3">
                                 <MudDatePicker Label="Ngày mua"
-                                               Date="@_edit.PurchaseDate"
-                                               DateChanged="OnPurchaseDateChanged"
+                                               @bind-Date="_edit.PurchaseDate"
                                                DateFormat="dd/MM/yyyy"
                                                Clearable="true" />
                             </MudItem>
@@ -218,8 +220,7 @@
 
                             <MudItem xs="12" md="3">
                                 <MudDatePicker Label="Ngày hóa đơn"
-                                               Date="@_edit.InvoiceDate"
-                                               DateChanged="OnInvoiceDateChanged"
+                                               @bind-Date="_edit.InvoiceDate"
                                                DateFormat="dd/MM/yyyy"
                                                Clearable="true" />
                             </MudItem>
@@ -233,8 +234,7 @@
 
                             <MudItem xs="12" md="3">
                                 <MudDatePicker Label="Ngày chứng từ"
-                                               Date="@_edit.VoucherDate"
-                                               DateChanged="OnVoucherDateChanged"
+                                               @bind-Date="_edit.VoucherDate"
                                                DateFormat="dd/MM/yyyy"
                                                Clearable="true" />
                             </MudItem>
@@ -485,9 +485,9 @@
                     <MudButton Variant="Variant.Filled"
                                Color="Color.Success"
                                StartIcon="@Icons.Material.Filled.PlayArrow"
-                               Disabled="@(_saving || !_companyResolved)"
+                               Disabled="@(_saving || !_companyResolved || (_edit.Id != Guid.Empty && _edit.Status == FixedAssetStatus.InUse))"
                                OnClick="PutIntoUseAsync">
-                        LƯU & ĐƯA VÀO SỬ DỤNG
+                        @(_saving ? "ĐANG XỬ LÝ..." : "LƯU & ĐƯA VÀO SỬ DỤNG")
                     </MudButton>
 
                     <MudButton Variant="Variant.Outlined"
@@ -664,8 +664,7 @@
     private async Task ResolveUserAsync()
     {
         var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        var user = state.User;
-        _userName = user.Identity?.Name ?? "system";
+        _userName = state.User.Identity?.Name ?? "system";
     }
 
     private Guid? TryGetCompanyIdFromClaims(ClaimsPrincipal user)
@@ -736,6 +735,15 @@
         }
 
         return string.IsNullOrEmpty(a) ? b : a;
+    }
+
+    private string CompanyIdToDisplay(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+
+        var company = _customers.FirstOrDefault(x => x.Customer_ID == id);
+        return company is null ? string.Empty : CompanyLabel(company);
     }
 
     private async Task OnCompanyChangedAsync(Guid companyId)
@@ -842,34 +850,52 @@
         {
             PrepareAssetBeforeSave();
 
-            var validationMessage = ValidateAssetBeforeSave();
+            var validationMessage = ValidateAssetBeforeSave(putIntoUse);
             if (!string.IsNullOrWhiteSpace(validationMessage))
             {
                 Snackbar.Add(validationMessage, MudBlazor.Severity.Warning);
                 return;
             }
 
-            // Nút LƯU luôn gửi trạng thái Nháp. Với tài sản đã sử dụng,
-            // service sẽ giữ nguyên trạng thái và chỉ cho sửa thông tin quản lý.
-            _edit.Status = putIntoUse
-                ? FixedAssetStatus.InUse
-                : FixedAssetStatus.Draft;
+            if (!putIntoUse)
+            {
+                // Nút LƯU luôn gửi trạng thái Nháp. Với tài sản đã sử dụng,
+                // service hiện tại sẽ giữ nguyên trạng thái và chỉ cho sửa
+                // các thông tin quản lý được phép.
+                _edit.Status = FixedAssetStatus.Draft;
 
-            var savedAsset = await FixedAssetService.SaveAsync(
-                _companyId,
-                _edit,
-                _userName);
+                _edit = await FixedAssetService.SaveAsync(
+                    _companyId,
+                    _edit,
+                    _userName);
+                SyncDateFieldsFromEdit();
 
-            // Nhận lại Id, RowVersion và trạng thái thực tế sau khi SQL lưu xong.
-            _edit = savedAsset;
+                await LoadAsync();
+
+                Snackbar.Add(
+                    $"Đã lưu tài sản {_edit.AssetCode} - {_edit.AssetName}.",
+                    MudBlazor.Severity.Success);
+                return;
+            }
+
+            if (_edit.Id != Guid.Empty &&
+                _edit.Status == FixedAssetStatus.InUse)
+            {
+                Snackbar.Add(
+                    "Tài sản đã được đưa vào sử dụng.",
+                    MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var result = await SaveAndPutIntoUseAsync();
+            _edit = result.Asset;
             SyncDateFieldsFromEdit();
 
             await LoadAsync();
 
             Snackbar.Add(
-                putIntoUse
-                    ? $"Đã lưu và đưa tài sản {_edit.AssetCode} vào sử dụng."
-                    : $"Đã lưu tài sản {_edit.AssetCode} - {_edit.AssetName}.",
+                $"Đã đưa tài sản {_edit.AssetCode} vào sử dụng. " +
+                $"Chứng từ {result.VoucherNo} đã được tạo và ghi sổ.",
                 MudBlazor.Severity.Success);
         }
         catch (DbUpdateConcurrencyException ex)
@@ -887,13 +913,695 @@
         catch (Exception ex)
         {
             Snackbar.Add(
-                $"Không thể lưu tài sản: {ex.Message}",
+                $"Không thể lưu tài sản: {GetRootMessage(ex)}",
                 MudBlazor.Severity.Error);
         }
         finally
         {
             _saving = false;
         }
+    }
+
+    private async Task<PutIntoUseResult> SaveAndPutIntoUseAsync()
+    {
+        // Bước 1: lưu hồ sơ ở trạng thái nháp trước. Nếu phần chứng từ lỗi,
+        // hồ sơ vẫn còn ở Nháp và không bị đánh dấu Đang sử dụng sai.
+        _edit.Status = FixedAssetStatus.Draft;
+
+        var savedDraft = await FixedAssetService.SaveAsync(
+            _companyId,
+            _edit,
+            _userName);
+
+        _edit = savedDraft;
+
+        VoucherPostResult? postedVoucher = null;
+
+        try
+        {
+            postedVoucher = await CreateVoucherAndPostLedgerAsync(savedDraft);
+
+            // Chỉ chuyển tài sản sang Đang sử dụng sau khi voucher và ledger
+            // đã được tạo thành công.
+            savedDraft.Status = FixedAssetStatus.InUse;
+            savedDraft.VoucherNo = postedVoucher.VoucherNo;
+            savedDraft.VoucherDate = postedVoucher.VoucherDate;
+
+            var inUseAsset = await FixedAssetService.SaveAsync(
+                _companyId,
+                savedDraft,
+                _userName);
+
+            return new PutIntoUseResult
+            {
+                Asset = inUseAsset,
+                VoucherId = postedVoucher.VoucherId,
+                VoucherNo = postedVoucher.VoucherNo
+            };
+        }
+        catch
+        {
+            // Service lưu tài sản và phần kế toán đang dùng hai DbContext khác
+            // nhau. Nếu bước cập nhật trạng thái cuối cùng lỗi, xóa voucher và
+            // ledger vừa tạo để tránh tài sản/voucher lệch trạng thái.
+            if (postedVoucher is not null)
+            {
+                await TryRollbackVoucherAsync(postedVoucher.VoucherId);
+            }
+
+            throw;
+        }
+    }
+
+    private async Task<VoucherPostResult> CreateVoucherAndPostLedgerAsync(
+        FixedAsset asset)
+    {
+        if (asset.Id == Guid.Empty)
+            throw new InvalidOperationException("Tài sản chưa được lưu.");
+
+        var sourceAccount = asset.SourceAccount?.Trim();
+        if (string.IsNullOrWhiteSpace(sourceAccount))
+        {
+            throw new InvalidOperationException(
+                "Vui lòng nhập tài khoản đối ứng nguồn hình thành.");
+        }
+
+        var assetAccount = asset.AssetAccount?.Trim();
+        if (string.IsNullOrWhiteSpace(assetAccount))
+        {
+            throw new InvalidOperationException(
+                "Vui lòng nhập tài khoản nguyên giá.");
+        }
+
+        var voucherDate = (asset.VoucherDate ?? asset.RecognitionDate).Date;
+        var voucherNo = string.IsNullOrWhiteSpace(asset.VoucherNo)
+            ? GenerateVoucherNo(voucherDate)
+            : asset.VoucherNo.Trim().ToUpperInvariant();
+
+        var description =
+            $"Ghi tăng và đưa vào sử dụng TSCĐ " +
+            $"{asset.AssetCode} - {asset.AssetName}";
+
+        var voucherId = Guid.NewGuid();
+        var totalCredit = RoundMoney(
+            asset.OriginalCost + asset.RecoverableVat);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var connection = db.Database.GetDbConnection();
+
+        if (connection.State != ConnectionState.Open)
+            await connection.OpenAsync();
+
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        try
+        {
+            await EnsureVoucherNotExistsAsync(
+                connection,
+                transaction,
+                asset.Id);
+
+            var assetAccountId = await ResolveAccountIdAsync(
+                connection,
+                transaction,
+                assetAccount);
+
+            var sourceAccountId = await ResolveAccountIdAsync(
+                connection,
+                transaction,
+                sourceAccount);
+
+            Guid? vatAccountId = null;
+            if (asset.RecoverableVat > 0)
+            {
+                vatAccountId = await ResolveAccountIdAsync(
+                    connection,
+                    transaction,
+                    "1332");
+            }
+
+            await InsertVoucherAsync(
+                connection,
+                transaction,
+                voucherId,
+                asset,
+                voucherNo,
+                voucherDate,
+                description);
+
+            var lineNo = 1;
+
+            await InsertVoucherLineAsync(
+                connection,
+                transaction,
+                voucherId,
+                lineNo++,
+                assetAccountId,
+                assetAccount,
+                debit: asset.OriginalCost,
+                credit: 0,
+                description: description,
+                invoiceNo: asset.InvoiceNo,
+                invoiceDate: asset.InvoiceDate ?? voucherDate);
+
+            if (asset.RecoverableVat > 0 && vatAccountId.HasValue)
+            {
+                await InsertVoucherLineAsync(
+                    connection,
+                    transaction,
+                    voucherId,
+                    lineNo++,
+                    vatAccountId.Value,
+                    "1332",
+                    debit: asset.RecoverableVat,
+                    credit: 0,
+                    description: $"Thuế GTGT được khấu trừ của TSCĐ {asset.AssetCode}",
+                    invoiceNo: asset.InvoiceNo,
+                    invoiceDate: asset.InvoiceDate ?? voucherDate);
+            }
+
+            await InsertVoucherLineAsync(
+                connection,
+                transaction,
+                voucherId,
+                lineNo,
+                sourceAccountId,
+                sourceAccount,
+                debit: 0,
+                credit: totalCredit,
+                description: description,
+                invoiceNo: asset.InvoiceNo,
+                invoiceDate: asset.InvoiceDate ?? voucherDate);
+
+            await PostVoucherToLedgerAsync(
+                connection,
+                transaction,
+                voucherId);
+
+            var ledgerLineCount = await GetLedgerLineCountAsync(
+                connection,
+                transaction,
+                voucherId);
+
+            if (ledgerLineCount <= 0)
+            {
+                throw new InvalidOperationException(
+                    "Chứng từ đã tạo nhưng chưa sinh được dòng sổ cái.");
+            }
+
+            await transaction.CommitAsync();
+
+            return new VoucherPostResult
+            {
+                VoucherId = voucherId,
+                VoucherNo = voucherNo,
+                VoucherDate = voucherDate,
+                LedgerLineCount = ledgerLineCount
+            };
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            await connection.CloseAsync();
+        }
+    }
+
+    private async Task EnsureVoucherNotExistsAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid assetId)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT TOP (1) VoucherNo
+FROM dbo.AccountingVouchers
+WHERE CompanyId = @CompanyId
+  AND SourceModule = N'FIXED_ASSET_TT99'
+  AND CONVERT(NVARCHAR(100), SourceId) = @SourceId;";
+
+        AddParameter(command, "@CompanyId", _companyId);
+        AddParameter(command, "@SourceId", assetId.ToString());
+
+        var existing = await command.ExecuteScalarAsync();
+        if (existing is not null && existing != DBNull.Value)
+        {
+            throw new InvalidOperationException(
+                $"Tài sản đã có chứng từ ghi tăng {existing}.");
+        }
+    }
+
+    private static async Task<Guid> ResolveAccountIdAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string accountCode)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT TOP (1) Id
+FROM dbo.DanhMucTaiKhoan
+WHERE LTRIM(RTRIM(Taikhoan)) = @AccountCode
+ORDER BY Id;";
+
+        AddParameter(command, "@AccountCode", accountCode.Trim());
+
+        var value = await command.ExecuteScalarAsync();
+
+        if (value is Guid accountId && accountId != Guid.Empty)
+            return accountId;
+
+        if (value is not null &&
+            value != DBNull.Value &&
+            Guid.TryParse(Convert.ToString(value), out accountId) &&
+            accountId != Guid.Empty)
+        {
+            return accountId;
+        }
+
+        throw new InvalidOperationException(
+            $"Không tìm thấy tài khoản {accountCode} trong DanhMucTaiKhoan.");
+    }
+
+    private async Task InsertVoucherAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid voucherId,
+        FixedAsset asset,
+        string voucherNo,
+        DateTime voucherDate,
+        string description)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+INSERT INTO dbo.AccountingVouchers
+(
+    Id,
+    CompanyId,
+    VoucherNo,
+    VoucherDate,
+    PostingDate,
+    FiscalYear,
+    FiscalPeriod,
+    TransactionTypeCode,
+    Description,
+    CurrencyCode,
+    ExchangeRate,
+    Status,
+    ReferenceNo,
+    ReferenceDate,
+    BookScope,
+    SourceModule,
+    SourceId,
+    CreatedBy,
+    CreatedDate,
+    ModifiedBy,
+    ModifiedDate,
+    Ghiso,
+    Approve,
+    Both
+)
+VALUES
+(
+    @Id,
+    @CompanyId,
+    @VoucherNo,
+    @VoucherDate,
+    @PostingDate,
+    @FiscalYear,
+    @FiscalPeriod,
+    N'GENERAL',
+    @Description,
+    N'VND',
+    1,
+    1,
+    @ReferenceNo,
+    @ReferenceDate,
+    N'BOTH',
+    N'FIXED_ASSET_TT99',
+    @SourceId,
+    @CreatedBy,
+    SYSDATETIME(),
+    @CreatedBy,
+    SYSDATETIME(),
+    0,
+    1,
+    1
+);";
+
+        AddParameter(command, "@Id", voucherId);
+        AddParameter(command, "@CompanyId", _companyId);
+        AddParameter(command, "@VoucherNo", voucherNo);
+        AddParameter(command, "@VoucherDate", voucherDate);
+        AddParameter(command, "@PostingDate", voucherDate);
+        AddParameter(command, "@FiscalYear", voucherDate.Year);
+        AddParameter(command, "@FiscalPeriod", voucherDate.Month);
+        AddParameter(command, "@Description", description);
+        AddParameter(
+            command,
+            "@ReferenceNo",
+            string.IsNullOrWhiteSpace(asset.InvoiceNo)
+                ? voucherNo
+                : asset.InvoiceNo.Trim());
+        AddParameter(
+            command,
+            "@ReferenceDate",
+            asset.InvoiceDate?.Date ?? voucherDate);
+        AddParameter(command, "@SourceId", asset.Id);
+        AddParameter(command, "@CreatedBy", _userName);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertVoucherLineAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid voucherId,
+        int lineNo,
+        Guid accountId,
+        string accountCode,
+        decimal debit,
+        decimal credit,
+        string description,
+        string? invoiceNo,
+        DateTime invoiceDate)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+INSERT INTO dbo.AccountingVoucherLines
+(
+    Id,
+    VoucherId,
+    LineNo_,
+    DanhMucTaiKhoanID,
+    AccountCode,
+    DebitAmount,
+    CreditAmount,
+    DebitAmountFC,
+    CreditAmountFC,
+    LineDescription,
+    IsTaxBook,
+    IsManagementBook,
+    LedgerType,
+    InvoiceNo,
+    InvoiceDate,
+    SortKey
+)
+VALUES
+(
+    NEWID(),
+    @VoucherId,
+    @LineNo,
+    @DanhMucTaiKhoanID,
+    @AccountCode,
+    @DebitAmount,
+    @CreditAmount,
+    @DebitAmount,
+    @CreditAmount,
+    @LineDescription,
+    1,
+    1,
+    N'BOTH',
+    @InvoiceNo,
+    @InvoiceDate,
+    @SortKey
+);";
+
+        AddParameter(command, "@VoucherId", voucherId);
+        AddParameter(command, "@LineNo", lineNo.ToString());
+        AddParameter(command, "@DanhMucTaiKhoanID", accountId);
+        AddParameter(command, "@AccountCode", accountCode.Trim());
+        AddParameter(command, "@DebitAmount", RoundMoney(debit));
+        AddParameter(command, "@CreditAmount", RoundMoney(credit));
+        AddParameter(command, "@LineDescription", description);
+        AddParameter(command, "@InvoiceNo", NormalizeText(invoiceNo));
+        AddParameter(command, "@InvoiceDate", invoiceDate.Date);
+        AddParameter(command, "@SortKey", lineNo);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task PostVoucherToLedgerAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid voucherId)
+    {
+        // Chỉ post đúng chứng từ tài sản vừa tạo. Không gọi procedure post theo
+        // cả kỳ để tránh vô tình ghi sổ những voucher khác cùng công ty/tháng.
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+DECLARE @TotalDebit DECIMAL(18, 2);
+DECLARE @TotalCredit DECIMAL(18, 2);
+
+SELECT
+    @TotalDebit = ISNULL(SUM(ISNULL(DebitAmount, 0)), 0),
+    @TotalCredit = ISNULL(SUM(ISNULL(CreditAmount, 0)), 0)
+FROM dbo.AccountingVoucherLines
+WHERE VoucherId = @VoucherId;
+
+IF @TotalDebit = 0 AND @TotalCredit = 0
+BEGIN
+    RAISERROR(N'Chứng từ tài sản không có dòng hạch toán.', 16, 1);
+    RETURN;
+END;
+
+IF ABS(@TotalDebit - @TotalCredit) > 0.01
+BEGIN
+    RAISERROR(N'Chứng từ tài sản không cân Nợ/Có.', 16, 1);
+    RETURN;
+END;
+
+IF EXISTS
+(
+    SELECT 1
+    FROM dbo.GeneralLedgerEntries
+    WHERE VoucherId = @VoucherId
+)
+BEGIN
+    RAISERROR(N'Chứng từ tài sản đã được ghi sổ.', 16, 1);
+    RETURN;
+END;
+
+INSERT INTO dbo.GeneralLedgerEntries
+(
+    Id,
+    VoucherId,
+    VoucherLineId,
+    CompanyId,
+    FiscalYear,
+    FiscalPeriod,
+    PostingDate,
+    VoucherDate,
+    VoucherNo,
+    AccountCode,
+    Debit,
+    Credit,
+    CurrencyCode,
+    ExchangeRate,
+    DebitFC,
+    CreditFC,
+    CustomerId,
+    SupplierId,
+    EmployeeId,
+    ShipmentId,
+    ContractId,
+    BranchCode,
+    Description,
+    SourceModule,
+    SourceId,
+    CreatedAt,
+    CreatedBy,
+    IsTaxBook,
+    IsManagementBook,
+    LedgerType
+)
+SELECT
+    NEWID(),
+    V.Id,
+    L.Id,
+    V.CompanyId,
+    V.FiscalYear,
+    V.FiscalPeriod,
+    CAST(ISNULL(V.PostingDate, V.VoucherDate) AS DATE),
+    CAST(V.VoucherDate AS DATE),
+    V.VoucherNo,
+    CAST(L.AccountCode AS NVARCHAR(20)),
+    ISNULL(L.DebitAmount, 0),
+    ISNULL(L.CreditAmount, 0),
+    ISNULL(V.CurrencyCode, N'VND'),
+    ISNULL(V.ExchangeRate, 1),
+    ISNULL(L.DebitAmountFC, ISNULL(L.DebitAmount, 0)),
+    ISNULL(L.CreditAmountFC, ISNULL(L.CreditAmount, 0)),
+    L.CustomerId,
+    NULL,
+    NULL,
+    L.ShipmentId,
+    TRY_CONVERT(UNIQUEIDENTIFIER, L.ContractId),
+    L.BranchId,
+    COALESCE(L.LineDescription, V.Description),
+    N'ACCOUNTING_VOUCHER',
+    CONVERT(NVARCHAR(100), V.Id),
+    SYSDATETIME(),
+    @CreatedBy,
+    ISNULL(L.IsTaxBook, 1),
+    ISNULL(L.IsManagementBook, 1),
+    ISNULL(L.LedgerType, N'GENERAL')
+FROM dbo.AccountingVouchers V
+INNER JOIN dbo.AccountingVoucherLines L
+    ON L.VoucherId = V.Id
+WHERE V.Id = @VoucherId
+  AND V.CompanyId = @CompanyId
+  AND ISNULL(V.Approve, 0) = 1
+  AND ISNULL(V.Status, 1) <> 3
+  AND ISNULL(L.AccountCode, N'') <> N''
+  AND (ISNULL(L.DebitAmount, 0) <> 0
+       OR ISNULL(L.CreditAmount, 0) <> 0);
+
+UPDATE dbo.AccountingVouchers
+SET Ghiso = 1,
+    Status = 2,
+    PostedBy = @CreatedBy,
+    PostedDate = SYSDATETIME(),
+    ModifiedBy = @CreatedBy,
+    ModifiedDate = SYSDATETIME()
+WHERE Id = @VoucherId
+  AND CompanyId = @CompanyId;
+";
+
+        AddParameter(command, "@VoucherId", voucherId);
+        AddParameter(command, "@CompanyId", _companyId);
+        AddParameter(command, "@CreatedBy", _userName);
+
+        await command.ExecuteNonQueryAsync();
+
+        await using var verifyCommand = connection.CreateCommand();
+        verifyCommand.Transaction = transaction;
+        verifyCommand.CommandText = @"
+SELECT COUNT(*)
+FROM dbo.GeneralLedgerEntries
+WHERE VoucherId = @VoucherId;";
+        AddParameter(verifyCommand, "@VoucherId", voucherId);
+
+        var result = await verifyCommand.ExecuteScalarAsync();
+        var count = result is null || result == DBNull.Value
+            ? 0
+            : Convert.ToInt32(result);
+
+        if (count <= 0)
+        {
+            throw new InvalidOperationException(
+                "Không tạo được GeneralLedgerEntries cho chứng từ tài sản.");
+        }
+    }
+
+    private static async Task<int> GetLedgerLineCountAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid voucherId)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT COUNT(*)
+FROM dbo.GeneralLedgerEntries
+WHERE VoucherId = @VoucherId;";
+        AddParameter(command, "@VoucherId", voucherId);
+
+        var result = await command.ExecuteScalarAsync();
+        return result is null || result == DBNull.Value
+            ? 0
+            : Convert.ToInt32(result);
+    }
+
+    private async Task TryRollbackVoucherAsync(Guid voucherId)
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var connection = db.Database.GetDbConnection();
+
+            if (connection.State != ConnectionState.Open)
+                await connection.OpenAsync();
+
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            try
+            {
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = @"
+DELETE FROM dbo.GeneralLedgerEntries
+WHERE VoucherId = @VoucherId;
+
+DELETE FROM dbo.AccountingVoucherLines
+WHERE VoucherId = @VoucherId;
+
+DELETE FROM dbo.AccountingVouchers
+WHERE Id = @VoucherId
+  AND SourceModule = N'FIXED_ASSET_TT99';";
+
+                AddParameter(command, "@VoucherId", voucherId);
+                await command.ExecuteNonQueryAsync();
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+            }
+            finally
+            {
+                await connection.CloseAsync();
+            }
+        }
+        catch
+        {
+            // Không che mất lỗi gốc của thao tác đưa tài sản vào sử dụng.
+        }
+    }
+
+    private static void AddParameter(
+        DbCommand command,
+        string name,
+        object? value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value ?? DBNull.Value;
+        command.Parameters.Add(parameter);
+    }
+
+    private static string GenerateVoucherNo(DateTime voucherDate)
+        => $"TSCD-{voucherDate:yyyyMMdd}-{DateTime.Now:HHmmssfff}";
+
+    private static string GetRootMessage(Exception ex)
+    {
+        var root = ex;
+        while (root.InnerException is not null)
+            root = root.InnerException;
+
+        return root.Message;
+    }
+
+    private sealed class PutIntoUseResult
+    {
+        public FixedAsset Asset { get; init; } = new();
+        public Guid VoucherId { get; init; }
+        public string VoucherNo { get; init; } = string.Empty;
+    }
+
+    private sealed class VoucherPostResult
+    {
+        public Guid VoucherId { get; init; }
+        public string VoucherNo { get; init; } = string.Empty;
+        public DateTime VoucherDate { get; init; }
+        public int LedgerLineCount { get; init; }
     }
 
     private void PrepareAssetBeforeSave()
@@ -945,7 +1653,7 @@
             _edit.OpeningAccumulatedDepreciation);
     }
 
-    private string? ValidateAssetBeforeSave()
+    private string? ValidateAssetBeforeSave(bool putIntoUse)
     {
         if (string.IsNullOrWhiteSpace(_edit.AssetCode))
             return "Mã tài sản không được để trống.";
@@ -1019,6 +1727,18 @@
         if (string.IsNullOrWhiteSpace(_edit.ExpenseAccount))
             return "Tài khoản chi phí khấu hao không được để trống.";
 
+        if (putIntoUse && string.IsNullOrWhiteSpace(_edit.SourceAccount))
+        {
+            return "Tài khoản đối ứng nguồn hình thành không được để trống khi đưa tài sản vào sử dụng.";
+        }
+
+        if (putIntoUse &&
+            _edit.Id != Guid.Empty &&
+            _edit.Status == FixedAssetStatus.InUse)
+        {
+            return "Tài sản đã được đưa vào sử dụng.";
+        }
+
         return null;
     }
 
@@ -1061,30 +1781,12 @@
         ApplyDefaultAccounts(value, false);
     }
 
-    private Task OnPurchaseDateChanged(DateTime? date)
-    {
-        _edit.PurchaseDate = date;
-        return Task.CompletedTask;
-    }
-
     private Task OnRecognitionDateChanged(DateTime? date)
     {
         _recognitionDate = date;
         if (date.HasValue)
             _edit.RecognitionDate = date.Value;
 
-        return Task.CompletedTask;
-    }
-
-    private Task OnInvoiceDateChanged(DateTime? date)
-    {
-        _edit.InvoiceDate = date;
-        return Task.CompletedTask;
-    }
-
-    private Task OnVoucherDateChanged(DateTime? date)
-    {
-        _edit.VoucherDate = date;
         return Task.CompletedTask;
     }
 
