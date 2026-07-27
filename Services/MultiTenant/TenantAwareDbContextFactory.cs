@@ -22,6 +22,12 @@ public class TenantAwareDbContextFactory(
 
     private string ResolveConnectionString()
     {
+        if (!configuration.GetValue("MultiTenant:Enabled", true))
+        {
+            return configuration.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("DefaultConnection is not configured.");
+        }
+
         var httpContext = httpContextAccessor.HttpContext;
         if (httpContext?.User?.Identity?.IsAuthenticated == true)
         {

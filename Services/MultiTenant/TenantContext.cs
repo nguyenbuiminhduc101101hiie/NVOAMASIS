@@ -6,7 +6,8 @@ namespace NVOAMASIS.Services.MultiTenant;
 
 public class TenantContext(
     IHttpContextAccessor httpContextAccessor,
-    IServiceScopeFactory scopeFactory) : ITenantContext
+    IServiceScopeFactory scopeFactory,
+    IConfiguration configuration) : ITenantContext
 {
     private Guid? _tenantId;
     private string? _databaseName;
@@ -36,6 +37,13 @@ public class TenantContext(
     public void EnsureInitializedFromHttpContext()
     {
         if (_initialized) return;
+
+        // Tạm tắt Multi DB: luôn dùng DefaultConnection, bỏ qua claim tenant cũ.
+        if (!configuration.GetValue("MultiTenant:Enabled", true))
+        {
+            _initialized = true;
+            return;
+        }
 
         var user = httpContextAccessor.HttpContext?.User;
         if (user?.Identity?.IsAuthenticated != true) return;

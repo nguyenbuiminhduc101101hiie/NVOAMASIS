@@ -23,6 +23,7 @@
 @inject ILogger<Login> Logger
 @inject TenantAuthService tenantAuth
 @inject RegistryDbContext registryDb
+@inject AppDbContext appDb
 @inject IDistributedCache distributedCache
 @inject IConfiguration Configuration
 
@@ -36,7 +37,7 @@
     <div class="login-brand text-center mb-3">
         <div class="brand-badge">LMS</div>
         <h1>LMS</h1>
-        <p>Đăng nhập database riêng hoặc đăng ký database mới bằng email</p>
+        <p>@(MultiTenantEnabled ? "Đăng nhập database riêng hoặc đăng ký database mới bằng email" : "Đăng nhập hệ thống")</p>
     </div>
 
     @if (errorMessage != null)
@@ -51,7 +52,7 @@
             @successMessage
         </div>
     }
-    @if (!string.IsNullOrWhiteSpace(mailFailureCredentials))
+    @if (MultiTenantEnabled && !string.IsNullOrWhiteSpace(mailFailureCredentials))
     {
         <div class="alert alert-warning w-100" style="max-width:560px;" role="alert">
             <div class="fw-bold mb-2">Database đã tạo thành công. Email chưa gửi được, copy tạm thông tin bên dưới:</div>
@@ -59,6 +60,90 @@
         </div>
     }
 
+    @if (!MultiTenantEnabled)
+    {
+        @if (loginStep < 2)
+        {
+            <EditForm id="singleLoginForm" Model="SimpleLoginInput" method="post" OnValidSubmit="LoginUserSingleDb" FormName="single-login"
+                      action="@LoginTabUrl" class="w-100" style="max-width:560px;">
+                <DataAnnotationsValidator />
+                <AntiForgeryToken />
+                <div class="card login-card">
+                    <div class="card-body p-4">
+                        <h5 class="card-title fw-bold">Đăng nhập</h5>
+                        <p class="small text-muted">Nhập tài khoản ứng dụng trên database gốc. Nếu tài khoản bật OTP, hệ thống sẽ gửi mã tới email đã đăng ký.</p>
+                        <ValidationSummary class="text-danger" role="alert" />
+
+                        <div class="form-floating mb-3 mt-2">
+                            <InputText id="singleAppUserName" @bind-Value="SimpleLoginInput.AppUserName" class="form-control" autocomplete="username" />
+                            <label>User Name / Email</label>
+                            <ValidationMessage For="() => SimpleLoginInput.AppUserName" class="text-danger" />
+                        </div>
+                        <div class="form-floating mb-3">
+                            <InputText id="singleAppPassword" type="password" @bind-Value="SimpleLoginInput.AppPassword" class="form-control" autocomplete="current-password" />
+                            <label>Password</label>
+                            <ValidationMessage For="() => SimpleLoginInput.AppPassword" class="text-danger" />
+                        </div>
+
+                        <div class="checkbox mb-3">
+                            <label class="form-label mb-1">
+                                <InputCheckbox id="singleRememberMe" @bind-Value="SimpleLoginInput.RememberMe" class="form-check-input" />
+                                Nhớ thông tin đăng nhập
+                            </label>
+                        </div>
+                        <button type="submit" class="w-100 btn btn-lg btn-primary" disabled="@isBusy">@(isBusy ? "Đang xử lý..." : "Đăng nhập")</button>
+                        <div class="mt-2 text-center">
+                            <NavLink class="btn btn-link" href="/AccountPass">Quên mật khẩu?</NavLink>
+                        </div>
+                    </div>
+                </div>
+            </EditForm>
+        }
+        else
+        {
+            <EditForm Model="LoginOtpInput" method="post" OnValidSubmit="VerifyLoginOtp" FormName="tenant-login-otp"
+                      action="@LoginOtpVerifyUrl" class="w-100" style="max-width:560px;">
+                <DataAnnotationsValidator />
+                <AntiForgeryToken />
+                <div class="d-none">
+                    <InputText @bind-Value="LoginOtpInput.SessionId" />
+                </div>
+                <div class="card login-card">
+                    <div class="card-body p-4">
+                        <h5 class="card-title fw-bold">Xác thực OTP đăng nhập</h5>
+                        <p class="small text-muted mb-3">
+                            Mã OTP đã gửi tới <b>@loginOtpEmail</b>. Nhập mã 6 số để hoàn tất đăng nhập.
+                        </p>
+                        <ValidationSummary class="text-danger" role="alert" />
+
+                        <div class="form-floating mb-3">
+                            <InputText @bind-Value="LoginOtpInput.Otp" class="form-control" autocomplete="one-time-code" placeholder="123456" maxlength="6" />
+                            <label>Mã OTP</label>
+                            <ValidationMessage For="() => LoginOtpInput.Otp" class="text-danger" />
+                        </div>
+
+                        <button type="submit" class="w-100 btn btn-lg btn-primary mb-2" disabled="@isBusy">
+                            @(isBusy ? "Đang xác thực..." : "Xác nhận OTP & đăng nhập")
+                        </button>
+                        <NavLink class="btn btn-link w-100" href="@LoginTabUrl">Quay lại đăng nhập</NavLink>
+                    </div>
+                </div>
+            </EditForm>
+
+            <EditForm Model="LoginResendInput" method="post" OnValidSubmit="ResendLoginOtp" FormName="tenant-login-resend"
+                      action="@LoginOtpVerifyUrl" class="w-100" style="max-width:560px;">
+                <AntiForgeryToken />
+                <div class="d-none">
+                    <InputText @bind-Value="LoginResendInput.SessionId" />
+                </div>
+                <button type="submit" class="w-100 btn btn-outline-secondary btn-sm" disabled="@isBusy">
+                    Gửi lại mã OTP
+                </button>
+            </EditForm>
+        }
+    }
+    else
+    {
     <ul class="nav nav-tabs mb-0 tenant-tabs" style="max-width:560px; width:100%;">
         <li class="nav-item">
             <a class="nav-link @(activeTab == Tab.Login ? "active" : "")" href="@LoginTabUrl">Đăng nhập</a>
@@ -250,6 +335,7 @@
                 Gửi lại mã OTP
             </button>
         </EditForm>
+    }
     }
 </div>
 
@@ -484,6 +570,9 @@
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
 
+    [SupplyParameterFromForm(FormName = "single-login")]
+    private SimpleLoginModel? SimpleLoginInput { get; set; }
+
     [SupplyParameterFromForm(FormName = "tenant-login")]
     private TenantLoginModel? LoginInput { get; set; }
 
@@ -546,6 +635,8 @@
 
     private enum Tab { Login, Register }
     private Tab activeTab = Tab.Login;
+
+    private bool MultiTenantEnabled => Configuration.GetValue("MultiTenant:Enabled", true);
 
     private string LoginTabUrl => BuildTabUrl("login");
     private string RegisterTabUrl => BuildTabUrl("register");
@@ -719,9 +810,17 @@
 
     protected override async Task OnInitializedAsync()
     {
-        activeTab = TabQuery?.Equals("register", StringComparison.OrdinalIgnoreCase) == true
-            ? Tab.Register
-            : Tab.Login;
+        activeTab = !MultiTenantEnabled
+            ? Tab.Login
+            : TabQuery?.Equals("register", StringComparison.OrdinalIgnoreCase) == true
+                ? Tab.Register
+                : Tab.Login;
+
+        SimpleLoginInput ??= new SimpleLoginModel();
+        if (!string.IsNullOrWhiteSpace(PrefillAppUser))
+            SimpleLoginInput.AppUserName = PrefillAppUser.Trim();
+        if (!string.IsNullOrWhiteSpace(PrefillAppPassword))
+            SimpleLoginInput.AppPassword = PrefillAppPassword.Trim();
 
         LoginInput ??= new TenantLoginModel();
         ApplyLoginPrefillFromQuery(LoginInput);
@@ -733,12 +832,13 @@
         RegisterOtpInput ??= new TenantEmailOtpRequestModel();
         RegisterResendInput ??= new TenantEmailOtpRequestModel();
         await SyncLoginStepAsync();
-        SyncRegisterStep();
+        if (MultiTenantEnabled)
+            SyncRegisterStep();
 
-        if (RegisteredFlag == "1")
+        if (MultiTenantEnabled && RegisteredFlag == "1")
             successMessage = "Đăng ký database thành công. Vui lòng kiểm tra email để lấy thông tin đăng nhập.";
 
-        if (OtpSentFlag == "1" && registerStep == 2 && !string.IsNullOrWhiteSpace(RegisterInput.Email))
+        if (MultiTenantEnabled && OtpSentFlag == "1" && registerStep == 2 && !string.IsNullOrWhiteSpace(RegisterInput.Email))
             successMessage = $"Mã OTP đã được gửi tới {RegisterInput.Email}. Mã có hiệu lực trong {RegisterOtpLifetime.TotalMinutes:0} phút.";
 
         if (LoginOtpSentFlag == "1" && loginStep == 2 && !string.IsNullOrWhiteSpace(loginOtpEmail))
@@ -749,8 +849,105 @@
     }
 
     [ValidateAntiForgeryToken]
+    public async Task LoginUserSingleDb()
+    {
+        if (SimpleLoginInput == null) return;
+
+        SimpleLoginInput.AppUserName = SimpleLoginInput.AppUserName.Trim();
+        SimpleLoginInput.AppPassword = SimpleLoginInput.AppPassword.Trim();
+        isBusy = true;
+        errorMessage = null;
+        successMessage = null;
+
+        try
+        {
+            var userName = SimpleLoginInput.AppUserName;
+            var appUser = await appDb.UserList.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Usr != null && x.Usr.ToLower() == userName.ToLower());
+
+            if (appUser == null)
+            {
+                errorMessage = "User không tồn tại.";
+                return;
+            }
+
+            if (SimpleLoginInput.AppPassword != appUser.Pass_viettel)
+            {
+                errorMessage = "User/Password không đúng.";
+                return;
+            }
+
+            var authUser = new AuthUser
+            {
+                Usr = appUser.Usr,
+                Name = appUser.Name,
+                UsrId = appUser.UsrId,
+                Email = appUser.Email,
+                Manager2 = appUser.Manager2,
+                Department = appUser.Department,
+                Send_OTP_login = appUser.Send_OTP_login
+            };
+
+            if (!authUser.Send_OTP_login)
+            {
+                LoginInput ??= new TenantLoginModel();
+                LoginInput.RememberMe = SimpleLoginInput.RememberMe;
+                await SignInWithClaimsAsync(authUser);
+                Logger.LogInformation("User {User} logged in to default database without OTP.", authUser.Usr);
+                navSvc.NavigateTo(ReturnUrl ?? "/", true);
+                return;
+            }
+
+            var email = NormalizeEmail(authUser.Email);
+            if (string.IsNullOrWhiteSpace(email) || !new EmailAddressAttribute().IsValid(email))
+            {
+                errorMessage = "Tài khoản bật xác thực OTP nhưng chưa có email hợp lệ. Vui lòng liên hệ quản trị viên để cập nhật email.";
+                return;
+            }
+
+            var sessionId = Guid.NewGuid().ToString("N");
+            var otp = GenerateOtpCode();
+            var session = new LoginPendingSession
+            {
+                Otp = otp,
+                Email = email,
+                AuthUser = authUser,
+                TenantId = null,
+                DatabaseName = null,
+                RememberMe = SimpleLoginInput.RememberMe
+            };
+
+            await StoreLoginSessionAsync(sessionId, session);
+
+            try
+            {
+                await SendLoginOtpEmailAsync(email, otp);
+            }
+            catch (Exception mailEx)
+            {
+                Logger.LogError(mailEx, "Failed to send login OTP to {Email}.", email);
+                await ClearLoginSessionAsync(sessionId);
+                errorMessage = "Gửi mã OTP thất bại: " + BuildMailErrorMessage(mailEx);
+                return;
+            }
+
+            navSvc.NavigateTo(LoginOtpVerifyUrlForSession(sessionId) + "&loginOtpSent=1", forceLoad: true);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    [ValidateAntiForgeryToken]
     public async Task LoginUser()
     {
+        if (!MultiTenantEnabled)
+        {
+            errorMessage = "Chế độ Multi DB đang tắt. Vui lòng đăng nhập bằng User/Password.";
+            return;
+        }
+
         if (LoginInput == null) return;
         TrimLoginInput(LoginInput);
         isBusy = true;
@@ -872,10 +1069,15 @@
         {
             LoginInput ??= new TenantLoginModel();
             LoginInput.RememberMe = session.RememberMe;
+            SimpleLoginInput ??= new SimpleLoginModel();
+            SimpleLoginInput.RememberMe = session.RememberMe;
 
             await SignInWithClaimsAsync(session.AuthUser, session.TenantId, session.DatabaseName);
             await ClearLoginSessionAsync(sessionId);
-            Logger.LogInformation("User {User} logged in to tenant {Db} after OTP verification.", session.AuthUser.Usr, session.DatabaseName);
+            Logger.LogInformation(
+                "User {User} logged in{TenantInfo} after OTP verification.",
+                session.AuthUser.Usr,
+                string.IsNullOrWhiteSpace(session.DatabaseName) ? " to default database" : $" to tenant {session.DatabaseName}");
             navSvc.NavigateTo(ReturnUrl ?? "/", true);
         }
         finally
@@ -1054,6 +1256,12 @@
     [ValidateAntiForgeryToken]
     public async Task SendRegisterOtp()
     {
+        if (!MultiTenantEnabled)
+        {
+            errorMessage = "Chế độ Multi DB đang tắt. Đăng ký database tạm thời không khả dụng.";
+            return;
+        }
+
         var source = RegisterOtpInput ?? RegisterResendInput;
         if (source == null) return;
 
@@ -1104,6 +1312,12 @@
     [ValidateAntiForgeryToken]
     public async Task RegisterTenant()
     {
+        if (!MultiTenantEnabled)
+        {
+            errorMessage = "Chế độ Multi DB đang tắt. Đăng ký database tạm thời không khả dụng.";
+            return;
+        }
+
         if (RegisterInput == null) return;
 
         var email = NormalizeEmail(RegisterInput.Email);
@@ -1667,7 +1881,7 @@
         return new string(chars.OrderBy(_ => RandomNumberGenerator.GetInt32(int.MaxValue)).ToArray());
     }
 
-    private async Task SignInWithClaimsAsync(AuthUser authUser, Guid tenantId, string databaseName)
+    private async Task SignInWithClaimsAsync(AuthUser authUser, Guid? tenantId = null, string? databaseName = null)
     {
         var userClaims = new List<Claim>
         {
@@ -1676,10 +1890,14 @@
             new(ClaimTypes.GivenName, authUser.Name ?? ""),
             new(ClaimTypes.Email, authUser.Email ?? ""),
             new(ClaimTypes.Role, authUser.Department ?? ""),
-            new(ClaimTypes.NameIdentifier, authUser.UsrId.ToString()),
-            new(TenantClaimTypes.TenantId, tenantId.ToString()),
-            new(TenantClaimTypes.DatabaseName, databaseName)
+            new(ClaimTypes.NameIdentifier, authUser.UsrId.ToString())
         };
+
+        if (MultiTenantEnabled && tenantId.HasValue && !string.IsNullOrWhiteSpace(databaseName))
+        {
+            userClaims.Add(new Claim(TenantClaimTypes.TenantId, tenantId.Value.ToString()));
+            userClaims.Add(new Claim(TenantClaimTypes.DatabaseName, databaseName));
+        }
 
         var userIdentity = new ClaimsIdentity(userClaims, CookieAuthenticationDefaults.AuthenticationScheme);
         var authProperties = new AuthenticationProperties
@@ -1687,13 +1905,24 @@
             IssuedUtc = DateTimeOffset.UtcNow.AddDays(-1),
             ExpiresUtc = DateTimeOffset.UtcNow.AddMonths(1),
             RedirectUri = ReturnUrl,
-            IsPersistent = LoginInput?.RememberMe ?? false
+            IsPersistent = (SimpleLoginInput?.RememberMe ?? false) || (LoginInput?.RememberMe ?? false)
         };
 
         await HttpContext.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
             new ClaimsPrincipal(userIdentity),
             authProperties);
+    }
+
+    private sealed class SimpleLoginModel
+    {
+        [Required(ErrorMessage = "Nhập user ứng dụng.")]
+        public string AppUserName { get; set; } = "";
+
+        [Required(ErrorMessage = "Nhập password ứng dụng.")]
+        public string AppPassword { get; set; } = "";
+
+        public bool RememberMe { get; set; }
     }
 
     private sealed class TenantLoginModel
@@ -1735,8 +1964,8 @@
         public string Otp { get; set; } = "";
         public string Email { get; set; } = "";
         public AuthUser AuthUser { get; set; } = new();
-        public Guid TenantId { get; set; }
-        public string DatabaseName { get; set; } = "";
+        public Guid? TenantId { get; set; }
+        public string? DatabaseName { get; set; }
         public bool RememberMe { get; set; }
     }
 
