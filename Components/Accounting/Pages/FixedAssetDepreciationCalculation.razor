@@ -1,0 +1,603 @@
+@page "/accounting/fixed-assets/depreciation"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using MudBlazor
+@using NVOAMASIS.Models.Accounting
+@using NVOAMASIS.Services.Accounting
+
+@inject IFixedAssetDepreciationService DepreciationService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Tính khấu hao TSCĐ</PageTitle>
+
+<MudStack Spacing="2">
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudStack Row="true"
+                  AlignItems="AlignItems.Center"
+                  Justify="Justify.SpaceBetween">
+            <div>
+                <MudText Typo="Typo.h5">10.4.5 Tính khấu hao TSCĐ</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Tính và lưu nháp khấu hao theo từng kỳ kế toán
+                </MudText>
+            </div>
+
+            <MudButton Variant="Variant.Outlined"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       Disabled="@_busy"
+                       OnClick="CalculateAsync">
+                Tải lại
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+
+    @if (!_companyResolved)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Error" Variant="Variant.Filled">
+            Không xác định được CompanyId từ tài khoản đăng nhập.
+            Hãy điều chỉnh danh sách claim trong ResolveCompanyAsync().
+        </MudAlert>
+    }
+    else
+    {
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudGrid Spacing="2" AlignItems="AlignItems.End">
+                <MudItem xs="12" sm="3" md="2">
+                    <MudNumericField T="int"
+                                     Label="Năm tài chính"
+                                     @bind-Value="_fiscalYear"
+                                     Min="2000"
+                                     Max="9999"
+                                     HideSpinButtons="true" />
+                </MudItem>
+
+                <MudItem xs="12" sm="3" md="2">
+                    <MudSelect T="int"
+                               Label="Kỳ kế toán"
+                               @bind-Value="_fiscalPeriod">
+                        @for (var month = 1; month <= 12; month++)
+                        {
+                            var monthValue = month;
+                            <MudSelectItem T="int" Value="@monthValue">
+                                Tháng @monthValue
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
+                <MudItem xs="12" sm="6" md="3">
+                    <MudSwitch T="bool"
+                               Color="Color.Primary"
+                               @bind-Value="_prorateByDay">
+                        Phân bổ theo ngày thực tế
+                    </MudSwitch>
+                </MudItem>
+
+                <MudItem xs="12" md="5">
+                    <MudStack Row="true" Spacing="1">
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Calculate"
+                                   Disabled="@_busy"
+                                   OnClick="CalculateAsync">
+                            Tính khấu hao
+                        </MudButton>
+
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Success"
+                                   StartIcon="@Icons.Material.Filled.Save"
+                                   Disabled="@(_busy || SelectedSavableCount == 0)"
+                                   OnClick="SaveDraftAsync">
+                            Lưu nháp
+                        </MudButton>
+
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Error"
+                                   StartIcon="@Icons.Material.Filled.Delete"
+                                   Disabled="@(_busy || SelectedDraftCount == 0)"
+                                   OnClick="DeleteDraftAsync">
+                            Xóa nháp
+                        </MudButton>
+                    </MudStack>
+                </MudItem>
+            </MudGrid>
+
+            <MudDivider Class="my-4" />
+
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string"
+                                  Label="Tìm mã, tên tài sản"
+                                  @bind-Value="_keyword"
+                                  Immediate="true"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" />
+                </MudItem>
+
+                <MudItem xs="12" md="6">
+                    <MudTextField T="string"
+                                  Label="Lọc bộ phận"
+                                  @bind-Value="_departmentFilter"
+                                  Immediate="true"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Apartment" />
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+
+        <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
+            Bản này tính tự động phương pháp đường thẳng. Phương pháp số dư giảm dần
+            và theo sản lượng được hiển thị để kiểm tra nhưng chưa tự động tính vì cần
+            thêm hệ số hoặc dữ liệu sản lượng. Lưu nháp không làm thay đổi sổ cái.
+        </MudAlert>
+
+        @if (_busy)
+        {
+            <MudProgressLinear Color="Color.Primary" Indeterminate="true" />
+        }
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6" md="3">
+                <MudPaper Class="pa-3 summary-box" Outlined="true">
+                    <MudText Typo="Typo.caption">Tài sản hiển thị</MudText>
+                    <MudText Typo="Typo.h6">@VisibleRowCount</MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudPaper Class="pa-3 summary-box" Outlined="true">
+                    <MudText Typo="Typo.caption">Đang chọn lưu</MudText>
+                    <MudText Typo="Typo.h6">@SelectedSavableCount</MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudPaper Class="pa-3 summary-box" Outlined="true">
+                    <MudText Typo="Typo.caption">Tổng nguyên giá đã chọn</MudText>
+                    <MudText Typo="Typo.h6">@FormatMoney(SelectedOriginalCost)</MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudPaper Class="pa-3 summary-box" Outlined="true">
+                    <MudText Typo="Typo.caption">Khấu hao kỳ đã chọn</MudText>
+                    <MudText Typo="Typo.h6">@FormatMoney(SelectedDepreciationAmount)</MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="pa-3" Elevation="1">
+            <MudTable T="FixedAssetDepreciationRow"
+                      Items="@FilteredRows"
+                      Dense="true"
+                      Hover="true"
+                      Bordered="true"
+                      Striped="true"
+                      FixedHeader="true"
+                      Height="520px"
+                      Breakpoint="Breakpoint.Sm">
+                <HeaderContent>
+                    <MudTh Style="width:50px">
+                        <MudCheckBox T="bool"
+                                     Value="@AllSelectableSelected"
+                                     ValueChanged="ToggleAll" />
+                    </MudTh>
+                    <MudTh>Mã tài sản</MudTh>
+                    <MudTh>Tên tài sản</MudTh>
+                    <MudTh>Bộ phận</MudTh>
+                    <MudTh>Bắt đầu KH</MudTh>
+                    <MudTh Align="Right">Nguyên giá</MudTh>
+                    <MudTh Align="Right">HM đầu kỳ</MudTh>
+                    <MudTh Align="Right">KH tháng chuẩn</MudTh>
+                    <MudTh Align="Center">Ngày KH</MudTh>
+                    <MudTh Align="Right">KH kỳ này</MudTh>
+                    <MudTh Align="Right">HM cuối kỳ</MudTh>
+                    <MudTh Align="Right">Còn lại</MudTh>
+                    <MudTh>TK Nợ</MudTh>
+                    <MudTh>TK Có</MudTh>
+                    <MudTh>Trạng thái</MudTh>
+                </HeaderContent>
+
+                <RowTemplate>
+                    <MudTd DataLabel="Chọn">
+                        <MudCheckBox T="bool"
+                                     @bind-Value="context.Selected"
+                                     Disabled="@(!context.CanSave)" />
+                    </MudTd>
+
+                    <MudTd DataLabel="Mã tài sản">
+                        <MudText Typo="Typo.body2"><b>@context.AssetCode</b></MudText>
+                    </MudTd>
+
+                    <MudTd DataLabel="Tên tài sản">@context.AssetName</MudTd>
+                    <MudTd DataLabel="Bộ phận">@context.DepartmentCode</MudTd>
+                    <MudTd DataLabel="Bắt đầu KH">
+                        @context.DepreciationStartDate.ToString("dd/MM/yyyy")
+                    </MudTd>
+
+                    <MudTd DataLabel="Nguyên giá" Align="Right">
+                        @FormatMoney(context.OriginalCost)
+                    </MudTd>
+
+                    <MudTd DataLabel="HM đầu kỳ" Align="Right">
+                        @FormatMoney(context.OpeningAccumulatedDepreciation)
+                    </MudTd>
+
+                    <MudTd DataLabel="KH tháng chuẩn" Align="Right">
+                        @FormatMoney(context.MonthlyDepreciation)
+                    </MudTd>
+
+                    <MudTd DataLabel="Ngày KH" Align="Center">
+                        @context.DepreciableDays/@context.DaysInPeriod
+                    </MudTd>
+
+                    <MudTd DataLabel="KH kỳ này" Align="Right">
+                        <b>@FormatMoney(context.DepreciationAmount)</b>
+                    </MudTd>
+
+                    <MudTd DataLabel="HM cuối kỳ" Align="Right">
+                        @FormatMoney(context.ClosingAccumulatedDepreciation)
+                    </MudTd>
+
+                    <MudTd DataLabel="Còn lại" Align="Right">
+                        @FormatMoney(context.ClosingRemainingValue)
+                    </MudTd>
+
+                    <MudTd DataLabel="TK Nợ">
+                        <MudTextField T="string"
+                                      @bind-Value="context.ExpenseAccount"
+                                      Disabled="@(!context.CanSave)"
+                                      MaxLength="20"
+                                      Margin="Margin.Dense" />
+                    </MudTd>
+
+                    <MudTd DataLabel="TK Có">
+                        <MudTextField T="string"
+                                      @bind-Value="context.DepreciationAccount"
+                                      Disabled="@(!context.CanSave)"
+                                      MaxLength="20"
+                                      Margin="Margin.Dense" />
+                    </MudTd>
+
+                    <MudTd DataLabel="Trạng thái">
+                        <MudText Typo="Typo.caption"
+                                 Color="@(GetStatusColor(context))">
+                            @GetStatusText(context)
+                        </MudText>
+
+                        @if (!string.IsNullOrWhiteSpace(context.Message))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @context.Message
+                            </MudText>
+                        }
+                    </MudTd>
+                </RowTemplate>
+
+                <NoRecordsContent>
+                    <MudText Class="pa-4">
+                        Chưa có dữ liệu. Chọn kỳ rồi bấm “Tính khấu hao”.
+                    </MudText>
+                </NoRecordsContent>
+
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="@(new int[] { 20, 50, 100 })" />
+                </PagerContent>
+            </MudTable>
+        </MudPaper>
+    }
+</MudStack>
+
+<style>
+    .summary-box {
+        min-height: 78px;
+        background: var(--mud-palette-background-grey);
+    }
+</style>
+
+@code {
+    private Guid _companyId;
+    private string _userName = "system";
+    private bool _companyResolved;
+    private bool _busy;
+
+    private int _fiscalYear = DateTime.Today.Year;
+    private int _fiscalPeriod = DateTime.Today.Month;
+    private bool _prorateByDay = true;
+    private string? _keyword;
+    private string? _departmentFilter;
+
+    private List<FixedAssetDepreciationRow> _rows = [];
+
+    private IEnumerable<FixedAssetDepreciationRow> FilteredRows
+    {
+        get
+        {
+            IEnumerable<FixedAssetDepreciationRow> query = _rows;
+
+            var keyword = _keyword?.Trim();
+            if (!string.IsNullOrWhiteSpace(keyword))
+            {
+                query = query.Where(x =>
+                    x.AssetCode.Contains(
+                        keyword,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    x.AssetName.Contains(
+                        keyword,
+                        StringComparison.OrdinalIgnoreCase));
+            }
+
+            var department = _departmentFilter?.Trim();
+            if (!string.IsNullOrWhiteSpace(department))
+            {
+                query = query.Where(x =>
+                    x.DepartmentCode?.Contains(
+                        department,
+                        StringComparison.OrdinalIgnoreCase) ?? false);
+            }
+
+            return query;
+        }
+    }
+
+    private int VisibleRowCount => FilteredRows.Count();
+
+    private int SelectedSavableCount =>
+        _rows.Count(x => x.Selected && x.CanSave);
+
+    private int SelectedDraftCount =>
+        _rows.Count(x => x.Selected && x.IsSavedDraft && !x.IsPosted);
+
+    private decimal SelectedOriginalCost =>
+        _rows
+            .Where(x => x.Selected && x.CanSave)
+            .Sum(x => x.OriginalCost);
+
+    private decimal SelectedDepreciationAmount =>
+        _rows
+            .Where(x => x.Selected && x.CanSave)
+            .Sum(x => x.DepreciationAmount);
+
+    private bool AllSelectableSelected
+    {
+        get
+        {
+            var selectable = FilteredRows
+                .Where(x => x.CanSave)
+                .ToList();
+
+            return selectable.Count > 0 &&
+                   selectable.All(x => x.Selected);
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ResolveCompanyAsync();
+
+        if (_companyResolved)
+            await CalculateAsync();
+    }
+
+    private async Task ResolveCompanyAsync()
+    {
+        var state = await AuthenticationStateProvider
+            .GetAuthenticationStateAsync();
+
+        var user = state.User;
+        _userName = user.Identity?.Name ?? "system";
+
+        var companyClaimNames = new[]
+        {
+            "CompanyId",
+            "company_id",
+            "TenantCompanyId",
+            "tenant_company_id"
+        };
+
+        foreach (var claimName in companyClaimNames)
+        {
+            var value = user.FindFirst(claimName)?.Value;
+
+            if (Guid.TryParse(value, out var companyId))
+            {
+                _companyId = companyId;
+                _companyResolved = true;
+                return;
+            }
+        }
+    }
+
+    private async Task CalculateAsync()
+    {
+        if (_busy || !_companyResolved)
+            return;
+
+        _busy = true;
+
+        try
+        {
+            _rows = (await DepreciationService.CalculateAsync(
+                _companyId,
+                _fiscalYear,
+                _fiscalPeriod,
+                _prorateByDay)).ToList();
+
+            if (_rows.Count == 0)
+            {
+                Snackbar.Add(
+                    "Không có tài sản đang sử dụng đủ điều kiện tính khấu hao.",
+                    MudBlazor.Severity.Info);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SaveDraftAsync()
+    {
+        if (_busy)
+            return;
+
+        var selectedRows = _rows
+            .Where(x => x.Selected && x.CanSave)
+            .ToList();
+
+        if (selectedRows.Count == 0)
+        {
+            Snackbar.Add(
+                "Chưa chọn tài sản cần lưu khấu hao.",
+                MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var invalidAccountRow = selectedRows.FirstOrDefault(x =>
+            string.IsNullOrWhiteSpace(x.ExpenseAccount) ||
+            string.IsNullOrWhiteSpace(x.DepreciationAccount));
+
+        if (invalidAccountRow is not null)
+        {
+            Snackbar.Add(
+                $"Tài sản {invalidAccountRow.AssetCode} chưa đủ tài khoản Nợ/Có.",
+                MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _busy = true;
+
+        try
+        {
+            var saved = await DepreciationService.SaveDraftAsync(
+                _companyId,
+                _fiscalYear,
+                _fiscalPeriod,
+                _prorateByDay,
+                selectedRows,
+                _userName);
+
+            Snackbar.Add(
+                $"Đã lưu nháp khấu hao cho {saved} tài sản " +
+                $"kỳ {_fiscalPeriod:00}/{_fiscalYear}.",
+                MudBlazor.Severity.Success);
+
+            _rows = (await DepreciationService.CalculateAsync(
+                _companyId,
+                _fiscalYear,
+                _fiscalPeriod,
+                _prorateByDay)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteDraftAsync()
+    {
+        if (_busy)
+            return;
+
+        var selectedDrafts = _rows
+            .Where(x => x.Selected && x.IsSavedDraft && !x.IsPosted)
+            .ToList();
+
+        if (selectedDrafts.Count == 0)
+        {
+            Snackbar.Add(
+                "Chưa chọn bản nháp khấu hao cần xóa.",
+                MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Xóa bản nháp khấu hao",
+            $"Xóa {selectedDrafts.Count} bản nháp kỳ " +
+            $"{_fiscalPeriod:00}/{_fiscalYear}?",
+            yesText: "Xóa",
+            cancelText: "Hủy");
+
+        if (confirmed != true)
+            return;
+
+        _busy = true;
+
+        try
+        {
+            var deleted = await DepreciationService.DeleteDraftAsync(
+                _companyId,
+                _fiscalYear,
+                _fiscalPeriod,
+                selectedDrafts.Select(x => x.FixedAssetId).ToList());
+
+            Snackbar.Add(
+                $"Đã xóa {deleted} bản nháp khấu hao.",
+                MudBlazor.Severity.Success);
+
+            _rows = (await DepreciationService.CalculateAsync(
+                _companyId,
+                _fiscalYear,
+                _fiscalPeriod,
+                _prorateByDay)).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ToggleAll(bool value)
+    {
+        foreach (var row in FilteredRows.Where(x => x.CanSave))
+            row.Selected = value;
+    }
+
+    private static string GetStatusText(
+        FixedAssetDepreciationRow row)
+    {
+        if (row.IsPosted)
+            return "Đã ghi sổ";
+
+        if (row.IsSavedDraft)
+            return "Đã lưu nháp";
+
+        if (!row.CanSave)
+            return "Không tính";
+
+        return "Chưa lưu";
+    }
+
+    private static Color GetStatusColor(
+        FixedAssetDepreciationRow row)
+    {
+        if (row.IsPosted)
+            return Color.Success;
+
+        if (row.IsSavedDraft)
+            return Color.Primary;
+
+        if (!row.CanSave)
+            return Color.Warning;
+
+        return Color.Default;
+    }
+
+    private static string FormatMoney(decimal value)
+        => value.ToString("N0");
+}

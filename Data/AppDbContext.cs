@@ -182,6 +182,7 @@ namespace NVOAMASIS.Data
         public DbSet<QuanLy_Tau> QuanLy_Tau { get; set; }
 
         public DbSet<FixedAsset> FixedAssets => Set<FixedAsset>();
+        public DbSet<FixedAssetDepreciationRecord> FixedAssetDepreciations => Set<FixedAssetDepreciationRecord>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -487,6 +488,7 @@ namespace NVOAMASIS.Data
             });
 
 
+
             modelBuilder.Entity<FixedAsset>(entity =>
             {
                 entity.ToTable("FixedAssets", "dbo");
@@ -517,6 +519,47 @@ namespace NVOAMASIS.Data
                     .IsRowVersion()
                     .IsConcurrencyToken();
             });
+
+            modelBuilder.Entity<FixedAssetDepreciationRecord>(entity =>
+            {
+                entity.ToTable("FixedAssetDepreciations", "dbo");
+                entity.HasKey(x => x.Id);
+
+                entity.HasIndex(x => new
+                {
+                    x.CompanyId,
+                    x.FixedAssetId,
+                    x.FiscalYear,
+                    x.FiscalPeriod
+                })
+                    .IsUnique()
+                    .HasDatabaseName("UX_FixedAssetDepreciations_Asset_Period");
+
+                entity.Property(x => x.DepreciationMethod).HasConversion<byte>();
+                entity.Property(x => x.Status).HasConversion<byte>();
+
+                entity.Property(x => x.OriginalCost).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.ResidualValue).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.MonthlyDepreciation).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.OpeningAccumulatedDepreciation)
+                    .HasColumnType("decimal(18,2)");
+                entity.Property(x => x.DepreciationAmount).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.ClosingAccumulatedDepreciation)
+                    .HasColumnType("decimal(18,2)");
+                entity.Property(x => x.ClosingRemainingValue)
+                    .HasColumnType("decimal(18,2)");
+
+                entity.Property(x => x.RowVersion)
+                    .IsRowVersion()
+                    .IsConcurrencyToken();
+
+                entity.HasOne<FixedAsset>()
+                    .WithMany()
+                    .HasForeignKey(x => x.FixedAssetId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+
 
         }
 

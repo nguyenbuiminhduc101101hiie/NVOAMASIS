@@ -1,27 +1,29 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.SqlServer;
+using Microsoft.Extensions.Localization;
 using Microsoft.IdentityModel.Tokens;
 using MudBlazor.Services;
 using MudExtensions.Services;
-using Stimulsoft.Base;
-using System.Text;
 using NVOAMASIS.Components;
 using NVOAMASIS.Data;
 using NVOAMASIS.Hubs;
 using NVOAMASIS.Interface;
 using NVOAMASIS.Models;
+using NVOAMASIS.Options;
 using NVOAMASIS.Services;
+using NVOAMASIS.Services.Accounting;
+using NVOAMASIS.Services.Accounting.ExcelImport;
 using NVOAMASIS.Services.Localization;
 using NVOAMASIS.Services.MultiTenant;
-using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.Extensions.Localization;
-using Microsoft.AspNetCore.Components;
-using Microsoft.Extensions.Caching.SqlServer;
-using NVOAMASIS.Services.Accounting;
+using Stimulsoft.Base;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -257,6 +259,22 @@ builder.Services.AddHttpClient<HistoryLogService>((serviceProvider, client) =>
 
     client.BaseAddress = new Uri(baseUrl!);
 });
+
+builder.Services.Configure<AccountBalanceImportOptions>(
+    builder.Configuration.GetSection(AccountBalanceImportOptions.SectionName));
+
+builder.Services.AddScoped<
+    IAccountBalanceExcelImportService,
+    AccountBalanceExcelImportService>();
+
+
+builder.Services.AddDbContextFactory<AppDbContext>(options =>
+{
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection"));
+});
+
+
 // Change SingletonSerivce to scoped to align with per-request auth/user context and avoid holding onto stale user/context state.
 builder.Services.AddScoped<SingletonSerivce>();
 // Remove duplicate singleton registration of CustomAuthenticationStateProvider (already added as scoped above)
