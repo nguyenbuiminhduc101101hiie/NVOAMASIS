@@ -9,10 +9,13 @@
 @inject ShipmentService shipsv
 @inject GlobalServices gsv
 @inject IStringLocalizer<SharedResource> Localizer
-@using System.Globalization﻿
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
 @inject HistoryLogService HistoryLogService
 @using System.Text.Json;
 @inject IJSRuntime JSRuntime
+@inject IDbContextFactory<AppDbContext> DbFactory
 <MudTabs SliderColor="Color.Primary">
     <MudTabPanel Text="@($"HBL [{(hbldetail != null ? hbldetail.hbl : null)}]")" Class="custom-tab">
         <MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-hbl-bg"
@@ -324,29 +327,29 @@
             </Columns>
         </MudDataGrid>
     </MudTabPanel>
-    <MudTabPanel Text="Container" Class="custom-tab" Disabled="@(type == "AI")">
-        <ContainerTab HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" />
+    <MudTabPanel Text="@($"Container ({containerCount})")" Class="custom-tab" Disabled="@(type == "AI")">
+        <ContainerTab HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" OnDataCountChanged="OnContainerCountChanged" />
     </MudTabPanel>
-    <MudTabPanel Text="Debit" Class="custom-tab" >
-        <DebitTab Type="HBL" HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" Customers="Customers" isDuty = "false"/>
+    <MudTabPanel Text="@($"Debit ({debitCount})")" Class="custom-tab" >
+        <DebitTab Type="HBL" HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" Customers="Customers" isDuty = "false" OnDataCountChanged="OnDebitCountChanged"/>
     </MudTabPanel>
-    <MudTabPanel Text="Credit" Class="custom-tab" >
-        <CreditTab Type="HBL" HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" Customers="Customers" isCommission="false"/>
+    <MudTabPanel Text="@($"Credit ({creditCount})")" Class="custom-tab" >
+        <CreditTab Type="HBL" HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" Customers="Customers" isCommission="false" OnDataCountChanged="OnCreditCountChanged"/>
     </MudTabPanel>
-    <MudTabPanel Text="Commission" Class="custom-tab" Disabled>
-        <CreditTab Type="HBL" HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" Customers="Customers" isCommission="true" />
+    <MudTabPanel Text="@($"Commission ({commissionCount})")" Class="custom-tab" Disabled>
+        <CreditTab Type="HBL" HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" Customers="Customers" isCommission="true" OnDataCountChanged="OnCommissionCountChanged" />
     </MudTabPanel>
-    <MudTabPanel Text="Refund Duty" Class="custom-tab" Disabled>
-        <DebitTab Type="HBL" HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" Customers="Customers" isDuty = "true" />
+    <MudTabPanel Text="@($"Refund Duty ({refundDutyCount})")" Class="custom-tab" Disabled>
+        <DebitTab Type="HBL" HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" Customers="Customers" isDuty = "true" OnDataCountChanged="OnRefundDutyCountChanged" />
     </MudTabPanel>
-    <MudTabPanel Text="Theo Dõi Lô Hàng" Class="custom-tab" >
-        <TheoDoiLoHang HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" />
+    <MudTabPanel Text="@($"Theo Dõi Lô Hàng ({theoDoiCount})")" Class="custom-tab" >
+        <TheoDoiLoHang HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" OnDataCountChanged="OnTheoDoiCountChanged" />
     </MudTabPanel>
-    <MudTabPanel Text="Map" Class="custom-tab" >
-        <Map HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" />
+    <MudTabPanel Text="@($"Map ({mapCount})")" Class="custom-tab" >
+        <Map HBLDetail="hbldetail ==  null ? new M_HBL() : hbldetail" OnDataCountChanged="OnMapCountChanged" />
     </MudTabPanel>
-    <MudTabPanel Text="Image" Class="custom-tab">
-        <HblImageTab HBLDetail="hbldetail == null ? new M_HBL() : hbldetail" />
+    <MudTabPanel Text="@($"Image ({imageCount})")" Class="custom-tab">
+        <HblImageTab HBLDetail="hbldetail == null ? new M_HBL() : hbldetail" OnDataCountChanged="OnImageCountChanged" />
     </MudTabPanel>
 </MudTabs>
 
@@ -431,6 +434,54 @@
     bool _loading = false;
     List<M_HBL> Listdata = new List<M_HBL>();
     M_HBL hbldetail = new M_HBL();
+    int containerCount;
+    int debitCount;
+    int creditCount;
+    int commissionCount;
+    int refundDutyCount;
+    int theoDoiCount;
+    int mapCount;
+    int imageCount;
+
+    void OnContainerCountChanged(int count) => containerCount = count;
+    void OnDebitCountChanged(int count) => debitCount = count;
+    void OnCreditCountChanged(int count) => creditCount = count;
+    void OnCommissionCountChanged(int count) => commissionCount = count;
+    void OnRefundDutyCountChanged(int count) => refundDutyCount = count;
+    void OnTheoDoiCountChanged(int count) => theoDoiCount = count;
+    void OnMapCountChanged(int count) => mapCount = count;
+    void OnImageCountChanged(int count) => imageCount = count;
+
+    async Task LoadTabCountsAsync()
+    {
+        if (hbldetail == null || hbldetail.hblID == Guid.Empty)
+        {
+            containerCount = debitCount = creditCount = commissionCount = 0;
+            refundDutyCount = theoDoiCount = mapCount = imageCount = 0;
+            return;
+        }
+
+        var id = hbldetail.hblID;
+        try
+        {
+            // Sequential: shipsv methods share one DbContext (not safe for parallel)
+            containerCount = shipsv.GetListContainerHBL(id)?.Count ?? 0;
+            debitCount = (await shipsv.GetListDebitHBL(id, false)).Count;
+            refundDutyCount = (await shipsv.GetListDebitHBL(id, true)).Count;
+            creditCount = (await shipsv.GetListCreditHBL(id, false)).Count;
+            commissionCount = (await shipsv.GetListCreditHBL(id, true)).Count;
+            theoDoiCount = (await shipsv.GetListTheoDoiLoHang(id)).Count;
+            mapCount = (await shipsv.GetlistVitrilohang(id)).Count;
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            imageCount = await db.HBL_Attachment.AsNoTracking().CountAsync(x => x.hblID == id);
+        }
+        catch
+        {
+            // giữ count cũ nếu load lỗi
+        }
+    }
+
     async Task Refresh()
     {
         try
@@ -447,6 +498,7 @@
             ListCredit = await shipsv.GetListCreditALL();
             if (Listdata.Count > 0)
                 hbldetail = Listdata[0];
+            await LoadTabCountsAsync();
         }
         finally
         {
@@ -593,11 +645,15 @@
             return string.Empty;
         }
     }
-    void RowClicked(DataGridRowClickEventArgs<M_HBL> args)
+    async Task RowClicked(DataGridRowClickEventArgs<M_HBL> args)
     {
         if(args.Item.approve.HasValue && args.Item.approve.Value)
             CallSnackBar("This HBL is approved!", MudBlazor.Severity.Info);
-        else hbldetail = args.Item;
+        else
+        {
+            hbldetail = args.Item;
+            await LoadTabCountsAsync();
+        }
     }
 
     void RowRightClicked(DataGridRowClickEventArgs<M_HBL> args)
