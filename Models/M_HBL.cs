@@ -231,6 +231,12 @@ namespace NVOAMASIS.Models
         public bool? dachicredit { get; set; }
         [Display(Name = "")]
         public bool? dathuchidaily { get; set; }
+        /// <summary>Xác nhận đã hoàn thành Debit của HBL — khóa add/edit/delete Debit.</summary>
+        [Display(Name = "Debit Completed")]
+        public bool? debitCompleted { get; set; } = false;
+        /// <summary>Xác nhận đã hoàn thành Credit của HBL — khóa add/edit/delete Credit.</summary>
+        [Display(Name = "Credit Completed")]
+        public bool? creditCompleted { get; set; } = false;
         [Display(Name = "")]
         public string? Truck_LenhDieuXeNo { get; set; }
 

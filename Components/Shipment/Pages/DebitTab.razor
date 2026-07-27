@@ -182,7 +182,7 @@
                                                            Icon="@Icons.Material.Filled.South"
                                                            Color="Color.Success"
                                                            OnClick="@(() => CopySourceDebitToCurrent(context.Item))"
-                                                           Disabled="_copyingDebitRow" />
+                                                           Disabled="@(_copyingDebitRow || IsDebitCompletedLocked)" />
                                         </MudTooltip>
                                     </CellTemplate>
                                 </TemplateColumn>
@@ -207,12 +207,28 @@
             <MudText Typo="Typo.subtitle2" Class="mb-1">
                 Debit HBL hiện tại: <b>@(HBLDetail?.hbl ?? string.Empty)</b>
             </MudText>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                <MudChip T="string"
+                         Size="Size.Small"
+                         Color="@(IsDebitCompletedLocked ? Color.Success : Color.Default)"
+                         Variant="Variant.Filled">
+                    @(IsDebitCompletedLocked ? "Debit đã xác nhận hoàn thành — đang khóa" : "Debit chưa xác nhận hoàn thành")
+                </MudChip>
+                <MudButton Variant="Variant.Filled"
+                           Size="Size.Small"
+                           Color="@(IsDebitCompletedLocked ? Color.Warning : Color.Success)"
+                           StartIcon="@(IsDebitCompletedLocked ? Icons.Material.Filled.LockOpen : Icons.Material.Filled.Verified)"
+                           OnClick="ToggleDebitCompleted"
+                           Disabled="@(HBLDetail == null || HBLDetail.hblID == Guid.Empty || _togglingCompleted)">
+                    @(IsDebitCompletedLocked ? "Bỏ xác nhận Debit" : "Xác nhận hoàn thành Debit")
+                </MudButton>
+            </MudStack>
         }
 
         <MudDataGrid T="M_Debit" Items="@Listdata" Filterable="true" @ref="mudTable"
         FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true"
         FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
-        ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+        ReadOnly="@IsDebitCompletedLocked" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
         RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true"
         ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false"
         Class="debit-main-grid">
@@ -228,7 +244,7 @@
                                 Size="Size.Small"
                                 OnClick="Refresh"
                                 Variant="Variant.Filled"
-                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Disabled="@IsDebitParentMissing"
                                 Class="btn-compact" />
                             </MudTooltip>
                             <MudTooltip Text="@Localizer["New In Cell"]">
@@ -237,7 +253,7 @@
                                 Size="Size.Small"
                                 OnClick="NewItemIncell"
                                 Variant="Variant.Filled"
-                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Disabled="@(!CanMutateDebitData)"
                                 Class="btn-compact" />
                             </MudTooltip>
                             <MudTooltip Text="@Localizer["New"]">
@@ -246,7 +262,7 @@
                                 Size="Size.Small"
                                 OnClick="NewItem"
                                 Variant="Variant.Filled"
-                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Disabled="@(!CanMutateDebitData)"
                                 Class="btn-compact" />
                             </MudTooltip>
 
@@ -256,7 +272,7 @@
                                 Size="Size.Small"
                                 OnClick="AddItem"
                                 Variant="Variant.Filled"
-                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Disabled="@(!CanMutateDebitData)"
                                 Class="btn-compact" />
                             </MudTooltip>
 
@@ -267,7 +283,7 @@
                                 Color="Color.Success"
                                 Size="Size.Small"
                                 Variant="Variant.Filled"
-                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Disabled="@IsDebitParentMissing"
                                 AnchorOrigin="Origin.BottomCenter"
                                 TransformOrigin="Origin.TopCenter">
                                     <MudMenuItem Disabled="_processingUpload" OnClick="ExportBill">
@@ -283,7 +299,7 @@
                                     </MudMenuItem>
                                     @if(!isDuty)
                                     {
-                                        <MudMenuItem OnClick="CreateInvoice">
+                                        <MudMenuItem OnClick="CreateInvoice" Disabled="@IsDebitCompletedLocked">
                                             @Localizer["Create Invoice"]
                                         </MudMenuItem>
                                     }
@@ -296,7 +312,7 @@
                                 Size="Size.Small"
                                 OnClick="CopyDebitQuotation"
                                 Variant="Variant.Filled"
-                                Disabled="@(HBLDetail == null || HBLDetail.hblID == Guid.Empty)"
+                                Disabled="@(HBLDetail == null || HBLDetail.hblID == Guid.Empty || IsDebitCompletedLocked)"
                                 Class="btn-compact" />
                             </MudTooltip>
 
@@ -306,7 +322,7 @@
                                 Size="Size.Small"
                                 OnClick="CopyDebitFromMblHbl"
                                 Variant="Variant.Filled"
-                                Disabled="@(isMBL ? ((MBLDetail?.MblID ?? Guid.Empty) == Guid.Empty) : ((HBLDetail?.hblID ?? Guid.Empty) == Guid.Empty))"
+                                Disabled="@(!CanMutateDebitData)"
                                 Class="btn-compact" />
                             </MudTooltip>
                             @if(!isDuty)
@@ -336,8 +352,8 @@
                         </MudStack>
                     </HeaderTemplate>
                     <CellTemplate>
-                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(()=>TryStartEditing(context.Item))" Disabled="context.Item.khoa == true" />
-                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" Disabled="context.Item.khoa == true" />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(()=>TryStartEditing(context.Item))" Disabled="@(context.Item.khoa == true || IsDebitCompletedLocked)" />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" Disabled="@(context.Item.khoa == true || IsDebitCompletedLocked)" />
                     </CellTemplate>
                 </TemplateColumn>
                 <PropertyColumn Property="x => x.debitno" Title="@Localizer["Debit No."]" Required="false" >
@@ -557,6 +573,13 @@
     M_Debit detail_Debit;
     List<string> currs = new List<string>();
 
+    bool IsDebitParentMissing => isMBL
+        ? (MBLDetail?.MblID ?? Guid.Empty) == Guid.Empty
+        : (HBLDetail?.hblID ?? Guid.Empty) == Guid.Empty;
+    bool IsDebitCompletedLocked => !isMBL && HBLDetail?.debitCompleted == true;
+    bool CanMutateDebitData => !IsDebitParentMissing && !IsDebitCompletedLocked;
+    bool _togglingCompleted;
+
     public CultureInfo _de = CultureInfo.GetCultureInfo("de-DE");
     public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
     void CallSnackBar(string message, MudBlazor.Severity severity)
@@ -680,6 +703,7 @@
     MudDataGrid<M_Debit> mudTable;
     async Task AddItem()
     {
+        if (!EnsureCanMutateDebit()) return;
         if(detail  == null)
         {
             CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
@@ -698,7 +722,7 @@
 
     private async Task CopyDebitQuotation()
     {
-        var optionsdialog = new DialogOptions
+        if (!EnsureCanMutateDebit()) return;        var optionsdialog = new DialogOptions
         {
             ClassBackground = "class-dialog-custom",
             FullWidth = true,
@@ -726,7 +750,7 @@
 
     private async Task CopyDebitFromMblHbl()
     {
-        var optionsdialog = new DialogOptions
+        if (!EnsureCanMutateDebit()) return;        var optionsdialog = new DialogOptions
         {
             ClassBackground = "class-dialog-custom",
             FullWidth = true,
@@ -764,6 +788,7 @@
     }
     async Task NewItem()
     {
+        if (!EnsureCanMutateDebit()) return;
         var item = new M_Debit
         {
                 customerid = isMBL ? MBLDetail!.CustomerID : HBLDetail!.CustomerID
@@ -773,6 +798,7 @@
     }
     async Task DeleteItem(M_Debit item)
     {
+        if (!EnsureCanMutateDebit()) return;
         if (item == null)
         {
             CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
@@ -805,6 +831,7 @@
     }
     async Task CommittedItem(M_Debit item)
     {
+        if (!EnsureCanMutateDebit()) return;
         if (detail_Debit != null
             && detail_Debit.debitId != Guid.Empty
             && detail_Debit.khoa == true
@@ -1204,6 +1231,7 @@
     }
     async Task TryStartEditing(M_Debit item)
     {
+        if (!EnsureCanMutateDebit()) return;
         if (item.khoa.HasValue && item.khoa.Value)
         {
             CallSnackBar("This Debit is locked!", MudBlazor.Severity.Warning);
@@ -1265,6 +1293,7 @@
 
     async Task NewItemIncell()
     {
+        if (!EnsureCanMutateDebit()) return;
         var maincus = isMBL ? MBLDetail!.CustomerID : HBLDetail!.CustomerID;
         var df = new List<M_Debit>();
 
@@ -1573,6 +1602,7 @@
 
     private async Task CopySourceDebitToCurrent(M_Debit item)
     {
+        if (!EnsureCanMutateDebit()) return;
         if (HBLDetail == null || HBLDetail.hblID == Guid.Empty)
         {
             CallSnackBar("Please select 1 row HBL", MudBlazor.Severity.Warning);
@@ -1656,6 +1686,49 @@
         {
             _copyingDebitRow = false;
             StateHasChanged();
+        }
+    }
+
+    bool EnsureCanMutateDebit()
+    {
+        if (IsDebitCompletedLocked)
+        {
+            CallSnackBar("Debit đã xác nhận hoàn thành. Bỏ xác nhận để thao tác.", MudBlazor.Severity.Warning);
+            return false;
+        }
+        return true;
+    }
+
+    async Task ToggleDebitCompleted()
+    {
+        if (isMBL || HBLDetail == null || HBLDetail.hblID == Guid.Empty)
+        {
+            CallSnackBar("Vui lòng chọn 1 dòng HBL.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var next = !(HBLDetail.debitCompleted == true);
+        var msg = next
+            ? "Xác nhận hoàn thành Debit của HBL này? Sau khi xác nhận sẽ không thể thêm/sửa/xóa Debit."
+            : "Bỏ xác nhận hoàn thành Debit? Bạn sẽ thao tác Debit được trở lại.";
+        var ok = await DialogService.ShowMessageBox("Xác nhận", msg, yesText: "Đồng ý", cancelText: "Hủy");
+        if (ok != true) return;
+
+        try
+        {
+            _togglingCompleted = true;
+            var rs = await shipsv.SetHblDebitCreditCompleted(HBLDetail.hblID, debitCompleted: next);
+            if (rs.Flag)
+            {
+                HBLDetail.debitCompleted = next;
+                CallSnackBar(rs.Message, MudBlazor.Severity.Success);
+            }
+            else
+                CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _togglingCompleted = false;
         }
     }
 }

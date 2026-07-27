@@ -453,6 +453,41 @@ namespace NVOAMASIS.Services
             }
         }
 
+        /// <summary>
+        /// Cập nhật cờ xác nhận hoàn thành Debit/Credit trên HBL (khóa thao tác trên tab tương ứng).
+        /// </summary>
+        public async Task<BoolandMessReponse> SetHblDebitCreditCompleted(Guid hblId, bool? debitCompleted = null, bool? creditCompleted = null)
+        {
+            try
+            {
+                if (hblId == Guid.Empty)
+                    return new BoolandMessReponse(false, "HBL không hợp lệ");
+
+                _context.ChangeTracker.Clear();
+                var hbl = await _context.HBL.FirstOrDefaultAsync(x => x.hblID == hblId);
+                if (hbl == null)
+                    return new BoolandMessReponse(false, "Không tìm thấy HBL");
+
+                if (debitCompleted.HasValue)
+                    hbl.debitCompleted = debitCompleted.Value;
+                if (creditCompleted.HasValue)
+                    hbl.creditCompleted = creditCompleted.Value;
+
+                hbl.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", new System.Globalization.CultureInfo("en-US"));
+                await _context.SaveChangesAsync();
+
+                var usr = asv.GetAuth().Result.User.Identity!.Name!;
+                await HistoryLogService.LogAsync(usr, "Update HBL Debit/Credit Completed", "Shipment", hbl.hblID, hbl.hbl,
+                    new { debitCompleted = hbl.debitCompleted, creditCompleted = hbl.creditCompleted });
+
+                return new BoolandMessReponse(true, "Cập nhật xác nhận hoàn thành thành công");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Không thể cập nhật: " + ex.Message);
+            }
+        }
+
         public async Task<BoolandMessReponse> CreateHBLDetail(M_HBL c)
         {
             try
@@ -2022,8 +2057,10 @@ namespace NVOAMASIS.Services
                 listmblold.ForEach(x => x.Approve = x.dachicredit = x.dathuchidaily = x.dachicredit = x.dathudebit = false);
                 _FHBLs.ForEach(x => x.dateupdate = today);
                 _FHBLs.ForEach(x => x.approve = x.dachicredit = x.dathuchidaily = x.dachicredit = x.dathudebit = false);
+                _FHBLs.ForEach(x => x.debitCompleted = x.creditCompleted = false);
                 TC.ForEach(x => x.dateupdate = today);
                 TC.ForEach(x => x.approve = x.dachicredit = x.dathuchidaily = x.dachicredit = x.dathudebit = false);
+                TC.ForEach(x => x.debitCompleted = x.creditCompleted = false);
 
                 _Fcredits.ForEach(x => x.approve = false);
                 _Fdebits.ForEach(x => x.approve = x.daIndebit = x.daXuatHoadon = false);

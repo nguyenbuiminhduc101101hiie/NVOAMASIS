@@ -255,6 +255,9 @@
             </PropertyColumn>
             <PropertyColumn Property="x => CountMBL(x.JobID)" Title="@Localizer["Total MBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => CountHBL(x.JobID)" Title="@Localizer["Total HBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x => CountDebitHBL(x.JobID)" Title="@Localizer["Total Debit (HBL)"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x => CountCreditHBL(x.JobID)" Title="@Localizer["Total Credit (HBL)"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x => DebitCreditCompletedStatus(x.JobID)" Title="@Localizer["Debit/Credit Done"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => joinmbl(x.JobID)" Title="@Localizer["MBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => joinhbl(x.JobID)" Title="@Localizer["HBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
             
@@ -903,6 +906,7 @@
     List<M_HBL> ListHBLs = new List<M_HBL>();
     List<M_Container> ListConts = new List<M_Container>();
     List<M_Debit> ListDebits = new List<M_Debit>();
+    List<M_Credit> ListCredits = new List<M_Credit>();
     List<M_HoaDonDauRa> ListHoaDonDRa = new List<M_HoaDonDauRa>();
     List<M_HoaDonDauVao> ListHoaDonDVao = new List<M_HoaDonDauVao>();
     M_Job jobdetail;
@@ -918,6 +922,7 @@
             ListHBLs = await shipsv.GetListHBLALL();
             ListConts = shipsv.GetListContainerAll();
             ListDebits = await shipsv.GetListDebitALL();
+            ListCredits = await shipsv.GetListCreditALL();
             ListHoaDonDRa = await shipsv.GetListHoaDonDauRaALL();
             ListHoaDonDVao = await shipsv.GetListHoaDonDauVaoALL();
             jobdetail = null;
@@ -1044,17 +1049,44 @@
     }
     int CountHBL(Guid? i)
     {
-        var list = ListMBLs.Where(x => x.Jobid == i);
+        return GetHBLsByJob(i).Count;
+    }
+
+    List<M_HBL> GetHBLsByJob(Guid? jobId)
+    {
+        var list = ListMBLs.Where(x => x.Jobid == jobId);
         var listhbl = new List<M_HBL>();
         foreach (var item in list)
         {
             var hbls = ListHBLs.Where(x => x.mblid == item.MblID);
             listhbl.AddRange(hbls);
         }
-        var TC = ListHBLs.Where(x => x.Jobid == i); // dem truck voi customs
+        var TC = ListHBLs.Where(x => x.Jobid == jobId); // dem truck voi customs
         listhbl.AddRange(TC);
-        //
-        return listhbl.Count();
+        return listhbl;
+    }
+
+    int CountDebitHBL(Guid? jobId)
+    {
+        var hblIds = GetHBLsByJob(jobId).Select(x => x.hblID).ToHashSet();
+        if (hblIds.Count == 0) return 0;
+        return ListDebits.Count(x => hblIds.Contains(x.hblid));
+    }
+
+    int CountCreditHBL(Guid? jobId)
+    {
+        var hblIds = GetHBLsByJob(jobId).Select(x => x.hblID).ToHashSet();
+        if (hblIds.Count == 0) return 0;
+        return ListCredits.Count(x => hblIds.Contains(x.hblid));
+    }
+
+    string DebitCreditCompletedStatus(Guid? jobId)
+    {
+        var hbls = GetHBLsByJob(jobId);
+        if (hbls.Count == 0) return "-";
+        var debitDone = hbls.Count(x => x.debitCompleted == true);
+        var creditDone = hbls.Count(x => x.creditCompleted == true);
+        return $"Debit {debitDone}/{hbls.Count} | Credit {creditDone}/{hbls.Count}";
     }
     async Task CommittedItem(M_Job item)
     {

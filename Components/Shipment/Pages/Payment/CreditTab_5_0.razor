@@ -76,11 +76,30 @@
 <MudTabs SliderColor="Color.Primary" Class="pay-bl-tabs">
     <MudTabPanel Text="@(isCommission ? "Input" : "Credit")" Class="custom-tab">
         <div class="pay-bl-panel-sheet">
+        @if (!isMBL)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2 px-3 pt-3">
+                <MudChip T="string"
+                         Size="Size.Small"
+                         Color="@(IsCreditCompletedLocked ? Color.Success : Color.Default)"
+                         Variant="Variant.Filled">
+                    @(IsCreditCompletedLocked ? "Credit đã xác nhận hoàn thành — đang khóa" : "Credit chưa xác nhận hoàn thành")
+                </MudChip>
+                <MudButton Variant="Variant.Filled"
+                           Size="Size.Small"
+                           Color="@(IsCreditCompletedLocked ? Color.Warning : Color.Success)"
+                           StartIcon="@(IsCreditCompletedLocked ? Icons.Material.Filled.LockOpen : Icons.Material.Filled.Verified)"
+                           OnClick="ToggleCreditCompleted"
+                           Disabled="@(HBLDetail == null || HBLDetail.hblID == Guid.Empty || _togglingCompleted)">
+                    @(IsCreditCompletedLocked ? "Bỏ xác nhận Credit" : "Xác nhận hoàn thành Credit")
+                </MudButton>
+            </MudStack>
+        }
         <MudDataGrid T="M_Credit" Items="@Listdata" Filterable="true" @ref="mudTable" Bordered="true"
         Class="pay-bl-datagrid"
         FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true"
         FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
-        ReadOnly="false" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
+        ReadOnly="@IsCreditCompletedLocked" CommittedItemChanges="@CommittedItem" RowClassFunc="@SelectedRowClassFunc"
         RowClick="@RowClicked" RowContextMenuClick="RowRightClicked"
         ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false">
             <Columns>
@@ -106,7 +125,7 @@
                                 Size="Size.Small"
                                 OnClick="AddItem"
                                 Variant="Variant.Filled"
-                                Disabled="@(isMBL ? (MBLDetail!.MblID == Guid.Empty ? true : false) : (HBLDetail!.hblID == Guid.Empty ? true : false))"
+                                Disabled="@(!CanMutateCreditData)"
                                 Class="btn-compact" />
                             </MudTooltip>
 
@@ -126,7 +145,7 @@
                                 Size="Size.Small"
                                 OnClick="CopyCreditFromMblHbl"
                                 Variant="Variant.Filled"
-                                Disabled="@(isMBL ? ((MBLDetail?.MblID ?? Guid.Empty) == Guid.Empty) : ((HBLDetail?.hblID ?? Guid.Empty) == Guid.Empty))"
+                                Disabled="@(!CanMutateCreditData)"
                                 Class="btn-compact" />
                             </MudTooltip>
 
@@ -154,8 +173,8 @@
                         </MudStack>
                     </HeaderTemplate>
                     <CellTemplate>
-                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(()=>TryStartEditing(context.Item))" />
-                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@(()=>TryStartEditing(context.Item))" Disabled="@IsCreditCompletedLocked" />
+                        <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" Disabled="@IsCreditCompletedLocked" />
                     </CellTemplate>
                 </TemplateColumn>
                 <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["Customer"]" Required="false" CellClass="no-wrap-cell">
@@ -304,6 +323,14 @@
     [Parameter] public bool isCommission { get; set; }
     [Parameter] public EventCallback<int> OnDataCountChanged { get; set; }
     M_Credit detail_credit;
+
+    bool IsCreditParentMissing => isMBL
+        ? (MBLDetail?.MblID ?? Guid.Empty) == Guid.Empty
+        : (HBLDetail?.hblID ?? Guid.Empty) == Guid.Empty;
+    bool IsCreditCompletedLocked => !isMBL && HBLDetail?.creditCompleted == true;
+    bool CanMutateCreditData => !IsCreditParentMissing && !IsCreditCompletedLocked;
+    bool _togglingCompleted;
+
     void CallSnackBar(string message, MudBlazor.Severity severity)
     {
         Snackbar.Configuration.SnackbarVariant = Variant.Filled;
@@ -399,6 +426,7 @@
     MudDataGrid<M_Credit> mudTable;
     async Task AddItem()
     {
+        if (!EnsureCanMutateCredit()) return;
         var item = new M_Credit();
         Listdata.Add(item);
         await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
@@ -412,6 +440,7 @@
     }
     async Task DeleteItem(M_Credit item)
     {
+        if (!EnsureCanMutateCredit()) return;
         if (item == null)
         {
             CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
@@ -438,6 +467,7 @@
     }
     async Task CommittedItem(M_Credit item)
     {
+        if (!EnsureCanMutateCredit()) return;
         if (isMBL)
             item.mblid = MBLDetail!.MblID;
         else
@@ -633,6 +663,7 @@
     }
     async Task TryStartEditing(M_Credit item)
     {
+        if (!EnsureCanMutateCredit()) return;
         if (item.approve.HasValue && item.approve.Value)
         {
             CallSnackBar("This Credit is approved!", MudBlazor.Severity.Warning);
@@ -645,6 +676,7 @@
 
     private async Task CopyCredit(Models.M_HBL tr)
     {
+        if (!EnsureCanMutateCredit()) return;
 
         var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.ExtraLarge };
         if (tr == null)
@@ -674,6 +706,7 @@
 
     private async Task CopyCreditFromMblHbl()
     {
+        if (!EnsureCanMutateCredit()) return;
         var optionsdialog = new DialogOptions
         {
             ClassBackground = "class-dialog-custom",
@@ -857,5 +890,48 @@
 
         var keyword = text.Trim();
         return Task.FromResult<IEnumerable<string?>>(items.Where(x => x.Contains(keyword, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    bool EnsureCanMutateCredit()
+    {
+        if (IsCreditCompletedLocked)
+        {
+            CallSnackBar("Credit đã xác nhận hoàn thành. Bỏ xác nhận để thao tác.", MudBlazor.Severity.Warning);
+            return false;
+        }
+        return true;
+    }
+
+    async Task ToggleCreditCompleted()
+    {
+        if (isMBL || HBLDetail == null || HBLDetail.hblID == Guid.Empty)
+        {
+            CallSnackBar("Vui lòng chọn 1 dòng HBL.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var next = !(HBLDetail.creditCompleted == true);
+        var msg = next
+            ? "Xác nhận hoàn thành Credit của HBL này? Sau khi xác nhận sẽ không thể thêm/sửa/xóa Credit."
+            : "Bỏ xác nhận hoàn thành Credit? Bạn sẽ thao tác Credit được trở lại.";
+        var ok = await DialogService.ShowMessageBox("Xác nhận", msg, yesText: "Đồng ý", cancelText: "Hủy");
+        if (ok != true) return;
+
+        try
+        {
+            _togglingCompleted = true;
+            var rs = await shipsv.SetHblDebitCreditCompleted(HBLDetail.hblID, creditCompleted: next);
+            if (rs.Flag)
+            {
+                HBLDetail.creditCompleted = next;
+                CallSnackBar(rs.Message, MudBlazor.Severity.Success);
+            }
+            else
+                CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _togglingCompleted = false;
+        }
     }
 }
