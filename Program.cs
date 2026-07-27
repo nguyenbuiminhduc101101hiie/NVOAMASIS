@@ -203,6 +203,7 @@ builder.Services.AddScoped<LeaveRequestService>();
 builder.Services.AddScoped<ResxImportService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
+builder.Services.AddScoped<IFixedAssetDepreciationService, FixedAssetDepreciationService>();
 
 // Forwarded headers (X-Forwarded-For / X-Forwarded-Proto) support
 builder.Services.Configure<ForwardedHeadersOptions>(options =>

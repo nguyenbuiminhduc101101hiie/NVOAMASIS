@@ -2,12 +2,16 @@
 @attribute [Microsoft.AspNetCore.Authorization.Authorize]
 
 @using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
 @using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
 @using NVOAMASIS.Models.Accounting
 @using NVOAMASIS.Services.Accounting
 
 @inject IFixedAssetDepreciationService DepreciationService
 @inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IDbContextFactory<AppDbContext> DbFactory
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 
@@ -27,24 +31,39 @@
 
             <MudButton Variant="Variant.Outlined"
                        StartIcon="@Icons.Material.Filled.Refresh"
-                       Disabled="@_busy"
+                       Disabled="@(_busy || _companyId == Guid.Empty)"
                        OnClick="CalculateAsync">
                 Tải lại
             </MudButton>
         </MudStack>
     </MudPaper>
 
-    @if (!_companyResolved)
+    @if (_customers.Count == 0)
     {
         <MudAlert Severity="MudBlazor.Severity.Error" Variant="Variant.Filled">
-            Không xác định được CompanyId từ tài khoản đăng nhập.
-            Hãy điều chỉnh danh sách claim trong ResolveCompanyAsync().
+            Không có dữ liệu công ty trong M_Customer để chọn.
         </MudAlert>
     }
     else
     {
         <MudPaper Class="pa-4" Elevation="1">
             <MudGrid Spacing="2" AlignItems="AlignItems.End">
+                <MudItem xs="12" sm="6" md="4">
+                    <MudSelect T="Guid"
+                               Label="Công ty"
+                               Value="_companyId"
+                               ValueChanged="OnCompanyChangedAsync"
+                               Variant="Variant.Outlined"
+                               Dense="true">
+                        @foreach (var c in _customers)
+                        {
+                            <MudSelectItem T="Guid" Value="@c.Customer_ID">
+                                @CompanyLabel(c)
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+
                 <MudItem xs="12" sm="3" md="2">
                     <MudNumericField T="int"
                                      Label="Năm tài chính"
@@ -68,7 +87,7 @@
                     </MudSelect>
                 </MudItem>
 
-                <MudItem xs="12" sm="6" md="3">
+                <MudItem xs="12" sm="6" md="4">
                     <MudSwitch T="bool"
                                Color="Color.Primary"
                                @bind-Value="_prorateByDay">
@@ -76,12 +95,12 @@
                     </MudSwitch>
                 </MudItem>
 
-                <MudItem xs="12" md="5">
+                <MudItem xs="12">
                     <MudStack Row="true" Spacing="1">
                         <MudButton Variant="Variant.Filled"
                                    Color="Color.Primary"
                                    StartIcon="@Icons.Material.Filled.Calculate"
-                                   Disabled="@_busy"
+                                   Disabled="@(_busy || _companyId == Guid.Empty)"
                                    OnClick="CalculateAsync">
                             Tính khấu hao
                         </MudButton>
@@ -301,8 +320,8 @@
 @code {
     private Guid _companyId;
     private string _userName = "system";
-    private bool _companyResolved;
     private bool _busy;
+    private List<M_Customer> _customers = [];
 
     private int _fiscalYear = DateTime.Today.Year;
     private int _fiscalPeriod = DateTime.Today.Month;
@@ -376,13 +395,14 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await ResolveCompanyAsync();
+        await ResolveUserAsync();
+        await LoadCompaniesAsync();
 
-        if (_companyResolved)
+        if (_companyId != Guid.Empty)
             await CalculateAsync();
     }
 
-    private async Task ResolveCompanyAsync()
+    private async Task ResolveUserAsync()
     {
         var state = await AuthenticationStateProvider
             .GetAuthenticationStateAsync();
@@ -405,15 +425,56 @@
             if (Guid.TryParse(value, out var companyId))
             {
                 _companyId = companyId;
-                _companyResolved = true;
                 return;
             }
         }
     }
 
+    private async Task LoadCompaniesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _customers = await db.Customer.AsNoTracking()
+            .Where(x => x.Customer_ID != Guid.Empty)
+            .OrderBy(x => x.COMPANY)
+            .ThenBy(x => x.BIZName)
+            .ToListAsync();
+
+        if (_companyId != Guid.Empty &&
+            _customers.Any(x => x.Customer_ID == _companyId))
+            return;
+
+        _companyId = _customers.Count > 0
+            ? _customers[0].Customer_ID
+            : Guid.Empty;
+    }
+
+    private static string CompanyLabel(M_Customer c)
+    {
+        var a = (c.COMPANY ?? string.Empty).Trim();
+        var b = (c.BIZName ?? string.Empty).Trim();
+        if (!string.IsNullOrEmpty(a) &&
+            !string.IsNullOrEmpty(b) &&
+            !string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+            return $"{a} ({b})";
+
+        return string.IsNullOrEmpty(a) ? b : a;
+    }
+
+    private async Task OnCompanyChangedAsync(Guid companyId)
+    {
+        if (_companyId == companyId)
+            return;
+
+        _companyId = companyId;
+        _rows = [];
+
+        if (_companyId != Guid.Empty)
+            await CalculateAsync();
+    }
+
     private async Task CalculateAsync()
     {
-        if (_busy || !_companyResolved)
+        if (_busy || _companyId == Guid.Empty)
             return;
 
         _busy = true;
@@ -445,7 +506,7 @@
 
     private async Task SaveDraftAsync()
     {
-        if (_busy)
+        if (_busy || _companyId == Guid.Empty)
             return;
 
         var selectedRows = _rows
@@ -507,7 +568,7 @@
 
     private async Task DeleteDraftAsync()
     {
-        if (_busy)
+        if (_busy || _companyId == Guid.Empty)
             return;
 
         var selectedDrafts = _rows
