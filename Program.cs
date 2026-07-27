@@ -134,12 +134,24 @@ builder.Services.AddScoped<TenantLoginQrService>();
 
 builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 {
-    var tenantContext = serviceProvider.GetRequiredService<ITenantContext>();
-    tenantContext.EnsureInitializedFromHttpContext();
-    var connectionString = tenantContext.ConnectionString
-        ?? builder.Configuration.GetConnectionString("DefaultConnection")
-        ?? throw new InvalidOperationException("Sorry, your connection is not found");
-    options.UseSqlServer(connectionString);
+    var configuration = serviceProvider.GetRequiredService<IConfiguration>();
+    string? connectionString;
+
+    // MultiTenant:Enabled=false → luôn dùng DB gốc (DefaultConnection).
+    if (!configuration.GetValue("MultiTenant:Enabled", true))
+    {
+        connectionString = configuration.GetConnectionString("DefaultConnection");
+    }
+    else
+    {
+        var tenantContext = serviceProvider.GetRequiredService<ITenantContext>();
+        tenantContext.EnsureInitializedFromHttpContext();
+        connectionString = tenantContext.ConnectionString
+            ?? configuration.GetConnectionString("DefaultConnection");
+    }
+
+    options.UseSqlServer(connectionString
+        ?? throw new InvalidOperationException("Sorry, your connection is not found"));
 });
 
 builder.Services.AddSingleton<IDbContextFactory<AppDbContext>, TenantAwareDbContextFactory>();
@@ -203,6 +215,7 @@ builder.Services.AddScoped<LeaveRequestService>();
 builder.Services.AddScoped<ResxImportService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
+builder.Services.AddScoped<IFixedAssetDepreciationService, FixedAssetDepreciationService>();
 
 // Forwarded headers (X-Forwarded-For / X-Forwarded-Proto) support
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
