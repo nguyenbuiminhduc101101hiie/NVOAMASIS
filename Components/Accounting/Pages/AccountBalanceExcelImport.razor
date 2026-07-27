@@ -1,0 +1,808 @@
+@page "/accounting/import-account-balance"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Models.Accounting.ExcelImport
+@using NVOAMASIS.Services.Accounting.ExcelImport
+
+@inject IAccountBalanceExcelImportService ImportService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+
+<PageTitle>Import Excel số dư tài khoản</PageTitle>
+
+<MudStack Spacing="2">
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudStack Row="true"
+                  AlignItems="AlignItems.Center"
+                  Justify="Justify.SpaceBetween">
+            <div>
+                <MudText Typo="Typo.h5">Import Excel vào Account Balance</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Đọc chi tiết khách hàng, đối chiếu tổng và nhập một dòng tổng hợp theo tài khoản/kỳ
+                </MudText>
+            </div>
+
+            <MudButton Variant="Variant.Outlined"
+                       StartIcon="@Icons.Material.Filled.RestartAlt"
+                       Disabled="@(_reading || _importing)"
+                       OnClick="ResetScreen">
+                Làm mới
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+
+    @if (!_companyResolved)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined">
+            Không lấy được CompanyId từ claim đăng nhập.
+            Hãy chọn công ty bên dưới (danh sách từ Customer).
+        </MudAlert>
+    }
+
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudSelect T="Guid"
+                           Label="Công ty"
+                           Value="_companyId"
+                           ValueChanged="OnCompanyChanged"
+                           Disabled="@(_reading || _importing)"
+                           Required="true"
+                           HelperText="@_companySourceHint">
+                    @foreach (var c in _companies)
+                    {
+                        <MudSelectItem T="Guid" Value="@c.Customer_ID">@CompanyLabel(c)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" md="3">
+                <MudSelect T="ExcelAccountingImportTarget"
+                           Label="Đích nhập dữ liệu"
+                           Value="_target"
+                           ValueChanged="OnTargetChanged"
+                           Disabled="@(_reading || _importing)">
+                    <MudSelectItem T="ExcelAccountingImportTarget"
+                                   Value="@ExcelAccountingImportTarget.AccountBalance">
+                        Account Balance - Số dư tài khoản
+                    </MudSelectItem>
+                    <MudSelectItem T="ExcelAccountingImportTarget"
+                                   Value="@ExcelAccountingImportTarget.GeneralLedger">
+                        General Ledger - Sổ cái
+                    </MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" md="3">
+                <MudSelect T="ExistingBalanceImportMode"
+                           Label="Xử lý dữ liệu đã tồn tại"
+                           @bind-Value="_existingMode"
+                           Disabled="@(_reading || _importing)">
+                    <MudSelectItem T="ExistingBalanceImportMode"
+                                   Value="@ExistingBalanceImportMode.RejectExisting">
+                        An toàn - Báo lỗi nếu đã tồn tại
+                    </MudSelectItem>
+                    <MudSelectItem T="ExistingBalanceImportMode"
+                                   Value="@ExistingBalanceImportMode.UpdateExisting">
+                        Cập nhật dòng tổng hợp hiện có
+                    </MudSelectItem>
+                    <MudSelectItem T="ExistingBalanceImportMode"
+                                   Value="@ExistingBalanceImportMode.ReplaceCurrentAccountPeriod">
+                        Xóa và thay thế tài khoản/kỳ/sổ
+                    </MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" md="2">
+                <MudTextField T="string"
+                              Label="Mã sổ"
+                              @bind-Value="_bookCode"
+                              MaxLength="50"
+                              Placeholder="Để trống = NULL"
+                              Disabled="@(_reading || _importing)" />
+            </MudItem>
+
+            <MudItem xs="12" md="2">
+                <MudSelect T="string"
+                           Label="Tính chất số dư"
+                           @bind-Value="_accountType"
+                           Disabled="@(_reading || _importing)">
+                    <MudSelectItem T="string" Value="@("NONE")">
+                        Không ghi (NULL)
+                    </MudSelectItem>
+                    <MudSelectItem T="string" Value="@("AUTO")">
+                        Tự động theo số dư
+                    </MudSelectItem>
+                    <MudSelectItem T="string" Value="@("DEBIT")">
+                        Dư Nợ
+                    </MudSelectItem>
+                    <MudSelectItem T="string" Value="@("CREDIT")">
+                        Dư Có
+                    </MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" md="1">
+                <MudTextField T="string"
+                              Label="Tiền tệ"
+                              @bind-Value="_currencyCode"
+                              MaxLength="10"
+                              Disabled="@(_reading || _importing)" />
+            </MudItem>
+
+            <MudItem xs="12">
+                <MudPaper Class="pa-4 upload-box" Outlined="true">
+                    <MudStack Row="true"
+                              AlignItems="AlignItems.Center"
+                              Spacing="3"
+                              Class="flex-wrap">
+                        <InputFile OnChange="HandleFileSelectedAsync"
+                                   accept=".xlsx,.xlsm"
+                                   disabled="@(_reading || _importing || !_companyResolved)" />
+
+                        @if (_reading)
+                        {
+                            <MudProgressCircular Indeterminate="true"
+                                                 Size="Size.Small"
+                                                 Color="Color.Primary" />
+                            <MudText>Đang đọc và kiểm tra file...</MudText>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(_selectedFileName))
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Description"
+                                     Color="Color.Primary" />
+                            <MudText>@_selectedFileName</MudText>
+                        }
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (_target == ExcelAccountingImportTarget.AccountBalance)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined">
+            Bảng <b>account_balance</b> của hệ thống không có mã khách hàng.
+            Vì vậy các dòng khách hàng chỉ dùng để kiểm tra và lưu audit;
+            khi import, hệ thống ghi <b>một dòng tổng hợp</b> theo
+            CompanyId + tài khoản + năm + tháng + mã sổ.
+        </MudAlert>
+    }
+
+    @if (_target == ExcelAccountingImportTarget.GeneralLedger)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined">
+            Sổ công nợ tổng hợp không đủ dữ liệu để tạo GeneralLedgerEntries vì không có
+            ngày chứng từ, số chứng từ, diễn giải và cặp tài khoản Nợ/Có của từng nghiệp vụ.
+            Với file mẫu đã gửi, hãy chọn <b>Account Balance</b>.
+        </MudAlert>
+    }
+
+    @if (_preview is not null)
+    {
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.h6" Class="mb-3">Thông tin nhận diện từ file</MudText>
+
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="4">
+                    <MudTextField T="string"
+                                  Label="Đơn vị trong file"
+                                  Value="_preview.CompanyNameInFile"
+                                  ReadOnly="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="2">
+                    <MudTextField T="string"
+                                  Label="Mã số thuế"
+                                  Value="_preview.TaxCodeInFile"
+                                  ReadOnly="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="2">
+                    <MudTextField T="string"
+                                  Label="Tài khoản"
+                                  @bind-Value="_preview.AccountCode"
+                                  Immediate="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="4">
+                    <MudTextField T="string"
+                                  Label="Tên tài khoản"
+                                  Value="_preview.AccountName"
+                                  ReadOnly="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="2">
+                    <MudNumericField T="int"
+                                     Label="Năm tài chính"
+                                     @bind-Value="_preview.FiscalYear"
+                                     Min="2000"
+                                     Max="2200"
+                                     HideSpinButtons="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="2">
+                    <MudNumericField T="int"
+                                     Label="Kỳ/tháng"
+                                     @bind-Value="_preview.PeriodNo"
+                                     Min="1"
+                                     Max="12"
+                                     HideSpinButtons="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="2">
+                    <MudTextField T="string"
+                                  Label="Từ ngày"
+                                  Value="@FormatDate(_preview.FromDate)"
+                                  ReadOnly="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="2">
+                    <MudTextField T="string"
+                                  Label="Đến ngày"
+                                  Value="@FormatDate(_preview.ToDate)"
+                                  ReadOnly="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="2">
+                    <MudTextField T="string"
+                                  Label="Số dòng"
+                                  Value="@(_preview.Lines.Count.ToString("N0"))"
+                                  ReadOnly="true" />
+                </MudItem>
+
+                <MudItem xs="12" md="2">
+                    <MudTextField T="string"
+                                  Label="Kết quả kiểm tra"
+                                  Value="@GetValidationSummary()"
+                                  ReadOnly="true" />
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6" lg="3">
+                <MudPaper Class="pa-3 summary-card" Outlined="true">
+                    <MudText Typo="Typo.caption">Số dư đầu kỳ thuần</MudText>
+                    <MudText Typo="Typo.h6">
+                        @FormatMoney(
+                            _preview.CalculatedTotals.OpeningDebit -
+                            _preview.CalculatedTotals.OpeningCredit)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" lg="3">
+                <MudPaper Class="pa-3 summary-card" Outlined="true">
+                    <MudText Typo="Typo.caption">Phát sinh Nợ</MudText>
+                    <MudText Typo="Typo.h6">
+                        @FormatMoney(_preview.CalculatedTotals.PeriodDebit)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" lg="3">
+                <MudPaper Class="pa-3 summary-card" Outlined="true">
+                    <MudText Typo="Typo.caption">Phát sinh Có</MudText>
+                    <MudText Typo="Typo.h6">
+                        @FormatMoney(_preview.CalculatedTotals.PeriodCredit)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" lg="3">
+                <MudPaper Class="pa-3 summary-card" Outlined="true">
+                    <MudText Typo="Typo.caption">Số dư cuối kỳ thuần</MudText>
+                    <MudText Typo="Typo.h6">
+                        @FormatMoney(
+                            _preview.CalculatedTotals.ClosingDebit -
+                            _preview.CalculatedTotals.ClosingCredit)
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        @foreach (var message in _preview.Messages)
+        {
+            <MudAlert Severity="@ToSeverity(message.Level)"
+                      Variant="Variant.Outlined"
+                      Dense="true">
+                @if (message.ExcelRowNo.HasValue)
+                {
+                    <b>Dòng Excel @message.ExcelRowNo:</b>
+                }
+                @message.Message
+            </MudAlert>
+        }
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudStack Row="true"
+                      AlignItems="AlignItems.Center"
+                      Justify="Justify.SpaceBetween"
+                      Class="mb-3 flex-wrap">
+                <div>
+                    <MudText Typo="Typo.h6">Xem trước dữ liệu</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Dòng lỗi được tô đỏ và không thể import
+                    </MudText>
+                </div>
+
+                <MudCheckBox T="bool"
+                             Label="Chỉ hiện dòng lỗi/cảnh báo"
+                             @bind-Value="_showOnlyProblemRows" />
+            </MudStack>
+
+            <div class="table-scroll">
+                <MudTable T="AccountBalanceExcelLine"
+                          Items="@VisibleLines"
+                          Dense="true"
+                          Hover="true"
+                          Bordered="true"
+                          Striped="true"
+                          Breakpoint="Breakpoint.None"
+                          RowClassFunc="GetRowClass">
+                    <HeaderContent>
+                        <MudTh>Dòng</MudTh>
+                        <MudTh>Mã KH</MudTh>
+                        <MudTh>Tên khách hàng</MudTh>
+                        <MudTh Align="Right">ĐK NT</MudTh>
+                        <MudTh Align="Right">ĐK Nợ</MudTh>
+                        <MudTh Align="Right">ĐK Có</MudTh>
+                        <MudTh Align="Right">PS NT</MudTh>
+                        <MudTh Align="Right">PS Nợ</MudTh>
+                        <MudTh Align="Right">PS Có</MudTh>
+                        <MudTh Align="Right">CK NT</MudTh>
+                        <MudTh Align="Right">CK Nợ</MudTh>
+                        <MudTh Align="Right">CK Có</MudTh>
+                        <MudTh>Kết quả</MudTh>
+                    </HeaderContent>
+
+                    <RowTemplate>
+                        <MudTd DataLabel="Dòng">@context.ExcelRowNo</MudTd>
+                        <MudTd DataLabel="Mã KH">@context.CustomerCode</MudTd>
+                        <MudTd DataLabel="Tên khách hàng">@context.CustomerName</MudTd>
+                        <MudTd DataLabel="ĐK NT" Align="Right">
+                            @FormatForeign(context.OpeningForeignAmount)
+                        </MudTd>
+                        <MudTd DataLabel="ĐK Nợ" Align="Right">
+                            @FormatMoney(context.OpeningDebit)
+                        </MudTd>
+                        <MudTd DataLabel="ĐK Có" Align="Right">
+                            @FormatMoney(context.OpeningCredit)
+                        </MudTd>
+                        <MudTd DataLabel="PS NT" Align="Right">
+                            @FormatForeign(context.PeriodForeignAmount)
+                        </MudTd>
+                        <MudTd DataLabel="PS Nợ" Align="Right">
+                            @FormatMoney(context.PeriodDebit)
+                        </MudTd>
+                        <MudTd DataLabel="PS Có" Align="Right">
+                            @FormatMoney(context.PeriodCredit)
+                        </MudTd>
+                        <MudTd DataLabel="CK NT" Align="Right">
+                            @FormatForeign(context.ClosingForeignAmount)
+                        </MudTd>
+                        <MudTd DataLabel="CK Nợ" Align="Right">
+                            @FormatMoney(context.ClosingDebit)
+                        </MudTd>
+                        <MudTd DataLabel="CK Có" Align="Right">
+                            @FormatMoney(context.ClosingCredit)
+                        </MudTd>
+                        <MudTd DataLabel="Kết quả">
+                            @if (context.HasError)
+                            {
+                                <MudTooltip Text="@context.ErrorText">
+                                    <MudIcon Icon="@Icons.Material.Filled.Error"
+                                             Color="Color.Error"
+                                             Size="Size.Small" />
+                                </MudTooltip>
+                            }
+                            else if (context.HasWarning)
+                            {
+                                <MudTooltip Text="@context.WarningText">
+                                    <MudIcon Icon="@Icons.Material.Filled.Warning"
+                                             Color="Color.Warning"
+                                             Size="Size.Small" />
+                                </MudTooltip>
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle"
+                                         Color="Color.Success"
+                                         Size="Size.Small" />
+                            }
+                        </MudTd>
+                    </RowTemplate>
+
+                    <NoRecordsContent>
+                        <MudText Class="pa-4">Không có dòng phù hợp bộ lọc.</MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            </div>
+
+            <MudDivider Class="my-4" />
+
+            <MudStack Row="true" Spacing="2" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Success"
+                           StartIcon="@Icons.Material.Filled.Publish"
+                           Disabled="@(!CanCommit)"
+                           OnClick="CommitAsync">
+                    @(_importing ? "ĐANG IMPORT..." : "IMPORT VÀO ACCOUNT BALANCE")
+                </MudButton>
+
+                <MudButton Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.RestartAlt"
+                           Disabled="@(_reading || _importing)"
+                           OnClick="ResetScreen">
+                    Hủy dữ liệu xem trước
+                </MudButton>
+
+                @if (_importResult is not null)
+                {
+                    <MudAlert Severity="MudBlazor.Severity.Success" Dense="true">
+                        Import thành công vào account_balance:
+                        thêm @_importResult.InsertedCount,
+                        cập nhật @_importResult.UpdatedCount,
+                        xóa @_importResult.DeletedCount dòng tổng hợp;
+                        lưu audit @_importResult.ImportedRowCount dòng khách hàng.
+                    </MudAlert>
+                }
+            </MudStack>
+        </MudPaper>
+    }
+</MudStack>
+
+<style>
+    .upload-box {
+        border-style: dashed;
+        background: var(--mud-palette-background-grey);
+    }
+
+    .summary-card {
+        min-height: 84px;
+        background: var(--mud-palette-background-grey);
+    }
+
+    .table-scroll {
+        width: 100%;
+        overflow-x: auto;
+    }
+
+    .table-scroll table {
+        min-width: 1650px;
+    }
+
+    .import-row-error td {
+        background-color: rgba(244, 67, 54, 0.10) !important;
+    }
+
+    .import-row-warning td {
+        background-color: rgba(255, 152, 0, 0.10) !important;
+    }
+
+    .flex-wrap {
+        flex-wrap: wrap;
+    }
+</style>
+
+@code {
+    private const long MaxUploadSize = 20 * 1024 * 1024;
+
+    private AccountBalanceExcelPreview? _preview;
+    private AccountBalanceImportResult? _importResult;
+
+    private ExcelAccountingImportTarget _target =
+        ExcelAccountingImportTarget.AccountBalance;
+
+    private ExistingBalanceImportMode _existingMode =
+        ExistingBalanceImportMode.RejectExisting;
+
+    private Guid _companyId;
+    private string _userName = "system";
+    private string _currencyCode = "VND";
+    private string? _bookCode;
+    private string _accountType = "NONE";
+    private string? _selectedFileName;
+    private string _companySourceHint = "Ưu tiên lấy từ claim đăng nhập; nếu không có thì chọn từ danh sách.";
+
+    private List<M_Customer> _companies = new();
+
+    private bool _companyResolved;
+    private bool _reading;
+    private bool _importing;
+    private bool _showOnlyProblemRows;
+
+    private IEnumerable<AccountBalanceExcelLine> VisibleLines =>
+        _preview is null
+            ? Enumerable.Empty<AccountBalanceExcelLine>()
+            : _showOnlyProblemRows
+                ? _preview.Lines.Where(line => line.HasError || line.HasWarning)
+                : _preview.Lines;
+
+    private bool CanCommit =>
+        !_reading &&
+        !_importing &&
+        _companyResolved &&
+        _preview is { CanImport: true } &&
+        _preview.FiscalYear is >= 2000 and <= 2200 &&
+        _preview.PeriodNo is >= 1 and <= 12 &&
+        !string.IsNullOrWhiteSpace(_preview.AccountCode) &&
+        !string.IsNullOrWhiteSpace(_currencyCode) &&
+        (string.IsNullOrWhiteSpace(_accountType) ||
+         _accountType is "NONE" or "AUTO" or "DEBIT" or "CREDIT");
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCompaniesAndResolveAsync();
+    }
+
+    private async Task LoadCompaniesAndResolveAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = state.User;
+        _userName = user.Identity?.Name ?? "system";
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _companies = await db.Customer.AsNoTracking()
+            .Where(x => x.Customer_ID != Guid.Empty)
+            .OrderBy(x => x.COMPANY)
+            .ThenBy(x => x.BIZName)
+            .ToListAsync();
+
+        var claimCompanyId = TryGetCompanyIdFromClaims(user);
+        if (claimCompanyId is Guid companyIdFromClaim)
+        {
+            _companyId = companyIdFromClaim;
+            _companyResolved = true;
+            _companySourceHint = $"Lấy từ claim đăng nhập: {companyIdFromClaim}";
+
+            if (_companies.All(x => x.Customer_ID != companyIdFromClaim))
+            {
+                _companySourceHint += " (không có trong danh sách Customer — vẫn dùng claim)";
+            }
+
+            return;
+        }
+
+        _companySourceHint = "Không có claim CompanyId — chọn công ty từ Customer.";
+
+        if (_companies.Count > 0)
+        {
+            _companyId = _companies[0].Customer_ID;
+            _companyResolved = true;
+            _companySourceHint = $"Đã chọn mặc định: {CompanyLabel(_companies[0])}";
+        }
+        else
+        {
+            _companyId = Guid.Empty;
+            _companyResolved = false;
+            _companySourceHint = "Không có dữ liệu Customer để chọn CompanyId.";
+        }
+    }
+
+    private static Guid? TryGetCompanyIdFromClaims(System.Security.Claims.ClaimsPrincipal user)
+    {
+        var claimNames = new[]
+        {
+            "CompanyId",
+            "company_id",
+            "TenantCompanyId",
+            "tenant_company_id"
+        };
+
+        foreach (var claimName in claimNames)
+        {
+            var claimValue = user.FindFirst(claimName)?.Value;
+            if (Guid.TryParse(claimValue, out var companyId) && companyId != Guid.Empty)
+                return companyId;
+        }
+
+        return null;
+    }
+
+    private void OnCompanyChanged(Guid companyId)
+    {
+        _companyId = companyId;
+        _companyResolved = companyId != Guid.Empty;
+
+        var selected = _companies.FirstOrDefault(x => x.Customer_ID == companyId);
+        _companySourceHint = selected is null
+            ? "Đã chọn CompanyId thủ công."
+            : $"Đã chọn từ Customer: {CompanyLabel(selected)}";
+    }
+
+    private static string CompanyLabel(M_Customer c)
+    {
+        var a = (c.COMPANY ?? string.Empty).Trim();
+        var b = (c.BIZName ?? string.Empty).Trim();
+        if (!string.IsNullOrEmpty(a) && !string.IsNullOrEmpty(b) &&
+            !string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+            return $"{a} ({b})";
+
+        if (!string.IsNullOrEmpty(a))
+            return a;
+
+        if (!string.IsNullOrEmpty(b))
+            return b;
+
+        var code = (c.Customer_Code ?? c.MaDT ?? string.Empty).Trim();
+        return string.IsNullOrEmpty(code) ? c.Customer_ID.ToString() : code;
+    }
+
+    private async Task HandleFileSelectedAsync(InputFileChangeEventArgs args)
+    {
+        _preview = null;
+        _importResult = null;
+        _selectedFileName = args.File.Name;
+        _reading = true;
+
+        try
+        {
+            await using var stream = args.File.OpenReadStream(MaxUploadSize);
+
+            _preview = await ImportService.ReadAndValidateAsync(
+                stream,
+                args.File.Name,
+                _target);
+
+            if (!string.IsNullOrWhiteSpace(_preview.CurrencyCode))
+                _currencyCode = _preview.CurrencyCode;
+
+            Snackbar.Add(
+                _preview.CanImport
+                    ? $"Đã đọc {_preview.Lines.Count:N0} dòng hợp lệ."
+                    : $"Đã đọc file nhưng còn {_preview.ErrorCount:N0} lỗi.",
+                _preview.CanImport ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        }
+        catch (IOException ex)
+        {
+            Snackbar.Add(
+                $"Không thể đọc file: {ex.Message}",
+                MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _reading = false;
+        }
+    }
+
+    private void OnTargetChanged(ExcelAccountingImportTarget value)
+    {
+        _target = value;
+        _preview = null;
+        _importResult = null;
+        _selectedFileName = null;
+    }
+
+    private async Task CommitAsync()
+    {
+        if (!CanCommit || _preview is null)
+            return;
+
+        if (_existingMode == ExistingBalanceImportMode.ReplaceCurrentAccountPeriod)
+        {
+            var replaceConfirmed = await DialogService.ShowMessageBox(
+                "Xác nhận thay thế dữ liệu",
+                $"Hệ thống sẽ xóa dòng số dư tài khoản {_preview.AccountCode}, " +
+                $"năm {_preview.FiscalYear}, tháng {_preview.PeriodNo}, " +
+                $"sổ {DisplayBookCode()} rồi nhập lại tổng từ file. " +
+                "Thao tác chạy trong transaction nhưng không thể hoàn tác sau khi hoàn thành.",
+                yesText: "Xóa và thay thế",
+                cancelText: "Hủy");
+
+            if (replaceConfirmed != true)
+                return;
+        }
+        else
+        {
+            var confirmed = await DialogService.ShowMessageBox(
+                "Xác nhận import",
+                $"Tổng hợp {_preview.Lines.Count:N0} khách hàng thành một dòng account_balance " +
+                $"cho tài khoản {_preview.AccountCode}, năm {_preview.FiscalYear}, " +
+                $"tháng {_preview.PeriodNo}, sổ {DisplayBookCode()}?",
+                yesText: "Import",
+                cancelText: "Hủy");
+
+            if (confirmed != true)
+                return;
+        }
+
+        _importing = true;
+        _importResult = null;
+
+        try
+        {
+            _importResult = await ImportService.CommitAsync(
+                new CommitAccountBalanceImportRequest
+                {
+                    CompanyId = _companyId,
+                    UserName = _userName,
+                    CurrencyCode = _currencyCode,
+                    BookCode = _bookCode,
+                    AccountType = _accountType is "NONE" ? null : _accountType,
+                    ExistingMode = _existingMode,
+                    Preview = _preview
+                });
+
+            Snackbar.Add(
+                $"Import thành công 1 dòng tổng hợp từ " +
+                $"{_importResult.ImportedRowCount:N0} dòng khách hàng.",
+                MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private void ResetScreen()
+    {
+        if (_reading || _importing)
+            return;
+
+        _preview = null;
+        _importResult = null;
+        _selectedFileName = null;
+        _showOnlyProblemRows = false;
+    }
+
+    private string DisplayBookCode()
+        => string.IsNullOrWhiteSpace(_bookCode)
+            ? "(NULL/mặc định)"
+            : _bookCode.Trim();
+
+    private string GetRowClass(AccountBalanceExcelLine line, int rowNumber)
+    {
+        if (line.HasError)
+            return "import-row-error";
+
+        if (line.HasWarning)
+            return "import-row-warning";
+
+        return string.Empty;
+    }
+
+    private string GetValidationSummary()
+    {
+        if (_preview is null)
+            return string.Empty;
+
+        return _preview.ErrorCount == 0
+            ? $"Hợp lệ, {_preview.WarningCount:N0} cảnh báo"
+            : $"{_preview.ErrorCount:N0} lỗi, {_preview.WarningCount:N0} cảnh báo";
+    }
+
+    private static MudBlazor.Severity ToSeverity(ExcelImportMessageLevel level)
+        => level switch
+        {
+            ExcelImportMessageLevel.Error => MudBlazor.Severity.Error,
+            ExcelImportMessageLevel.Warning => MudBlazor.Severity.Warning,
+            _ => MudBlazor.Severity.Info
+        };
+
+    private static string FormatDate(DateTime? value)
+        => value?.ToString("dd/MM/yyyy") ?? string.Empty;
+
+    private static string FormatMoney(decimal value)
+        => value.ToString("N0");
+
+    private static string FormatForeign(decimal value)
+        => value.ToString("N2");
+}
