@@ -19,15 +19,16 @@ public sealed class FixedAssetService : IFixedAssetService
         string? keyword,
         CancellationToken cancellationToken = default)
     {
-        if (companyId == Guid.Empty)
-            return Array.Empty<FixedAsset>();
+        // Giữ tham số companyId để tương thích IFixedAssetService hiện tại.
+        // Hệ thống TSCĐ dùng chung dữ liệu, không phân tách theo công ty.
+        _ = companyId;
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var query = db.FixedAssets
             .AsNoTracking()
-            .Where(x => x.CompanyId == companyId);
+            .AsQueryable();
 
         keyword = keyword?.Trim();
         if (!string.IsNullOrWhiteSpace(keyword))
@@ -51,7 +52,10 @@ public sealed class FixedAssetService : IFixedAssetService
         Guid id,
         CancellationToken cancellationToken = default)
     {
-        if (companyId == Guid.Empty || id == Guid.Empty)
+        // Giữ tham số companyId để tương thích IFixedAssetService hiện tại.
+        _ = companyId;
+
+        if (id == Guid.Empty)
             return null;
 
         using var scope = _scopeFactory.CreateScope();
@@ -60,7 +64,7 @@ public sealed class FixedAssetService : IFixedAssetService
         return await db.FixedAssets
             .AsNoTracking()
             .SingleOrDefaultAsync(
-                x => x.CompanyId == companyId && x.Id == id,
+                x => x.Id == id,
                 cancellationToken);
     }
 
@@ -70,8 +74,9 @@ public sealed class FixedAssetService : IFixedAssetService
         string userName,
         CancellationToken cancellationToken = default)
     {
-        if (companyId == Guid.Empty)
-            throw new InvalidOperationException("Không xác định được công ty.");
+        // Giữ tham số companyId để tương thích IFixedAssetService hiện tại.
+        // Không kiểm tra hoặc dùng CompanyId để phân tách dữ liệu.
+        _ = companyId;
 
         ArgumentNullException.ThrowIfNull(model);
 
@@ -95,15 +100,14 @@ public sealed class FixedAssetService : IFixedAssetService
             var duplicated = await db.FixedAssets
                 .AsNoTracking()
                 .AnyAsync(
-                    x => x.CompanyId == companyId &&
-                         x.AssetCode == normalizedCode &&
+                    x => x.AssetCode == normalizedCode &&
                          x.Id != model.Id,
                     cancellationToken);
 
             if (duplicated)
             {
                 throw new InvalidOperationException(
-                    $"Mã tài sản '{normalizedCode}' đã tồn tại trong công ty.");
+                    $"Mã tài sản '{normalizedCode}' đã tồn tại.");
             }
 
             FixedAsset entity;
@@ -113,7 +117,9 @@ public sealed class FixedAssetService : IFixedAssetService
                 entity = new FixedAsset
                 {
                     Id = Guid.NewGuid(),
-                    CompanyId = companyId,
+                    // Cột CompanyId vẫn tồn tại trong entity/schema cũ.
+                    // Dùng Guid.Empty làm giá trị chung toàn hệ thống.
+                    CompanyId = Guid.Empty,
                     CreatedAt = DateTime.UtcNow,
                     CreatedBy = userName
                 };
@@ -127,7 +133,7 @@ public sealed class FixedAssetService : IFixedAssetService
             {
                 entity = await db.FixedAssets
                     .SingleOrDefaultAsync(
-                        x => x.CompanyId == companyId && x.Id == model.Id,
+                        x => x.Id == model.Id,
                         cancellationToken)
                     ?? throw new KeyNotFoundException(
                         "Không tìm thấy tài sản cần cập nhật.");
@@ -178,7 +184,7 @@ public sealed class FixedAssetService : IFixedAssetService
             await transaction.RollbackAsync(cancellationToken);
 
             throw new InvalidOperationException(
-                $"Mã tài sản '{model.AssetCode}' đã tồn tại trong công ty.",
+                $"Mã tài sản '{model.AssetCode}' đã tồn tại.",
                 ex);
         }
         catch
@@ -193,8 +199,8 @@ public sealed class FixedAssetService : IFixedAssetService
         Guid id,
         CancellationToken cancellationToken = default)
     {
-        if (companyId == Guid.Empty)
-            throw new InvalidOperationException("Không xác định được công ty.");
+        // Giữ tham số companyId để tương thích IFixedAssetService hiện tại.
+        _ = companyId;
 
         if (id == Guid.Empty)
             throw new InvalidOperationException("Mã tài sản không hợp lệ.");
@@ -203,7 +209,7 @@ public sealed class FixedAssetService : IFixedAssetService
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var entity = await db.FixedAssets.SingleOrDefaultAsync(
-            x => x.CompanyId == companyId && x.Id == id,
+            x => x.Id == id,
             cancellationToken)
             ?? throw new KeyNotFoundException("Không tìm thấy tài sản.");
 

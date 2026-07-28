@@ -26,4 +26,12 @@ public interface IFixedAssetDepreciationService
         int fiscalPeriod,
         IReadOnlyCollection<Guid> fixedAssetIds,
         CancellationToken cancellationToken = default);
+
+    Task<FixedAssetDepreciationPostResult> PostDraftAsync(
+        Guid companyId,
+        int fiscalYear,
+        int fiscalPeriod,
+        IReadOnlyCollection<Guid> fixedAssetIds,
+        string userName,
+        CancellationToken cancellationToken = default);
 }

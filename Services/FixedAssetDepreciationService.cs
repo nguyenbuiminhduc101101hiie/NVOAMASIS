@@ -1,6 +1,8 @@
 using System.Data;
+using System.Data.Common;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models.Accounting;
 
@@ -24,7 +26,8 @@ public sealed class FixedAssetDepreciationService
         bool prorateByDay,
         CancellationToken cancellationToken = default)
     {
-        ValidateCompanyAndPeriod(companyId, fiscalYear, fiscalPeriod);
+        _ = companyId; // Giữ tham số để tương thích interface cũ.
+        ValidatePeriod(fiscalYear, fiscalPeriod);
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -47,7 +50,8 @@ public sealed class FixedAssetDepreciationService
         string userName,
         CancellationToken cancellationToken = default)
     {
-        ValidateCompanyAndPeriod(companyId, fiscalYear, fiscalPeriod);
+        _ = companyId; // Giữ tham số để tương thích interface cũ.
+        ValidatePeriod(fiscalYear, fiscalPeriod);
         ArgumentNullException.ThrowIfNull(rows);
 
         userName = string.IsNullOrWhiteSpace(userName)
@@ -95,17 +99,20 @@ public sealed class FixedAssetDepreciationService
 
             var requestedIds = requestedRows
                 .Select(x => x.FixedAssetId)
-                .ToList();
+                .ToHashSet();
 
-            var existingRecords = await db.FixedAssetDepreciations
+            // Không dùng requestedIds.Contains(...) trực tiếp trong EF query.
+            // EF Core mới có thể dịch thành OPENJSON(... WITH ...), gây lỗi
+            // trên SQL Server có compatibility level cũ.
+            var existingRecordList = await db.FixedAssetDepreciations
                 .Where(x =>
-                    x.CompanyId == companyId &&
                     x.FiscalYear == fiscalYear &&
-                    x.FiscalPeriod == fiscalPeriod &&
-                    requestedIds.Contains(x.FixedAssetId))
-                .ToDictionaryAsync(
-                    x => x.FixedAssetId,
-                    cancellationToken);
+                    x.FiscalPeriod == fiscalPeriod)
+                .ToListAsync(cancellationToken);
+
+            var existingRecords = existingRecordList
+                .Where(x => requestedIds.Contains(x.FixedAssetId))
+                .ToDictionary(x => x.FixedAssetId);
 
             var savedCount = 0;
 
@@ -141,7 +148,9 @@ public sealed class FixedAssetDepreciationService
                     entity = new FixedAssetDepreciationRecord
                     {
                         Id = Guid.NewGuid(),
-                        CompanyId = companyId,
+                        // Dữ liệu TSCĐ dùng chung toàn hệ thống.
+                        // Giữ Guid.Empty để tương thích cột CompanyId hiện có.
+                        CompanyId = Guid.Empty,
                         FixedAssetId = requested.FixedAssetId,
                         FiscalYear = fiscalYear,
                         FiscalPeriod = fiscalPeriod,
@@ -239,6 +248,245 @@ public sealed class FixedAssetDepreciationService
         }
     }
 
+    public async Task<FixedAssetDepreciationPostResult> PostDraftAsync(
+        Guid companyId,
+        int fiscalYear,
+        int fiscalPeriod,
+        IReadOnlyCollection<Guid> fixedAssetIds,
+        string userName,
+        CancellationToken cancellationToken = default)
+    {
+        _ = companyId; // Giữ tham số để tương thích interface cũ.
+        ValidatePeriod(fiscalYear, fiscalPeriod);
+        ArgumentNullException.ThrowIfNull(fixedAssetIds);
+
+        userName = string.IsNullOrWhiteSpace(userName)
+            ? "system"
+            : userName.Trim();
+
+        var selectedIds = fixedAssetIds
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToHashSet();
+
+        if (selectedIds.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Chưa chọn bản nháp khấu hao cần ghi sổ.");
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+
+        try
+        {
+            // Không dùng selectedIds.Contains trực tiếp trong EF query để tránh
+            // EF sinh OPENJSON trên SQL Server compatibility level cũ.
+            var periodDrafts = await db.FixedAssetDepreciations
+                .Where(x =>
+                    x.FiscalYear == fiscalYear &&
+                    x.FiscalPeriod == fiscalPeriod &&
+                    x.Status == FixedAssetDepreciationStatus.Draft)
+                .ToListAsync(cancellationToken);
+
+            var records = periodDrafts
+                .Where(x => selectedIds.Contains(x.FixedAssetId))
+                .OrderBy(x => x.FixedAssetId)
+                .ToList();
+
+            if (records.Count != selectedIds.Count)
+            {
+                throw new InvalidOperationException(
+                    "Một hoặc nhiều bản khấu hao không còn ở trạng thái Nháp. " +
+                    "Hãy tải lại dữ liệu trước khi ghi sổ.");
+            }
+
+            if (records.Any(x => x.DepreciationAmount <= 0))
+            {
+                throw new InvalidOperationException(
+                    "Không thể ghi sổ bản khấu hao có số tiền bằng 0.");
+            }
+
+            foreach (var record in records)
+            {
+                record.ExpenseAccount = NormalizeAccount(
+                    record.ExpenseAccount,
+                    "tài khoản chi phí khấu hao");
+
+                record.DepreciationAccount = NormalizeAccount(
+                    record.DepreciationAccount,
+                    "tài khoản hao mòn");
+            }
+
+            var assetIdSet = records
+                .Select(x => x.FixedAssetId)
+                .ToHashSet();
+
+            var allAssets = await db.FixedAssets
+                .AsNoTracking()
+                .ToListAsync(cancellationToken);
+
+            var assets = allAssets
+                .Where(x => assetIdSet.Contains(x.Id))
+                .ToDictionary(x => x.Id);
+
+            if (assets.Count != assetIdSet.Count)
+            {
+                throw new InvalidOperationException(
+                    "Không tìm thấy đầy đủ tài sản của các bản khấu hao đã chọn.");
+            }
+
+            var voucherId = Guid.NewGuid();
+            var postingDate = new DateTime(
+                fiscalYear,
+                fiscalPeriod,
+                DateTime.DaysInMonth(fiscalYear, fiscalPeriod));
+
+            var voucherNo = GenerateDepreciationVoucherNo(
+                fiscalYear,
+                fiscalPeriod);
+
+            var description =
+                $"Trích khấu hao TSCĐ kỳ {fiscalPeriod:00}/{fiscalYear}";
+
+            var connection = db.Database.GetDbConnection();
+
+            if (connection.State != ConnectionState.Open)
+                await connection.OpenAsync(cancellationToken);
+
+            var dbTransaction = db.Database.CurrentTransaction
+                ?.GetDbTransaction()
+                ?? throw new InvalidOperationException(
+                    "Không lấy được transaction ghi sổ khấu hao.");
+
+            await InsertDepreciationVoucherAsync(
+                connection,
+                dbTransaction,
+                voucherId,
+                voucherNo,
+                postingDate,
+                fiscalYear,
+                fiscalPeriod,
+                description,
+                userName,
+                cancellationToken);
+
+            var lineNo = 1;
+            var totalAmount = 0m;
+
+            foreach (var record in records)
+            {
+                var asset = assets[record.FixedAssetId];
+                var amount = RoundMoney(record.DepreciationAmount);
+                totalAmount += amount;
+
+                var expenseAccountId = await ResolveAccountIdAsync(
+                    connection,
+                    dbTransaction,
+                    record.ExpenseAccount,
+                    cancellationToken);
+
+                var depreciationAccountId = await ResolveAccountIdAsync(
+                    connection,
+                    dbTransaction,
+                    record.DepreciationAccount,
+                    cancellationToken);
+
+                var lineDescription =
+                    $"Khấu hao TSCĐ {asset.AssetCode} - {asset.AssetName} " +
+                    $"kỳ {fiscalPeriod:00}/{fiscalYear}";
+
+                await InsertDepreciationVoucherLineAsync(
+                    connection,
+                    dbTransaction,
+                    voucherId,
+                    lineNo++,
+                    expenseAccountId,
+                    record.ExpenseAccount,
+                    debit: amount,
+                    credit: 0,
+                    lineDescription,
+                    postingDate,
+                    cancellationToken);
+
+                await InsertDepreciationVoucherLineAsync(
+                    connection,
+                    dbTransaction,
+                    voucherId,
+                    lineNo++,
+                    depreciationAccountId,
+                    record.DepreciationAccount,
+                    debit: 0,
+                    credit: amount,
+                    lineDescription,
+                    postingDate,
+                    cancellationToken);
+            }
+
+            await PostDepreciationVoucherToLedgerAsync(
+                connection,
+                dbTransaction,
+                voucherId,
+                Guid.Empty,
+                userName,
+                cancellationToken);
+
+            var ledgerLineCount = await CountLedgerLinesAsync(
+                connection,
+                dbTransaction,
+                voucherId,
+                cancellationToken);
+
+            if (ledgerLineCount != records.Count * 2)
+            {
+                throw new InvalidOperationException(
+                    "Số dòng Sổ cái phát sinh không đúng với số dòng khấu hao.");
+            }
+
+            foreach (var record in records)
+            {
+                record.Status = FixedAssetDepreciationStatus.Posted;
+                record.VoucherId = voucherId;
+                record.VoucherNo = voucherNo;
+                record.PostedAt = DateTime.UtcNow;
+                record.PostedBy = userName;
+                record.UpdatedAt = DateTime.UtcNow;
+                record.UpdatedBy = userName;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return new FixedAssetDepreciationPostResult
+            {
+                VoucherId = voucherId,
+                VoucherNo = voucherNo,
+                PostingDate = postingDate,
+                PostedAssetCount = records.Count,
+                LedgerLineCount = ledgerLineCount,
+                TotalAmount = RoundMoney(totalAmount)
+            };
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+
+            throw new DbUpdateConcurrencyException(
+                "Bản khấu hao đã được người khác thay đổi. " +
+                "Hãy tải lại dữ liệu trước khi ghi sổ.",
+                ex);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
     public async Task<int> DeleteDraftAsync(
         Guid companyId,
         int fiscalYear,
@@ -246,7 +494,8 @@ public sealed class FixedAssetDepreciationService
         IReadOnlyCollection<Guid> fixedAssetIds,
         CancellationToken cancellationToken = default)
     {
-        ValidateCompanyAndPeriod(companyId, fiscalYear, fiscalPeriod);
+        _ = companyId; // Giữ tham số để tương thích interface cũ.
+        ValidatePeriod(fiscalYear, fiscalPeriod);
         ArgumentNullException.ThrowIfNull(fixedAssetIds);
 
         var ids = fixedAssetIds
@@ -263,14 +512,20 @@ public sealed class FixedAssetDepreciationService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var records = await db.FixedAssetDepreciations
+        // Không dùng ids.Contains(...) trực tiếp trong EF query để tránh
+        // EF sinh OPENJSON(... WITH ...) trên SQL Server compatibility cũ.
+        var periodDraftRecords = await db.FixedAssetDepreciations
             .Where(x =>
-                x.CompanyId == companyId &&
                 x.FiscalYear == fiscalYear &&
                 x.FiscalPeriod == fiscalPeriod &&
-                x.Status == FixedAssetDepreciationStatus.Draft &&
-                ids.Contains(x.FixedAssetId))
+                x.Status == FixedAssetDepreciationStatus.Draft)
             .ToListAsync(cancellationToken);
+
+        var idSet = ids.ToHashSet();
+
+        var records = periodDraftRecords
+            .Where(x => idSet.Contains(x.FixedAssetId))
+            .ToList();
 
         if (records.Count == 0)
             return 0;
@@ -297,7 +552,6 @@ public sealed class FixedAssetDepreciationService
         var assets = await db.FixedAssets
             .AsNoTracking()
             .Where(x =>
-                x.CompanyId == companyId &&
                 x.Status == FixedAssetStatus.InUse &&
                 x.DepreciationMethod != DepreciationMethod.NotDepreciated &&
                 x.DepreciationStartDate <= periodEnd &&
@@ -308,15 +562,20 @@ public sealed class FixedAssetDepreciationService
         if (assets.Count == 0)
             return Array.Empty<FixedAssetDepreciationRow>();
 
-        var assetIds = assets.Select(x => x.Id).ToList();
+        var assetIds = assets
+            .Select(x => x.Id)
+            .ToHashSet();
 
-        var recordedRows = await db.FixedAssetDepreciations
+        // Tránh List<Guid>.Contains trong LINQ-to-Entities vì EF Core có thể
+        // sinh OPENJSON(@ids) WITH (...), không chạy trên compatibility cũ.
+        var recordedRowsForPeriod = await db.FixedAssetDepreciations
             .AsNoTracking()
-            .Where(x =>
-                x.CompanyId == companyId &&
-                assetIds.Contains(x.FixedAssetId) &&
-                x.PeriodStartDate <= periodEnd)
+            .Where(x => x.PeriodStartDate <= periodEnd)
             .ToListAsync(cancellationToken);
+
+        var recordedRows = recordedRowsForPeriod
+            .Where(x => assetIds.Contains(x.FixedAssetId))
+            .ToList();
 
         var recordsByAssetId = recordedRows
             .GroupBy(x => x.FixedAssetId)
@@ -512,14 +771,370 @@ public sealed class FixedAssetDepreciationService
         };
     }
 
-    private static void ValidateCompanyAndPeriod(
+    private static async Task<Guid> ResolveAccountIdAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string accountCode,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT TOP (1) Id
+FROM dbo.DanhMucTaiKhoan
+WHERE LTRIM(RTRIM(Taikhoan)) = @AccountCode
+ORDER BY Id;";
+
+        AddParameter(command, "@AccountCode", accountCode.Trim());
+
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+
+        if (value is Guid accountId && accountId != Guid.Empty)
+            return accountId;
+
+        if (value is not null &&
+            value != DBNull.Value &&
+            Guid.TryParse(Convert.ToString(value), out accountId) &&
+            accountId != Guid.Empty)
+        {
+            return accountId;
+        }
+
+        throw new InvalidOperationException(
+            $"Không tìm thấy tài khoản {accountCode} trong DanhMucTaiKhoan.");
+    }
+
+    private static async Task InsertDepreciationVoucherAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid voucherId,
+        string voucherNo,
+        DateTime postingDate,
+        int fiscalYear,
+        int fiscalPeriod,
+        string description,
+        string userName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+INSERT INTO dbo.AccountingVouchers
+(
+    Id,
+    CompanyId,
+    VoucherNo,
+    VoucherDate,
+    PostingDate,
+    FiscalYear,
+    FiscalPeriod,
+    TransactionTypeCode,
+    Description,
+    CurrencyCode,
+    ExchangeRate,
+    Status,
+    ReferenceNo,
+    ReferenceDate,
+    BookScope,
+    SourceModule,
+    SourceId,
+    CreatedBy,
+    CreatedDate,
+    ModifiedBy,
+    ModifiedDate,
+    Ghiso,
+    Approve,
+    Both
+)
+VALUES
+(
+    @Id,
+    @CompanyId,
+    @VoucherNo,
+    @VoucherDate,
+    @PostingDate,
+    @FiscalYear,
+    @FiscalPeriod,
+    N'GENERAL',
+    @Description,
+    N'VND',
+    1,
+    1,
+    @ReferenceNo,
+    @ReferenceDate,
+    N'BOTH',
+    N'FIXED_ASSET_DEPRECIATION_TT99',
+    @SourceId,
+    @CreatedBy,
+    SYSDATETIME(),
+    @CreatedBy,
+    SYSDATETIME(),
+    0,
+    1,
+    1
+);";
+
+        AddParameter(command, "@Id", voucherId);
+        AddParameter(command, "@CompanyId", Guid.Empty);
+        AddParameter(command, "@VoucherNo", voucherNo);
+        AddParameter(command, "@VoucherDate", postingDate);
+        AddParameter(command, "@PostingDate", postingDate);
+        AddParameter(command, "@FiscalYear", fiscalYear);
+        AddParameter(command, "@FiscalPeriod", fiscalPeriod);
+        AddParameter(command, "@Description", description);
+        AddParameter(command, "@ReferenceNo", voucherNo);
+        AddParameter(command, "@ReferenceDate", postingDate);
+        AddParameter(command, "@SourceId", voucherId);
+        AddParameter(command, "@CreatedBy", userName);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task InsertDepreciationVoucherLineAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid voucherId,
+        int lineNo,
+        Guid accountId,
+        string accountCode,
+        decimal debit,
+        decimal credit,
+        string description,
+        DateTime postingDate,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+INSERT INTO dbo.AccountingVoucherLines
+(
+    Id,
+    VoucherId,
+    LineNo_,
+    DanhMucTaiKhoanID,
+    AccountCode,
+    DebitAmount,
+    CreditAmount,
+    DebitAmountFC,
+    CreditAmountFC,
+    LineDescription,
+    IsTaxBook,
+    IsManagementBook,
+    LedgerType,
+    InvoiceNo,
+    InvoiceDate,
+    SortKey
+)
+VALUES
+(
+    NEWID(),
+    @VoucherId,
+    @LineNo,
+    @DanhMucTaiKhoanID,
+    @AccountCode,
+    @DebitAmount,
+    @CreditAmount,
+    @DebitAmount,
+    @CreditAmount,
+    @LineDescription,
+    1,
+    1,
+    N'BOTH',
+    NULL,
+    @InvoiceDate,
+    @SortKey
+);";
+
+        AddParameter(command, "@VoucherId", voucherId);
+        AddParameter(command, "@LineNo", lineNo.ToString());
+        AddParameter(command, "@DanhMucTaiKhoanID", accountId);
+        AddParameter(command, "@AccountCode", accountCode.Trim());
+        AddParameter(command, "@DebitAmount", RoundMoney(debit));
+        AddParameter(command, "@CreditAmount", RoundMoney(credit));
+        AddParameter(command, "@LineDescription", description);
+        AddParameter(command, "@InvoiceDate", postingDate);
+        AddParameter(command, "@SortKey", lineNo);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task PostDepreciationVoucherToLedgerAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid voucherId,
         Guid companyId,
+        string userName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+DECLARE @TotalDebit DECIMAL(18, 2);
+DECLARE @TotalCredit DECIMAL(18, 2);
+
+SELECT
+    @TotalDebit = ISNULL(SUM(ISNULL(DebitAmount, 0)), 0),
+    @TotalCredit = ISNULL(SUM(ISNULL(CreditAmount, 0)), 0)
+FROM dbo.AccountingVoucherLines
+WHERE VoucherId = @VoucherId;
+
+IF @TotalDebit = 0 AND @TotalCredit = 0
+BEGIN
+    RAISERROR(N'Chứng từ khấu hao không có dòng hạch toán.', 16, 1);
+    RETURN;
+END;
+
+IF ABS(@TotalDebit - @TotalCredit) > 0.01
+BEGIN
+    RAISERROR(N'Chứng từ khấu hao không cân Nợ/Có.', 16, 1);
+    RETURN;
+END;
+
+IF EXISTS
+(
+    SELECT 1
+    FROM dbo.GeneralLedgerEntries
+    WHERE VoucherId = @VoucherId
+)
+BEGIN
+    RAISERROR(N'Chứng từ khấu hao đã được ghi sổ.', 16, 1);
+    RETURN;
+END;
+
+INSERT INTO dbo.GeneralLedgerEntries
+(
+    Id,
+    VoucherId,
+    VoucherLineId,
+    CompanyId,
+    FiscalYear,
+    FiscalPeriod,
+    PostingDate,
+    VoucherDate,
+    VoucherNo,
+    AccountCode,
+    Debit,
+    Credit,
+    CurrencyCode,
+    ExchangeRate,
+    DebitFC,
+    CreditFC,
+    CustomerId,
+    SupplierId,
+    EmployeeId,
+    ShipmentId,
+    ContractId,
+    BranchCode,
+    Description,
+    SourceModule,
+    SourceId,
+    CreatedAt,
+    CreatedBy,
+    IsTaxBook,
+    IsManagementBook,
+    LedgerType
+)
+SELECT
+    NEWID(),
+    V.Id,
+    L.Id,
+    V.CompanyId,
+    V.FiscalYear,
+    V.FiscalPeriod,
+    CAST(ISNULL(V.PostingDate, V.VoucherDate) AS DATE),
+    CAST(V.VoucherDate AS DATE),
+    V.VoucherNo,
+    CAST(L.AccountCode AS NVARCHAR(20)),
+    ISNULL(L.DebitAmount, 0),
+    ISNULL(L.CreditAmount, 0),
+    ISNULL(V.CurrencyCode, N'VND'),
+    ISNULL(V.ExchangeRate, 1),
+    ISNULL(L.DebitAmountFC, ISNULL(L.DebitAmount, 0)),
+    ISNULL(L.CreditAmountFC, ISNULL(L.CreditAmount, 0)),
+    L.CustomerId,
+    NULL,
+    NULL,
+    L.ShipmentId,
+    TRY_CONVERT(UNIQUEIDENTIFIER, L.ContractId),
+    L.BranchId,
+    COALESCE(L.LineDescription, V.Description),
+    N'ACCOUNTING_VOUCHER',
+    CONVERT(NVARCHAR(100), V.Id),
+    SYSDATETIME(),
+    @CreatedBy,
+    ISNULL(L.IsTaxBook, 1),
+    ISNULL(L.IsManagementBook, 1),
+    ISNULL(L.LedgerType, N'GENERAL')
+FROM dbo.AccountingVouchers V
+INNER JOIN dbo.AccountingVoucherLines L
+    ON L.VoucherId = V.Id
+WHERE V.Id = @VoucherId
+  AND V.CompanyId = @CompanyId
+  AND ISNULL(V.Approve, 0) = 1
+  AND ISNULL(V.Status, 1) <> 3
+  AND ISNULL(L.AccountCode, N'') <> N''
+  AND (ISNULL(L.DebitAmount, 0) <> 0
+       OR ISNULL(L.CreditAmount, 0) <> 0);
+
+UPDATE dbo.AccountingVouchers
+SET Ghiso = 1,
+    Status = 2,
+    PostedBy = @CreatedBy,
+    PostedDate = SYSDATETIME(),
+    ModifiedBy = @CreatedBy,
+    ModifiedDate = SYSDATETIME()
+WHERE Id = @VoucherId
+  AND CompanyId = @CompanyId;";
+
+        AddParameter(command, "@VoucherId", voucherId);
+        AddParameter(command, "@CompanyId", companyId);
+        AddParameter(command, "@CreatedBy", userName);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<int> CountLedgerLinesAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid voucherId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT COUNT(*)
+FROM dbo.GeneralLedgerEntries
+WHERE VoucherId = @VoucherId;";
+
+        AddParameter(command, "@VoucherId", voucherId);
+
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+
+        return value is null || value == DBNull.Value
+            ? 0
+            : Convert.ToInt32(value);
+    }
+
+    private static void AddParameter(
+        DbCommand command,
+        string name,
+        object? value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value ?? DBNull.Value;
+        command.Parameters.Add(parameter);
+    }
+
+    private static string GenerateDepreciationVoucherNo(
+        int fiscalYear,
+        int fiscalPeriod)
+        => $"KHTS-{fiscalYear}{fiscalPeriod:00}-{DateTime.Now:HHmmssfff}";
+
+    private static void ValidatePeriod(
         int fiscalYear,
         int fiscalPeriod)
     {
-        if (companyId == Guid.Empty)
-            throw new InvalidOperationException("Không xác định được công ty.");
-
         if (fiscalYear is < 2000 or > 9999)
             throw new InvalidOperationException("Năm tài chính không hợp lệ.");
 
