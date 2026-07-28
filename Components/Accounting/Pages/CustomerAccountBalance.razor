@@ -1,0 +1,2777 @@
+@page "/accounting/customer-account-balance"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+
+@using System.Data
+@using System.Data.Common
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using Microsoft.Extensions.Localization
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Models.Accounting.ExcelImport
+@using NVOAMASIS.Resources
+@using NVOAMASIS.Services.Accounting.ExcelImport
+
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IAccountBalanceExcelImportService ImportService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["CustomerAccountBalance.Title"]</PageTitle>
+
+<MudStack Spacing="2">
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudStack Row="true"
+                  AlignItems="AlignItems.Center"
+                  Justify="Justify.SpaceBetween"
+                  Class="flex-wrap">
+            <div>
+                <MudText Typo="Typo.h5">@Localizer["CustomerAccountBalance.Heading"]</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    @Localizer["CustomerAccountBalance.Subtitle"]
+                </MudText>
+            </div>
+
+            <MudStack Row="true" Spacing="2" Class="flex-wrap">
+                <MudButton Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.UploadFile"
+                           Disabled="@(_loading || _saving || _readingImport || _importing)"
+                           OnClick="ToggleImportPanel">
+                    @(_importExpanded ? Localizer["CustomerAccountBalance.CloseImport"] : Localizer["CustomerAccountBalance.ImportExcel"])
+                </MudButton>
+
+                <MudButton Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           Disabled="@_loading"
+                           OnClick="ReloadAsync">
+                    @Localizer["CustomerAccountBalance.Reload"]
+                </MudButton>
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+
+    @if (!_companyResolved)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning" Variant="Variant.Outlined">
+            @Localizer["CustomerAccountBalance.CompanyNotResolved"]
+        </MudAlert>
+    }
+
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">@Localizer["CustomerAccountBalance.Filters"]</MudText>
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudSelect T="Guid"
+                           Label="@Localizer["CustomerAccountBalance.Company"]"
+                           Value="_companyId"
+                           ValueChanged="OnCompanyChangedAsync"
+                           Disabled="@_loading"
+                           Required="true"
+                           HelperText="@_companySourceHint">
+                    @foreach (var company in _companies)
+                    {
+                        <MudSelectItem T="Guid" Value="@company.Customer_ID">
+                            @CompanyLabel(company)
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" md="2">
+                <MudNumericField T="int"
+                                 Label="@Localizer["CustomerAccountBalance.Year"]"
+                                 @bind-Value="_filterYear"
+                                 Min="2000"
+                                 Max="2200"
+                                 HideSpinButtons="true"
+                                 Disabled="@_loading" />
+            </MudItem>
+
+            <MudItem xs="12" md="2">
+                <MudSelect T="int?"
+                           Label="@Localizer["CustomerAccountBalance.Month"]"
+                           @bind-Value="_filterMonth"
+                           Clearable="true"
+                           Disabled="@_loading">
+                    @for (var month = 1; month <= 12; month++)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)month)">@string.Format(Localizer["CustomerAccountBalance.MonthItem"].Value, month)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" md="2">
+                <MudTextField T="string"
+                              Label="@Localizer["CustomerAccountBalance.Account"]"
+                              @bind-Value="_filterAccountCode"
+                              Immediate="true"
+                              MaxLength="20"
+                              Placeholder="@Localizer["CustomerAccountBalance.AccountPlaceholder"]"
+                              Disabled="@_loading" />
+            </MudItem>
+
+            <MudItem xs="12" md="2">
+                <MudTextField T="string"
+                              Label="@Localizer["CustomerAccountBalance.BookCode"]"
+                              @bind-Value="_filterBookCode"
+                              Immediate="true"
+                              MaxLength="50"
+                              Placeholder="@Localizer["CustomerAccountBalance.BookCodeAllPlaceholder"]"
+                              Disabled="@_loading" />
+            </MudItem>
+
+            <MudItem xs="12" md="6">
+                <MudSelect T="Guid?"
+                           Label="@Localizer["CustomerAccountBalance.Customer"]"
+                           @bind-Value="_filterCustomerId"
+                           Clearable="true"
+                           Disabled="@_loading">
+                    @foreach (var customer in _customers)
+                    {
+                        <MudSelectItem T="Guid?" Value="@((Guid?)customer.Customer_ID)">
+                            @CustomerLabel(customer)
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" md="6">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="h-100 flex-wrap">
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Search"
+                               Disabled="@(!_companyResolved || _loading)"
+                               OnClick="ApplyFilterAsync">
+                        @Localizer["CustomerAccountBalance.Search"]
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Filled.FilterAltOff"
+                               Disabled="@_loading"
+                               OnClick="ClearFilterAsync">
+                        @Localizer["CustomerAccountBalance.ClearFilter"]
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.Calculate"
+                               Disabled="@(!CanSyncAccountBalance || _loading || _saving)"
+                               OnClick="SyncAccountBalanceAsync">
+                        @Localizer["CustomerAccountBalance.SyncAccountBalance"]
+                    </MudButton>
+                </MudStack>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (_importExpanded)
+    {
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudStack Row="true"
+                      AlignItems="AlignItems.Center"
+                      Justify="Justify.SpaceBetween"
+                      Class="mb-3 flex-wrap">
+                <div>
+                    <MudText Typo="Typo.h6">@Localizer["CustomerAccountBalance.ImportTitle"]</MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        @Localizer["CustomerAccountBalance.ImportSubtitle"]
+                    </MudText>
+                </div>
+
+                <MudButton Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.RestartAlt"
+                           Disabled="@(_readingImport || _importing)"
+                           OnClick="ResetImport">
+                    @Localizer["CustomerAccountBalance.ResetImport"]
+                </MudButton>
+            </MudStack>
+
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="4">
+                    <MudSelect T="ExistingBalanceImportMode"
+                               Label="@Localizer["CustomerAccountBalance.ExistingMode"]"
+                               @bind-Value="_importExistingMode"
+                               Disabled="@(_readingImport || _importing)">
+                        <MudSelectItem T="ExistingBalanceImportMode"
+                                       Value="@ExistingBalanceImportMode.RejectExisting">
+                            @Localizer["CustomerAccountBalance.ExistingModeReject"]
+                        </MudSelectItem>
+                        <MudSelectItem T="ExistingBalanceImportMode"
+                                       Value="@ExistingBalanceImportMode.UpdateExisting">
+                            @Localizer["CustomerAccountBalance.ExistingModeUpdate"]
+                        </MudSelectItem>
+                        <MudSelectItem T="ExistingBalanceImportMode"
+                                       Value="@ExistingBalanceImportMode.ReplaceCurrentAccountPeriod">
+                            @Localizer["CustomerAccountBalance.ExistingModeReplace"]
+                        </MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+
+                <MudItem xs="12" md="3">
+                    <MudTextField T="string"
+                                  Label="@Localizer["CustomerAccountBalance.ImportBookCode"]"
+                                  @bind-Value="_importBookCode"
+                                  MaxLength="50"
+                                  Placeholder="@Localizer["CustomerAccountBalance.ImportBookCodePlaceholder"]"
+                                  Disabled="@(_readingImport || _importing)" />
+                </MudItem>
+
+                <MudItem xs="12" md="5">
+                    <MudCheckBox T="bool"
+                                 Label="@Localizer["CustomerAccountBalance.SyncAfterImport"]"
+                                 @bind-Value="_syncAccountBalanceAfterImport"
+                                 Disabled="@(_readingImport || _importing)" />
+                </MudItem>
+
+                <MudItem xs="12">
+                    <MudPaper Class="pa-4 upload-box" Outlined="true">
+                        <MudStack Row="true"
+                                  AlignItems="AlignItems.Center"
+                                  Spacing="3"
+                                  Class="flex-wrap">
+                            <InputFile OnChange="HandleCustomerBalanceFileSelectedAsync"
+                                       accept=".xlsx,.xlsm"
+                                       disabled="@(_readingImport || _importing || !_companyResolved)" />
+
+                            @if (_readingImport)
+                            {
+                                <MudProgressCircular Indeterminate="true"
+                                                     Size="Size.Small"
+                                                     Color="Color.Primary" />
+                                <MudText>@Localizer["CustomerAccountBalance.ReadingFile"]</MudText>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(_importFileName))
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Description"
+                                         Color="Color.Primary" />
+                                <MudText>@_importFileName</MudText>
+                            }
+                        </MudStack>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudAlert Severity="MudBlazor.Severity.Info"
+                      Variant="Variant.Outlined"
+                      Dense="true"
+                      Class="mt-3">
+                @((MarkupString)Localizer["CustomerAccountBalance.ImportInfoAlert"].Value)
+            </MudAlert>
+
+            @if (_importPreview is not null)
+            {
+                <MudDivider Class="my-4" />
+
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" md="4">
+                        <MudTextField T="string"
+                                      Label="@Localizer["CustomerAccountBalance.CompanyInFile"]"
+                                      Value="_importPreview.CompanyNameInFile"
+                                      ReadOnly="true" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudTextField T="string"
+                                      Label="@Localizer["CustomerAccountBalance.TaxCodeInFile"]"
+                                      Value="_importPreview.TaxCodeInFile"
+                                      ReadOnly="true" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudTextField T="string"
+                                      Label="@Localizer["CustomerAccountBalance.Account"]"
+                                      @bind-Value="_importPreview.AccountCode"
+                                      Immediate="true" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="int"
+                                         Label="@Localizer["CustomerAccountBalance.Year"]"
+                                         @bind-Value="_importPreview.FiscalYear"
+                                         Min="2000"
+                                         Max="2200"
+                                         HideSpinButtons="true" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="int"
+                                         Label="@Localizer["CustomerAccountBalance.Month"]"
+                                         @bind-Value="_importPreview.PeriodNo"
+                                         Min="1"
+                                         Max="12"
+                                         HideSpinButtons="true" />
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" lg="3">
+                        <MudPaper Class="pa-3 import-summary-card" Outlined="true">
+                            <MudText Typo="Typo.caption">@Localizer["CustomerAccountBalance.MatchedCustomers"]</MudText>
+                            <MudText Typo="Typo.h6">@MatchedImportCustomerCount.ToString("N0")</MudText>
+                        </MudPaper>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" lg="3">
+                        <MudPaper Class="pa-3 import-summary-card" Outlined="true">
+                            <MudText Typo="Typo.caption">@Localizer["CustomerAccountBalance.UnmatchedCustomers"]</MudText>
+                            <MudText Typo="Typo.h6" Color="@(UnmatchedImportCustomerCount > 0 ? Color.Error : Color.Success)">
+                                @UnmatchedImportCustomerCount.ToString("N0")
+                            </MudText>
+                        </MudPaper>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" lg="3">
+                        <MudPaper Class="pa-3 import-summary-card" Outlined="true">
+                            <MudText Typo="Typo.caption">@Localizer["CustomerAccountBalance.ExcelErrors"]</MudText>
+                            <MudText Typo="Typo.h6" Color="@(_importPreview.ErrorCount > 0 ? Color.Error : Color.Success)">
+                                @_importPreview.ErrorCount.ToString("N0")
+                            </MudText>
+                        </MudPaper>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" lg="3">
+                        <MudPaper Class="pa-3 import-summary-card" Outlined="true">
+                            <MudText Typo="Typo.caption">@Localizer["CustomerAccountBalance.WriteRowsAfterMerge"]</MudText>
+                            <MudText Typo="Typo.h6">@ImportWriteRowCount.ToString("N0")</MudText>
+                        </MudPaper>
+                    </MudItem>
+                </MudGrid>
+
+                @foreach (var message in _importPreview.Messages)
+                {
+                    <MudAlert Severity="@ToSeverity(message.Level)"
+                              Variant="Variant.Outlined"
+                              Dense="true"
+                              Class="mt-2">
+                        @if (message.ExcelRowNo.HasValue)
+                        {
+                            <b>@string.Format(Localizer["CustomerAccountBalance.ExcelRowPrefix"].Value, message.ExcelRowNo)</b>
+                        }
+                        @message.Message
+                    </MudAlert>
+                }
+
+                <MudStack Row="true"
+                          AlignItems="AlignItems.Center"
+                          Justify="Justify.SpaceBetween"
+                          Class="mt-4 mb-2 flex-wrap">
+                    <MudText Typo="Typo.h6">@Localizer["CustomerAccountBalance.PreviewTitle"]</MudText>
+                    <MudCheckBox T="bool"
+                                 Label="@Localizer["CustomerAccountBalance.ShowOnlyProblems"]"
+                                 @bind-Value="_showOnlyImportProblems" />
+                </MudStack>
+
+                <div class="import-preview-scroll">
+                    <MudTable T="AccountBalanceExcelLine"
+                              Items="@VisibleImportLines"
+                              Dense="true"
+                              Hover="true"
+                              Bordered="true"
+                              Striped="true"
+                              Breakpoint="Breakpoint.None"
+                              RowClassFunc="GetImportRowClass">
+                        <HeaderContent>
+                            <MudTh>@Localizer["CustomerAccountBalance.ColRow"]</MudTh>
+                            <MudTh>@Localizer["CustomerAccountBalance.ColCustomerTax"]</MudTh>
+                            <MudTh>@Localizer["CustomerAccountBalance.ColNameInFile"]</MudTh>
+                            <MudTh>@Localizer["CustomerAccountBalance.ColCustomerId"]</MudTh>
+                            <MudTh>@Localizer["CustomerAccountBalance.ColSystemCustomer"]</MudTh>
+                            <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColOpeningDebit"]</MudTh>
+                            <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColOpeningCredit"]</MudTh>
+                            <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColPeriodDebit"]</MudTh>
+                            <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColPeriodCredit"]</MudTh>
+                            <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColClosingDebit"]</MudTh>
+                            <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColClosingCredit"]</MudTh>
+                            <MudTh>@Localizer["CustomerAccountBalance.ColResult"]</MudTh>
+                        </HeaderContent>
+
+                        <RowTemplate>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColRow"]">@context.ExcelRowNo</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColCustomerTax"]">@context.CustomerCode</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColNameInFile"]">@context.CustomerName</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColCustomerId"]">
+                                @if (GetImportCustomerMatch(context)?.CustomerId is Guid customerId)
+                                {
+                                    <MudTooltip Text="@customerId.ToString()">
+                                        <MudChip T="string"
+                                                 Size="Size.Small"
+                                                 Color="Color.Success"
+                                                 Variant="Variant.Outlined">
+                                            @ShortGuid(customerId)
+                                        </MudChip>
+                                    </MudTooltip>
+                                }
+                                else
+                                {
+                                    <MudIcon Icon="@Icons.Material.Filled.PersonOff"
+                                             Color="Color.Error"
+                                             Size="Size.Small" />
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColSystemCustomer"]">
+                                @{
+                                    var match = GetImportCustomerMatch(context);
+                                }
+                                @if (match?.CustomerId is not null)
+                                {
+                                    <MudText Typo="Typo.body2">@match.CustomerName</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                        @string.Format(Localizer["CustomerAccountBalance.TaxCodePrefix"].Value, match.TaxCode)
+                                    </MudText>
+                                }
+                                else
+                                {
+                                    <MudTooltip Text="@(match?.ErrorText ?? Localizer["CustomerAccountBalance.NotMatchedYet"].Value)">
+                                        <MudText Typo="Typo.body2" Color="Color.Error">
+                                            @(match?.ErrorText ?? Localizer["CustomerAccountBalance.NotMatchedYet"].Value)
+                                        </MudText>
+                                    </MudTooltip>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColOpeningDebit"]" Align="Right">@FormatMoney(context.OpeningDebit)</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColOpeningCredit"]" Align="Right">@FormatMoney(context.OpeningCredit)</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColPeriodDebit"]" Align="Right">@FormatMoney(context.PeriodDebit)</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColPeriodCredit"]" Align="Right">@FormatMoney(context.PeriodCredit)</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColClosingDebit"]" Align="Right">@FormatMoney(context.ClosingDebit)</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColClosingCredit"]" Align="Right">@FormatMoney(context.ClosingCredit)</MudTd>
+                            <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColResult"]">
+                                @if (context.HasError)
+                                {
+                                    <MudTooltip Text="@context.ErrorText">
+                                        <MudIcon Icon="@Icons.Material.Filled.Error"
+                                                 Color="Color.Error"
+                                                 Size="Size.Small" />
+                                    </MudTooltip>
+                                }
+                                else if (HasImportCustomerProblem(context))
+                                {
+                                    <MudTooltip Text="@(GetImportCustomerMatch(context)?.ErrorText ?? Localizer["CustomerAccountBalance.CustomerNotMatched"].Value)">
+                                        <MudIcon Icon="@Icons.Material.Filled.PersonOff"
+                                                 Color="Color.Error"
+                                                 Size="Size.Small" />
+                                    </MudTooltip>
+                                }
+                                else if (context.HasWarning)
+                                {
+                                    <MudTooltip Text="@context.WarningText">
+                                        <MudIcon Icon="@Icons.Material.Filled.Warning"
+                                                 Color="Color.Warning"
+                                                 Size="Size.Small" />
+                                    </MudTooltip>
+                                }
+                                else
+                                {
+                                    <MudTooltip Text="@Localizer["CustomerAccountBalance.ReadyToImport"]">
+                                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle"
+                                                 Color="Color.Success"
+                                                 Size="Size.Small" />
+                                    </MudTooltip>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </div>
+
+                <MudDivider Class="my-4" />
+
+                <MudStack Row="true" Spacing="2" Class="flex-wrap">
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.Publish"
+                               Disabled="@(!CanCommitCustomerBalanceImport)"
+                               OnClick="CommitCustomerBalanceImportAsync">
+                        @(_importing ? Localizer["CustomerAccountBalance.Importing"] : Localizer["CustomerAccountBalance.ImportCommit"])
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Filled.RestartAlt"
+                               Disabled="@(_readingImport || _importing)"
+                               OnClick="ResetImport">
+                        @Localizer["CustomerAccountBalance.CancelPreview"]
+                    </MudButton>
+
+                    @if (_customerImportResult is not null)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Success" Dense="true">
+                            @string.Format(
+                                Localizer["CustomerAccountBalance.ImportSuccessResult"].Value,
+                                _customerImportResult.InsertedCount,
+                                _customerImportResult.UpdatedCount,
+                                _customerImportResult.DeletedCount,
+                                _customerImportResult.CustomerCount)
+                            @if (_customerImportResult.AccountBalanceSynced)
+                            {
+                                <span> @Localizer["CustomerAccountBalance.AccountBalanceSynced"]</span>
+                            }
+                        </MudAlert>
+                    }
+                </MudStack>
+            }
+        </MudPaper>
+    }
+
+    <MudGrid Spacing="2">
+        <MudItem xs="12" sm="6" lg="3">
+            <MudPaper Class="pa-3 summary-card" Outlined="true">
+                <MudText Typo="Typo.caption">@Localizer["CustomerAccountBalance.CustomerCount"]</MudText>
+                <MudText Typo="Typo.h6">@_summary.CustomerCount.ToString("N0")</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    @string.Format(Localizer["CustomerAccountBalance.BalanceRowsCount"].Value, _summary.RowCount.ToString("N0"))
+                </MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" lg="3">
+            <MudPaper Class="pa-3 summary-card" Outlined="true">
+                <MudText Typo="Typo.caption">@Localizer["CustomerAccountBalance.Opening"]</MudText>
+                <MudText Typo="Typo.body1">@string.Format(Localizer["CustomerAccountBalance.DebitColon"].Value, FormatMoney(_summary.OpeningDebit))</MudText>
+                <MudText Typo="Typo.body1">@string.Format(Localizer["CustomerAccountBalance.CreditColon"].Value, FormatMoney(_summary.OpeningCredit))</MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" lg="3">
+            <MudPaper Class="pa-3 summary-card" Outlined="true">
+                <MudText Typo="Typo.caption">@Localizer["CustomerAccountBalance.Period"]</MudText>
+                <MudText Typo="Typo.body1">@string.Format(Localizer["CustomerAccountBalance.DebitColon"].Value, FormatMoney(_summary.DebitTotal))</MudText>
+                <MudText Typo="Typo.body1">@string.Format(Localizer["CustomerAccountBalance.CreditColon"].Value, FormatMoney(_summary.CreditTotal))</MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" lg="3">
+            <MudPaper Class="pa-3 summary-card" Outlined="true">
+                <MudText Typo="Typo.caption">@Localizer["CustomerAccountBalance.Closing"]</MudText>
+                <MudText Typo="Typo.body1">@string.Format(Localizer["CustomerAccountBalance.DebitColon"].Value, FormatMoney(_summary.ClosingDebit))</MudText>
+                <MudText Typo="Typo.body1">@string.Format(Localizer["CustomerAccountBalance.CreditColon"].Value, FormatMoney(_summary.ClosingCredit))</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudExpansionPanels>
+        <MudExpansionPanel Text="@Localizer["CustomerAccountBalance.EditorTitle"]"
+                           @bind-Expanded="_editorExpanded">
+            <MudForm @ref="_editForm">
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" md="4">
+                        <MudSelect T="Guid?"
+                                   Label="@Localizer["CustomerAccountBalance.Customer"]"
+                                   @bind-Value="_editCustomerId"
+                                   Required="true"
+                                   RequiredError="@Localizer["CustomerAccountBalance.CustomerRequired"]"
+                                   Disabled="@_saving">
+                            @foreach (var customer in _customers)
+                            {
+                                <MudSelectItem T="Guid?" Value="@((Guid?)customer.Customer_ID)">
+                                    @CustomerLabel(customer)
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudTextField T="string"
+                                      Label="@Localizer["CustomerAccountBalance.Account"]"
+                                      @bind-Value="_editAccountCode"
+                                      Required="true"
+                                      RequiredError="@Localizer["CustomerAccountBalance.AccountRequired"]"
+                                      MaxLength="20"
+                                      Disabled="@_saving" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="int"
+                                         Label="@Localizer["CustomerAccountBalance.Year"]"
+                                         @bind-Value="_editYear"
+                                         Min="2000"
+                                         Max="2200"
+                                         Required="true"
+                                         HideSpinButtons="true"
+                                         Disabled="@_saving" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudSelect T="int"
+                                   Label="@Localizer["CustomerAccountBalance.Month"]"
+                                   @bind-Value="_editMonth"
+                                   Required="true"
+                                   Disabled="@_saving">
+                            @for (var month = 1; month <= 12; month++)
+                            {
+                                <MudSelectItem T="int" Value="@month">@string.Format(Localizer["CustomerAccountBalance.MonthItem"].Value, month)</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudTextField T="string"
+                                      Label="@Localizer["CustomerAccountBalance.BookCode"]"
+                                      @bind-Value="_editBookCode"
+                                      MaxLength="50"
+                                      Placeholder="@Localizer["CustomerAccountBalance.ImportBookCodePlaceholder"]"
+                                      Disabled="@_saving" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="decimal"
+                                         Label="@Localizer["CustomerAccountBalance.OpeningDebit"]"
+                                         @bind-Value="_editOpeningDebit"
+                                         Min="0"
+                                         Immediate="true"
+                                         HideSpinButtons="true"
+                                         Format="N2"
+                                         Disabled="@_saving" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="decimal"
+                                         Label="@Localizer["CustomerAccountBalance.OpeningCredit"]"
+                                         @bind-Value="_editOpeningCredit"
+                                         Min="0"
+                                         Immediate="true"
+                                         HideSpinButtons="true"
+                                         Format="N2"
+                                         Disabled="@_saving" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="decimal"
+                                         Label="@Localizer["CustomerAccountBalance.PeriodDebit"]"
+                                         @bind-Value="_editDebitTotal"
+                                         Min="0"
+                                         Immediate="true"
+                                         HideSpinButtons="true"
+                                         Format="N2"
+                                         Disabled="@_saving" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="decimal"
+                                         Label="@Localizer["CustomerAccountBalance.PeriodCredit"]"
+                                         @bind-Value="_editCreditTotal"
+                                         Min="0"
+                                         Immediate="true"
+                                         HideSpinButtons="true"
+                                         Format="N2"
+                                         Disabled="@_saving" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="decimal"
+                                         Label="@Localizer["CustomerAccountBalance.ClosingDebit"]"
+                                         Value="@CalculatedClosingDebit"
+                                         ReadOnly="true"
+                                         HideSpinButtons="true"
+                                         Format="N2" />
+                    </MudItem>
+
+                    <MudItem xs="12" md="2">
+                        <MudNumericField T="decimal"
+                                         Label="@Localizer["CustomerAccountBalance.ClosingCredit"]"
+                                         Value="@CalculatedClosingCredit"
+                                         ReadOnly="true"
+                                         HideSpinButtons="true"
+                                         Format="N2" />
+                    </MudItem>
+
+                    <MudItem xs="12">
+                        @if (!string.IsNullOrWhiteSpace(EditorWarning))
+                        {
+                            <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-3">
+                                @EditorWarning
+                            </MudAlert>
+                        }
+
+                        <MudStack Row="true" Spacing="2" Class="flex-wrap">
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Success"
+                                       StartIcon="@Icons.Material.Filled.Save"
+                                       Disabled="@(!_companyResolved || _saving)"
+                                       OnClick="SaveBalanceAsync">
+                                @(_saving
+                                    ? Localizer["CustomerAccountBalance.Saving"]
+                                    : _editId.HasValue
+                                        ? Localizer["CustomerAccountBalance.Update"]
+                                        : Localizer["CustomerAccountBalance.AddNew"])
+                            </MudButton>
+
+                            <MudButton Variant="Variant.Outlined"
+                                       StartIcon="@Icons.Material.Filled.RestartAlt"
+                                       Disabled="@_saving"
+                                       OnClick="ResetEditor">
+                                @Localizer["CustomerAccountBalance.CancelEdit"]
+                            </MudButton>
+                        </MudStack>
+                    </MudItem>
+                </MudGrid>
+            </MudForm>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudTable T="CustomerBalanceRow"
+                  @ref="_table"
+                  ServerData="LoadServerDataAsync"
+                  Loading="@_loading"
+                  Dense="true"
+                  Hover="true"
+                  Bordered="true"
+                  Striped="true"
+                  Breakpoint="Breakpoint.None"
+                  RowsPerPage="25">
+            <ToolBarContent>
+                <MudText Typo="Typo.h6">@Localizer["CustomerAccountBalance.DetailTitle"]</MudText>
+                <MudSpacer />
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    @string.Format(Localizer["CustomerAccountBalance.TotalRows"].Value, _summary.RowCount.ToString("N0"))
+                </MudText>
+            </ToolBarContent>
+
+            <HeaderContent>
+                <MudTh><MudTableSortLabel T="CustomerBalanceRow" SortLabel="customer">@Localizer["CustomerAccountBalance.ColCustomerCode"]</MudTableSortLabel></MudTh>
+                <MudTh>@Localizer["CustomerAccountBalance.ColCustomerName"]</MudTh>
+                <MudTh><MudTableSortLabel T="CustomerBalanceRow" SortLabel="account">@Localizer["CustomerAccountBalance.Account"]</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel T="CustomerBalanceRow" SortLabel="period">@Localizer["CustomerAccountBalance.ColPeriod"]</MudTableSortLabel></MudTh>
+                <MudTh>@Localizer["CustomerAccountBalance.BookCode"]</MudTh>
+                <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColOpeningDebit"]</MudTh>
+                <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColOpeningCredit"]</MudTh>
+                <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColPeriodDebit"]</MudTh>
+                <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColPeriodCredit"]</MudTh>
+                <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColClosingDebit"]</MudTh>
+                <MudTh Align="Right">@Localizer["CustomerAccountBalance.ColClosingCredit"]</MudTh>
+                <MudTh><MudTableSortLabel T="CustomerBalanceRow" SortLabel="updated">@Localizer["CustomerAccountBalance.ColUpdated"]</MudTableSortLabel></MudTh>
+                <MudTh>@Localizer["CustomerAccountBalance.ColActions"]</MudTh>
+            </HeaderContent>
+
+            <RowTemplate>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColCustomerCode"]">@context.CustomerCode</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColCustomerName"]">@context.CustomerName</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.Account"]">@context.AccountCode</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColPeriod"]">@context.PeriodMonth.ToString("00")/@context.PeriodYear</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.BookCode"]">@DisplayBookCode(context.BookCode)</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColOpeningDebit"]" Align="Right">@FormatMoney(context.OpeningDebit)</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColOpeningCredit"]" Align="Right">@FormatMoney(context.OpeningCredit)</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColPeriodDebit"]" Align="Right">@FormatMoney(context.DebitTotal)</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColPeriodCredit"]" Align="Right">@FormatMoney(context.CreditTotal)</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColClosingDebit"]" Align="Right">@FormatMoney(context.ClosingDebit)</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColClosingCredit"]" Align="Right">@FormatMoney(context.ClosingCredit)</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColUpdated"]">@context.UpdatedAt.ToString("dd/MM/yyyy HH:mm")</MudTd>
+                <MudTd DataLabel="@Localizer["CustomerAccountBalance.ColActions"]">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                                   Color="Color.Primary"
+                                   Size="Size.Small"
+                                   Disabled="@_saving"
+                                   OnClick="@(() => EditRow(context))" />
+
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Color="Color.Error"
+                                   Size="Size.Small"
+                                   Disabled="@_saving"
+                                   OnClick="@(() => DeleteRowAsync(context))" />
+                </MudTd>
+            </RowTemplate>
+
+            <NoRecordsContent>
+                <MudText Class="pa-4">@Localizer["CustomerAccountBalance.NoRecords"]</MudText>
+            </NoRecordsContent>
+
+            <LoadingContent>
+                <MudText Class="pa-4">@Localizer["CustomerAccountBalance.Loading"]</MudText>
+            </LoadingContent>
+
+            <PagerContent>
+                <MudTablePager PageSizeOptions="@(new int[] { 10, 25, 50, 100 })" />
+            </PagerContent>
+        </MudTable>
+    </MudPaper>
+</MudStack>
+
+<style>
+    .summary-card {
+        min-height: 108px;
+        background: var(--mud-palette-background-grey);
+    }
+
+    .upload-box {
+        border-style: dashed;
+        background: var(--mud-palette-background-grey);
+    }
+
+    .import-summary-card {
+        min-height: 82px;
+        background: var(--mud-palette-background-grey);
+    }
+
+    .import-preview-scroll {
+        width: 100%;
+        overflow-x: auto;
+    }
+
+    .import-preview-scroll table {
+        min-width: 1600px;
+    }
+
+    .import-row-error td {
+        background-color: rgba(244, 67, 54, 0.10) !important;
+    }
+
+    .import-row-warning td {
+        background-color: rgba(255, 152, 0, 0.10) !important;
+    }
+
+    .flex-wrap {
+        flex-wrap: wrap;
+    }
+
+    .h-100 {
+        height: 100%;
+    }
+
+    .mud-table-container {
+        overflow-x: auto;
+    }
+
+    .mud-table-container table {
+        min-width: 1650px;
+    }
+</style>
+
+@code {
+    private const long MaxUploadSize = 20 * 1024 * 1024;
+
+    private MudTable<CustomerBalanceRow>? _table;
+    private MudForm? _editForm;
+
+    private AccountBalanceExcelPreview? _importPreview;
+    private ExistingBalanceImportMode _importExistingMode = ExistingBalanceImportMode.RejectExisting;
+    private CustomerBalanceImportResult? _customerImportResult;
+    private readonly Dictionary<int, CustomerImportMatch> _importCustomerMatches = new();
+
+    private bool _importExpanded;
+    private bool _readingImport;
+    private bool _importing;
+    private bool _showOnlyImportProblems;
+    private bool _syncAccountBalanceAfterImport = true;
+    private string? _importFileName;
+    private string? _importBookCode;
+
+    private readonly List<M_Customer> _companies = new();
+    private readonly List<M_Customer> _customers = new();
+
+    private Guid _companyId;
+    private bool _companyResolved;
+    private string _companySourceHint = string.Empty;
+
+    private bool _loading;
+    private bool _saving;
+    private bool _editorExpanded;
+
+    private int _filterYear = DateTime.Today.Year;
+    private int? _filterMonth = DateTime.Today.Month;
+    private string? _filterAccountCode;
+    private string? _filterBookCode;
+    private Guid? _filterCustomerId;
+
+    private CustomerBalanceSummary _summary = new();
+
+    private Guid? _editId;
+    private Guid? _editCustomerId;
+    private string _editAccountCode = "131";
+    private int _editYear = DateTime.Today.Year;
+    private int _editMonth = DateTime.Today.Month;
+    private string? _editBookCode;
+    private decimal _editOpeningDebit;
+    private decimal _editOpeningCredit;
+    private decimal _editDebitTotal;
+    private decimal _editCreditTotal;
+
+    private decimal CalculatedClosingNet =>
+        _editOpeningDebit - _editOpeningCredit +
+        _editDebitTotal - _editCreditTotal;
+
+    private decimal CalculatedClosingDebit =>
+        CalculatedClosingNet > 0 ? CalculatedClosingNet : 0;
+
+    private decimal CalculatedClosingCredit =>
+        CalculatedClosingNet < 0 ? Math.Abs(CalculatedClosingNet) : 0;
+
+    private string? EditorWarning
+    {
+        get
+        {
+            if (_editOpeningDebit > 0 && _editOpeningCredit > 0)
+                return Localizer["CustomerAccountBalance.EditorOpeningBothSides"];
+
+            return null;
+        }
+    }
+
+    private IEnumerable<AccountBalanceExcelLine> VisibleImportLines =>
+        _importPreview is null
+            ? Enumerable.Empty<AccountBalanceExcelLine>()
+            : _showOnlyImportProblems
+                ? _importPreview.Lines.Where(line =>
+                    line.HasError ||
+                    line.HasWarning ||
+                    HasImportCustomerProblem(line))
+                : _importPreview.Lines;
+
+    private int MatchedImportCustomerCount =>
+        _importCustomerMatches.Values.Count(x => x.CustomerId.HasValue);
+
+    private int UnmatchedImportCustomerCount =>
+        _importCustomerMatches.Values.Count(x => !x.CustomerId.HasValue);
+
+    private int ImportWriteRowCount =>
+        BuildCustomerBalanceImportRows().Count;
+
+    private bool CanCommitCustomerBalanceImport =>
+        !_readingImport &&
+        !_importing &&
+        _companyResolved &&
+        _importPreview is { CanImport: true } &&
+        _importPreview.FiscalYear is >= 2000 and <= 2200 &&
+        _importPreview.PeriodNo is >= 1 and <= 12 &&
+        !string.IsNullOrWhiteSpace(_importPreview.AccountCode) &&
+        UnmatchedImportCustomerCount == 0 &&
+        ImportWriteRowCount > 0;
+
+    private bool CanSyncAccountBalance =>
+        _companyResolved &&
+        _filterMonth.HasValue &&
+        !string.IsNullOrWhiteSpace(_filterAccountCode);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCustomersAndResolveCompanyAsync();
+    }
+
+    private async Task LoadCustomersAndResolveCompanyAsync()
+    {
+        var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var user = state.User;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var rows = await db.Customer
+            .AsNoTracking()
+            .Where(x => x.Customer_ID != Guid.Empty)
+            .OrderBy(x => x.COMPANY)
+            .ThenBy(x => x.BIZName)
+            .ThenBy(x => x.Customer_Code)
+            .ToListAsync();
+
+        _companies.Clear();
+        _companies.AddRange(rows);
+
+        _customers.Clear();
+        _customers.AddRange(rows);
+
+        var claimCompanyId = TryGetCompanyIdFromClaims(user);
+        if (claimCompanyId.HasValue)
+        {
+            _companyId = claimCompanyId.Value;
+            _companyResolved = true;
+            _companySourceHint = string.Format(
+                Localizer["CustomerAccountBalance.CompanyHintClaimValue"].Value,
+                _companyId);
+            return;
+        }
+
+        if (_companies.Count > 0)
+        {
+            _companyId = _companies[0].Customer_ID;
+            _companyResolved = true;
+            _companySourceHint = string.Format(
+                Localizer["CustomerAccountBalance.CompanyHintDefault"].Value,
+                CompanyLabel(_companies[0]));
+            return;
+        }
+
+        _companyId = Guid.Empty;
+        _companyResolved = false;
+        _companySourceHint = Localizer["CustomerAccountBalance.CompanyHintNone"];
+    }
+
+    private static Guid? TryGetCompanyIdFromClaims(System.Security.Claims.ClaimsPrincipal user)
+    {
+        var claimNames = new[]
+        {
+            "CompanyId",
+            "company_id",
+            "TenantCompanyId",
+            "tenant_company_id"
+        };
+
+        foreach (var claimName in claimNames)
+        {
+            var value = user.FindFirst(claimName)?.Value;
+            if (Guid.TryParse(value, out var companyId) && companyId != Guid.Empty)
+                return companyId;
+        }
+
+        return null;
+    }
+
+    private async Task OnCompanyChangedAsync(Guid companyId)
+    {
+        _companyId = companyId;
+        _companyResolved = companyId != Guid.Empty;
+
+        var selected = _companies.FirstOrDefault(x => x.Customer_ID == companyId);
+        _companySourceHint = selected is null
+            ? Localizer["CustomerAccountBalance.CompanyHintManual"]
+            : string.Format(Localizer["CustomerAccountBalance.CompanyHintSelected"].Value, CompanyLabel(selected));
+
+        ResetEditor();
+
+        if (_importPreview is not null)
+            await ResolveImportCustomersByTaxCodeAsync();
+
+        await ReloadAsync();
+    }
+
+    private async Task<TableData<CustomerBalanceRow>> LoadServerDataAsync(TableState state)
+    {
+        var cancellationToken = CancellationToken.None;
+
+        if (!_companyResolved)
+        {
+            return new TableData<CustomerBalanceRow>
+            {
+                Items = Array.Empty<CustomerBalanceRow>(),
+                TotalItems = 0
+            };
+        }
+
+        _loading = true;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync(cancellationToken);
+            var connection = db.Database.GetDbConnection();
+            var mustClose = connection.State != ConnectionState.Open;
+
+            if (mustClose)
+                await connection.OpenAsync(cancellationToken);
+
+            try
+            {
+                var where = BuildWhereSql();
+                var orderBy = BuildOrderBy(state);
+                var offset = Math.Max(0, state.Page) * Math.Max(1, state.PageSize);
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = $@"
+SELECT
+    cab.id,
+    cab.company_id,
+    cab.customer_id,
+    cab.account_code,
+    cab.period_year,
+    cab.period_month,
+    cab.book_code,
+    cab.opening_debit,
+    cab.opening_credit,
+    cab.debit_total,
+    cab.credit_total,
+    cab.closing_debit,
+    cab.closing_credit,
+    cab.created_at,
+    cab.updated_at,
+    COALESCE(NULLIF(LTRIM(RTRIM(c.Customer_Code)), ''),
+             NULLIF(LTRIM(RTRIM(c.MaDT)), ''),
+             CONVERT(NVARCHAR(36), cab.customer_id)) AS customer_code,
+    COALESCE(NULLIF(LTRIM(RTRIM(c.COMPANY)), ''),
+             NULLIF(LTRIM(RTRIM(c.BIZName)), ''),
+             @NoCustomerName) AS customer_name,
+    COUNT_BIG(1) OVER() AS total_rows
+FROM dbo.customer_account_balance cab
+LEFT JOIN dbo.Customer c
+    ON c.Customer_ID = cab.customer_id
+{where}
+ORDER BY {orderBy}
+OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+
+                AddFilterParameters(command);
+                AddParameter(command, "@Offset", offset, DbType.Int32);
+                AddParameter(command, "@PageSize", Math.Max(1, state.PageSize), DbType.Int32);
+                AddParameter(command, "@NoCustomerName", Localizer["CustomerAccountBalance.NoCustomerName"].Value, DbType.String);
+
+                var result = new List<CustomerBalanceRow>();
+                var totalRows = 0;
+
+                await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+                {
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        if (totalRows == 0 && !reader.IsDBNull(17))
+                            totalRows = Convert.ToInt32(reader.GetInt64(17));
+
+                        result.Add(new CustomerBalanceRow
+                        {
+                            Id = reader.GetGuid(0),
+                            CompanyId = reader.GetGuid(1),
+                            CustomerId = reader.GetGuid(2),
+                            AccountCode = reader.GetString(3),
+                            PeriodYear = reader.GetInt32(4),
+                            PeriodMonth = reader.GetInt32(5),
+                            BookCode = reader.IsDBNull(6) ? null : reader.GetString(6),
+                            OpeningDebit = reader.GetDecimal(7),
+                            OpeningCredit = reader.GetDecimal(8),
+                            DebitTotal = reader.GetDecimal(9),
+                            CreditTotal = reader.GetDecimal(10),
+                            ClosingDebit = reader.GetDecimal(11),
+                            ClosingCredit = reader.GetDecimal(12),
+                            CreatedAt = reader.GetDateTime(13),
+                            UpdatedAt = reader.GetDateTime(14),
+                            CustomerCode = reader.GetString(15),
+                            CustomerName = reader.GetString(16)
+                        });
+                    }
+                }
+
+                await LoadSummaryAsync(connection, cancellationToken);
+
+                return new TableData<CustomerBalanceRow>
+                {
+                    Items = result,
+                    TotalItems = totalRows
+                };
+            }
+            finally
+            {
+                if (mustClose)
+                    await connection.CloseAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(
+                string.Format(Localizer["CustomerAccountBalance.LoadFailed"].Value, ex.Message),
+                MudBlazor.Severity.Error);
+
+            return new TableData<CustomerBalanceRow>
+            {
+                Items = Array.Empty<CustomerBalanceRow>(),
+                TotalItems = 0
+            };
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadSummaryAsync(DbConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $@"
+SELECT
+    COUNT_BIG(1) AS row_count,
+    COUNT_BIG(DISTINCT customer_id) AS customer_count,
+    COALESCE(SUM(opening_debit), 0) AS opening_debit,
+    COALESCE(SUM(opening_credit), 0) AS opening_credit,
+    COALESCE(SUM(debit_total), 0) AS debit_total,
+    COALESCE(SUM(credit_total), 0) AS credit_total,
+    COALESCE(SUM(closing_debit), 0) AS closing_debit,
+    COALESCE(SUM(closing_credit), 0) AS closing_credit
+FROM dbo.customer_account_balance
+{BuildWhereSql(alias: null)};";
+
+        AddFilterParameters(command, alias: null);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            _summary = new CustomerBalanceSummary();
+            return;
+        }
+
+        _summary = new CustomerBalanceSummary
+        {
+            RowCount = Convert.ToInt32(reader.GetInt64(0)),
+            CustomerCount = Convert.ToInt32(reader.GetInt64(1)),
+            OpeningDebit = reader.GetDecimal(2),
+            OpeningCredit = reader.GetDecimal(3),
+            DebitTotal = reader.GetDecimal(4),
+            CreditTotal = reader.GetDecimal(5),
+            ClosingDebit = reader.GetDecimal(6),
+            ClosingCredit = reader.GetDecimal(7)
+        };
+    }
+
+    private string BuildWhereSql(string? alias = "cab")
+    {
+        var prefix = string.IsNullOrWhiteSpace(alias) ? string.Empty : alias + ".";
+        var conditions = new List<string>
+        {
+            $"{prefix}company_id = @CompanyId",
+            $"{prefix}period_year = @PeriodYear"
+        };
+
+        if (_filterMonth.HasValue)
+            conditions.Add($"{prefix}period_month = @PeriodMonth");
+
+        if (!string.IsNullOrWhiteSpace(_filterAccountCode))
+            conditions.Add($"{prefix}account_code = @AccountCode");
+
+        if (_filterCustomerId.HasValue)
+            conditions.Add($"{prefix}customer_id = @CustomerId");
+
+        if (!string.IsNullOrWhiteSpace(_filterBookCode))
+            conditions.Add($"{prefix}book_code = @BookCode");
+
+        return "WHERE " + string.Join("\n  AND ", conditions);
+    }
+
+    private void AddFilterParameters(DbCommand command, string? alias = "cab")
+    {
+        AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+        AddParameter(command, "@PeriodYear", _filterYear, DbType.Int32);
+
+        if (_filterMonth.HasValue)
+            AddParameter(command, "@PeriodMonth", _filterMonth.Value, DbType.Int32);
+
+        if (!string.IsNullOrWhiteSpace(_filterAccountCode))
+            AddParameter(command, "@AccountCode", _filterAccountCode.Trim(), DbType.String);
+
+        if (_filterCustomerId.HasValue)
+            AddParameter(command, "@CustomerId", _filterCustomerId.Value, DbType.Guid);
+
+        if (!string.IsNullOrWhiteSpace(_filterBookCode))
+            AddParameter(command, "@BookCode", _filterBookCode.Trim(), DbType.String);
+    }
+
+    private static string BuildOrderBy(TableState state)
+    {
+        var column = state.SortLabel switch
+        {
+            "customer" => "customer_code",
+            "account" => "cab.account_code",
+            "period" => "cab.period_year, cab.period_month",
+            "updated" => "cab.updated_at",
+            _ => "cab.account_code, cab.period_year, cab.period_month, customer_code"
+        };
+
+        var direction = state.SortDirection == SortDirection.Descending ? "DESC" : "ASC";
+        return $"{column} {direction}";
+    }
+
+    private async Task SaveBalanceAsync()
+    {
+        if (!_companyResolved || _saving)
+            return;
+
+        await _editForm!.Validate();
+        if (!_editForm.IsValid)
+            return;
+
+        if (!_editCustomerId.HasValue)
+        {
+            Snackbar.Add(Localizer["CustomerAccountBalance.SaveCustomerRequired"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_editOpeningDebit > 0 && _editOpeningCredit > 0)
+        {
+            Snackbar.Add(Localizer["CustomerAccountBalance.SaveOpeningBothSides"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var connection = db.Database.GetDbConnection();
+            var mustClose = connection.State != ConnectionState.Open;
+
+            if (mustClose)
+                await connection.OpenAsync();
+
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            try
+            {
+                await using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+
+                if (_editId.HasValue)
+                {
+                    command.CommandText = @"
+UPDATE dbo.customer_account_balance
+SET customer_id = @CustomerId,
+    account_code = @AccountCode,
+    period_year = @PeriodYear,
+    period_month = @PeriodMonth,
+    book_code = @BookCode,
+    opening_debit = @OpeningDebit,
+    opening_credit = @OpeningCredit,
+    debit_total = @DebitTotal,
+    credit_total = @CreditTotal,
+    closing_debit = @ClosingDebit,
+    closing_credit = @ClosingCredit,
+    updated_at = SYSUTCDATETIME()
+WHERE id = @Id
+  AND company_id = @CompanyId;";
+
+                    AddParameter(command, "@Id", _editId.Value, DbType.Guid);
+                }
+                else
+                {
+                    command.CommandText = @"
+INSERT INTO dbo.customer_account_balance
+(
+    id,
+    company_id,
+    customer_id,
+    account_code,
+    period_year,
+    period_month,
+    book_code,
+    opening_debit,
+    opening_credit,
+    debit_total,
+    credit_total,
+    closing_debit,
+    closing_credit,
+    created_at,
+    updated_at
+)
+VALUES
+(
+    NEWID(),
+    @CompanyId,
+    @CustomerId,
+    @AccountCode,
+    @PeriodYear,
+    @PeriodMonth,
+    @BookCode,
+    @OpeningDebit,
+    @OpeningCredit,
+    @DebitTotal,
+    @CreditTotal,
+    @ClosingDebit,
+    @ClosingCredit,
+    SYSUTCDATETIME(),
+    SYSUTCDATETIME()
+);";
+                }
+
+                AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+                AddParameter(command, "@CustomerId", _editCustomerId.Value, DbType.Guid);
+                AddParameter(command, "@AccountCode", _editAccountCode.Trim(), DbType.String);
+                AddParameter(command, "@PeriodYear", _editYear, DbType.Int32);
+                AddParameter(command, "@PeriodMonth", _editMonth, DbType.Int32);
+                AddNullableString(command, "@BookCode", _editBookCode);
+                AddParameter(command, "@OpeningDebit", _editOpeningDebit, DbType.Decimal);
+                AddParameter(command, "@OpeningCredit", _editOpeningCredit, DbType.Decimal);
+                AddParameter(command, "@DebitTotal", _editDebitTotal, DbType.Decimal);
+                AddParameter(command, "@CreditTotal", _editCreditTotal, DbType.Decimal);
+                AddParameter(command, "@ClosingDebit", CalculatedClosingDebit, DbType.Decimal);
+                AddParameter(command, "@ClosingCredit", CalculatedClosingCredit, DbType.Decimal);
+
+                var affected = await command.ExecuteNonQueryAsync();
+                if (_editId.HasValue && affected == 0)
+                    throw new InvalidOperationException(Localizer["CustomerAccountBalance.SaveNotFound"]);
+
+                await transaction.CommitAsync();
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+            finally
+            {
+                if (mustClose)
+                    await connection.CloseAsync();
+            }
+
+            Snackbar.Add(
+                _editId.HasValue
+                    ? Localizer["CustomerAccountBalance.SaveUpdated"]
+                    : Localizer["CustomerAccountBalance.SaveAdded"],
+                MudBlazor.Severity.Success);
+
+            ResetEditor();
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            var message = ex.Message.Contains("UX_customer_account_balance_business_key", StringComparison.OrdinalIgnoreCase) ||
+                          ex.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase)
+                ? Localizer["CustomerAccountBalance.SaveDuplicate"].Value
+                : ex.Message;
+
+            Snackbar.Add(message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void EditRow(CustomerBalanceRow row)
+    {
+        _editId = row.Id;
+        _editCustomerId = row.CustomerId;
+        _editAccountCode = row.AccountCode;
+        _editYear = row.PeriodYear;
+        _editMonth = row.PeriodMonth;
+        _editBookCode = row.BookCode;
+        _editOpeningDebit = row.OpeningDebit;
+        _editOpeningCredit = row.OpeningCredit;
+        _editDebitTotal = row.DebitTotal;
+        _editCreditTotal = row.CreditTotal;
+        _editorExpanded = true;
+    }
+
+    private async Task DeleteRowAsync(CustomerBalanceRow row)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            Localizer["CustomerAccountBalance.DeleteTitle"],
+            string.Format(
+                Localizer["CustomerAccountBalance.DeleteConfirm"].Value,
+                row.CustomerCode,
+                row.CustomerName,
+                row.AccountCode,
+                row.PeriodMonth.ToString("00"),
+                row.PeriodYear),
+            yesText: Localizer["CustomerAccountBalance.Delete"],
+            cancelText: Localizer["CustomerAccountBalance.Cancel"]);
+
+        if (confirmed != true)
+            return;
+
+        _saving = true;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var connection = db.Database.GetDbConnection();
+            var mustClose = connection.State != ConnectionState.Open;
+
+            if (mustClose)
+                await connection.OpenAsync();
+
+            try
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = @"
+DELETE FROM dbo.customer_account_balance
+WHERE id = @Id
+  AND company_id = @CompanyId;";
+
+                AddParameter(command, "@Id", row.Id, DbType.Guid);
+                AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+
+                var affected = await command.ExecuteNonQueryAsync();
+                if (affected == 0)
+                    throw new InvalidOperationException(Localizer["CustomerAccountBalance.DeleteNotFound"]);
+            }
+            finally
+            {
+                if (mustClose)
+                    await connection.CloseAsync();
+            }
+
+            Snackbar.Add(Localizer["CustomerAccountBalance.Deleted"], MudBlazor.Severity.Success);
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task SyncAccountBalanceAsync()
+    {
+        if (!CanSyncAccountBalance || !_filterMonth.HasValue)
+            return;
+
+        var accountCode = _filterAccountCode!.Trim();
+        var bookCode = NormalizeNullable(_filterBookCode);
+
+        var confirmed = await DialogService.ShowMessageBox(
+            Localizer["CustomerAccountBalance.SyncTitle"],
+            string.Format(
+                Localizer["CustomerAccountBalance.SyncConfirm"].Value,
+                accountCode,
+                _filterMonth.Value.ToString("00"),
+                _filterYear,
+                DisplayBookCode(bookCode)),
+            yesText: Localizer["CustomerAccountBalance.Update"],
+            cancelText: Localizer["CustomerAccountBalance.Cancel"]);
+
+        if (confirmed != true)
+            return;
+
+        _saving = true;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var connection = db.Database.GetDbConnection();
+            var mustClose = connection.State != ConnectionState.Open;
+
+            if (mustClose)
+                await connection.OpenAsync();
+
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            try
+            {
+                var totals = await ReadSyncTotalsAsync(
+                    connection,
+                    transaction,
+                    accountCode,
+                    _filterYear,
+                    _filterMonth.Value,
+                    bookCode);
+
+                if (totals.RowCount == 0)
+                    throw new InvalidOperationException(Localizer["CustomerAccountBalance.SyncNoData"]);
+
+                var existingIds = await ReadAccountBalanceIdsAsync(
+                    connection,
+                    transaction,
+                    accountCode,
+                    _filterYear,
+                    _filterMonth.Value,
+                    bookCode);
+
+                if (existingIds.Count > 1)
+                {
+                    throw new InvalidOperationException(
+                        Localizer["CustomerAccountBalance.SyncDuplicateAccountBalance"]);
+                }
+
+                if (existingIds.Count == 1)
+                {
+                    await UpdateAccountBalanceAsync(
+                        connection,
+                        transaction,
+                        existingIds[0],
+                        totals,
+                        accountCode,
+                        _filterYear,
+                        _filterMonth.Value,
+                        bookCode);
+                }
+                else
+                {
+                    await InsertAccountBalanceAsync(
+                        connection,
+                        transaction,
+                        totals,
+                        accountCode,
+                        _filterYear,
+                        _filterMonth.Value,
+                        bookCode);
+                }
+
+                await transaction.CommitAsync();
+
+                Snackbar.Add(
+                    string.Format(
+                        Localizer["CustomerAccountBalance.SyncSuccess"].Value,
+                        totals.RowCount.ToString("N0"),
+                        totals.CustomerCount.ToString("N0")),
+                    MudBlazor.Severity.Success);
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+            finally
+            {
+                if (mustClose)
+                    await connection.CloseAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task<SyncTotals> ReadSyncTotalsAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT
+    COUNT_BIG(1),
+    COUNT_BIG(DISTINCT customer_id),
+    COALESCE(SUM(opening_debit), 0),
+    COALESCE(SUM(opening_credit), 0),
+    COALESCE(SUM(debit_total), 0),
+    COALESCE(SUM(credit_total), 0),
+    COALESCE(SUM(closing_debit), 0),
+    COALESCE(SUM(closing_credit), 0)
+FROM dbo.customer_account_balance
+WHERE company_id = @CompanyId
+  AND account_code = @AccountCode
+  AND period_year = @PeriodYear
+  AND period_month = @PeriodMonth
+  AND ((book_code = @BookCode) OR (book_code IS NULL AND @BookCode IS NULL));";
+
+        AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+        AddParameter(command, "@AccountCode", accountCode, DbType.String);
+        AddParameter(command, "@PeriodYear", year, DbType.Int32);
+        AddParameter(command, "@PeriodMonth", month, DbType.Int32);
+        AddNullableString(command, "@BookCode", bookCode);
+
+        await using var reader = await command.ExecuteReaderAsync();
+        await reader.ReadAsync();
+
+        return new SyncTotals
+        {
+            RowCount = Convert.ToInt32(reader.GetInt64(0)),
+            CustomerCount = Convert.ToInt32(reader.GetInt64(1)),
+            OpeningDebit = reader.GetDecimal(2),
+            OpeningCredit = reader.GetDecimal(3),
+            DebitTotal = reader.GetDecimal(4),
+            CreditTotal = reader.GetDecimal(5),
+            ClosingDebit = reader.GetDecimal(6),
+            ClosingCredit = reader.GetDecimal(7)
+        };
+    }
+
+    private async Task<List<Guid>> ReadAccountBalanceIdsAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT id
+FROM dbo.account_balance WITH (UPDLOCK, HOLDLOCK)
+WHERE company_id = @CompanyId
+  AND account_code = @AccountCode
+  AND period_year = @PeriodYear
+  AND period_month = @PeriodMonth
+  AND ((book_code = @BookCode) OR (book_code IS NULL AND @BookCode IS NULL));";
+
+        AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+        AddParameter(command, "@AccountCode", accountCode, DbType.String);
+        AddParameter(command, "@PeriodYear", year, DbType.Int32);
+        AddParameter(command, "@PeriodMonth", month, DbType.Int32);
+        AddNullableString(command, "@BookCode", bookCode);
+
+        var ids = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            ids.Add(reader.GetGuid(0));
+
+        return ids;
+    }
+
+    private async Task UpdateAccountBalanceAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid id,
+        SyncTotals totals,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode)
+    {
+        var fromDate = new DateTime(year, month, 1);
+        var toDate = fromDate.AddMonths(1).AddSeconds(-1);
+        var openingNet = totals.OpeningDebit - totals.OpeningCredit;
+        var closingNet = totals.ClosingDebit - totals.ClosingCredit;
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+UPDATE dbo.account_balance
+SET opening_balance = @OpeningBalance,
+    debit_total = @DebitTotal,
+    credit_total = @CreditTotal,
+    closing_balance = @ClosingBalance,
+    account_type = @AccountType,
+    calculated_from = @CalculatedFrom,
+    calculated_to = @CalculatedTo,
+    last_calculated_at = SYSUTCDATETIME(),
+    updated_at = SYSUTCDATETIME(),
+    openingdebit = @OpeningDebit,
+    openingcredit = @OpeningCredit,
+    closingdebit = @ClosingDebit,
+    closingcredit = @ClosingCredit,
+    opening_debit = @OpeningDebit,
+    opening_credit = @OpeningCredit,
+    closing_debit = @ClosingDebit,
+    closing_credit = @ClosingCredit
+WHERE id = @Id;";
+
+        AddParameter(command, "@Id", id, DbType.Guid);
+        AddParameter(command, "@OpeningBalance", openingNet, DbType.Decimal);
+        AddParameter(command, "@DebitTotal", totals.DebitTotal, DbType.Decimal);
+        AddParameter(command, "@CreditTotal", totals.CreditTotal, DbType.Decimal);
+        AddParameter(command, "@ClosingBalance", closingNet, DbType.Decimal);
+        AddNullableString(command, "@AccountType", ResolveAccountType(totals));
+        AddParameter(command, "@CalculatedFrom", fromDate, DbType.DateTime2);
+        AddParameter(command, "@CalculatedTo", toDate, DbType.DateTime2);
+        AddParameter(command, "@OpeningDebit", totals.OpeningDebit, DbType.Decimal);
+        AddParameter(command, "@OpeningCredit", totals.OpeningCredit, DbType.Decimal);
+        AddParameter(command, "@ClosingDebit", totals.ClosingDebit, DbType.Decimal);
+        AddParameter(command, "@ClosingCredit", totals.ClosingCredit, DbType.Decimal);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task InsertAccountBalanceAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        SyncTotals totals,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode)
+    {
+        var fromDate = new DateTime(year, month, 1);
+        var toDate = fromDate.AddMonths(1).AddSeconds(-1);
+        var openingNet = totals.OpeningDebit - totals.OpeningCredit;
+        var closingNet = totals.ClosingDebit - totals.ClosingCredit;
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+INSERT INTO dbo.account_balance
+(
+    id,
+    account_code,
+    period_year,
+    period_month,
+    opening_balance,
+    debit_total,
+    credit_total,
+    closing_balance,
+    account_type,
+    company_id,
+    calculated_from,
+    calculated_to,
+    last_calculated_at,
+    created_at,
+    updated_at,
+    book_code,
+    openingdebit,
+    openingcredit,
+    closingdebit,
+    closingcredit,
+    opening_debit,
+    opening_credit,
+    closing_debit,
+    closing_credit
+)
+VALUES
+(
+    NEWID(),
+    @AccountCode,
+    @PeriodYear,
+    @PeriodMonth,
+    @OpeningBalance,
+    @DebitTotal,
+    @CreditTotal,
+    @ClosingBalance,
+    @AccountType,
+    @CompanyId,
+    @CalculatedFrom,
+    @CalculatedTo,
+    SYSUTCDATETIME(),
+    SYSUTCDATETIME(),
+    SYSUTCDATETIME(),
+    @BookCode,
+    @OpeningDebit,
+    @OpeningCredit,
+    @ClosingDebit,
+    @ClosingCredit,
+    @OpeningDebit,
+    @OpeningCredit,
+    @ClosingDebit,
+    @ClosingCredit
+);";
+
+        AddParameter(command, "@AccountCode", accountCode, DbType.String);
+        AddParameter(command, "@PeriodYear", year, DbType.Int32);
+        AddParameter(command, "@PeriodMonth", month, DbType.Int32);
+        AddParameter(command, "@OpeningBalance", openingNet, DbType.Decimal);
+        AddParameter(command, "@DebitTotal", totals.DebitTotal, DbType.Decimal);
+        AddParameter(command, "@CreditTotal", totals.CreditTotal, DbType.Decimal);
+        AddParameter(command, "@ClosingBalance", closingNet, DbType.Decimal);
+        AddNullableString(command, "@AccountType", ResolveAccountType(totals));
+        AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+        AddParameter(command, "@CalculatedFrom", fromDate, DbType.DateTime2);
+        AddParameter(command, "@CalculatedTo", toDate, DbType.DateTime2);
+        AddNullableString(command, "@BookCode", bookCode);
+        AddParameter(command, "@OpeningDebit", totals.OpeningDebit, DbType.Decimal);
+        AddParameter(command, "@OpeningCredit", totals.OpeningCredit, DbType.Decimal);
+        AddParameter(command, "@ClosingDebit", totals.ClosingDebit, DbType.Decimal);
+        AddParameter(command, "@ClosingCredit", totals.ClosingCredit, DbType.Decimal);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static string? ResolveAccountType(SyncTotals totals)
+    {
+        if (totals.ClosingDebit > totals.ClosingCredit)
+            return "DEBIT";
+
+        if (totals.ClosingCredit > totals.ClosingDebit)
+            return "CREDIT";
+
+        return null;
+    }
+
+    private async Task ApplyFilterAsync()
+    {
+        NormalizeFilters();
+        await ReloadAsync();
+    }
+
+    private async Task ClearFilterAsync()
+    {
+        _filterYear = DateTime.Today.Year;
+        _filterMonth = DateTime.Today.Month;
+        _filterAccountCode = null;
+        _filterBookCode = null;
+        _filterCustomerId = null;
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private void NormalizeFilters()
+    {
+        _filterAccountCode = NormalizeNullable(_filterAccountCode);
+        _filterBookCode = NormalizeNullable(_filterBookCode);
+    }
+
+    private void ResetEditor()
+    {
+        _editId = null;
+        _editCustomerId = null;
+        _editAccountCode = string.IsNullOrWhiteSpace(_filterAccountCode)
+            ? "131"
+            : _filterAccountCode.Trim();
+        _editYear = _filterYear;
+        _editMonth = _filterMonth ?? DateTime.Today.Month;
+        _editBookCode = NormalizeNullable(_filterBookCode);
+        _editOpeningDebit = 0;
+        _editOpeningCredit = 0;
+        _editDebitTotal = 0;
+        _editCreditTotal = 0;
+        _editorExpanded = false;
+        _editForm?.ResetValidation();
+    }
+
+    private void ToggleImportPanel()
+    {
+        if (_readingImport || _importing)
+            return;
+
+        _importExpanded = !_importExpanded;
+    }
+
+    private async Task HandleCustomerBalanceFileSelectedAsync(InputFileChangeEventArgs args)
+    {
+        _importPreview = null;
+        _customerImportResult = null;
+        _importCustomerMatches.Clear();
+        _importFileName = args.File.Name;
+        _readingImport = true;
+
+        try
+        {
+            await using var stream = args.File.OpenReadStream(MaxUploadSize);
+
+            _importPreview = await ImportService.ReadAndValidateAsync(
+                stream,
+                args.File.Name,
+                ExcelAccountingImportTarget.AccountBalance);
+
+            if (string.IsNullOrWhiteSpace(_importBookCode))
+                _importBookCode = NormalizeNullable(_filterBookCode);
+
+            await ResolveImportCustomersByTaxCodeAsync();
+
+            var severity =
+                _importPreview.CanImport && UnmatchedImportCustomerCount == 0
+                    ? MudBlazor.Severity.Success
+                    : MudBlazor.Severity.Warning;
+
+            Snackbar.Add(
+                string.Format(
+                    Localizer["CustomerAccountBalance.ImportReadSuccess"].Value,
+                    _importPreview.Lines.Count.ToString("N0"),
+                    MatchedImportCustomerCount.ToString("N0"),
+                    UnmatchedImportCustomerCount.ToString("N0"),
+                    _importPreview.ErrorCount.ToString("N0")),
+                severity);
+        }
+        catch (IOException ex)
+        {
+            Snackbar.Add(
+                string.Format(Localizer["CustomerAccountBalance.ImportReadFailed"].Value, ex.Message),
+                MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(GetRootExceptionMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _readingImport = false;
+        }
+    }
+
+    private async Task ResolveImportCustomersByTaxCodeAsync()
+    {
+        _importCustomerMatches.Clear();
+
+        if (_importPreview is null || _importPreview.Lines.Count == 0)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var customers = await db.Customer
+            .AsNoTracking()
+            .Where(x =>
+                x.Customer_ID != Guid.Empty &&
+                x.TaxCode != null &&
+                x.TaxCode != string.Empty)
+            .Select(x => new CustomerTaxLookupRow
+            {
+                CustomerId = x.Customer_ID,
+                TaxCode = x.TaxCode!,
+                CustomerName =
+                    x.COMPANY != null && x.COMPANY != string.Empty
+                        ? x.COMPANY
+                        : x.BIZName ?? string.Empty
+            })
+            .ToListAsync();
+
+        var lookupGroups = customers
+            .Where(x => !string.IsNullOrWhiteSpace(x.TaxCode))
+            .GroupBy(x => NormalizeTaxCode(x.TaxCode))
+            .Where(group => !string.IsNullOrWhiteSpace(group.Key))
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        foreach (var line in _importPreview.Lines)
+        {
+            var normalizedTaxCode = NormalizeTaxCode(line.CustomerCode);
+
+            if (string.IsNullOrWhiteSpace(normalizedTaxCode))
+            {
+                _importCustomerMatches[line.ExcelRowNo] = new CustomerImportMatch
+                {
+                    SourceTaxCode = line.CustomerCode,
+                    ErrorText = Localizer["CustomerAccountBalance.ImportEmptyTax"]
+                };
+                continue;
+            }
+
+            if (!lookupGroups.TryGetValue(normalizedTaxCode, out var matches) || matches.Count == 0)
+            {
+                _importCustomerMatches[line.ExcelRowNo] = new CustomerImportMatch
+                {
+                    SourceTaxCode = line.CustomerCode,
+                    ErrorText = string.Format(
+                        Localizer["CustomerAccountBalance.ImportTaxNotFound"].Value,
+                        line.CustomerCode)
+                };
+                continue;
+            }
+
+            if (matches.Count > 1)
+            {
+                _importCustomerMatches[line.ExcelRowNo] = new CustomerImportMatch
+                {
+                    SourceTaxCode = line.CustomerCode,
+                    ErrorText = string.Format(
+                        Localizer["CustomerAccountBalance.ImportTaxDuplicate"].Value,
+                        line.CustomerCode,
+                        matches.Count.ToString("N0"))
+                };
+                continue;
+            }
+
+            var customer = matches[0];
+            _importCustomerMatches[line.ExcelRowNo] = new CustomerImportMatch
+            {
+                SourceTaxCode = line.CustomerCode,
+                CustomerId = customer.CustomerId,
+                TaxCode = customer.TaxCode,
+                CustomerName = customer.CustomerName
+            };
+        }
+    }
+
+    private CustomerImportMatch? GetImportCustomerMatch(AccountBalanceExcelLine line)
+        => _importCustomerMatches.TryGetValue(line.ExcelRowNo, out var match)
+            ? match
+            : null;
+
+    private bool HasImportCustomerProblem(AccountBalanceExcelLine line)
+        => GetImportCustomerMatch(line)?.CustomerId is null;
+
+    private string GetImportRowClass(AccountBalanceExcelLine line, int rowNumber)
+    {
+        if (line.HasError || HasImportCustomerProblem(line))
+            return "import-row-error";
+
+        if (line.HasWarning)
+            return "import-row-warning";
+
+        return string.Empty;
+    }
+
+    private List<CustomerBalanceImportRow> BuildCustomerBalanceImportRows()
+    {
+        if (_importPreview is null)
+            return new List<CustomerBalanceImportRow>();
+
+        var validLines = _importPreview.Lines
+            .Where(line => !line.HasError)
+            .Select(line => new
+            {
+                Line = line,
+                Match = GetImportCustomerMatch(line)
+            })
+            .Where(x => x.Match?.CustomerId is not null)
+            .ToList();
+
+        return validLines
+            .GroupBy(x => x.Match!.CustomerId!.Value)
+            .Select(group =>
+            {
+                var openingNet = group.Sum(x => x.Line.OpeningDebit - x.Line.OpeningCredit);
+                var closingNet = group.Sum(x => x.Line.ClosingDebit - x.Line.ClosingCredit);
+                var first = group.First();
+
+                return new CustomerBalanceImportRow
+                {
+                    CustomerId = group.Key,
+                    CustomerTaxCode = first.Match!.TaxCode ?? first.Line.CustomerCode,
+                    CustomerName = first.Match.CustomerName ?? first.Line.CustomerName,
+                    SourceExcelRow = group.Min(x => x.Line.ExcelRowNo),
+                    OpeningDebit = RoundMoney(openingNet > 0 ? openingNet : 0),
+                    OpeningCredit = RoundMoney(openingNet < 0 ? Math.Abs(openingNet) : 0),
+                    DebitTotal = RoundMoney(group.Sum(x => x.Line.PeriodDebit)),
+                    CreditTotal = RoundMoney(group.Sum(x => x.Line.PeriodCredit)),
+                    ClosingDebit = RoundMoney(closingNet > 0 ? closingNet : 0),
+                    ClosingCredit = RoundMoney(closingNet < 0 ? Math.Abs(closingNet) : 0)
+                };
+            })
+            .OrderBy(x => x.CustomerTaxCode)
+            .ToList();
+    }
+
+    private async Task CommitCustomerBalanceImportAsync()
+    {
+        if (!CanCommitCustomerBalanceImport || _importPreview is null)
+            return;
+
+        var rows = BuildCustomerBalanceImportRows();
+        if (rows.Count == 0)
+        {
+            Snackbar.Add(Localizer["CustomerAccountBalance.ImportNoValidRows"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var actionText = _importExistingMode switch
+        {
+            ExistingBalanceImportMode.RejectExisting => Localizer["CustomerAccountBalance.ImportActionReject"].Value,
+            ExistingBalanceImportMode.UpdateExisting => Localizer["CustomerAccountBalance.ImportActionUpdate"].Value,
+            ExistingBalanceImportMode.ReplaceCurrentAccountPeriod => Localizer["CustomerAccountBalance.ImportActionReplace"].Value,
+            _ => Localizer["CustomerAccountBalance.ImportActionDefault"].Value
+        };
+
+        var confirmed = await DialogService.ShowMessageBox(
+            Localizer["CustomerAccountBalance.ImportConfirmTitle"],
+            string.Format(
+                Localizer["CustomerAccountBalance.ImportConfirmBody"].Value,
+                actionText,
+                rows.Count.ToString("N0"),
+                _importPreview.AccountCode,
+                _importPreview.PeriodNo.ToString("00"),
+                _importPreview.FiscalYear,
+                DisplayBookCode(_importBookCode),
+                _syncAccountBalanceAfterImport
+                    ? Localizer["CustomerAccountBalance.ImportConfirmSyncYes"].Value
+                    : Localizer["CustomerAccountBalance.ImportConfirmSyncNo"].Value),
+            yesText: Localizer["CustomerAccountBalance.Import"],
+            cancelText: Localizer["CustomerAccountBalance.Cancel"]);
+
+        if (confirmed != true)
+            return;
+
+        _importing = true;
+        _customerImportResult = null;
+
+        try
+        {
+            _customerImportResult = await CommitCustomerBalanceRowsAsync(rows);
+
+            _filterAccountCode = _importPreview.AccountCode.Trim();
+            _filterYear = _importPreview.FiscalYear;
+            _filterMonth = _importPreview.PeriodNo;
+            _filterBookCode = NormalizeNullable(_importBookCode);
+            _filterCustomerId = null;
+
+            Snackbar.Add(
+                string.Format(
+                    Localizer["CustomerAccountBalance.ImportSuccessSnackbar"].Value,
+                    rows.Count.ToString("N0"),
+                    _customerImportResult.InsertedCount.ToString("N0"),
+                    _customerImportResult.UpdatedCount.ToString("N0"),
+                    _customerImportResult.DeletedCount.ToString("N0")),
+                MudBlazor.Severity.Success);
+
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(GetRootExceptionMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private async Task<CustomerBalanceImportResult> CommitCustomerBalanceRowsAsync(
+        IReadOnlyCollection<CustomerBalanceImportRow> rows)
+    {
+        if (_importPreview is null)
+            throw new InvalidOperationException(Localizer["CustomerAccountBalance.PreviewMissing"]);
+
+        var accountCode = _importPreview.AccountCode.Trim();
+        var year = _importPreview.FiscalYear;
+        var month = _importPreview.PeriodNo;
+        var bookCode = NormalizeNullable(_importBookCode);
+        var batchId = Guid.NewGuid();
+        var result = new CustomerBalanceImportResult
+        {
+            CustomerCount = rows.Count
+        };
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var connection = db.Database.GetDbConnection();
+        var mustClose = connection.State != ConnectionState.Open;
+
+        if (mustClose)
+            await connection.OpenAsync();
+
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        try
+        {
+            await EnsureCustomerAccountBalanceTableAsync(connection, transaction);
+
+            if (_importExistingMode == ExistingBalanceImportMode.ReplaceCurrentAccountPeriod)
+            {
+                result.DeletedCount = await DeleteCustomerBalancePeriodAsync(
+                    connection,
+                    transaction,
+                    accountCode,
+                    year,
+                    month,
+                    bookCode);
+            }
+
+            foreach (var row in rows)
+            {
+                var existingIds = await FindExistingCustomerBalanceIdsAsync(
+                    connection,
+                    transaction,
+                    row.CustomerId,
+                    accountCode,
+                    year,
+                    month,
+                    bookCode);
+
+                if (existingIds.Count > 1)
+                {
+                    throw new InvalidOperationException(
+                        string.Format(
+                            Localizer["CustomerAccountBalance.ImportDuplicateRows"].Value,
+                            row.CustomerTaxCode));
+                }
+
+                if (existingIds.Count == 1)
+                {
+                    if (_importExistingMode == ExistingBalanceImportMode.RejectExisting)
+                    {
+                        throw new InvalidOperationException(
+                            string.Format(
+                                Localizer["CustomerAccountBalance.ImportExistingReject"].Value,
+                                row.CustomerTaxCode,
+                                accountCode,
+                                month.ToString("00"),
+                                year,
+                                DisplayBookCode(bookCode)));
+                    }
+
+                    await UpdateCustomerBalanceImportRowAsync(
+                        connection,
+                        transaction,
+                        existingIds[0],
+                        row,
+                        accountCode,
+                        year,
+                        month,
+                        bookCode,
+                        batchId);
+
+                    result.UpdatedCount++;
+                }
+                else
+                {
+                    await InsertCustomerBalanceImportRowAsync(
+                        connection,
+                        transaction,
+                        row,
+                        accountCode,
+                        year,
+                        month,
+                        bookCode,
+                        batchId);
+
+                    result.InsertedCount++;
+                }
+            }
+
+            if (_syncAccountBalanceAfterImport)
+            {
+                var totals = await ReadSyncTotalsAsync(
+                    connection,
+                    transaction,
+                    accountCode,
+                    year,
+                    month,
+                    bookCode);
+
+                if (totals.RowCount == 0)
+                    throw new InvalidOperationException(Localizer["CustomerAccountBalance.ImportNoDetailForSync"]);
+
+                var accountBalanceIds = await ReadAccountBalanceIdsAsync(
+                    connection,
+                    transaction,
+                    accountCode,
+                    year,
+                    month,
+                    bookCode);
+
+                if (accountBalanceIds.Count > 1)
+                {
+                    throw new InvalidOperationException(
+                        Localizer["CustomerAccountBalance.SyncDuplicateAccountBalance"]);
+                }
+
+                if (accountBalanceIds.Count == 1)
+                {
+                    await UpdateAccountBalanceAsync(
+                        connection,
+                        transaction,
+                        accountBalanceIds[0],
+                        totals,
+                        accountCode,
+                        year,
+                        month,
+                        bookCode);
+                }
+                else
+                {
+                    await InsertAccountBalanceAsync(
+                        connection,
+                        transaction,
+                        totals,
+                        accountCode,
+                        year,
+                        month,
+                        bookCode);
+                }
+
+                result.AccountBalanceSynced = true;
+            }
+
+            await transaction.CommitAsync();
+            return result;
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            if (mustClose)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task EnsureCustomerAccountBalanceTableAsync(
+        DbConnection connection,
+        DbTransaction transaction)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT CASE WHEN
+    OBJECT_ID(N'dbo.customer_account_balance', N'U') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'customer_id') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'account_code') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'period_year') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'period_month') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'opening_debit') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'opening_credit') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'debit_total') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'credit_total') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'closing_debit') IS NOT NULL
+    AND COL_LENGTH(N'dbo.customer_account_balance', N'closing_credit') IS NOT NULL
+THEN CAST(1 AS BIT)
+ELSE CAST(0 AS BIT)
+END;";
+
+        var value = await command.ExecuteScalarAsync();
+        if (value is null || value == DBNull.Value || !Convert.ToBoolean(value))
+        {
+            throw new InvalidOperationException(Localizer["CustomerAccountBalance.TableMissing"]);
+        }
+    }
+
+    private async Task<int> DeleteCustomerBalancePeriodAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+DELETE FROM dbo.customer_account_balance
+WHERE company_id = @CompanyId
+  AND account_code = @AccountCode
+  AND period_year = @PeriodYear
+  AND period_month = @PeriodMonth
+  AND ((book_code = @BookCode) OR (book_code IS NULL AND @BookCode IS NULL));";
+
+        AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+        AddParameter(command, "@AccountCode", accountCode, DbType.String);
+        AddParameter(command, "@PeriodYear", year, DbType.Int32);
+        AddParameter(command, "@PeriodMonth", month, DbType.Int32);
+        AddNullableString(command, "@BookCode", bookCode);
+
+        return await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<List<Guid>> FindExistingCustomerBalanceIdsAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid customerId,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+SELECT id
+FROM dbo.customer_account_balance WITH (UPDLOCK, HOLDLOCK)
+WHERE company_id = @CompanyId
+  AND customer_id = @CustomerId
+  AND account_code = @AccountCode
+  AND period_year = @PeriodYear
+  AND period_month = @PeriodMonth
+  AND ((book_code = @BookCode) OR (book_code IS NULL AND @BookCode IS NULL));";
+
+        AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+        AddParameter(command, "@CustomerId", customerId, DbType.Guid);
+        AddParameter(command, "@AccountCode", accountCode, DbType.String);
+        AddParameter(command, "@PeriodYear", year, DbType.Int32);
+        AddParameter(command, "@PeriodMonth", month, DbType.Int32);
+        AddNullableString(command, "@BookCode", bookCode);
+
+        var ids = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            ids.Add(reader.GetGuid(0));
+
+        return ids;
+    }
+
+    private async Task InsertCustomerBalanceImportRowAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        CustomerBalanceImportRow row,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode,
+        Guid batchId)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+INSERT INTO dbo.customer_account_balance
+(
+    id,
+    company_id,
+    customer_id,
+    account_code,
+    period_year,
+    period_month,
+    book_code,
+    opening_debit,
+    opening_credit,
+    debit_total,
+    credit_total,
+    closing_debit,
+    closing_credit,
+    source_file_name,
+    source_excel_row,
+    import_batch_id,
+    created_at,
+    updated_at
+)
+VALUES
+(
+    NEWID(),
+    @CompanyId,
+    @CustomerId,
+    @AccountCode,
+    @PeriodYear,
+    @PeriodMonth,
+    @BookCode,
+    @OpeningDebit,
+    @OpeningCredit,
+    @DebitTotal,
+    @CreditTotal,
+    @ClosingDebit,
+    @ClosingCredit,
+    @SourceFileName,
+    @SourceExcelRow,
+    @ImportBatchId,
+    SYSUTCDATETIME(),
+    SYSUTCDATETIME()
+);";
+
+        AddCustomerBalanceImportParameters(
+            command,
+            row,
+            accountCode,
+            year,
+            month,
+            bookCode,
+            batchId);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task UpdateCustomerBalanceImportRowAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        Guid id,
+        CustomerBalanceImportRow row,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode,
+        Guid batchId)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+UPDATE dbo.customer_account_balance
+SET opening_debit = @OpeningDebit,
+    opening_credit = @OpeningCredit,
+    debit_total = @DebitTotal,
+    credit_total = @CreditTotal,
+    closing_debit = @ClosingDebit,
+    closing_credit = @ClosingCredit,
+    source_file_name = @SourceFileName,
+    source_excel_row = @SourceExcelRow,
+    import_batch_id = @ImportBatchId,
+    updated_at = SYSUTCDATETIME()
+WHERE id = @Id
+  AND company_id = @CompanyId;";
+
+        AddParameter(command, "@Id", id, DbType.Guid);
+        AddCustomerBalanceImportParameters(
+            command,
+            row,
+            accountCode,
+            year,
+            month,
+            bookCode,
+            batchId);
+
+        var affected = await command.ExecuteNonQueryAsync();
+        if (affected == 0)
+            throw new InvalidOperationException(Localizer["CustomerAccountBalance.ImportUpdateNotFound"]);
+    }
+
+    private void AddCustomerBalanceImportParameters(
+        DbCommand command,
+        CustomerBalanceImportRow row,
+        string accountCode,
+        int year,
+        int month,
+        string? bookCode,
+        Guid batchId)
+    {
+        AddParameter(command, "@CompanyId", _companyId, DbType.Guid);
+        AddParameter(command, "@CustomerId", row.CustomerId, DbType.Guid);
+        AddParameter(command, "@AccountCode", accountCode, DbType.String);
+        AddParameter(command, "@PeriodYear", year, DbType.Int32);
+        AddParameter(command, "@PeriodMonth", month, DbType.Int32);
+        AddNullableString(command, "@BookCode", bookCode);
+        AddParameter(command, "@OpeningDebit", row.OpeningDebit, DbType.Decimal);
+        AddParameter(command, "@OpeningCredit", row.OpeningCredit, DbType.Decimal);
+        AddParameter(command, "@DebitTotal", row.DebitTotal, DbType.Decimal);
+        AddParameter(command, "@CreditTotal", row.CreditTotal, DbType.Decimal);
+        AddParameter(command, "@ClosingDebit", row.ClosingDebit, DbType.Decimal);
+        AddParameter(command, "@ClosingCredit", row.ClosingCredit, DbType.Decimal);
+        AddNullableString(command, "@SourceFileName", _importFileName);
+        AddParameter(command, "@SourceExcelRow", row.SourceExcelRow, DbType.Int32);
+        AddParameter(command, "@ImportBatchId", batchId, DbType.Guid);
+    }
+
+    private void ResetImport()
+    {
+        if (_readingImport || _importing)
+            return;
+
+        _importPreview = null;
+        _customerImportResult = null;
+        _importCustomerMatches.Clear();
+        _importFileName = null;
+        _showOnlyImportProblems = false;
+    }
+
+    private static string NormalizeTaxCode(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        return new string(
+            value
+                .Trim()
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToUpperInvariant)
+                .ToArray());
+    }
+
+    private static decimal RoundMoney(decimal value)
+        => decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+
+    private static string ShortGuid(Guid value)
+        => value.ToString("N")[..8];
+
+    private static string GetRootExceptionMessage(Exception exception)
+    {
+        var current = exception;
+        while (current.InnerException is not null)
+            current = current.InnerException;
+
+        return current.Message;
+    }
+
+    private static MudBlazor.Severity ToSeverity(ExcelImportMessageLevel level)
+        => level switch
+        {
+            ExcelImportMessageLevel.Error => MudBlazor.Severity.Error,
+            ExcelImportMessageLevel.Warning => MudBlazor.Severity.Warning,
+            _ => MudBlazor.Severity.Info
+        };
+
+    private static string CompanyLabel(M_Customer customer)
+    {
+        var company = (customer.COMPANY ?? string.Empty).Trim();
+        var business = (customer.BIZName ?? string.Empty).Trim();
+
+        if (!string.IsNullOrWhiteSpace(company) &&
+            !string.IsNullOrWhiteSpace(business) &&
+            !string.Equals(company, business, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{company} ({business})";
+        }
+
+        if (!string.IsNullOrWhiteSpace(company))
+            return company;
+
+        if (!string.IsNullOrWhiteSpace(business))
+            return business;
+
+        return CustomerLabel(customer);
+    }
+
+    private static string CustomerLabel(M_Customer customer)
+    {
+        var code = (customer.Customer_Code ?? customer.MaDT ?? string.Empty).Trim();
+        var name = (customer.COMPANY ?? customer.BIZName ?? string.Empty).Trim();
+
+        if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(name))
+            return $"{code} - {name}";
+
+        if (!string.IsNullOrWhiteSpace(name))
+            return name;
+
+        if (!string.IsNullOrWhiteSpace(code))
+            return code;
+
+        return customer.Customer_ID.ToString();
+    }
+
+    private string DisplayBookCode(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? Localizer["CustomerAccountBalance.DefaultBookCode"]
+            : value.Trim();
+
+    private static string? NormalizeNullable(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string FormatMoney(decimal value)
+        => value.ToString("N2");
+
+    private static void AddNullableString(DbCommand command, string name, string? value)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.DbType = DbType.String;
+        parameter.Value = string.IsNullOrWhiteSpace(value)
+            ? DBNull.Value
+            : value.Trim();
+        command.Parameters.Add(parameter);
+    }
+
+    private static void AddParameter(DbCommand command, string name, object value, DbType dbType)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.DbType = dbType;
+        parameter.Value = value;
+
+        if (dbType == DbType.Decimal)
+        {
+            parameter.Precision = 18;
+            parameter.Scale = 2;
+        }
+
+        command.Parameters.Add(parameter);
+    }
+
+    private sealed class CustomerTaxLookupRow
+    {
+        public Guid CustomerId { get; set; }
+        public string TaxCode { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+    }
+
+    private sealed class CustomerImportMatch
+    {
+        public string? SourceTaxCode { get; set; }
+        public Guid? CustomerId { get; set; }
+        public string? TaxCode { get; set; }
+        public string? CustomerName { get; set; }
+        public string? ErrorText { get; set; }
+    }
+
+    private sealed class CustomerBalanceImportRow
+    {
+        public Guid CustomerId { get; set; }
+        public string CustomerTaxCode { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public int SourceExcelRow { get; set; }
+        public decimal OpeningDebit { get; set; }
+        public decimal OpeningCredit { get; set; }
+        public decimal DebitTotal { get; set; }
+        public decimal CreditTotal { get; set; }
+        public decimal ClosingDebit { get; set; }
+        public decimal ClosingCredit { get; set; }
+    }
+
+    private sealed class CustomerBalanceImportResult
+    {
+        public int CustomerCount { get; set; }
+        public int InsertedCount { get; set; }
+        public int UpdatedCount { get; set; }
+        public int DeletedCount { get; set; }
+        public bool AccountBalanceSynced { get; set; }
+    }
+
+    private sealed class CustomerBalanceRow
+    {
+        public Guid Id { get; set; }
+        public Guid CompanyId { get; set; }
+        public Guid CustomerId { get; set; }
+        public string CustomerCode { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public string AccountCode { get; set; } = string.Empty;
+        public int PeriodYear { get; set; }
+        public int PeriodMonth { get; set; }
+        public string? BookCode { get; set; }
+        public decimal OpeningDebit { get; set; }
+        public decimal OpeningCredit { get; set; }
+        public decimal DebitTotal { get; set; }
+        public decimal CreditTotal { get; set; }
+        public decimal ClosingDebit { get; set; }
+        public decimal ClosingCredit { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+    }
+
+    private sealed class CustomerBalanceSummary
+    {
+        public int RowCount { get; set; }
+        public int CustomerCount { get; set; }
+        public decimal OpeningDebit { get; set; }
+        public decimal OpeningCredit { get; set; }
+        public decimal DebitTotal { get; set; }
+        public decimal CreditTotal { get; set; }
+        public decimal ClosingDebit { get; set; }
+        public decimal ClosingCredit { get; set; }
+    }
+
+    private sealed class SyncTotals
+    {
+        public int RowCount { get; set; }
+        public int CustomerCount { get; set; }
+        public decimal OpeningDebit { get; set; }
+        public decimal OpeningCredit { get; set; }
+        public decimal DebitTotal { get; set; }
+        public decimal CreditTotal { get; set; }
+        public decimal ClosingDebit { get; set; }
+        public decimal ClosingCredit { get; set; }
+    }
+}
