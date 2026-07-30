@@ -92,7 +92,7 @@ namespace NVOAMASIS.Components.Accounting.Pages
         private decimal SelectedDebit => ImportableVouchers.Sum(x => x.TotalDebit);
         private decimal SelectedCredit => ImportableVouchers.Sum(x => x.TotalCredit);
         private decimal SelectedDifference => SelectedDebit - SelectedCredit;
-        private Color BalanceColor => Math.Abs(SelectedDifference) < 0.01M ? Color.Success : Color.Error;
+        private MudBlazor.Color BalanceColor => Math.Abs(SelectedDifference) < 0.01M ? MudBlazor.Color.Success : MudBlazor.Color.Error;
 
         private bool CanImport =>
             ImportableVouchers.Any()

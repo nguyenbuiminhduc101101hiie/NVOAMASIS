@@ -23,6 +23,7 @@ using NVOAMASIS.Services.Accounting.ExcelImport;
 using NVOAMASIS.Services.Localization;
 using NVOAMASIS.Services.MultiTenant;
 using Stimulsoft.Base;
+using Stimulsoft.Drawing;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -43,6 +44,9 @@ catch (Exception ex)
 {
     Console.WriteLine($"Warning: Stimulsoft license key is invalid or expired. {ex.Message}");
 }
+
+// Avoid SixLabors.Fonts API mismatch with ClosedXML by using GDI text measurement on Windows
+Graphics.GraphicsEngine = GraphicsEngine.Gdi;
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
