@@ -15,6 +15,7 @@ namespace NVOAMASIS.Services
         public const string AnAir = "BillArrivalNotice_Air.mrt";
         public const string Do = "BillDeliveryOrderNVOCC.mrt";
         public const string Trang2 = "BillTrang2.mrt";
+        public const string Booking = "BookingRequestNVOCC.mrt";
     }
 
     public static class BillLayoutFormKindHelper
@@ -26,6 +27,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnAir => BillSeaReportTemplateNames.AnAir,
             BillLayoutFormKind.Do => BillSeaReportTemplateNames.Do,
             BillLayoutFormKind.Trang2 => BillSeaReportTemplateNames.Trang2,
+            BillLayoutFormKind.Booking => BillSeaReportTemplateNames.Booking,
             _ => BillSeaReportTemplateNames.Main
         };
 
@@ -41,6 +43,8 @@ namespace NVOAMASIS.Services
                 return BillLayoutFormKind.Do;
             if (string.Equals(value, nameof(BillLayoutFormKind.Trang2), StringComparison.OrdinalIgnoreCase))
                 return BillLayoutFormKind.Trang2;
+            if (string.Equals(value, nameof(BillLayoutFormKind.Booking), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.Booking;
             return BillLayoutFormKind.Sea;
         }
 
@@ -51,6 +55,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnAir => nameof(BillLayoutFormKind.AnAir),
             BillLayoutFormKind.Do => nameof(BillLayoutFormKind.Do),
             BillLayoutFormKind.Trang2 => nameof(BillLayoutFormKind.Trang2),
+            BillLayoutFormKind.Booking => nameof(BillLayoutFormKind.Booking),
             _ => nameof(BillLayoutFormKind.Sea)
         };
 
@@ -61,6 +66,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnAir => "AN Air",
             BillLayoutFormKind.Do => "DO",
             BillLayoutFormKind.Trang2 => "Trang 2",
+            BillLayoutFormKind.Booking => "Booking",
             _ => "Sea"
         };
 
@@ -71,6 +77,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnAir => "AN Air",
             BillLayoutFormKind.Do => "DO",
             BillLayoutFormKind.Trang2 => "Trang 2",
+            BillLayoutFormKind.Booking => "Booking",
             _ => "Bill Sea"
         };
 

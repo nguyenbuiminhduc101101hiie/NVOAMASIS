@@ -7,6 +7,7 @@ namespace NVOAMASIS.Models
         AnSea,
         AnAir,
         Do,
-        Trang2
+        Trang2,
+        Booking
     }
 }

@@ -2997,8 +2997,23 @@ namespace NVOAMASIS.Services
                 if (component is not StiImage image)
                     continue;
 
-                if (string.Equals(image.Name, componentName, StringComparison.OrdinalIgnoreCase))
-                    image.Image = CreateLogoImage(logo);
+                if (!string.Equals(image.Name, componentName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                image.Enabled = true;
+                if (image.Expressions is { Count: > 0 })
+                {
+                    for (var i = image.Expressions.Count - 1; i >= 0; i--)
+                    {
+                        if (string.Equals(image.Expressions[i].Name, "Enabled", StringComparison.OrdinalIgnoreCase))
+                            image.Expressions.RemoveAt(i);
+                    }
+                }
+
+                if (image.ImageURL != null)
+                    image.ImageURL.Value = string.Empty;
+
+                image.Image = CreateLogoImage(logo);
             }
         }
 
@@ -5111,19 +5126,43 @@ namespace NVOAMASIS.Services
         //    }
         //}
 
-        public async Task<BoolandMessReponse> ExportBooking(Guid id,string billType)
+        public async Task<BoolandMessReponse> ExportBooking(Guid id, Guid? layoutFormId = null)
         {
             try
             {
                 //Create empty report object
                 var report = new StiReport();
-                //Load report template
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "BookingRequestNVOCC.mrt");
+                byte[] templateBytes;
+                if (layoutFormId is Guid formId && formId != Guid.Empty)
+                {
+                    var form = await billSeaLayoutFormService.GetFormAsync(formId);
+                    if (form is null || !form.IsActive)
+                        return new BoolandMessReponse(false, "Không tìm thấy form Booking.");
+
+                    if (BillLayoutFormKindHelper.ParseFormKind(form.FormKind) != BillLayoutFormKind.Booking)
+                        return new BoolandMessReponse(false, "Form đã chọn không phải loại Booking.");
+
+                    templateBytes = await billSeaLayoutFormService.GetFormBytesAsync(formId);
+                }
+                else
+                {
+                    templateBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(BillSeaReportTemplateNames.Booking);
+                }
+
+                byte[]? reportLogo;
+                if (layoutFormId is Guid layoutForm && layoutForm != Guid.Empty)
+                    reportLogo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(layoutForm);
+                else
+                    reportLogo = await GetCompanyLogoAsync();
+
+                var connectionString = ResolveReportConnectionString();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StiReport.CreateNewReport();
-                report.Load(rpt);
+                report.Load(new MemoryStream(templateBytes));
+                ApplyReportConnectionString(report, connectionString);
+                ApplyLogoToImageComponent(report, "Image1", reportLogo);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
 
                 
                 try
