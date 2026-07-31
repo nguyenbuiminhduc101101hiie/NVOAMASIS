@@ -71,6 +71,15 @@
                            Disabled="_busy">
                     Export file import lại
                 </MudButton>
+
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Tertiary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.TableView"
+                           OnClick="ExportCongNoTongHopAsync"
+                           Disabled="_busy">
+                    Export
+                </MudButton>
             </MudStack>
         </Toolbar>
     </PpScreenHeader>
@@ -164,16 +173,52 @@
                 </MudSelect>
             </MudItem>
 
+        </MudGrid>
+
+        <MudGrid Spacing="2" AlignItems="Center" Class="mt-1">
             <MudItem xs="12" sm="3">
-                <MudTextField @bind-Value="_search"
-                              Label="Search"
-                              Placeholder="Voucher, khách hàng, diễn giải, source..."
+                <MudTextField @bind-Value="_searchVoucher"
+                              Label="Số chứng từ"
+                              Placeholder="VoucherNo..."
                               Variant="Variant.Outlined"
                               Margin="Margin.Dense"
                               Immediate="true"
                               Clearable="true"
                               Adornment="Adornment.Start"
                               AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_searchCustomer"
+                              Label="Khách hàng"
+                              Placeholder="Tên đối tượng / khách hàng..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.PersonSearch" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_searchDescription"
+                              Label="Diễn giải"
+                              Placeholder="Nội dung diễn giải..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Notes" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_searchSource"
+                              Label="Nguồn phát sinh"
+                              Placeholder="Source..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Source" />
             </MudItem>
         </MudGrid>
 
@@ -401,7 +446,10 @@
     private string _book = "ALL";
     private string _accountCode = "ALL";
     private Guid? _customerIdFilter;
-    private string _search = string.Empty;
+    private string _searchVoucher = string.Empty;
+    private string _searchCustomer = string.Empty;
+    private string _searchDescription = string.Empty;
+    private string _searchSource = string.Empty;
 
     private List<GeneralLedgerSummaryRow> _rows = new();
     private List<string> _accountCodes = new();
@@ -571,7 +619,10 @@
         _book = "ALL";
         _accountCode = "ALL";
         _customerIdFilter = null;
-        _search = string.Empty;
+        _searchVoucher = string.Empty;
+        _searchCustomer = string.Empty;
+        _searchDescription = string.Empty;
+        _searchSource = string.Empty;
 
         EnsureDateRange();
 
@@ -1417,6 +1468,447 @@
             _busy = false;
             StateHasChanged();
         }
+    }
+
+    private async Task ExportCongNoTongHopAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xuất sổ công nợ tổng hợp.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            ConfigureEpplusLicense();
+
+            if (IsPeriodMode)
+                UpdateDateRange();
+            else
+                EnsureDateRange();
+
+            if (!_fromDate.HasValue || !_toDate.HasValue)
+            {
+                Snackbar.Add("Vui lòng chọn Từ ngày / Đến ngày trước khi export.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var fromDate = _fromDate.Value.Date;
+            var toDate = _toDate.Value.Date;
+            var toExclusive = toDate.AddDays(1);
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var query = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.CustomerId != null && x.CustomerId != Guid.Empty)
+                .Where(x => x.PostingDate < toExclusive);
+
+            if (!string.Equals(_book, "ALL", StringComparison.OrdinalIgnoreCase))
+            {
+                if (_book == "TAX")
+                    query = query.Where(x => x.IsTaxBook == true);
+
+                if (_book == "MGMT")
+                    query = query.Where(x => x.IsManagementBook == true);
+            }
+
+            var accountFilter = (_accountCode ?? string.Empty).Trim();
+            var useDebtAccountsOnly = string.IsNullOrWhiteSpace(accountFilter)
+                || string.Equals(accountFilter, "ALL", StringComparison.OrdinalIgnoreCase);
+
+            if (useDebtAccountsOnly)
+            {
+                query = query.Where(x => x.AccountCode != null
+                    && (x.AccountCode.StartsWith("131") || x.AccountCode.StartsWith("331")));
+            }
+            else
+            {
+                query = query.Where(x => x.AccountCode != null && x.AccountCode.StartsWith(accountFilter));
+            }
+
+            if (_customerIdFilter.HasValue && _customerIdFilter.Value != Guid.Empty)
+                query = query.Where(x => x.CustomerId == _customerIdFilter.Value);
+
+            var lines = await query
+                .Select(x => new
+                {
+                    x.CustomerId,
+                    x.AccountCode,
+                    x.PostingDate,
+                    x.Debit,
+                    x.Credit,
+                    x.DebitFC,
+                    x.CreditFC
+                })
+                .ToListAsync();
+
+            if (lines.Count == 0)
+            {
+                Snackbar.Add("Không có dữ liệu công nợ theo điều kiện lọc hiện tại.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var grouped = lines
+                .GroupBy(x => x.CustomerId!.Value)
+                .Select(g =>
+                {
+                    var opening = g.Where(x => x.PostingDate < fromDate).ToList();
+                    var period = g.Where(x => x.PostingDate >= fromDate).ToList();
+
+                    var openingDebit = opening.Sum(x => x.Debit);
+                    var openingCredit = opening.Sum(x => x.Credit);
+                    var openingNt = opening.Sum(x => x.DebitFC - x.CreditFC);
+
+                    var periodDebit = period.Sum(x => x.Debit);
+                    var periodCredit = period.Sum(x => x.Credit);
+                    var periodNt = period.Sum(x => x.DebitFC - x.CreditFC);
+
+                    var openingNet = openingDebit - openingCredit;
+                    var closingNet = openingNet + periodDebit - periodCredit;
+                    var closingNt = openingNt + periodNt;
+
+                    SplitDebitCredit(openingNet, out var openDr, out var openCr);
+                    SplitDebitCredit(closingNet, out var closeDr, out var closeCr);
+
+                    return new CongNoTongHopExportRow
+                    {
+                        CustomerId = g.Key,
+                        OpeningNt = openingNt,
+                        OpeningDebit = openDr,
+                        OpeningCredit = openCr,
+                        PeriodNt = periodNt,
+                        PeriodDebit = periodDebit,
+                        PeriodCredit = periodCredit,
+                        ClosingNt = closingNt,
+                        ClosingDebit = closeDr,
+                        ClosingCredit = closeCr
+                    };
+                })
+                .Where(x => x.OpeningDebit != 0
+                            || x.OpeningCredit != 0
+                            || x.OpeningNt != 0
+                            || x.PeriodDebit != 0
+                            || x.PeriodCredit != 0
+                            || x.PeriodNt != 0
+                            || x.ClosingDebit != 0
+                            || x.ClosingCredit != 0
+                            || x.ClosingNt != 0)
+                .ToList();
+
+            var customerIds = grouped.Select(x => x.CustomerId).ToHashSet();
+            var customers = await db.Customer.AsNoTracking()
+                .Where(c => customerIds.Contains(c.Customer_ID))
+                .Select(c => new { c.Customer_ID, c.Customer_Code, c.COMPANY })
+                .ToListAsync();
+
+            var customerMap = customers
+                .GroupBy(x => x.Customer_ID)
+                .ToDictionary(
+                    g => g.Key,
+                    g =>
+                    {
+                        var c = g.First();
+                        return (
+                            Code: (c.Customer_Code ?? string.Empty).Trim(),
+                            Name: (c.COMPANY ?? string.Empty).Trim()
+                        );
+                    });
+
+            foreach (var row in grouped)
+            {
+                if (customerMap.TryGetValue(row.CustomerId, out var info))
+                {
+                    row.CustomerCode = info.Code;
+                    row.CustomerName = info.Name;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(_searchCustomer))
+            {
+                var key = _searchCustomer.Trim();
+                grouped = grouped
+                    .Where(x => x.CustomerCode.Contains(key, StringComparison.OrdinalIgnoreCase)
+                             || x.CustomerName.Contains(key, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+            }
+
+            grouped = grouped
+                .OrderBy(x => x.CustomerCode, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.CustomerName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (grouped.Count == 0)
+            {
+                Snackbar.Add("Không có khách hàng thỏa điều kiện export.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var company = await db.CompanyInfomation.AsNoTracking().FirstOrDefaultAsync();
+            var companyName = string.IsNullOrWhiteSpace(company?.NameTiengViet)
+                ? "CÔNG TY TNHH HÀNG HẢI AMASIS"
+                : company!.NameTiengViet!.Trim();
+            var companyAddress = string.IsNullOrWhiteSpace(company?.AddressTiengViet)
+                ? (company?.Address ?? "Số 27-29 Đường Ngô Thị Bì, Phường Tân Hưng, TP Hồ Chí Minh")
+                : company!.AddressTiengViet!.Trim();
+            var taxCode = string.IsNullOrWhiteSpace(company?.TaxCode) ? "0311095854" : company!.TaxCode!.Trim();
+
+            var accountLabel = await BuildCongNoAccountLabelAsync(db, accountFilter, useDebtAccountsOnly, lines
+                .Where(x => !string.IsNullOrWhiteSpace(x.AccountCode))
+                .Select(x => x.AccountCode!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList());
+
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("Sheet1");
+            BuildCongNoTongHopSheet(ws, companyName, companyAddress, taxCode, fromDate, toDate, accountLabel, grouped);
+
+            var bytes = package.GetAsByteArray();
+            var fileName = $"SO_TONG_HOP_CONG_NO_{fromDate:yyyyMMdd}_{toDate:yyyyMMdd}_{DateTime.Now:HHmmss}.xlsx";
+            await DownloadBytesAsync(bytes, fileName);
+
+            Snackbar.Add($"Đã export sổ công nợ tổng hợp: {grouped.Count:N0} khách hàng.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add("Export sổ công nợ thất bại: " + root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static void SplitDebitCredit(decimal net, out decimal debit, out decimal credit)
+    {
+        if (net > 0)
+        {
+            debit = net;
+            credit = 0;
+        }
+        else if (net < 0)
+        {
+            debit = 0;
+            credit = Math.Abs(net);
+        }
+        else
+        {
+            debit = 0;
+            credit = 0;
+        }
+    }
+
+    private async Task<string> BuildCongNoAccountLabelAsync(
+        AppDbContext db,
+        string accountFilter,
+        bool useDebtAccountsOnly,
+        List<string> accountCodesInData)
+    {
+        if (useDebtAccountsOnly)
+            return "Tất cả TK công nợ 131… / 331…";
+
+        var name = await db.DanhMucTaiKhoan.AsNoTracking()
+            .Where(a => a.Taikhoan == accountFilter)
+            .Select(a => a.Tentaikhoan)
+            .FirstOrDefaultAsync();
+
+        if (!string.IsNullOrWhiteSpace(name))
+            return $"{accountFilter} - {name.Trim()}";
+
+        if (accountCodesInData.Count == 1)
+            return accountCodesInData[0];
+
+        return accountFilter;
+    }
+
+    private static void BuildCongNoTongHopSheet(
+        ExcelWorksheet ws,
+        string companyName,
+        string companyAddress,
+        string taxCode,
+        DateTime fromDate,
+        DateTime toDate,
+        string accountLabel,
+        List<CongNoTongHopExportRow> rows)
+    {
+        ws.Cells["A1:L1"].Merge = true;
+        ws.Cells["A1"].Value = companyName;
+        ws.Cells["A1"].Style.Font.Bold = true;
+        ws.Cells["A1"].Style.Font.Size = 16;
+        ws.Cells["A1"].Style.Font.Name = "Aptos Narrow";
+
+        ws.Cells["A2:L2"].Merge = true;
+        ws.Cells["A2"].Value = $"{companyAddress}\nMST: {taxCode}";
+        ws.Cells["A2"].Style.Font.Size = 12;
+        ws.Cells["A2"].Style.Font.Name = "Aptos Narrow";
+        ws.Cells["A2"].Style.WrapText = true;
+        ws.Row(2).Height = 36;
+
+        ws.Cells["A4:L4"].Merge = true;
+        ws.Cells["A4"].Value = "SỔ CÔNG NỢ TỔNG HỢP";
+        ws.Cells["A4"].Style.Font.Bold = true;
+        ws.Cells["A4"].Style.Font.Size = 15;
+        ws.Cells["A4"].Style.Font.Name = "Aptos Narrow";
+        ws.Cells["A4"].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+
+        ws.Cells["A5:L5"].Merge = true;
+        ws.Cells["A5"].Value = $"Từ ngày: {fromDate:dd/MM/yyyy}, đến ngày: {toDate:dd/MM/yyyy}\n{accountLabel}";
+        ws.Cells["A5"].Style.Font.Bold = true;
+        ws.Cells["A5"].Style.Font.Size = 10;
+        ws.Cells["A5"].Style.Font.Name = "Aptos Narrow";
+        ws.Cells["A5"].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+        ws.Cells["A5"].Style.WrapText = true;
+        ws.Row(5).Height = 32;
+
+        ws.Cells["A6:L6"].Merge = true;
+        ws.Cells["A6"].Value = "Đơn vị tính : Đồng VN";
+        ws.Cells["A6"].Style.Font.Size = 10;
+        ws.Cells["A6"].Style.Font.Name = "Aptos Narrow";
+        ws.Cells["A6"].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Right;
+
+        ws.Cells["A7:A8"].Merge = true;
+        ws.Cells["A7"].Value = "Số\nTT";
+        ws.Cells["B7:B8"].Merge = true;
+        ws.Cells["B7"].Value = "Mã KH";
+        ws.Cells["C7:C8"].Merge = true;
+        ws.Cells["C7"].Value = "Tên KH";
+        ws.Cells["D7:F7"].Merge = true;
+        ws.Cells["D7"].Value = "Số dư đầu kỳ";
+        ws.Cells["G7:I7"].Merge = true;
+        ws.Cells["G7"].Value = "Số phát sinh trong kỳ";
+        ws.Cells["J7:L7"].Merge = true;
+        ws.Cells["J7"].Value = "Số dư cuối kỳ";
+
+        ws.Cells["D8"].Value = "NT";
+        ws.Cells["E8"].Value = "Nợ";
+        ws.Cells["F8"].Value = "Có";
+        ws.Cells["G8"].Value = "NT";
+        ws.Cells["H8"].Value = "Nợ";
+        ws.Cells["I8"].Value = "Có";
+        ws.Cells["J8"].Value = "NT";
+        ws.Cells["K8"].Value = "Nợ";
+        ws.Cells["L8"].Value = "Có";
+
+        var headerRange = ws.Cells["A7:L8"];
+        headerRange.Style.Font.Bold = true;
+        headerRange.Style.Font.Size = 10;
+        headerRange.Style.Font.Name = "Aptos Narrow";
+        headerRange.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+        headerRange.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
+        headerRange.Style.WrapText = true;
+        headerRange.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        headerRange.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        headerRange.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        headerRange.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+
+        ws.Row(7).Height = 20;
+        ws.Row(8).Height = 18;
+
+        const int dataStart = 9;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var r = dataStart + i;
+
+            ws.Cells[r, 1].Value = i + 1;
+            ws.Cells[r, 2].Value = row.CustomerCode;
+            ws.Cells[r, 3].Value = row.CustomerName;
+            ws.Cells[r, 4].Value = row.OpeningNt;
+            WriteMoneyOrNull(ws.Cells[r, 5], row.OpeningDebit);
+            WriteMoneyOrNull(ws.Cells[r, 6], row.OpeningCredit);
+            ws.Cells[r, 7].Value = row.PeriodNt;
+            WriteMoneyOrNull(ws.Cells[r, 8], row.PeriodDebit);
+            WriteMoneyOrNull(ws.Cells[r, 9], row.PeriodCredit);
+            ws.Cells[r, 10].Value = row.ClosingNt;
+            WriteMoneyOrNull(ws.Cells[r, 11], row.ClosingDebit);
+            WriteMoneyOrNull(ws.Cells[r, 12], row.ClosingCredit);
+
+            var dataRange = ws.Cells[r, 1, r, 12];
+            dataRange.Style.Font.Size = 10;
+            dataRange.Style.Font.Name = "Aptos Narrow";
+            dataRange.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Top;
+            dataRange.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+            dataRange.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+            dataRange.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+            dataRange.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+
+            ws.Cells[r, 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+            ws.Cells[r, 4].Style.Numberformat.Format = "#,##0.00";
+            ws.Cells[r, 5].Style.Numberformat.Format = "#,##0";
+            ws.Cells[r, 6].Style.Numberformat.Format = "#,##0";
+            ws.Cells[r, 7].Style.Numberformat.Format = "#,##0.00";
+            ws.Cells[r, 8].Style.Numberformat.Format = "#,##0";
+            ws.Cells[r, 9].Style.Numberformat.Format = "#,##0";
+            ws.Cells[r, 10].Style.Numberformat.Format = "#,##0.00";
+            ws.Cells[r, 11].Style.Numberformat.Format = "#,##0";
+            ws.Cells[r, 12].Style.Numberformat.Format = "#,##0";
+        }
+
+        var dataEnd = dataStart + rows.Count - 1;
+        var totalRow = dataEnd + 1;
+
+        ws.Cells[totalRow, 3].Value = $"Tổng cộng ({accountLabel})";
+        ws.Cells[totalRow, 4].Formula = $"SUM(D{dataStart}:D{dataEnd})";
+        ws.Cells[totalRow, 5].Formula = $"SUM(E{dataStart}:E{dataEnd})";
+        ws.Cells[totalRow, 6].Formula = $"SUM(F{dataStart}:F{dataEnd})";
+        ws.Cells[totalRow, 7].Formula = $"SUM(G{dataStart}:G{dataEnd})";
+        ws.Cells[totalRow, 8].Formula = $"SUM(H{dataStart}:H{dataEnd})";
+        ws.Cells[totalRow, 9].Formula = $"SUM(I{dataStart}:I{dataEnd})";
+        ws.Cells[totalRow, 10].Formula = $"SUM(J{dataStart}:J{dataEnd})";
+        ws.Cells[totalRow, 11].Formula = $"SUM(K{dataStart}:K{dataEnd})";
+        ws.Cells[totalRow, 12].Formula = $"SUM(L{dataStart}:L{dataEnd})";
+
+        var totalRange = ws.Cells[totalRow, 1, totalRow, 12];
+        totalRange.Style.Font.Bold = true;
+        totalRange.Style.Font.Size = 10;
+        totalRange.Style.Font.Name = "Aptos Narrow";
+        totalRange.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        totalRange.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        totalRange.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        totalRange.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+
+        ws.Cells[totalRow, 4].Style.Numberformat.Format = "#,##0.00";
+        ws.Cells[totalRow, 5].Style.Numberformat.Format = "#,##0";
+        ws.Cells[totalRow, 6].Style.Numberformat.Format = "#,##0";
+        ws.Cells[totalRow, 7].Style.Numberformat.Format = "#,##0.00";
+        ws.Cells[totalRow, 8].Style.Numberformat.Format = "#,##0";
+        ws.Cells[totalRow, 9].Style.Numberformat.Format = "#,##0";
+        ws.Cells[totalRow, 10].Style.Numberformat.Format = "#,##0.00";
+        ws.Cells[totalRow, 11].Style.Numberformat.Format = "#,##0";
+        ws.Cells[totalRow, 12].Style.Numberformat.Format = "#,##0";
+
+        var noteRow = totalRow + 3;
+        ws.Cells[noteRow, 3].Value = "Sổ tổng hợp này dùng tất cả các TK công nợ 131 …/331 ...";
+        ws.Cells[noteRow, 3].Style.Font.Size = 11;
+        ws.Cells[noteRow, 3].Style.Font.Name = "Aptos Narrow";
+        ws.Cells[noteRow, 3].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+        ws.Cells[noteRow, 3].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.Yellow);
+
+        ws.Column(1).Width = 5;
+        ws.Column(2).Width = 14;
+        ws.Column(3).Width = 55;
+        ws.Column(4).Width = 12;
+        ws.Column(5).Width = 14;
+        ws.Column(6).Width = 14;
+        ws.Column(7).Width = 12;
+        ws.Column(8).Width = 14;
+        ws.Column(9).Width = 14;
+        ws.Column(10).Width = 12;
+        ws.Column(11).Width = 14;
+        ws.Column(12).Width = 14;
+    }
+
+    private static void WriteMoneyOrNull(OfficeOpenXml.ExcelRange cell, decimal value)
+    {
+        if (value == 0)
+            cell.Value = null;
+        else
+            cell.Value = value;
     }
 
     private bool MatchesExportSeedFilter(M_GeneralLedgerEntries x)
@@ -2277,37 +2769,45 @@
 
     private bool MatchesSearch(GeneralLedgerSummaryRow x)
     {
-        if (string.IsNullOrWhiteSpace(_search))
-            return true;
+        if (!string.IsNullOrWhiteSpace(_searchVoucher)
+            && !x.VoucherNo.Contains(_searchVoucher.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
 
-        var key = _search.Trim();
+        if (!string.IsNullOrWhiteSpace(_searchCustomer)
+            && !x.CustomerName.Contains(_searchCustomer.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
 
-        return x.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.PostingDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.VoucherDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.VoucherType.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.AccountCode.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.AccountName.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.SoHD.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.CustomerName.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.Description.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.HBLNo.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.BookingNo.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.SaleName.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.POLName.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.PODName.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.Debit.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.Credit.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.CurrencyCode.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.Book.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.SourceName.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.CreatedBy.Contains(key, StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(_searchDescription)
+            && !x.Description.Contains(_searchDescription.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_searchSource)
+            && !x.SourceName.Contains(_searchSource.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return true;
     }
 
     private void OnSelectedChanged(GeneralLedgerSummaryRow? item) => _selected = item;
 
     private string RowClass(GeneralLedgerSummaryRow row, int rowNumber)
         => _selected is not null && _selected.Id == row.Id ? "selected-row-blue" : string.Empty;
+
+    private sealed class CongNoTongHopExportRow
+    {
+        public Guid CustomerId { get; set; }
+        public string CustomerCode { get; set; } = string.Empty;
+        public string CustomerName { get; set; } = string.Empty;
+        public decimal OpeningNt { get; set; }
+        public decimal OpeningDebit { get; set; }
+        public decimal OpeningCredit { get; set; }
+        public decimal PeriodNt { get; set; }
+        public decimal PeriodDebit { get; set; }
+        public decimal PeriodCredit { get; set; }
+        public decimal ClosingNt { get; set; }
+        public decimal ClosingDebit { get; set; }
+        public decimal ClosingCredit { get; set; }
+    }
 
     private sealed class LedgerImportRow
     {

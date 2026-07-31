@@ -49,12 +49,80 @@ namespace NVOAMASIS.Controllers
                 {
                     navMenuBackgroundColor = preference.NavMenuBackgroundColor,
                     navMenuTextColor = preference.NavMenuTextColor,
-                    mainLayoutBackgroundColor = preference.MainLayoutBackgroundColor
+                    mainLayoutBackgroundColor = preference.MainLayoutBackgroundColor,
+                    fontHeaderH6 = preference.FontHeaderH6,
+                    fontTieuDe = preference.FontTieuDe,
+                    fontNoiDung = preference.FontNoiDung,
+                    fontNoiDungLuoi = preference.FontNoiDungLuoi,
+                    fontNavMenu = preference.FontNavMenu
                 });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Error retrieving theme preference", error = ex.Message });
+            }
+        }
+
+        [HttpPost("update-fonts")]
+        public async Task<IActionResult> UpdateContentFontPreference([FromBody] UpdateContentFontRequest request)
+        {
+            try
+            {
+                if (request == null ||
+                    string.IsNullOrWhiteSpace(request.FontHeaderH6) ||
+                    string.IsNullOrWhiteSpace(request.FontTieuDe) ||
+                    string.IsNullOrWhiteSpace(request.FontNoiDung) ||
+                    string.IsNullOrWhiteSpace(request.FontNoiDungLuoi))
+                {
+                    return BadRequest(new { message = "Invalid request data" });
+                }
+
+                var userId = GetCurrentUserId();
+                if (userId == null)
+                    return Unauthorized(new { message = "User not found" });
+
+                var success = await _themeService.UpdateUserContentFontPreferenceAsync(
+                    userId.Value,
+                    request.FontHeaderH6.Trim(),
+                    request.FontTieuDe.Trim(),
+                    request.FontNoiDung.Trim(),
+                    request.FontNoiDungLuoi.Trim());
+
+                if (success)
+                    return Ok(new { message = "Font preference updated successfully" });
+                else
+                    return StatusCode(500, new { message = "Failed to update font preference" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error updating font preference", error = ex.Message });
+            }
+        }
+
+        [HttpPost("update-navmenu-font")]
+        public async Task<IActionResult> UpdateNavMenuFontPreference([FromBody] UpdateNavMenuFontRequest request)
+        {
+            try
+            {
+                if (request == null || string.IsNullOrWhiteSpace(request.FontNavMenu))
+                    return BadRequest(new { message = "Invalid request data" });
+
+                var userId = GetCurrentUserId();
+                if (userId == null)
+                    return Unauthorized(new { message = "User not found" });
+
+                var success = await _themeService.UpdateUserNavMenuFontPreferenceAsync(
+                    userId.Value,
+                    request.FontNavMenu.Trim());
+
+                if (success)
+                    return Ok(new { message = "Nav menu font preference updated successfully" });
+                else
+                    return StatusCode(500, new { message = "Failed to update nav menu font preference" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error updating nav menu font preference", error = ex.Message });
             }
         }
 
@@ -118,5 +186,18 @@ namespace NVOAMASIS.Controllers
         public string NavMenuBackgroundColor { get; set; } = string.Empty;
         public string NavMenuTextColor { get; set; } = string.Empty;
         public string MainLayoutBackgroundColor { get; set; } = string.Empty;
+    }
+
+    public class UpdateContentFontRequest
+    {
+        public string FontHeaderH6 { get; set; } = string.Empty;
+        public string FontTieuDe { get; set; } = string.Empty;
+        public string FontNoiDung { get; set; } = string.Empty;
+        public string FontNoiDungLuoi { get; set; } = string.Empty;
+    }
+
+    public class UpdateNavMenuFontRequest
+    {
+        public string FontNavMenu { get; set; } = string.Empty;
     }
 }

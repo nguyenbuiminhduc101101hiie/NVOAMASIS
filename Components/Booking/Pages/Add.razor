@@ -8,6 +8,8 @@
 @inject IStringLocalizer<SharedResource> Localizer
 @inject SharedServices ssv
 @inject SupportServices supsv
+@inject GlobalServices gsv
+@inject NotificationService _notificationService
 <MudDialog Class="booking-dialog">
     <DialogContent>
         <div class="booking-dialog-content">
@@ -2545,30 +2547,46 @@
 
     private async Task SendEmailAsync_send()
     {
-        string[] users = _BookingDetail.OperationCode_.Split(',');
-        List<string> emails = new List<string>(); // Danh sách động, có thể thêm thoải mái
+        if (string.IsNullOrWhiteSpace(_BookingDetail.OperationCode_))
+        {
+            CallSnackBar("User is empty!", MudBlazor.Severity.Warning);
+            return;
+        }
 
-        int index = 0;
+        string[] users = _BookingDetail.OperationCode_.Split(',');
+        List<string> emails = new List<string>();
+        List<string> listid = new List<string>();
+
         foreach (var user in users)
         {
-            if(string.IsNullOrEmpty(user)){
+            var userName = user?.Trim();
+            if (string.IsNullOrEmpty(userName))
+                continue;
 
-            }else{
-                string inputemail ="";
-                inputemail= await bksv.GetEmailAsync(user);
-                if (!string.IsNullOrEmpty(inputemail))
-                {
-                    emails.Add(inputemail);
-                }
+            string inputemail = await bksv.GetEmailAsync(userName);
+            if (!string.IsNullOrEmpty(inputemail))
+            {
+                emails.Add(inputemail);
+            }
 
+            Guid? inputid = await gsv.GetIdfromUser(userName);
+            if (inputid != null && inputid != Guid.Empty)
+            {
+                listid.Add(inputid.ToString()!);
             }
         }
+
         string[] emailarray = emails.ToArray();
-        if (emails != null && emailarray.Length > 0)
+        if (emailarray.Length > 0)
         {
             bool result = await emsv.SendEmailAsync_1(EmailContent, emailarray, Attachments);
-            if (result = true)
+            if (result)
             {
+                if (listid.Count > 0 && !string.IsNullOrWhiteSpace(EmailContent))
+                {
+                    await _notificationService.SendNotificationAsync(listid.ToArray(), EmailContent);
+                }
+
                 CallSnackBar("Email đã gửi thành công!", MudBlazor.Severity.Success);
             }
             else
@@ -2576,7 +2594,10 @@
                 CallSnackBar("Email đã gửi thất bại!", MudBlazor.Severity.Error);
             }
         }
-
+        else
+        {
+            CallSnackBar("Email is empty!", MudBlazor.Severity.Warning);
+        }
     }
     string save_text_vessel;
  
