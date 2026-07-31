@@ -49,6 +49,10 @@ window.updateFontSize = (headerh6,noidung,tieude,noidungluoi) => {
     document.documentElement.style.setProperty('--mud-input-table-cell-size', noidungluoi);
 }
 
+window.updateNavMenuFontSize = (navmenu) => {
+    document.documentElement.style.setProperty('--nav-menu-font-size', navmenu);
+}
+
 window.setPageTitle = (title) => {
     document.title = title;
 }

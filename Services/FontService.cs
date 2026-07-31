@@ -19,6 +19,11 @@ namespace NVOAMASIS.Services
             await _jsRuntime.InvokeVoidAsync("updateFontSize", headerh6, noidung, tieude, noidungluoi);
         }
 
+        public async Task SetNavMenuFontSize(string navmenu)
+        {
+            await _jsRuntime.InvokeVoidAsync("updateNavMenuFontSize", navmenu);
+        }
+
         private string ConvertPxToRem(string pxString)
         {
             if (pxString.EndsWith("px", StringComparison.OrdinalIgnoreCase))

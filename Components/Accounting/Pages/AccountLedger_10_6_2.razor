@@ -1,6 +1,9 @@
 @page "/accounting/account-ledger"
 @page "/AccountLedger"
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Configuration
+@using Microsoft.JSInterop
+@using OfficeOpenXml
 @using MudBlazor
 @using NVOAMASIS.Data
 @using NVOAMASIS.Models
@@ -10,6 +13,8 @@
 @inject AccountService asv
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject IConfiguration Configuration
 @inject IStringLocalizer<SharedResource> Localizer
 
 <PageTitle>10.6.2 Sổ cái theo tài khoản</PageTitle>
@@ -34,6 +39,15 @@
                            OnClick="ResetFilterAsync"
                            Disabled="_busy">
                     Reset
+                </MudButton>
+
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FileDownload"
+                           OnClick="ExportExcelAsync"
+                           Disabled="_busy || !_rows.Any()">
+                    Export
                 </MudButton>
             </MudStack>
         </Toolbar>
@@ -126,16 +140,52 @@
                 </MudSelect>
             </MudItem>
 
-            <MudItem xs="12" sm="2">
-                <MudTextField @bind-Value="_search"
-                              Label="Search"
-                              Placeholder="Voucher, khách hàng, diễn giải..."
+        </MudGrid>
+
+        <MudGrid Spacing="2" AlignItems="Center" Class="mt-1">
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_searchVoucher"
+                              Label="Số chứng từ"
+                              Placeholder="VoucherNo..."
                               Variant="Variant.Outlined"
                               Margin="Margin.Dense"
                               Immediate="true"
                               Clearable="true"
                               Adornment="Adornment.Start"
                               AdornmentIcon="@Icons.Material.Filled.Search" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_searchCustomer"
+                              Label="Khách hàng"
+                              Placeholder="Tên đối tượng / khách hàng..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.PersonSearch" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_searchDescription"
+                              Label="Diễn giải"
+                              Placeholder="Nội dung diễn giải..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Notes" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudTextField @bind-Value="_searchSource"
+                              Label="Nguồn phát sinh"
+                              Placeholder="Source..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Source" />
             </MudItem>
         </MudGrid>
 
@@ -239,6 +289,20 @@
 
 @code {
     private const string PermissionMenuName = "GeneralLedgerEntries";
+    private static bool _epplusLicenseConfigured;
+
+    private void ConfigureEpplusLicense()
+    {
+        if (_epplusLicenseConfigured)
+            return;
+
+        var commercialLicenseKey = Configuration["EPPlus:LicenseKey"];
+        ExcelPackage.LicenseContext = string.IsNullOrWhiteSpace(commercialLicenseKey)
+            ? LicenseContext.NonCommercial
+            : LicenseContext.Commercial;
+
+        _epplusLicenseConfigured = true;
+    }
 
     private bool _busy;
     private string _usr = string.Empty;
@@ -252,7 +316,10 @@
     private string _book = "TAX";
     private string _accountCode = "131";
     private string _accountName = string.Empty;
-    private string _search = string.Empty;
+    private string _searchVoucher = string.Empty;
+    private string _searchCustomer = string.Empty;
+    private string _searchDescription = string.Empty;
+    private string _searchSource = string.Empty;
 
     private decimal _openingBalance;
     private decimal _closingBalance;
@@ -375,7 +442,10 @@
         _periodMonth = DateTime.Today.Month;
         _book = "TAX";
         _accountCode = _accountOptions.FirstOrDefault()?.Code ?? "131";
-        _search = string.Empty;
+        _searchVoucher = string.Empty;
+        _searchCustomer = string.Empty;
+        _searchDescription = string.Empty;
+        _searchSource = string.Empty;
 
         EnsureDateRange();
 
@@ -703,23 +773,364 @@
 
     private bool MatchesSearch(AccountLedgerRow x)
     {
-        if (string.IsNullOrWhiteSpace(_search))
-            return true;
+        if (!string.IsNullOrWhiteSpace(_searchVoucher)
+            && !x.VoucherNo.Contains(_searchVoucher.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
 
-        var key = _search.Trim();
+        if (!string.IsNullOrWhiteSpace(_searchCustomer)
+            && !x.CustomerName.Contains(_searchCustomer.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
 
-        return x.VoucherNo.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.PostingDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.VoucherDate.ToString("dd/MM/yyyy").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.SoHD.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.Description.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.CustomerName.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.OppositeAccountCode.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.Debit.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.Credit.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.RunningBalanceAbs.ToString("N0").Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.Book.Contains(key, StringComparison.OrdinalIgnoreCase)
-            || x.SourceName.Contains(key, StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(_searchDescription)
+            && !x.Description.Contains(_searchDescription.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_searchSource)
+            && !x.SourceName.Contains(_searchSource.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return true;
+    }
+
+    private async Task ExportExcelAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xuất sổ chi tiết công nợ.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        EnsureDateRange();
+
+        if (!_fromDate.HasValue || !_toDate.HasValue)
+        {
+            Snackbar.Add("Vui lòng chọn Từ ngày / Đến ngày trước khi export.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var detailRows = VisibleItems
+            .Where(x => !string.Equals(x.VoucherNo, "OPENING", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (detailRows.Count == 0 && _openingBalance == 0)
+        {
+            Snackbar.Add("Không có dữ liệu theo điều kiện search hiện tại để export.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            ConfigureEpplusLicense();
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var company = await db.CompanyInfomation.AsNoTracking().FirstOrDefaultAsync();
+            var companyName = string.IsNullOrWhiteSpace(company?.NameTiengViet)
+                ? "CÔNG TY TNHH HÀNG HẢI AMASIS"
+                : company!.NameTiengViet!.Trim();
+            var companyAddress = string.IsNullOrWhiteSpace(company?.AddressTiengViet)
+                ? (company?.Address ?? "27-29 Đường Ngô Thị Bì, Phường Tân Hưng, TP Hồ Chí Minh, Việt Nam")
+                : company!.AddressTiengViet!.Trim();
+            var taxCode = string.IsNullOrWhiteSpace(company?.TaxCode) ? "0311095854" : company!.TaxCode!.Trim();
+
+            var customerHeader = ResolveExportCustomerHeader(detailRows);
+
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("Sheet1");
+            BuildChiTietCongNoSheet(
+                ws,
+                companyName,
+                companyAddress,
+                taxCode,
+                _fromDate.Value.Date,
+                _toDate.Value.Date,
+                _accountCode,
+                _accountName,
+                customerHeader,
+                _openingBalance,
+                detailRows);
+
+            var bytes = package.GetAsByteArray();
+            var safeAccount = string.IsNullOrWhiteSpace(_accountCode) ? "TK" : _accountCode.Trim();
+            var fileName = $"SO_CHI_TIET_CONG_NO_{safeAccount}_{_fromDate:yyyyMMdd}_{_toDate:yyyyMMdd}_{DateTime.Now:HHmmss}.xlsx";
+            await DownloadBytesAsync(bytes, fileName);
+
+            Snackbar.Add($"Đã export sổ chi tiết công nợ: {detailRows.Count:N0} dòng phát sinh.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            var root = ex;
+            while (root.InnerException is not null)
+                root = root.InnerException;
+
+            Snackbar.Add("Export Excel thất bại: " + root.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private string ResolveExportCustomerHeader(List<AccountLedgerRow> detailRows)
+    {
+        if (!string.IsNullOrWhiteSpace(_searchCustomer))
+            return _searchCustomer.Trim();
+
+        var customers = detailRows
+            .Select(x => x.CustomerName?.Trim() ?? string.Empty)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return customers.Count == 1 ? customers[0] : string.Empty;
+    }
+
+    private static void BuildChiTietCongNoSheet(
+        ExcelWorksheet ws,
+        string companyName,
+        string companyAddress,
+        string taxCode,
+        DateTime fromDate,
+        DateTime toDate,
+        string accountCode,
+        string accountName,
+        string customerHeader,
+        decimal openingBalance,
+        List<AccountLedgerRow> detailRows)
+    {
+        const string fontName = "Times New Roman";
+
+        ws.Cells["A1:M1"].Merge = true;
+        ws.Cells["A1"].Value = companyName;
+        ws.Cells["A1"].Style.Font.Bold = true;
+        ws.Cells["A1"].Style.Font.Size = 16;
+        ws.Cells["A1"].Style.Font.Name = fontName;
+        ws.Row(1).Height = 21;
+
+        ws.Cells["A2:M2"].Merge = true;
+        ws.Cells["A2"].Value = $"{companyAddress}\nMST: {taxCode}";
+        ws.Cells["A2"].Style.Font.Size = 12;
+        ws.Cells["A2"].Style.Font.Name = fontName;
+        ws.Cells["A2"].Style.WrapText = true;
+        ws.Row(2).Height = 35;
+
+        var title = string.IsNullOrWhiteSpace(accountName)
+            ? $"SỔ {accountCode}"
+            : $"SỔ {accountCode} - {accountName.Trim().ToUpperInvariant()}";
+
+        ws.Cells["A4:M4"].Merge = true;
+        ws.Cells["A4"].Value = title;
+        ws.Cells["A4"].Style.Font.Bold = true;
+        ws.Cells["A4"].Style.Font.Size = 15;
+        ws.Cells["A4"].Style.Font.Name = fontName;
+        ws.Cells["A4"].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+
+        ws.Cells["A5:M5"].Merge = true;
+        ws.Cells["A5"].Value = $"Từ ngày: {fromDate:dd/MM/yyyy}, đến ngày: {toDate:dd/MM/yyyy}";
+        ws.Cells["A5"].Style.Font.Size = 10;
+        ws.Cells["A5"].Style.Font.Name = fontName;
+        ws.Cells["A5"].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+
+        ws.Cells["A6:M6"].Merge = true;
+        ws.Cells["A6"].Value = string.IsNullOrWhiteSpace(customerHeader)
+            ? string.Empty
+            : $"KHÁCH HÀNG: {customerHeader.Trim().ToUpperInvariant()}";
+        ws.Cells["A6"].Style.Font.Size = 10;
+        ws.Cells["A6"].Style.Font.Name = fontName;
+        ws.Cells["A6"].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+
+        ws.Cells["A7:M7"].Merge = true;
+        ws.Cells["A7"].Value = "Đơn vị tính : Đồng VN";
+        ws.Cells["A7"].Style.Font.Size = 10;
+        ws.Cells["A7"].Style.Font.Name = fontName;
+        ws.Cells["A7"].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Right;
+
+        ws.Cells["A8:A9"].Merge = true;
+        ws.Cells["A8"].Value = "Ngày tháng\nchứng từ";
+
+        ws.Cells["B8:D8"].Merge = true;
+        ws.Cells["B8"].Value = "Sổ phiếu chứng từ";
+        ws.Cells["B9"].Value = "Nợ";
+        ws.Cells["C9"].Value = "Có";
+        ws.Cells["D9"].Value = "Số HĐ";
+
+        ws.Cells["E8:E9"].Merge = true;
+        ws.Cells["E8"].Value = "Cá nhân/Đơn vị";
+
+        ws.Cells["F8:F9"].Merge = true;
+        ws.Cells["F8"].Value = "Diễn giải";
+
+        ws.Cells["G8:G9"].Merge = true;
+        ws.Cells["G8"].Value = "TK/\nđối ứng";
+
+        ws.Cells["H8:I8"].Merge = true;
+        ws.Cells["H8"].Value = "Số phát sinh";
+        ws.Cells["H9"].Value = "Nợ";
+        ws.Cells["I9"].Value = "Có";
+
+        ws.Cells["J8:K8"].Merge = true;
+        ws.Cells["J8"].Value = "Số dư";
+        ws.Cells["J9"].Value = "Nợ";
+        ws.Cells["K9"].Value = "Có";
+
+        ws.Cells["L8:M8"].Merge = true;
+        ws.Cells["L8"].Value = "Ref.";
+        ws.Cells["L9"].Value = "DN";
+        ws.Cells["M9"].Value = "NO";
+
+        var headerRange = ws.Cells["A8:M9"];
+        headerRange.Style.Font.Bold = true;
+        headerRange.Style.Font.Size = 10;
+        headerRange.Style.Font.Name = fontName;
+        headerRange.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+        headerRange.Style.VerticalAlignment = OfficeOpenXml.Style.ExcelVerticalAlignment.Center;
+        headerRange.Style.WrapText = true;
+        ApplyThinBorder(headerRange);
+
+        var row = 10;
+        var running = openingBalance;
+
+        WriteOpeningRow(ws, row, accountCode, openingBalance, fontName);
+        ApplyThinBorder(ws.Cells[row, 1, row, 13]);
+        row++;
+
+        decimal totalDebit = 0;
+        decimal totalCredit = 0;
+
+        foreach (var item in detailRows)
+        {
+            running += item.Debit - item.Credit;
+            totalDebit += item.Debit;
+            totalCredit += item.Credit;
+
+            ws.Cells[row, 1].Value = item.PostingDate;
+            ws.Cells[row, 1].Style.Numberformat.Format = "dd/MM/yyyy";
+
+            if (item.Debit > 0)
+                ws.Cells[row, 2].Value = item.VoucherNo;
+            if (item.Credit > 0)
+                ws.Cells[row, 3].Value = item.VoucherNo;
+
+            ws.Cells[row, 4].Value = item.SoHD;
+            ws.Cells[row, 5].Value = item.CustomerName;
+            ws.Cells[row, 6].Value = item.Description;
+            ws.Cells[row, 7].Value = item.OppositeAccountCode;
+
+            if (item.Debit != 0)
+                ws.Cells[row, 8].Value = item.Debit;
+            if (item.Credit != 0)
+                ws.Cells[row, 9].Value = item.Credit;
+
+            if (running > 0)
+                ws.Cells[row, 10].Value = Math.Abs(running);
+            else if (running < 0)
+                ws.Cells[row, 11].Value = Math.Abs(running);
+            else
+                ws.Cells[row, 10].Value = 0;
+
+            ws.Cells[row, 12].Value = item.Book;
+            ws.Cells[row, 13].Value = string.IsNullOrWhiteSpace(item.SourceName) ? item.VoucherNo : item.SourceName;
+
+            ws.Cells[row, 1, row, 13].Style.Font.Name = fontName;
+            ws.Cells[row, 1, row, 13].Style.Font.Size = 10;
+            ws.Cells[row, 8, row, 11].Style.Numberformat.Format = "#,##0";
+            ws.Cells[row, 8, row, 11].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Right;
+            ApplyThinBorder(ws.Cells[row, 1, row, 13]);
+            row++;
+        }
+
+        WriteTotalRow(ws, row, accountCode, totalDebit, totalCredit, running, fontName);
+        ApplyThinBorder(ws.Cells[row, 1, row, 13]);
+        row += 3;
+
+        ws.Cells[row, 1, row, 4].Merge = true;
+        ws.Cells[row, 1].Value = "Người lập biểu";
+        ws.Cells[row, 5, row, 9].Merge = true;
+        ws.Cells[row, 5].Value = "Kế toán trưởng";
+        ws.Cells[row, 10, row, 13].Merge = true;
+        ws.Cells[row, 10].Value = "Giám đốc";
+        ws.Cells[row, 1, row, 13].Style.Font.Bold = true;
+        ws.Cells[row, 1, row, 13].Style.Font.Size = 10;
+        ws.Cells[row, 1, row, 13].Style.Font.Name = fontName;
+        ws.Cells[row, 1, row, 13].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Center;
+
+        ws.Column(1).Width = 12;
+        ws.Column(2).Width = 14;
+        ws.Column(3).Width = 14;
+        ws.Column(4).Width = 12;
+        ws.Column(5).Width = 36;
+        ws.Column(6).Width = 40;
+        ws.Column(7).Width = 10;
+        ws.Column(8).Width = 14;
+        ws.Column(9).Width = 14;
+        ws.Column(10).Width = 14;
+        ws.Column(11).Width = 14;
+        ws.Column(12).Width = 10;
+        ws.Column(13).Width = 18;
+    }
+
+    private static void WriteOpeningRow(ExcelWorksheet ws, int row, string accountCode, decimal openingBalance, string fontName)
+    {
+        ws.Cells[row, 6].Value = $"Số đầu kỳ TK: {accountCode}";
+        ws.Cells[row, 6].Style.Font.Bold = true;
+
+        if (openingBalance > 0)
+            ws.Cells[row, 10].Value = openingBalance;
+        else if (openingBalance < 0)
+            ws.Cells[row, 11].Value = Math.Abs(openingBalance);
+        else
+            ws.Cells[row, 10].Value = 0;
+
+        ws.Cells[row, 1, row, 13].Style.Font.Name = fontName;
+        ws.Cells[row, 1, row, 13].Style.Font.Size = 10;
+        ws.Cells[row, 1, row, 13].Style.Font.Bold = true;
+        ws.Cells[row, 8, row, 11].Style.Numberformat.Format = "#,##0";
+    }
+
+    private static void WriteTotalRow(
+        ExcelWorksheet ws,
+        int row,
+        string accountCode,
+        decimal totalDebit,
+        decimal totalCredit,
+        decimal closingBalance,
+        string fontName)
+    {
+        ws.Cells[row, 6].Value = $"Tổng cộng TK: {accountCode}";
+        ws.Cells[row, 8].Value = totalDebit;
+        ws.Cells[row, 9].Value = totalCredit;
+
+        if (closingBalance > 0)
+            ws.Cells[row, 10].Value = Math.Abs(closingBalance);
+        else if (closingBalance < 0)
+            ws.Cells[row, 11].Value = Math.Abs(closingBalance);
+        else
+        {
+            ws.Cells[row, 10].Value = 0;
+            ws.Cells[row, 11].Value = 0;
+        }
+
+        ws.Cells[row, 1, row, 13].Style.Font.Name = fontName;
+        ws.Cells[row, 1, row, 13].Style.Font.Size = 10;
+        ws.Cells[row, 1, row, 13].Style.Font.Bold = true;
+        ws.Cells[row, 8, row, 11].Style.Numberformat.Format = "#,##0";
+    }
+
+    private static void ApplyThinBorder(ExcelRange range)
+    {
+        range.Style.Border.Top.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        range.Style.Border.Bottom.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        range.Style.Border.Left.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+        range.Style.Border.Right.Style = OfficeOpenXml.Style.ExcelBorderStyle.Thin;
+    }
+
+    private async Task DownloadBytesAsync(byte[] bytes, string fileName)
+    {
+        var base64 = Convert.ToBase64String(bytes);
+        var safeFileName = fileName.Replace("'", string.Empty).Replace("\\", string.Empty).Replace("/", string.Empty);
+        var script = $"(() => {{ const a = document.createElement('a'); a.href = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{base64}'; a.download = '{safeFileName}'; document.body.appendChild(a); a.click(); a.remove(); }})()";
+        await JS.InvokeVoidAsync("eval", script);
     }
 
     private static string GetSide(decimal amount)
