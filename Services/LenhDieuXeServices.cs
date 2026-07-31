@@ -194,7 +194,7 @@ namespace NVOAMASIS.Services
                 //Load report template
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillLenhDieuXe.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 var lenhdieuxeinfo = await Get_LDXinfo(id);
        
@@ -205,7 +205,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["tamung"].Value = (lenhdieuxeinfo.Tamung ?? 0).ToString("#,##0.##");
                 try
                 {
-                    report.Render();
+                    StimulsoftLicenseHelper.PrepareAndRender(report);
                 }
                 catch (Exception ex)
                 {

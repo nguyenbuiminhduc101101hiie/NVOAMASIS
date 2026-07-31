@@ -402,7 +402,7 @@ namespace NVOAMASIS.Services
                 //Load report template
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "Quotation.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["Currency"].Value = currency;
@@ -446,7 +446,7 @@ namespace NVOAMASIS.Services
 
                 try
                 {
-                    report.Render();
+                    StimulsoftLicenseHelper.PrepareAndRender(report);
                 }
                 catch (Exception ex)
                 {
@@ -481,13 +481,13 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "Quotation.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
 
                 try
                 {
-                    report.Render();
+                    StimulsoftLicenseHelper.PrepareAndRender(report);
                 }
                 catch (Exception ex)
                 {

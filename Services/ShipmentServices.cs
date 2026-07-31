@@ -2208,7 +2208,7 @@ namespace NVOAMASIS.Services
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
                 ApplyCompanyLogoToReport(report, reportLogo, showLogo: !isOriginal);
@@ -2220,7 +2220,7 @@ namespace NVOAMASIS.Services
                 // Original = không logo, Draft = có logo
                 if (report.Dictionary.Variables["IsOriginal"] != null)
                     report.Dictionary.Variables["IsOriginal"].Value = isOriginal ? "true" : "false";
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2261,7 +2261,7 @@ namespace NVOAMASIS.Services
                     && BillSeaLayoutMrtHelper.IsTrang2ImageMode(formDoc);
 
                 StiBlazorHelper.Initialize(JSRuntime);
-                var report = StiReport.CreateNewReport();
+                var report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(new MemoryStream(templateBytes));
 
                 foreach (StiComponent component in report.GetComponents())
@@ -2278,7 +2278,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2315,7 +2315,7 @@ namespace NVOAMASIS.Services
                     reportLogo = await GetCompanyLogoAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
@@ -2328,7 +2328,7 @@ namespace NVOAMASIS.Services
                     formBillAir = await billSeaLayoutFormService.GetFormBillAirAsync(airFormId);
                 ApplyBillAirFormToReport(report, formBillAir);
 
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2351,7 +2351,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
 
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(new MemoryStream(templateBytes));
                 ApplyArrivalReportSetup(report, reportLogo);
                 ApplyLogoToImageComponent(report, "Image1", reportLogo);
@@ -2377,7 +2377,7 @@ namespace NVOAMASIS.Services
 
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam.ToString();
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2400,7 +2400,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
 
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(new MemoryStream(templateBytes));
                 ApplyArrivalReportSetup(report, reportLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
@@ -2420,7 +2420,7 @@ namespace NVOAMASIS.Services
 
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam.ToString();
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2447,7 +2447,7 @@ namespace NVOAMASIS.Services
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNoticeNVOCC.mrt");
                 var companyLogo = await GetCompanyLogoAsync();
 
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
@@ -2467,7 +2467,7 @@ namespace NVOAMASIS.Services
 
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using var ms = new MemoryStream();
                 report.ExportDocument(StiExportFormat.Pdf, ms);
                 return ms.ToArray();
@@ -2490,7 +2490,7 @@ namespace NVOAMASIS.Services
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillArrivalNotice_Air.mrt");
                 var companyLogo = await GetCompanyLogoAsync();
 
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
@@ -2515,7 +2515,7 @@ namespace NVOAMASIS.Services
 
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using var ms = new MemoryStream();
                 report.ExportDocument(StiExportFormat.Pdf, ms);
                 return ms.ToArray();
@@ -2536,7 +2536,7 @@ namespace NVOAMASIS.Services
                 var companyLogo = await GetCompanyLogoAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
@@ -2556,7 +2556,7 @@ namespace NVOAMASIS.Services
 
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam.ToString();
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2579,7 +2579,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrder.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
                 report.Dictionary.Variables["BillType"].Value = billType;
@@ -2588,7 +2588,7 @@ namespace NVOAMASIS.Services
 
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam.ToString();
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2619,7 +2619,7 @@ namespace NVOAMASIS.Services
 
                 var report = new StiReport();
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(new MemoryStream(templateBytes));
                 ApplyArrivalReportSetup(report, reportLogo);
                 SoftenDoPageBreakSettings(report);
@@ -2629,7 +2629,7 @@ namespace NVOAMASIS.Services
 
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam.ToString();
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2667,7 +2667,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BienBanGiaoNhan.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
 
@@ -2698,7 +2698,7 @@ namespace NVOAMASIS.Services
                 }
 
 
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2722,7 +2722,7 @@ namespace NVOAMASIS.Services
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrder_Air.mrt");
                 var companyLogo = await GetCompanyLogoAsync();
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
@@ -2735,7 +2735,7 @@ namespace NVOAMASIS.Services
 
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam.ToString();
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -2761,7 +2761,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrderNVOCC.mrt");
                 var companyLogo = await GetCompanyLogoAsync();
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 ApplyArrivalReportSetup(report, companyLogo);
                 SoftenDoPageBreakSettings(report);
@@ -2770,7 +2770,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using var ms = new MemoryStream();
                 report.ExportDocument(StiExportFormat.Pdf, ms);
                 return ms.ToArray();
@@ -2792,7 +2792,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillDeliveryOrder_Air.mrt");
                 var companyLogo = await GetCompanyLogoAsync();
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 ApplyArrivalReportSetup(report, companyLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
@@ -2803,7 +2803,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["flightNo"].Value = flightcode ?? "";
                 var ngaythangnam = $"Ngày {DateTime.Now.Day} tháng {DateTime.Now.Month} năm {DateTime.Now.Year}";
                 report.Dictionary.Variables["ngaythangnam"].Value = ngaythangnam;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using var ms = new MemoryStream();
                 report.ExportDocument(StiExportFormat.Pdf, ms);
                 return ms.ToArray();
@@ -3185,7 +3185,7 @@ namespace NVOAMASIS.Services
                 }
         
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 var connectionString = ResolveReportConnectionString();
                 var companyLogo = await GetCompanyLogoAsync();
 
@@ -3262,7 +3262,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["Refno"].Value = infojob.JobNo.ToString();
                 report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
                 report.Dictionary.Variables["debitno"].Value = detail.debitno;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -3285,7 +3285,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Truck.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Culture = "en-US";
                 report.Dictionary.Variables["BillType"].Value = billType;
@@ -3353,7 +3353,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["LDXNo"].Value = isMBL ? mblinfo.mbl_Truck_LenhDieuXeNo : hblinfo.Truck_LenhDieuXeNo;
                 report.Dictionary.Variables["WhereHBL"].Value = isMBL ? $" Where 1=0" : $" Where hblid = '{detail.hblid}' ";
                 report.Dictionary.Variables["WhereMBL"].Value = isMBL ? $" Where mblid = '{detail.mblid}' " : $" Where 1=0 "; ;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -3375,7 +3375,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportListDebitNote_SeaImport.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
 
 
 
@@ -3457,7 +3457,7 @@ namespace NVOAMASIS.Services
                     querydebit = "WHERE 1=0";
                 report.Dictionary.Variables["debitnos"].Value = querydebit.ToString();
 
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -3483,7 +3483,7 @@ namespace NVOAMASIS.Services
                 var companyLogo = await GetCompanyLogoAsync();
 
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Culture = "en-US";
                 ApplyReportConnectionString(report, connectionString);
@@ -3563,7 +3563,7 @@ namespace NVOAMASIS.Services
                     querydebit = "WHERE 1=0";
                 report.Dictionary.Variables["creditIDs"].Value = querydebit.ToString();
 
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -3586,7 +3586,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaImport_MBL.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
                 report.Dictionary.Variables["BillType"].Value = billType;
@@ -3661,7 +3661,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
                 report.Dictionary.Variables["MBLID"].Value = detail.mblid.ToString();
                 report.Dictionary.Variables["debitno"].Value = detail.debitno;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -3684,7 +3684,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaExport.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
                 report.Dictionary.Variables["BillType"].Value = billType;
@@ -3759,7 +3759,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["Refno"].Value = infojob.JobNo.ToString();
                 report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
                 report.Dictionary.Variables["debitno"].Value = detail.debitno;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -3781,7 +3781,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaExport_MBL.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
                 report.Dictionary.Variables["BillType"].Value = billType;
@@ -3856,7 +3856,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
                 report.Dictionary.Variables["MBLID"].Value = detail.mblid.ToString();
                 report.Dictionary.Variables["debitno"].Value = detail.debitno;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -3879,7 +3879,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_AirExport.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
                 report.Dictionary.Variables["BillType"].Value = billType;
@@ -3954,7 +3954,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["Refno"].Value = infojob.JobNo.ToString();
                 report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
                 report.Dictionary.Variables["debitno"].Value = detail.debitno;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -3977,7 +3977,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Airxport_MBL.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
                 report.Dictionary.Variables["BillType"].Value = billType;
@@ -4052,7 +4052,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
                 report.Dictionary.Variables["MBLID"].Value = detail.mblid.ToString();
                 report.Dictionary.Variables["debitno"].Value = detail.debitno;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -4074,7 +4074,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_AirImport.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
                 report.Dictionary.Variables["BillType"].Value = billType;
@@ -4149,7 +4149,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["Refno"].Value = infojob.JobNo.ToString();
                 report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
                 report.Dictionary.Variables["debitno"].Value = detail.debitno;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -4174,7 +4174,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_AirImport_MBL.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
 
 
@@ -4252,7 +4252,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
                 report.Dictionary.Variables["MBLID"].Value = detail.mblid.ToString();
                 report.Dictionary.Variables["debitno"].Value = detail.debitno;
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -5158,7 +5158,7 @@ namespace NVOAMASIS.Services
                 var connectionString = ResolveReportConnectionString();
 
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
                 ApplyLogoToImageComponent(report, "Image1", reportLogo);
@@ -5167,7 +5167,7 @@ namespace NVOAMASIS.Services
                 
                 try
                 {
-                    report.Render();
+                    StimulsoftLicenseHelper.PrepareAndRender(report);
                 }
                 catch (Exception ex)
                 {
@@ -5204,13 +5204,13 @@ namespace NVOAMASIS.Services
                 //Load report template
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "LenhCapContRong.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["ID"].Value = id_bk.ToString();
                 report.Dictionary.Variables["ID_Lenh"].Value = id.ToString();
                 try
                 {
-                    report.Render();
+                    StimulsoftLicenseHelper.PrepareAndRender(report);
                 }
                 catch (Exception ex)
                 {
@@ -5247,7 +5247,7 @@ namespace NVOAMASIS.Services
                 //Load report template
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "CamKetMuonCont_TraRong.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["HBL_ID"].Value = hblid.ToString();
@@ -5257,7 +5257,7 @@ namespace NVOAMASIS.Services
             
                 try
                 {
-                    report.Render();
+                    StimulsoftLicenseHelper.PrepareAndRender(report);
                 }
                 catch (Exception ex)
                 {
@@ -5703,7 +5703,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportProfitHBL.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Culture = "en-US";
                 var fcl = await GetFLCByMBLID(hblinfo.mblid); //
@@ -5744,7 +5744,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["debitnos"].Value = querydebit;
                 report.Dictionary.Variables["creditnos"].Value = querycredit;
                 report.Dictionary.Variables["Containers"].Value = string.Join(";", list_cont);
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -5767,7 +5767,7 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportProfitMBL.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Culture = "en-US";
                 var fcl = await GetFLCByMBLID(mblinfo.MblID); //
@@ -5819,7 +5819,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["debitids"].Value = querydebit;
                 report.Dictionary.Variables["creditids"].Value = querycredit;
                 report.Dictionary.Variables["Containers"].Value = string.Join(";", list_cont);
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
