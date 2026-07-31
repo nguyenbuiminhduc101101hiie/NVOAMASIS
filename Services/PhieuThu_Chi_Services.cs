@@ -420,7 +420,7 @@ namespace NVOAMASIS.Services
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
          
                 report.Load(rpt);
                 report.Culture = "en-US";
@@ -440,7 +440,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["In_Word"].Value = ConvertToWords(total, "VND");
 
 
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -509,7 +509,7 @@ namespace NVOAMASIS.Services
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
 
                 report.Load(rpt);
                 report.Culture = "en-US";
@@ -543,7 +543,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["lido"].Value = "Lí do nộp:";
                 report.Dictionary.Variables["Tenphieu"].Value = "PHIẾU THU";
                 report.Dictionary.Variables["nguoinhan_noptien"].Value = "Người Nộp Tiền";
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -572,7 +572,7 @@ namespace NVOAMASIS.Services
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
 
                 report.Load(rpt);
                 report.Culture = "en-US";
@@ -606,7 +606,7 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["lido"].Value = "Lí do chi:";
                 report.Dictionary.Variables["Tenphieu"].Value = "PHIẾU CHI";
                 report.Dictionary.Variables["nguoinhan_noptien"].Value = "Người Nhận Tiền";
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);

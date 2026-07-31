@@ -895,7 +895,7 @@ namespace NVOAMASIS.Services
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
-                report = StiReport.CreateNewReport();
+                report = StimulsoftLicenseHelper.CreateReport();
 
                 report.Load(rpt);
                 report.Culture = "en-US";
@@ -912,7 +912,7 @@ namespace NVOAMASIS.Services
                 }
                 report.Dictionary.Variables["Total"].Value = (sotien ?? 0).ToString("#,##0.##");
     
-                report.Render();
+                StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);

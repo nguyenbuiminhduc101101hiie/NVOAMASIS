@@ -22,9 +22,11 @@ using NVOAMASIS.Services.Accounting;
 using NVOAMASIS.Services.Accounting.ExcelImport;
 using NVOAMASIS.Services.Localization;
 using NVOAMASIS.Services.MultiTenant;
-using Stimulsoft.Base;
 using Stimulsoft.Drawing;
 using System.Text;
+
+// License Stimulsoft phải gán TRƯỚC mọi API Stimulsoft khác (kể cả GraphicsEngine).
+StimulsoftLicenseHelper.EnsureApplied();
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,16 +36,6 @@ builder.Services.AddLocalization();
 // This replaces the default file-based localization with database-driven localization
 // Resources are loaded from LocalizationResources table and cached per culture
 builder.Services.AddSingleton<IStringLocalizerFactory, DbStringLocalizerFactory>();
-
-// Set Stimulsoft license key
-try
-{
-    StiLicense.Key = "6vJhGtLLLz2GNviWmUTrhSqnOItdDwjBylQzQcAOiHkgpgFGkUl79uxVs8X+uspx6K+tqdtOB5G1S6PFPRrlVNvMUiSiNYl724EZbrUAWwAYHlGLRbvxMviMExTh2l9xZJ2xc4K1z3ZVudRpQpuDdFq+fe0wKXSKlB6okl0hUd2ikQHfyzsAN8fJltqvGRa5LI8BFkA/f7tffwK6jzW5xYYhHxQpU3hy4fmKo/BSg6yKAoUq3yMZTG6tWeKnWcI6ftCDxEHd30EjMISNn1LCdLN0/4YmedTjM7x+0dMiI2Qif/yI+y8gmdbostOE8S2ZjrpKsgxVv2AAZPdzHEkzYSzx81RHDzZBhKRZc5mwWAmXsWBFRQol9PdSQ8BZYLqvJ4Jzrcrext+t1ZD7HE1RZPLPAqErO9eo+7Zn9Cvu5O73+b9dxhE2sRyAv9Tl1lV2WqMezWRsO55Q3LntawkPq0HvBkd9f8uVuq9zk7VKegetCDLb0wszBAs1mjWzN+ACVHiPVKIk94/QlCkj31dWCg8YTrT5btsKcLibxog7pv1+2e4yocZKWsposmcJbgG0";
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"Warning: Stimulsoft license key is invalid or expired. {ex.Message}");
-}
 
 // Avoid SixLabors.Fonts API mismatch with ClosedXML by using GDI text measurement on Windows
 Graphics.GraphicsEngine = GraphicsEngine.Gdi;
