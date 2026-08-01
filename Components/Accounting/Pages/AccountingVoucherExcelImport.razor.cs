@@ -138,13 +138,13 @@ public partial class AccountingVoucherExcelImport
 
         if (!file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
         {
-            Snackbar.Add("Chỉ hỗ trợ file Excel .xlsx.", MudBlazor.Severity.Error);
+            Snackbar.Add(Localizer["AvImp.OnlyXlsx"], MudBlazor.Severity.Error);
             return;
         }
 
         if (file.Size > MaxFileSize)
         {
-            Snackbar.Add("File vượt quá 20 MB.", MudBlazor.Severity.Error);
+            Snackbar.Add(Localizer["AvImp.FileTooLarge"], MudBlazor.Severity.Error);
             return;
         }
 
@@ -172,12 +172,12 @@ public partial class AccountingVoucherExcelImport
             if (Guid.TryParse(_companyIdText, out _))
                 await CheckExistingAsync();
 
-            Snackbar.Add($"Đã nhận diện {_sourceRows.Count:N0} dòng Excel và {_vouchers.Count:N0} voucher.", MudBlazor.Severity.Success);
+            Snackbar.Add(string.Format(Localizer["AvImp.ReadSuccess"], _sourceRows.Count, _vouchers.Count), MudBlazor.Severity.Success);
         }
         catch (Exception ex)
         {
             _messages.Add(ex.Message);
-            Snackbar.Add("Không đọc được file. Kiểm tra lại đúng mẫu sổ chi tiết công nợ.", MudBlazor.Severity.Error);
+            Snackbar.Add(Localizer["AvImp.ReadFailed"], MudBlazor.Severity.Error);
         }
         finally
         {
@@ -372,7 +372,7 @@ public partial class AccountingVoucherExcelImport
 
         if (!Guid.TryParse(_companyIdText, out var companyId))
         {
-            Snackbar.Add("CompanyId không đúng định dạng GUID.", MudBlazor.Severity.Warning);
+            Snackbar.Add(Localizer["AvImp.InvalidCompanyId"], MudBlazor.Severity.Warning);
             return;
         }
 
@@ -422,13 +422,13 @@ WHERE CompanyId = @CompanyId
             }
 
             Snackbar.Add(existing.Count == 0
-                ? "Không phát hiện voucher trùng trong database."
-                : $"Có {existing.Count:N0} voucher đã tồn tại và đã được bỏ chọn.",
+                ? Localizer["AvImp.NoDuplicate"]
+                : string.Format(Localizer["AvImp.DuplicateFound"], existing.Count),
                 existing.Count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"Không kiểm tra được voucher trùng: {ex.Message}", MudBlazor.Severity.Error);
+            Snackbar.Add(string.Format(Localizer["AvImp.CheckDuplicateFailed"], ex.Message), MudBlazor.Severity.Error);
         }
         finally
         {
@@ -440,7 +440,7 @@ WHERE CompanyId = @CompanyId
     {
         if (!Guid.TryParse(_companyIdText, out var companyId))
         {
-            Snackbar.Add("CompanyId không đúng định dạng GUID.", MudBlazor.Severity.Error);
+            Snackbar.Add(Localizer["AvImp.InvalidCompanyId"], MudBlazor.Severity.Error);
             return;
         }
 
@@ -535,12 +535,12 @@ WHERE CompanyId = @CompanyId
                 voucher.Selected = false;
             }
 
-            Snackbar.Add($"Đã tạo thành công {selected.Count:N0} voucher nháp, gồm {selected.Sum(v => v.Lines.Count):N0} dòng hạch toán.", MudBlazor.Severity.Success);
+            Snackbar.Add(string.Format(Localizer["AvImp.SaveSuccess"], selected.Count, selected.Sum(v => v.Lines.Count)), MudBlazor.Severity.Success);
         }
         catch (Exception ex)
         {
             await transaction.RollbackAsync();
-            Snackbar.Add($"Import thất bại, toàn bộ giao dịch đã rollback: {ex.Message}", MudBlazor.Severity.Error);
+            Snackbar.Add(string.Format(Localizer["AvImp.SaveFailed"], ex.Message), MudBlazor.Severity.Error);
         }
         finally
         {

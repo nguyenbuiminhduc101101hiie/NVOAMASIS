@@ -1,4 +1,4 @@
-@page "/yard/alpine-inventory-import"
+﻿@page "/yard/alpine-inventory-import"
 @attribute [Authorize]
 
 @using System.Data
@@ -12,14 +12,16 @@
 @using MudBlazor
 @using OfficeOpenXml
 @using NVOAMASIS.Data
-@using NVOAMASIS.Services
+@using NVOAMASIS.Resources
+@using Microsoft.Extensions.Localization
 
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject AccountService asv
 @inject SharedServices ssv
 @inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>8.3.8 Import YARD Alpine Inventory</PageTitle>
+<PageTitle>@Localizer["StockImport_PageTitle838"]</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.False" Class="yard-import-page pa-3">
     <MudPaper Class="hero-card pa-4 mb-3" Elevation="0">
@@ -30,9 +32,9 @@
                         <MudIcon Icon="@Icons.Material.Filled.Warehouse" Size="Size.Large" />
                     </div>
                     <div>
-                        <MudText Typo="Typo.h5" Class="page-title">8.3.8 Import YARD Alpine Inventory</MudText>
+                        <MudText Typo="Typo.h5" Class="page-title">@Localizer["StockImport_HeroTitle838"]</MudText>
                         <MudText Typo="Typo.body2" Color="Color.Secondary">
-                            Import workbook dạng ALPINE Inventory: đọc GATE IN, GATE OUT và STOCK → preview → bỏ dòng trùng → ghi vào <b>@TableName</b>.
+                            @((MarkupString)string.Format(Localizer["StockImport_HeroDesc838"].Value, TableName))
                         </MudText>
                     </div>
                 </MudStack>
@@ -42,8 +44,8 @@
                 <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="flex-wrap action-bar">
                     <MudTextField T="string"
                                   @bind-Value="_importDepot"
-                                  Label="Depot"
-                                  Placeholder="PHUONG DONG DEPOT"
+                                  Label="@Localizer["StockImport_DepotName"]"
+                                  Placeholder="@Localizer["StockImport_DepotPlaceholder838"]"
                                   Variant="Variant.Outlined"
                                   Margin="Margin.Dense"
                                   Style="min-width:220px;background:#fff;border-radius:12px;"
@@ -56,7 +58,7 @@
                                Color="Color.Primary"
                                StartIcon="@Icons.Material.Filled.FolderOpen"
                                Disabled="@_busy">
-                        Chọn Excel
+                        @Localizer["StockImport_ChooseExcel"]
                         <InputFile OnChange="PreviewExcelAsync" accept=".xlsx" style="display:none" />
                     </MudButton>
 
@@ -65,7 +67,7 @@
                                StartIcon="@Icons.Material.Filled.CloudUpload"
                                OnClick="ConfirmImportAsync"
                                Disabled="@(_busy || _preview is null || ImportableTotal == 0)">
-                        Import DB
+                        @Localizer["StockImport_ImportDb"]
                     </MudButton>
 
                     <MudButton Variant="Variant.Outlined"
@@ -73,7 +75,7 @@
                                StartIcon="@Icons.Material.Filled.RestartAlt"
                                OnClick="ClearPreview"
                                Disabled="@_busy">
-                        Reset
+                        @Localizer["StockImport_Reset"]
                     </MudButton>
                 </MudStack>
             </MudItem>
@@ -318,7 +320,7 @@
     {
         if (!_canAdd)
         {
-            Snackbar.Add("Bạn không có quyền import Inventory.", MudBlazor.Severity.Warning);
+            Snackbar.Add(Localizer["StockImport_NoPermissionInventory"], MudBlazor.Severity.Warning);
             return;
         }
 
@@ -328,7 +330,7 @@
         var file = e.File;
         if (!file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
         {
-            Snackbar.Add("Chỉ hỗ trợ file .xlsx.", MudBlazor.Severity.Warning);
+            Snackbar.Add(Localizer["StockImport_XlsxOnly"], MudBlazor.Severity.Warning);
             return;
         }
 
@@ -345,7 +347,7 @@
 
             _preview = ReadPreview(ms.ToArray(), file.Name);
             if (_preview.Sheets.Count == 0)
-                throw new InvalidOperationException("Không tìm thấy GATE IN, GATE OUT hoặc STOCK trong file.");
+                throw new InvalidOperationException(Localizer["StockImport_AlpineSheetsNotFound"].Value);
 
             var detectedDepot = DetectDepot(_preview);
             if (!string.IsNullOrWhiteSpace(detectedDepot))
@@ -358,7 +360,8 @@
             await MarkDuplicatesAsync(_preview);
             _activeTab = 0;
 
-            Snackbar.Add($"Preview xong: {GateInCount:N0} Gate In, {GateOutCount:N0} Gate Out, {StockCount:N0} Stock. New {ImportableTotal:N0}, existing {ExistingTotal:N0}.", MudBlazor.Severity.Success);
+            Snackbar.Add(string.Format(Localizer["StockImport_AlpinePreviewSummary"],
+                GateInCount, GateOutCount, StockCount, ImportableTotal, ExistingTotal), MudBlazor.Severity.Success);
         }
         catch (Exception ex)
         {
@@ -374,19 +377,19 @@
     {
         if (!_canAdd)
         {
-            Snackbar.Add("Bạn không có quyền import Inventory.", MudBlazor.Severity.Warning);
+            Snackbar.Add(Localizer["StockImport_NoPermissionInventory"], MudBlazor.Severity.Warning);
             return;
         }
 
         if (_preview is null || ImportableTotal == 0)
         {
-            Snackbar.Add("Không có dòng mới để import.", MudBlazor.Severity.Info);
+            Snackbar.Add(Localizer["StockImport_NoNewRows"], MudBlazor.Severity.Info);
             return;
         }
 
         if (string.IsNullOrWhiteSpace(_importDepot))
         {
-            Snackbar.Add("Vui lòng nhập Depot.", MudBlazor.Severity.Warning);
+            Snackbar.Add(Localizer["StockImport_SelectDepotImport"], MudBlazor.Severity.Warning);
             return;
         }
 
@@ -398,7 +401,7 @@
             var rows = _preview.Sheets.SelectMany(s => s.Rows).Where(CanImport).ToList();
             var inserted = await InsertRowsAsync(rows, _preview.FileName, _importDepot.Trim());
 
-            Snackbar.Add($"Import thành công {inserted:N0} dòng vào dbo.{TableName}.", MudBlazor.Severity.Success);
+            Snackbar.Add(string.Format(Localizer["StockImport_AlpineCompleted"], inserted, TableName), MudBlazor.Severity.Success);
             ClearPreview();
         }
         catch (Exception ex)
