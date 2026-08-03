@@ -34,6 +34,7 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        position: relative;
     }
     .mud-drawer-content .nav-menu-full-height {
         height: 100%;
@@ -41,6 +42,38 @@
         flex: 1;
         overflow-y: auto;
         overflow-x: hidden;
+    }
+    .drawer-with-resize {
+        height: 100%;
+        min-height: 0;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+    }
+    .drawer-resize-handle {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 6px;
+        height: 100%;
+        cursor: col-resize;
+        z-index: 10;
+        background: transparent;
+        touch-action: none;
+        user-select: none;
+    }
+    .drawer-resize-handle:hover,
+    .drawer-resizing .drawer-resize-handle {
+        background: rgba(25, 118, 210, 0.35);
+    }
+    .drawer-resize-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 2000;
+        cursor: col-resize;
+        user-select: none;
+        touch-action: none;
     }
 </style>
 <CascadingValue Value="this">
@@ -156,9 +189,28 @@
         </MudAppBar>
         <MudDrawer Open=_drawerOpen ClipMode=DrawerClipMode.Always Elevation=2
         Variant="DrawerVariant.Responsive"
-        Breakpoint="Breakpoint.Md" DisableOverlay>
-            <NavMenu OnTabRequest="@((t) => OpenTab(t.Key,t.Title,t.Content))" @ref="_navMenuRef" />
+        Breakpoint="Breakpoint.Md" DisableOverlay
+        Width="@($"{_drawerWidth}px")"
+        Class="@(_isResizingDrawer ? "drawer-resizing" : null)">
+            <div class="drawer-with-resize">
+                <NavMenu OnTabRequest="@((t) => OpenTab(t.Key,t.Title,t.Content))" @ref="_navMenuRef" />
+                @if (_drawerOpen)
+                {
+                    <div class="drawer-resize-handle"
+                         title="Kéo để đổi độ rộng menu"
+                         @onpointerdown="OnDrawerResizeStart"
+                         @onpointerup="OnDrawerResizeEnd"
+                         @onpointercancel="OnDrawerResizeEnd"></div>
+                }
+            </div>
         </MudDrawer>
+        @if (_isResizingDrawer)
+        {
+            <div class="drawer-resize-overlay"
+                 @onpointermove="OnDrawerResizeMove"
+                 @onpointerup="OnDrawerResizeEnd"
+                 @onpointercancel="OnDrawerResizeEnd"></div>
+        }
         <MudMainContent>
             @* @Body *@
             <DynamicTabs @ref="_tabs" />
@@ -192,8 +244,67 @@
 
 @code {
     bool _drawerOpen = true;
+    private double _drawerWidth = 240;
+    private const double DrawerMinWidth = 180;
+    private const double DrawerMaxWidth = 480;
+    private const string DrawerWidthStorageKey = "nvocc.drawerWidth";
+    private bool _isResizingDrawer;
     AuthUser user = new AuthUser();
     void DrawerToggle() => _drawerOpen = !_drawerOpen;
+
+    private void OnDrawerResizeStart(PointerEventArgs e)
+    {
+        if (!_drawerOpen || e.Button != 0)
+            return;
+        _isResizingDrawer = true;
+    }
+
+    private void OnDrawerResizeMove(PointerEventArgs e)
+    {
+        if (!_isResizingDrawer)
+            return;
+
+        var next = Math.Clamp(e.ClientX, DrawerMinWidth, DrawerMaxWidth);
+        if (Math.Abs(next - _drawerWidth) < 0.5)
+            return;
+
+        _drawerWidth = next;
+    }
+
+    private async Task OnDrawerResizeEnd(PointerEventArgs e)
+    {
+        if (!_isResizingDrawer)
+            return;
+
+        _isResizingDrawer = false;
+        await SaveDrawerWidthAsync();
+    }
+
+    private async Task LoadDrawerWidthAsync()
+    {
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("localStorage.getItem", DrawerWidthStorageKey);
+            if (double.TryParse(stored, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var width))
+                _drawerWidth = Math.Clamp(width, DrawerMinWidth, DrawerMaxWidth);
+        }
+        catch
+        {
+            // ignore JS / storage errors
+        }
+    }
+
+    private async Task SaveDrawerWidthAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", DrawerWidthStorageKey, _drawerWidth.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch
+        {
+            // ignore JS / storage errors
+        }
+    }
     private int _unreadEmailCount = 0;
     private bool _checkedInToday = false;
     // Removed popup approach; using tab instead
@@ -245,9 +356,11 @@
 
         try
         {
+            await LoadDrawerWidthAsync();
             await ApplyStoredFontPreference();
             // Apply saved Shipment grid colors globally (CSS variables + localStorage).
             await JS.InvokeVoidAsync("nvoccLoadShipmentColorSettings");
+            await InvokeAsync(StateHasChanged);
         }
         catch
         {

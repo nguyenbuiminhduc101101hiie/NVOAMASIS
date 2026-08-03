@@ -3017,6 +3017,30 @@ namespace NVOAMASIS.Services
             }
         }
 
+        /// <summary>
+        /// Booking MRT dùng CalculationMode=Interpretation nên custom Script method formatDate không chạy;
+        /// expression lỗi làm cả ô text trống. Bỏ wrapper formatDate(...) → giữ field gốc.
+        /// </summary>
+        private static void StripUnsupportedFormatDateCalls(StiReport report)
+        {
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is not StiText text)
+                    continue;
+
+                var value = text.Text?.Value;
+                if (string.IsNullOrEmpty(value) ||
+                    value.IndexOf("formatDate(", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                text.Text.Value = Regex.Replace(
+                    value,
+                    @"formatDate\(([^()]*)\)",
+                    "$1",
+                    RegexOptions.IgnoreCase);
+            }
+        }
+
         private static void ApplyReportConnectionString(StiReport report, string connectionString)
         {
             if (string.IsNullOrWhiteSpace(connectionString))
@@ -5162,6 +5186,7 @@ namespace NVOAMASIS.Services
                 report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
                 ApplyLogoToImageComponent(report, "Image1", reportLogo);
+                StripUnsupportedFormatDateCalls(report);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
 
                 
