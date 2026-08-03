@@ -1,0 +1,125 @@
+@inject ISnackbar Snackbar
+@inject AccountService asv
+@inject SharedServices ssv
+@inject GlobalServices gsv
+@inject SupportServices supsv
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2" Class="pa-4" Style="min-width: 420px;">
+            <MudText Typo="Typo.subtitle1">Sync quyền từ Template theo bộ phận</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                Thêm các quyền mới trong template vào user thuộc bộ phận đã chọn (chỉ bổ sung quyền còn thiếu, không ghi đè quyền hiện có).
+            </MudText>
+            <MudAutocomplete T="string"
+                             Value="SelectedDept"
+                             ValueChanged="OnDeptChanged"
+                             Label="Department / Template"
+                             SearchFunc="SearchDeptAsync"
+                             MaxItems="@(Math.Max(Depts.Count, 1))"
+                             ResetValueOnEmptyText="false"
+                             Clearable="true"
+                             Immediate="true"
+                             Required
+                             ToStringFunc="@(x => x ?? string.Empty)" />
+            @if (!string.IsNullOrWhiteSpace(PreviewText))
+            {
+                <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mt-2">@PreviewText</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_busy || string.IsNullOrWhiteSpace(SelectedDept))" OnClick="SubmitAsync">
+            @(_busy ? "Syncing..." : "Sync")
+        </MudButton>
+        <MudButton OnClick="@(() => Muddialog.Cancel())" Disabled="@_busy">@Localizer["close"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public MudDialogInstance Muddialog { get; set; } = default!;
+
+    List<string> Depts = new();
+    List<AuthUser> Users = new();
+    List<PermissionTemplate> Templates = new();
+    string? SelectedDept;
+    string? PreviewText;
+    bool _busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Users = await asv.GetListUser();
+        var departments = await supsv.GetListDepartments();
+        Templates = await gsv.GetListPermissionTemplate();
+
+        Depts = Templates
+            .Select(x => x.Dept)
+            .Concat(departments.Select(x => x.Code))
+            .Where(x => !string.IsNullOrWhiteSpace(x) && !string.Equals(x, "ALL", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToList()!;
+    }
+
+    Task OnDeptChanged(string? dept)
+    {
+        SelectedDept = dept;
+        if (string.IsNullOrWhiteSpace(dept))
+        {
+            PreviewText = null;
+            return Task.CompletedTask;
+        }
+
+        var userCount = Users.Count(u =>
+            !string.IsNullOrWhiteSpace(u.Department) &&
+            string.Equals(u.Department, dept, StringComparison.OrdinalIgnoreCase));
+
+        var templateCount = Templates.Count(t =>
+            !string.IsNullOrWhiteSpace(t.Dept) &&
+            string.Equals(t.Dept, dept, StringComparison.OrdinalIgnoreCase) &&
+            t.MenuId.HasValue);
+
+        PreviewText = $"Template '{dept}': {templateCount} quyền → sync cho {userCount} user(s). Chỉ thêm quyền còn thiếu.";
+        return Task.CompletedTask;
+    }
+
+    private Task<IEnumerable<string>> SearchDeptAsync(string? text)
+    {
+        var q = Depts.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(text))
+            q = q.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(q.Take(50));
+    }
+
+    async Task SubmitAsync()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedDept))
+        {
+            CallSnackBar("Chọn bộ phận / template.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var rs = await ssv.SyncPermissionsFromTemplate(SelectedDept);
+            if (rs.Flag)
+                Muddialog.Close(rs);
+            else
+                CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
