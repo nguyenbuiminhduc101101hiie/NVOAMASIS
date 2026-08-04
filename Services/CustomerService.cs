@@ -1519,7 +1519,7 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
         return saveResult;
     }
 
-    private static string MapPartnerGroupToMainCode(string? group)
+    public static string MapPartnerGroupToMainCode(string? group)
     {
         if (string.IsNullOrWhiteSpace(group))
             return "Customer";
@@ -1719,6 +1719,7 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
                 result.Rows.Add(new CustomerPublicImportPreviewRow
                 {
                     ExcelRow = row,
+                    Customer_ID = customer.Customer_ID,
                     Company = company,
                     ShortName = company,
                     EnglishName = englishName,
@@ -2675,6 +2676,7 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
 public class CustomerPublicImportPreviewRow
 {
     public int ExcelRow { get; set; }
+    public Guid? Customer_ID { get; set; }
     public string? Customer_Code { get; set; }
     public string? MainCode { get; set; }
     public string? DonViDoiTac_gs { get; set; }
@@ -2691,6 +2693,7 @@ public class CustomerPublicImportPreviewRow
     public string? HanCongNo { get; set; }
     public string? Remarks_sale { get; set; }
     public bool IsSkipped { get; set; }
+    public bool ExcludedByUser { get; set; }
     public string? SkipReason { get; set; }
 }
 
