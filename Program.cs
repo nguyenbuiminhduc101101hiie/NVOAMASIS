@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.SignalR;
@@ -40,6 +41,53 @@ builder.Services.AddSingleton<IStringLocalizerFactory, DbStringLocalizerFactory>
 // Avoid SixLabors.Fonts API mismatch with ClosedXML by using GDI text measurement on Windows
 Graphics.GraphicsEngine = GraphicsEngine.Gdi;
 
+// Persist Data Protection keys so cookie auth survives AppPool recycle / republish under IIS.
+// Prefer ContentRoot/Keys; fall back if AppPoolIdentity cannot write the site folder.
+static string ResolveDataProtectionKeysPath(IWebHostEnvironment env, ILogger logger)
+{
+    var candidates = new[]
+    {
+        Path.Combine(env.ContentRootPath, "Keys"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NVOAMASIS", "Keys"),
+        Path.Combine(Path.GetTempPath(), "NVOAMASIS", "Keys")
+    };
+
+    foreach (var path in candidates)
+    {
+        try
+        {
+            Directory.CreateDirectory(path);
+            // Prove write access (AppPoolIdentity often cannot write site root)
+            var probe = Path.Combine(path, ".write-probe");
+            File.WriteAllText(probe, "ok");
+            File.Delete(probe);
+            return path;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Data Protection keys path unavailable: {Path}", path);
+        }
+    }
+
+    logger.LogWarning("No writable Data Protection keys path found; using ephemeral keys (cookies will not survive recycle).");
+    return candidates[^1];
+}
+
+var dpLogger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger("DataProtection");
+var keysPath = ResolveDataProtectionKeysPath(builder.Environment, dpLogger);
+try
+{
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
+        .SetApplicationName("NVOAMASIS");
+}
+catch (Exception ex)
+{
+    dpLogger.LogWarning(ex, "AddDataProtection PersistKeysToFileSystem failed for {Path}; continuing without persistent keys.", keysPath);
+    builder.Services.AddDataProtection()
+        .SetApplicationName("NVOAMASIS");
+}
+
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents()
@@ -49,6 +97,7 @@ builder.Services.AddRazorComponents()
         options.DetailedErrors = builder.Configuration.GetValue<bool>("DetailedErrors");
     });
 
+builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddMudServices();
 builder.Services.AddControllers();
 builder.Services.AddHttpClient();
@@ -62,27 +111,29 @@ builder.Services.AddDistributedSqlServerCache(options =>
     options.TableName = "DistributedCache";
 });
 
-//# for BLAZOR COOKIE Auth
-builder.Services.AddScoped<AuthenticationStateProvider, CustomAuthenticationStateProvider>();
+//# for BLAZOR COOKIE Auth — single scoped instance (avoid duplicate provider registrations)
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<CustomAuthenticationStateProvider>();
+builder.Services.AddScoped<AuthenticationStateProvider>(sp =>
+    sp.GetRequiredService<CustomAuthenticationStateProvider>());
 builder.Services.AddMudExtensions();
 builder.Services.AddBlazorBootstrap();
 
 //## for BLAZOR COOKIE Auth
-/// ref �� https://blazorhelpwebsite.com/ViewBlogPost/36
-//builder.Services.Configure<CookiePolicyOptions>(options =>
-//{
-//  options.CheckConsentNeeded = context => true;
-//  options.MinimumSameSitePolicy = SameSiteMode.Strict;
-//});
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(cfg =>
     {
-        cfg.LoginPath = "/Account/Login"; // default: /Accout/Login
-        cfg.Cookie.Name = ".NVOAMASIS.Cookies"; //default:.AspNetCore.Cookies
+        cfg.LoginPath = "/Account/Login";
+        cfg.Cookie.Name = ".NVOAMASIS.Auth";
+        cfg.Cookie.Path = "/";
         cfg.Cookie.SameSite = SameSiteMode.Lax;
         cfg.Cookie.HttpOnly = true;
-        cfg.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        // Production/IIS is HTTPS; SameAsRequest keeps local HTTP login working
+        cfg.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
+        cfg.ExpireTimeSpan = TimeSpan.FromDays(14);
+        cfg.SlidingExpiration = true;
     })
     .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
     {
@@ -154,7 +205,6 @@ builder.Services.AddSingleton<IDbContextFactory<AppDbContext>, TenantAwareDbCont
 builder.Services.AddScoped<AccountService>();
 builder.Services.AddScoped<ReportServices>();
 builder.Services.AddScoped<TrainScheduleServices>();
-builder.Services.AddScoped<CustomAuthenticationStateProvider>();
 builder.Services.AddScoped<IUserService, UserServicecs>();
 builder.Services.Configure<FormOptions>(options =>
 {
@@ -213,12 +263,12 @@ builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFixedAssetDepreciationService, FixedAssetDepreciationService>();
 
-// Forwarded headers (X-Forwarded-For / X-Forwarded-Proto) support
+// Forwarded headers (X-Forwarded-For / X-Forwarded-Proto) — clear known lists for IIS/reverse proxy
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    // Optionally add known networks/proxies if you want to restrict trust:
-    // options.KnownProxies.Add(System.Net.IPAddress.Parse("127.0.0.1"));
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
 });
 
 builder.Services.AddScoped<IForgotPasswordEmailService, ForgotPasswordEmailService>();
@@ -251,12 +301,12 @@ builder.Services.AddHttpClient<HistoryLogService>((serviceProvider, client) =>
 
     if (env.IsDevelopment())
     {
-        // D�ng URL local khi ?ang ch?y local
+        // Dùng URL local khi đang chạy local
         baseUrl = "http://localhost:5070/";
     }
     else
     {
-        // D�ng URL th?t khi publish l�n server
+        // Dùng URL thật khi publish lên server
         baseUrl = config["ApiSettings:HistoryLogBaseUrl"]; // may be null
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
@@ -286,7 +336,6 @@ builder.Services.AddDbContextFactory<AppDbContext>(options =>
 
 // Change SingletonSerivce to scoped to align with per-request auth/user context and avoid holding onto stale user/context state.
 builder.Services.AddScoped<SingletonSerivce>();
-// Remove duplicate singleton registration of CustomAuthenticationStateProvider (already added as scoped above)
 
 var app = builder.Build(); //--------------------------------------------------
 
@@ -296,6 +345,9 @@ var localizationOptions = new RequestLocalizationOptions()
     .AddSupportedCultures(supportedCultures)
     .AddSupportedUICultures(supportedCultures);
 app.UseRequestLocalization(localizationOptions);
+
+// MUST appear early, before HTTPS/auth and other middleware that reads scheme or RemoteIpAddress
+app.UseForwardedHeaders();
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
@@ -307,18 +359,10 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// MUST appear early, before auth and other middleware that reads scheme or RemoteIpAddress
-//app.UseForwardedHeaders();
-app.UseForwardedHeaders(new ForwardedHeadersOptions
-{
-    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
-});
-
 app.UseStaticFiles();
 app.UseAntiforgery();
 app.UseCors();
-//# for BLAZOR COOKIE Auth
-app.UseCookiePolicy();
+//# for BLAZOR COOKIE Auth (do not UseCookiePolicy unless consent/min SameSite policy is required)
 app.UseAuthentication();
 app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
