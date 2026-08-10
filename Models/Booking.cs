@@ -186,6 +186,9 @@ namespace NVOAMASIS.Models
         public string? VentOpen { get; set; }
         public string? PIC { get; set; }
         public string? Code { get; set; }
-   
+        public string? Freight_Payable { get; set; }
+
+        
+
     }
 }
