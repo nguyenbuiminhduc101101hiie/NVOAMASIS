@@ -1048,5 +1048,112 @@ namespace NVOAMASIS.Services
             }
 
         }
+
+        /// <summary>
+        /// Syncs missing permissions from a department template onto existing users in that department.
+        /// Only adds menus the user does not already have; does not overwrite existing rows.
+        /// </summary>
+        public async Task<BoolandMessReponse> SyncPermissionsFromTemplate(string? dept)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(dept))
+                    return new BoolandMessReponse(false, "Department is required.");
+
+                _context.ChangeTracker.Clear();
+                var deptKey = dept.Trim();
+                var deptLower = deptKey.ToLower();
+
+                var templates = await _context.PermissionTemplate
+                    .AsNoTracking()
+                    .Where(x => x.Dept != null && x.Dept.ToLower() == deptLower)
+                    .ToListAsync();
+
+                if (templates.Count == 0)
+                    return new BoolandMessReponse(false, $"No permission template found for department '{deptKey}'.");
+
+                // Deduplicate template by MenuId (keep first)
+                var templateByMenu = new Dictionary<Guid, PermissionTemplate>();
+                foreach (var t in templates)
+                {
+                    if (!t.MenuId.HasValue)
+                        continue;
+                    templateByMenu.TryAdd(t.MenuId.Value, t);
+                }
+
+                if (templateByMenu.Count == 0)
+                    return new BoolandMessReponse(false, $"Template '{deptKey}' has no valid menu entries.");
+
+                var users = await _context.UserList
+                    .AsNoTracking()
+                    .Where(x => x.Department != null && x.Department.ToLower() == deptLower)
+                    .ToListAsync();
+
+                if (users.Count == 0)
+                    return new BoolandMessReponse(false, $"No users found in department '{deptKey}'.");
+
+                var toAdd = new List<Permission_M>();
+                var usersUpdated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var user in users)
+                {
+                    if (string.IsNullOrWhiteSpace(user.Usr))
+                        continue;
+
+                    var userName = user.Usr;
+                    var existingMenuIds = await _context.Permissions
+                        .AsNoTracking()
+                        .Where(x => x.UserName == userName && x.MenuId != null)
+                        .Select(x => x.MenuId!.Value)
+                        .ToListAsync();
+                    var existingSet = existingMenuIds.ToHashSet();
+
+                    foreach (var (menuId, tmpl) in templateByMenu)
+                    {
+                        if (existingSet.Contains(menuId))
+                            continue;
+
+                        toAdd.Add(new Permission_M
+                        {
+                            PermissionId = Guid.NewGuid(),
+                            MenuId = menuId,
+                            MenuName = tmpl.MenuName,
+                            UserName = userName,
+                            See = tmpl.canView ?? false,
+                            Add = tmpl.canAdd ?? false,
+                            Edit = tmpl.canEdit ?? false,
+                            Del = tmpl.canDelete ?? false,
+                            Approve = tmpl.canApprove ?? false
+                        });
+                        usersUpdated.Add(userName);
+                    }
+                }
+
+                if (toAdd.Count == 0)
+                    return new BoolandMessReponse(true,
+                        $"Already up to date. {users.Count} user(s) in '{deptKey}' already have all {templateByMenu.Count} template permission(s).");
+
+                _context.Permissions.AddRange(toAdd);
+                await _context.SaveChangesAsync();
+
+                string usr = asv.GetAuth().Result.User.Identity!.Name!;
+                await HistoryLogService.LogAsync(usr, "Sync Permission From Template", "Permission", Guid.Empty, deptKey,
+                    new
+                    {
+                        Dept = deptKey,
+                        TemplateCount = templateByMenu.Count,
+                        UsersAffected = usersUpdated.Count,
+                        PermissionsAdded = toAdd.Count,
+                        Users = usersUpdated.ToList()
+                    });
+
+                return new BoolandMessReponse(true,
+                    $"Synced '{deptKey}': added {toAdd.Count} permission(s) for {usersUpdated.Count}/{users.Count} user(s).");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Sync Fail: " + (ex.InnerException?.Message ?? ex.Message));
+            }
+        }
     }
 }

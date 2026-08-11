@@ -1,0 +1,493 @@
+﻿@page "/Booking_Report"
+
+@using System.Globalization
+
+@inject SharedServices ssv
+@inject BookingService bksv
+@inject AccountService asv
+@inject CustomerService Cussv
+@inject ISnackbar Snackbar
+
+@attribute [Authorize]
+
+<PageTitle>Booking Report</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="px-3 py-3">
+    <MudPaper Class="pa-4 mb-3" Elevation="1">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="flex-wrap">
+            <div>
+                <MudText Typo="Typo.h5">Booking Report</MudText>
+                <MudText Typo="Typo.body2">Báo cáo Booking Request theo nhiều điều kiện</MudText>
+            </div>
+
+            <MudStack Row="true" Class="flex-wrap" AlignItems="AlignItems.Center">
+                <MudButton OnClick="ApplyFilters"
+                           Color="Color.Primary"
+                           Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.FilterAlt">
+                    Lọc dữ liệu
+                </MudButton>
+
+                <MudButton OnClick="ResetFilters"
+                           Color="Color.Default"
+                           Variant="Variant.Outlined"
+                           StartIcon="@Icons.Material.Filled.RestartAlt">
+                    Xóa lọc
+                </MudButton>
+
+                <MudButton OnClick="HandleRefresh"
+                           Color="Color.Primary"
+                           Variant="Variant.Outlined"
+                           Disabled="@isLoading"
+                           StartIcon="@Icons.Material.Filled.Refresh">
+                    Reload
+                </MudButton>
+
+                <a href="HDSDhtml/HDSD_Booking_Request.html" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
+                    <MudButton Color="Color.Info"
+                               Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Filled.MenuBook">
+                        HDSD Booking
+                    </MudButton>
+                </a>
+
+                <a href="HDSDhtml/HDSD_Shipment_Animated.html" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">
+                    <MudButton Color="Color.Info"
+                               Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Filled.MenuBook">
+                        HDSD Shipment
+                    </MudButton>
+                </a>
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+
+    @if (!string.IsNullOrWhiteSpace(loadError))
+    {
+        <MudAlert Severity="MudBlazor.Severity.Error"
+                  Variant="Variant.Outlined"
+                  Class="mb-3">
+            <b>Không tải được Booking Report:</b> @loadError
+        </MudAlert>
+    }
+
+    @if (isLoading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-3" />
+    }
+
+    <MudPaper Class="pa-4 mb-3" Elevation="1">
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6" md="3">
+                <MudTextField T="string"
+                              @bind-Value="searchText"
+                              Label="Booking / Customer / Bill / Vessel"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="Guid?"
+                           @bind-Value="customerId"
+                           Label="Khách hàng"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Clearable="true">
+                    @foreach (var customer in CustomerList)
+                    {
+                        <MudSelectItem T="Guid?" Value="@((Guid?)customer.Customer_ID)">
+                            @customer.COMPANY
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string"
+                           @bind-Value="serviceType"
+                           Label="Dịch vụ"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Clearable="true">
+                    @foreach (var value in ServiceOptions)
+                    {
+                        <MudSelectItem T="string" Value="@value">@value</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string"
+                           @bind-Value="statusValue"
+                           Label="Trạng thái"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Clearable="true">
+                    @foreach (var value in StatusOptions)
+                    {
+                        <MudSelectItem T="string" Value="@value">@value</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string"
+                           @bind-Value="approveValue"
+                           Label="Approve"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense">
+                    <MudSelectItem T="string" Value="@ApproveAll">Tất cả</MudSelectItem>
+                    <MudSelectItem T="string" Value="@ApproveYes">Đã duyệt</MudSelectItem>
+                    <MudSelectItem T="string" Value="@ApproveNo">Chưa duyệt</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudDatePicker @bind-Date="dateFrom"
+                               Label="ETD từ ngày"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy"
+                               Clearable="true" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudDatePicker @bind-Date="dateTo"
+                               Label="ETD đến ngày"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               DateFormat="dd/MM/yyyy"
+                               Clearable="true" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudTextField T="string" @bind-Value="carrierValue" Label="Carrier"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudTextField T="string" @bind-Value="polValue" Label="POL"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudTextField T="string" @bind-Value="podValue" Label="POD"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+
+            <MudItem xs="12" sm="6" md="2">
+                <MudTextField T="string" @bind-Value="userValue" Label="User Update"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="2" Class="mb-3">
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Class="pa-3" Elevation="1">
+                <MudText Typo="Typo.caption">Tổng booking</MudText>
+                <MudText Typo="Typo.h4">@filteredBookings.Count</MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Class="pa-3" Elevation="1">
+                <MudText Typo="Typo.caption">Đã approve</MudText>
+                <MudText Typo="Typo.h4">@filteredBookings.Count(x => x.Approve == true)</MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Class="pa-3" Elevation="1">
+                <MudText Typo="Typo.caption">Chưa approve</MudText>
+                <MudText Typo="Typo.h4">@filteredBookings.Count(x => x.Approve != true)</MudText>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" sm="6" md="3">
+            <MudPaper Class="pa-3" Elevation="1">
+                <MudText Typo="Typo.caption">Quá ETD chưa duyệt</MudText>
+                <MudText Typo="Typo.h4">@GetOverdueCount()</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    <MudPaper Elevation="1">
+        <MudDataGrid T="Models.Booking"
+                     Items="@filteredBookings"
+                     Dense="true"
+                     Hover="true"
+                     Striped="true"
+                     Bordered="false"
+                     Filterable="true"
+                     FilterMode="@DataGridFilterMode.ColumnFilterRow"
+                     FixedHeader="true"
+                     Height="calc(100vh - 470px)"
+                     ColumnResizeMode="ResizeMode.Column"
+                     Hideable="true">
+            <Columns>
+                <PropertyColumn Property="x => x.BookingNo" Title="Booking No" />
+
+                <TemplateColumn T="Models.Booking" Title="Customer">
+                    <CellTemplate>
+                        @CustomerName(context.Item.MaincusBk_Id_)
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <PropertyColumn Property="x => x.trangthai" Title="Status" />
+                <PropertyColumn Property="x => x.bkcarrier" Title="Carrier" />
+                <PropertyColumn Property="x => x.FCL_LCL_Air" Title="FCL/LCL/Air" />
+                <PropertyColumn Property="x => x.hano_POL" Title="POL" />
+                <PropertyColumn Property="x => x.hano_POD" Title="POD" />
+                <PropertyColumn Property="x => x.Vessel" Title="Vessel/Flight" />
+                <PropertyColumn Property="x => x.ETD" Title="ETD" />
+                <PropertyColumn Property="x => x.ETA" Title="ETA" />
+
+                <TemplateColumn T="Models.Booking" Title="Approve">
+                    <CellTemplate>
+                        <MudCheckBox T="bool"
+                                     Value="@(context.Item.Approve == true)"
+                                     Disabled="true" />
+                    </CellTemplate>
+                </TemplateColumn>
+
+                <PropertyColumn Property="x => x.UserID" Title="User Update" />
+                <PropertyColumn Property="x => x.UpdateTime" Title="Date Update" />
+            </Columns>
+
+            <PagerContent>
+                <MudDataGridPager T="Models.Booking"
+                                  PageSizeOptions="@(new int[] { 10, 20, 50, 100 })" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</MudContainer>
+
+@code {
+    private const string ApproveAll = "ALL";
+    private const string ApproveYes = "YES";
+    private const string ApproveNo = "NO";
+
+    private string searchText = string.Empty;
+    private Guid? customerId;
+    private string serviceType = string.Empty;
+    private string statusValue = string.Empty;
+    private string approveValue = ApproveAll;
+    private string carrierValue = string.Empty;
+    private string polValue = string.Empty;
+    private string podValue = string.Empty;
+    private string userValue = string.Empty;
+    private DateTime? dateFrom;
+    private DateTime? dateTo;
+
+    private bool isLoading;
+    private string loadError = string.Empty;
+
+    private List<Models.Booking> allBookings = new List<Models.Booking>();
+    private List<Models.Booking> filteredBookings = new List<Models.Booking>();
+    private List<Models.M_Customer> CustomerList = new List<Models.M_Customer>();
+    private List<string> ServiceOptions = new List<string>();
+    private List<string> StatusOptions = new List<string>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task HandleRefresh()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        isLoading = true;
+        loadError = string.Empty;
+
+        try
+        {
+            var authState = await asv.GetAuth();
+            var username = authState.User.Identity?.Name ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(username))
+            {
+                loadError = "Không xác định được người dùng đăng nhập.";
+                return;
+            }
+
+            if (!await ssv.CheckPermission(username, "View", "Booking-Report"))
+            {
+                loadError = "Bạn không có quyền View Booking-Report.";
+                Snackbar.Add(loadError, MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var customers = await Cussv.GetList();
+            CustomerList = customers ?? new List<Models.M_Customer>();
+
+            var bookings = await bksv.GetListSBooking();
+            allBookings = bookings ?? new List<Models.Booking>();
+
+            BuildOptions();
+            ApplyFilters();
+        }
+        catch (Exception ex)
+        {
+            CustomerList = CustomerList ?? new List<Models.M_Customer>();
+            allBookings = new List<Models.Booking>();
+            filteredBookings = new List<Models.Booking>();
+            loadError = ex.GetBaseException().Message;
+            Console.Error.WriteLine("[BookingReport] " + ex);
+            Snackbar.Add("Cannot load booking report: " + loadError, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void BuildOptions()
+    {
+        ServiceOptions = allBookings
+            .Where(x => !string.IsNullOrWhiteSpace(x.FCL_LCL_Air))
+            .Select(x => x.FCL_LCL_Air!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x)
+            .ToList();
+
+        StatusOptions = allBookings
+            .Where(x => !string.IsNullOrWhiteSpace(x.trangthai))
+            .Select(x => x.trangthai!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x)
+            .ToList();
+    }
+
+    private void ApplyFilters()
+    {
+        IEnumerable<Models.Booking> query = allBookings;
+
+        if (!string.IsNullOrWhiteSpace(searchText))
+        {
+            var keyword = searchText.Trim();
+            query = query.Where(x =>
+                ContainsText(x.BookingNo, keyword) ||
+                ContainsText(CustomerName(x.MaincusBk_Id_), keyword) ||
+                ContainsText(x.trangthai, keyword) ||
+                ContainsText(x.bkcarrier, keyword) ||
+                ContainsText(x.FCL_LCL_Air, keyword) ||
+                ContainsText(x.hano_POL, keyword) ||
+                ContainsText(x.hano_POD, keyword) ||
+                ContainsText(x.Vessel, keyword) ||
+                ContainsText(x.hanoAir_Freightrateterm, keyword) ||
+                ContainsText(x.hanoAIr_MAWBHAWBNo, keyword));
+        }
+
+        if (customerId.HasValue)
+            query = query.Where(x => x.MaincusBk_Id_ == customerId.Value);
+
+        if (!string.IsNullOrWhiteSpace(serviceType))
+            query = query.Where(x => ContainsText(x.FCL_LCL_Air, serviceType));
+
+        if (!string.IsNullOrWhiteSpace(statusValue))
+            query = query.Where(x => ContainsText(x.trangthai, statusValue));
+
+        if (!string.IsNullOrWhiteSpace(carrierValue))
+            query = query.Where(x => ContainsText(x.bkcarrier, carrierValue));
+
+        if (!string.IsNullOrWhiteSpace(polValue))
+            query = query.Where(x => ContainsText(x.hano_POL, polValue));
+
+        if (!string.IsNullOrWhiteSpace(podValue))
+            query = query.Where(x => ContainsText(x.hano_POD, podValue));
+
+        if (!string.IsNullOrWhiteSpace(userValue))
+            query = query.Where(x => ContainsText(x.UserID, userValue));
+
+        if (approveValue == ApproveYes)
+            query = query.Where(x => x.Approve == true);
+        else if (approveValue == ApproveNo)
+            query = query.Where(x => x.Approve != true);
+
+        if (dateFrom.HasValue)
+        {
+            query = query.Where(x =>
+            {
+                var etd = GetDateValue(x.ETD);
+                return etd.HasValue && etd.Value.Date >= dateFrom.Value.Date;
+            });
+        }
+
+        if (dateTo.HasValue)
+        {
+            query = query.Where(x =>
+            {
+                var etd = GetDateValue(x.ETD);
+                return etd.HasValue && etd.Value.Date <= dateTo.Value.Date;
+            });
+        }
+
+        filteredBookings = query.ToList();
+    }
+
+    private void ResetFilters()
+    {
+        searchText = string.Empty;
+        customerId = null;
+        serviceType = string.Empty;
+        statusValue = string.Empty;
+        approveValue = ApproveAll;
+        carrierValue = string.Empty;
+        polValue = string.Empty;
+        podValue = string.Empty;
+        userValue = string.Empty;
+        dateFrom = null;
+        dateTo = null;
+        ApplyFilters();
+    }
+
+    private string CustomerName(Guid? id)
+    {
+        if (!id.HasValue)
+            return string.Empty;
+
+        var customer = CustomerList.FirstOrDefault(x => x.Customer_ID == id.Value);
+        return customer?.COMPANY ?? string.Empty;
+    }
+
+    private static bool ContainsText(string? source, string value)
+    {
+        return !string.IsNullOrWhiteSpace(source)
+            && source.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static DateTime? GetDateValue(object? value)
+    {
+        if (value == null)
+            return null;
+
+        if (value is DateTime dateTime)
+            return dateTime;
+
+        if (value is DateTimeOffset dateTimeOffset)
+            return dateTimeOffset.DateTime;
+
+        if (DateTime.TryParse(Convert.ToString(value, CultureInfo.CurrentCulture), out var result))
+            return result;
+
+        return null;
+    }
+
+    private int GetOverdueCount()
+    {
+        return filteredBookings.Count(x =>
+        {
+            var etd = GetDateValue(x.ETD);
+            return x.Approve != true
+                && etd.HasValue
+                && etd.Value.Date < DateTime.Today;
+        });
+    }
+}
