@@ -173,6 +173,7 @@ namespace NVOAMASIS.Models
         public int? OT40 { get; set; }
         public int? FR20 { get; set; }
         public int? FR40 { get; set; }
+        public int? TK20 { get; set; }
         public string? Ref { get; set; }
         public string? contnum { get; set; }
         public string? stuffingdate { get; set; }
