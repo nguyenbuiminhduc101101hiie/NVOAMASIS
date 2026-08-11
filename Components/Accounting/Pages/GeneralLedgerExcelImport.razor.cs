@@ -102,8 +102,8 @@ namespace NVOAMASIS.Components.Accounting.Pages
             && Math.Abs(SelectedDifference) < 0.01M;
 
         private string SelectedCustomerHelperText => _selectedCustomer is null
-            ? "Gõ mã hoặc tên khách hàng để tìm"
-            : $"CustomerId: {_selectedCustomer.CustomerId}";
+            ? Localizer["GleImp.CustomerSearchHint"]
+            : string.Format(Localizer["GleImp.CustomerIdHint"], _selectedCustomer.CustomerId);
 
         protected override async Task OnInitializedAsync()
         {
@@ -187,13 +187,13 @@ namespace NVOAMASIS.Components.Accounting.Pages
 
             if (!file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
             {
-                Snackbar.Add("Chỉ hỗ trợ file .xlsx.", MudBlazor.Severity.Error);
+                Snackbar.Add(Localizer["AvImp.OnlyXlsx"], MudBlazor.Severity.Error);
                 return;
             }
 
             if (file.Size > MaxFileSize)
             {
-                Snackbar.Add("File vượt quá 20 MB.", MudBlazor.Severity.Error);
+                Snackbar.Add(Localizer["AvImp.FileTooLarge"], MudBlazor.Severity.Error);
                 return;
             }
 
@@ -215,13 +215,13 @@ namespace NVOAMASIS.Components.Accounting.Pages
                     await CheckExistingAsync();
 
                 Snackbar.Add(
-                    $"Đã nhận diện {_sourceRows.Count:N0} dòng Excel, {_vouchers.Count:N0} chứng từ và {_vouchers.Sum(x => x.Lines.Count):N0} dòng sổ cái.",
+                    string.Format(Localizer["GleImp.ReadSuccess"], _sourceRows.Count, _vouchers.Count, _vouchers.Sum(x => x.Lines.Count)),
                     MudBlazor.Severity.Success);
             }
             catch (Exception ex)
             {
                 _messages.Add(ex.Message);
-                Snackbar.Add("Không đọc được file Excel. Kiểm tra lại đúng mẫu sổ chi tiết công nợ.", MudBlazor.Severity.Error);
+                Snackbar.Add(Localizer["GleImp.ReadFailed"], MudBlazor.Severity.Error);
             }
             finally
             {
@@ -461,7 +461,7 @@ namespace NVOAMASIS.Components.Accounting.Pages
 
             if (!Guid.TryParse(_companyIdText, out var companyId))
             {
-                Snackbar.Add("CompanyId không hợp lệ.", MudBlazor.Severity.Error);
+                Snackbar.Add(Localizer["GleImp.InvalidCompanyId"], MudBlazor.Severity.Error);
                 return;
             }
 
@@ -482,11 +482,11 @@ namespace NVOAMASIS.Components.Accounting.Pages
                         voucher.Selected = false;
                 }
 
-                Snackbar.Add($"Đã kiểm tra trùng. Có {_vouchers.Count(x => x.ExistsInDatabase):N0} chứng từ đã tồn tại.", MudBlazor.Severity.Info);
+                Snackbar.Add(string.Format(Localizer["GleImp.CheckDuplicateResult"], _vouchers.Count(x => x.ExistsInDatabase)), MudBlazor.Severity.Info);
             }
             catch (Exception ex)
             {
-                Snackbar.Add($"Không kiểm tra được dữ liệu trùng: {ex.Message}", MudBlazor.Severity.Error);
+                Snackbar.Add(string.Format(Localizer["GleImp.CheckDuplicateFailed"], ex.Message), MudBlazor.Severity.Error);
             }
             finally
             {
@@ -498,13 +498,13 @@ namespace NVOAMASIS.Components.Accounting.Pages
         {
             if (!Guid.TryParse(_companyIdText, out var companyId))
             {
-                Snackbar.Add("CompanyId không hợp lệ.", MudBlazor.Severity.Error);
+                Snackbar.Add(Localizer["GleImp.InvalidCompanyId"], MudBlazor.Severity.Error);
                 return;
             }
 
             if (_selectedCustomer is null)
             {
-                Snackbar.Add("Vui lòng chọn khách hàng trước khi import.", MudBlazor.Severity.Warning);
+                Snackbar.Add(Localizer["GleImp.SelectCustomer"], MudBlazor.Severity.Warning);
                 return;
             }
 
@@ -512,20 +512,20 @@ namespace NVOAMASIS.Components.Accounting.Pages
 
             if (_exchangeRate <= 0)
             {
-                Snackbar.Add("ExchangeRate phải lớn hơn 0.", MudBlazor.Severity.Error);
+                Snackbar.Add(Localizer["GleImp.ExchangeRateInvalid"], MudBlazor.Severity.Error);
                 return;
             }
 
             var selected = ImportableVouchers.ToList();
             if (selected.Count == 0)
             {
-                Snackbar.Add("Không có chứng từ hợp lệ để import.", MudBlazor.Severity.Warning);
+                Snackbar.Add(Localizer["GleImp.NoValidVouchers"], MudBlazor.Severity.Warning);
                 return;
             }
 
             if (selected.Any(x => Math.Abs(x.TotalDebit - x.TotalCredit) >= 0.01M))
             {
-                Snackbar.Add("Có chứng từ chưa cân Nợ/Có.", MudBlazor.Severity.Error);
+                Snackbar.Add(Localizer["GleImp.UnbalancedVouchers"], MudBlazor.Severity.Error);
                 return;
             }
 
@@ -552,7 +552,7 @@ namespace NVOAMASIS.Components.Accounting.Pages
                             voucher.Selected = false;
                         }
                     }
-                    Snackbar.Add("Có chứng từ vừa được import trước đó. Hệ thống đã hủy toàn bộ lần import này.", MudBlazor.Severity.Warning);
+                    Snackbar.Add(Localizer["GleImp.DuplicateImportCancelled"], MudBlazor.Severity.Warning);
                     return;
                 }
 
@@ -585,11 +585,11 @@ namespace NVOAMASIS.Components.Accounting.Pages
                     voucher.Selected = false;
                 }
 
-                Snackbar.Add($"Đã import {selected.Count:N0} chứng từ / {insertedLines:N0} dòng vào GeneralLedgerEntries.", MudBlazor.Severity.Success);
+                Snackbar.Add(string.Format(Localizer["GleImp.ImportSuccess"], selected.Count, insertedLines), MudBlazor.Severity.Success);
             }
             catch (Exception ex)
             {
-                Snackbar.Add($"Import thất bại, dữ liệu đã rollback: {ex.Message}", MudBlazor.Severity.Error);
+                Snackbar.Add(string.Format(Localizer["GleImp.ImportFailed"], ex.Message), MudBlazor.Severity.Error);
             }
             finally
             {
