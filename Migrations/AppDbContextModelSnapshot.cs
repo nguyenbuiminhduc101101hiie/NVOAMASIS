@@ -175,6 +175,9 @@ namespace NVOAMASIS.Migrations
                     b.Property<int?>("FR40")
                         .HasColumnType("int");
 
+                    b.Property<int?>("TK20")
+                        .HasColumnType("int");
+
                     b.Property<string>("Fileno")
                         .HasColumnType("nvarchar(max)");
 
