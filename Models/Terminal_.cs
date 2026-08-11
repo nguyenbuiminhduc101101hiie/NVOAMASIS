@@ -20,5 +20,6 @@ namespace NVOAMASIS.Models
         public string? UserID { get; set; }
         public DateTime? UpdateTime { get; set; }
         public string? code_nvocc { get; set; }
+        public string? Codeha { get; set; }
     }
 }

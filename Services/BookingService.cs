@@ -183,6 +183,26 @@ namespace NVOAMASIS.Services
             }
         }
 
+        public async Task<List<string>> GetList_Terminal_Codeha(string searchValue)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var rs = await _context.Terminal.Where(x => x.TermiNalName != null)
+                    .Select(x => string.IsNullOrEmpty(x.Codeha)
+                        ? x.TermiNalName!
+                        : x.TermiNalName + "-" + x.Codeha)
+                    .Distinct().ToListAsync();
+
+                return rs!;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return null!;
+            }
+        }
+
         public async Task<List<string>> GetList_Port_2char(string searchValue)
         {
             try
