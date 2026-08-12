@@ -7,6 +7,7 @@
 @using System.Text
 @using System.Text.Json
 @using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.Data.SqlClient
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.EntityFrameworkCore.Storage
 @using MudBlazor
@@ -21,7 +22,7 @@
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>@Localizer["StockImport_PageTitle836"]</PageTitle>
+<PageTitle>@Localizer["Macstar Thủ Đức"]</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.False" Class="aps-import-page pa-3">
     <MudPaper Class="hero-card pa-4 mb-3" Elevation="0">
@@ -32,9 +33,9 @@
                         <MudIcon Icon="@Icons.Material.Filled.Inventory" Size="Size.Large" />
                     </div>
                     <div>
-                        <MudText Typo="Typo.h5" Class="page-title">@Localizer["StockImport_HeroTitle836"]</MudText>
+                        <MudText Typo="Typo.h5" Class="page-title">@Localizer["Macstar Thủ Đức"]</MudText>
                         <MudText Typo="Typo.body2" Color="Color.Secondary">
-                            @Localizer["StockImport_HeroDesc836"]
+                            @Localizer["Macstar Thủ Đức"]
                         </MudText>
                     </div>
                 </MudStack>
@@ -546,10 +547,46 @@
         _onlyProblem = false;
     }
 
+    private static readonly string[] ImportTableNames =
+    {
+        "M_8_3_6_YARD_APS_GATEIN",
+        "M_8_3_6_YARD_APS_GATEOUT",
+        "M_8_3_6_YARD_APS_STOCK",
+        "M_8_3_6_YARD_APS_GENERAL",
+        "M_8_3_6_YARD_APS_GENERAL_STATUS"
+    };
+
     private async Task EnsureTablesAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        await db.Database.ExecuteSqlRawAsync(CreateTablesSql);
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync();
+
+        // SQL Server kiểm tra quyền CREATE TABLE lúc compile batch.
+        // Nếu bảng chưa có, batch có thể fail ở CREATE TABLE rồi vẫn chạy CREATE INDEX → lỗi "object does not exist".
+        var missing = new List<string>();
+        foreach (var table in ImportTableNames)
+        {
+            await using var check = conn.CreateCommand();
+            check.CommandText = $"SELECT CASE WHEN OBJECT_ID(N'dbo.{table}', N'U') IS NULL THEN 0 ELSE 1 END;";
+            var exists = Convert.ToInt32(await check.ExecuteScalarAsync());
+            if (exists == 0)
+                missing.Add(table);
+        }
+
+        if (missing.Count == 0)
+            return;
+
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(CreateTablesSql);
+        }
+        catch (SqlException ex) when (ex.Number is 262 or 208)
+        {
+            throw new InvalidOperationException(
+                $"Thiếu bảng import: {string.Join(", ", missing.Select(t => "dbo." + t))}. Tài khoản SQL không có quyền CREATE TABLE. Hãy chạy Scripts/Create_M_8_3_6_YARD_APS_Import_Tables.sql bằng tài khoản DBA rồi import lại.");
+        }
     }
 
     private async Task MarkDuplicateRowsAsync(ImportPreview preview)
@@ -1444,28 +1481,7 @@
         if (_epplusConfigured)
             return;
 
-        try
-        {
-            var licenseProperty = typeof(ExcelPackage).GetProperty("License");
-            var license = licenseProperty?.GetValue(null);
-            var method = license?.GetType().GetMethod("SetNonCommercialOrganization");
-            if (method is not null)
-                method.Invoke(license, new object[] { "Logistics Management Software" });
-            else
-            {
-                var contextProperty = typeof(ExcelPackage).GetProperty("LicenseContext");
-                if (contextProperty is not null && contextProperty.PropertyType.IsEnum)
-                {
-                    var value = Enum.Parse(contextProperty.PropertyType, "NonCommercial");
-                    contextProperty.SetValue(null, value);
-                }
-            }
-        }
-        catch
-        {
-            // EPPlus will throw a clear error if runtime still requires license setup.
-        }
-
+        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
         _epplusConfigured = true;
     }
 

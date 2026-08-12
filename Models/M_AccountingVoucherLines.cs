@@ -54,6 +54,8 @@ namespace NVOAMASIS.Models
         public DateTime? InvoiceDate { get; set; }
 
         public int? SortKey { get; set; }
+        public bool thuho { get; set; } = false;
+
     }
 }
 
