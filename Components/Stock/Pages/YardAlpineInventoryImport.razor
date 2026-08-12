@@ -7,6 +7,7 @@
 @using System.Security.Cryptography
 @using System.Text
 @using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.Data.SqlClient
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.EntityFrameworkCore.Storage
 @using MudBlazor
@@ -541,7 +542,30 @@
     private async Task EnsureTableAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        await db.Database.ExecuteSqlRawAsync(CreateTableSql);
+        var conn = db.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync();
+
+        // SQL Server kiểm tra quyền CREATE TABLE lúc compile batch,
+        // kể cả khi lệnh nằm trong IF OBJECT_ID(...) IS NULL.
+        // App login thường không có quyền này → phải check tồn tại bằng SELECT riêng.
+        await using (var check = conn.CreateCommand())
+        {
+            check.CommandText = $"SELECT CASE WHEN OBJECT_ID(N'dbo.{TableName}', N'U') IS NULL THEN 0 ELSE 1 END;";
+            var exists = Convert.ToInt32(await check.ExecuteScalarAsync());
+            if (exists == 1)
+                return;
+        }
+
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(CreateTableSql);
+        }
+        catch (SqlException ex) when (ex.Number == 262)
+        {
+            throw new InvalidOperationException(
+                $"Bảng dbo.{TableName} chưa tồn tại và tài khoản SQL không có quyền CREATE TABLE. Hãy chạy script tạo bảng bằng tài khoản DBA rồi import lại.");
+        }
     }
 
     private async Task MarkDuplicatesAsync(ImportPreview preview)

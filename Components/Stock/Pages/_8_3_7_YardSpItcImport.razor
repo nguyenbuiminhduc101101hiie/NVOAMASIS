@@ -1,5 +1,6 @@
 @page "/yard/8-3-7-sp-itc-import"
 @using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.Data.SqlClient
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @using OfficeOpenXml
@@ -237,6 +238,7 @@
             .Select(x => x.RowHash)
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Cast<string>()
             .ToList();
 
         if (!hashes.Any())
@@ -244,15 +246,34 @@
             return;
         }
 
-        var existing = await Db.M_8_3_7_YARD_SP_ITC
-            .AsNoTracking()
-            .Where(x => x.RowHash != null && hashes.Contains(x.RowHash))
-            .Select(x => x.RowHash!)
-            .ToListAsync();
-
-        foreach (var h in existing)
+        // Không dùng hashes.Contains(...) trong LINQ-to-Entities.
+        // EF Core 8 dịch thành OPENJSON(...) WITH (...), lỗi trên SQL Server compatibility cũ:
+        // "Incorrect syntax near the keyword 'WITH'".
+        const int chunkSize = 200;
+        for (var i = 0; i < hashes.Count; i += chunkSize)
         {
-            ExistingHashes.Add(h);
+            var chunk = hashes.Skip(i).Take(chunkSize).ToList();
+            var names = new List<string>(chunk.Count);
+            var prm = new List<SqlParameter>(chunk.Count);
+            for (var j = 0; j < chunk.Count; j++)
+            {
+                var pname = "@h" + j;
+                names.Add(pname);
+                prm.Add(new SqlParameter(pname, chunk[j]));
+            }
+
+            var sql = ";SELECT [RowHash] AS [Value] FROM [M_8_3_7_YARD_SP_ITC] WHERE [RowHash] IN (" + string.Join(",", names) + ")";
+            var existing = await Db.Database
+                .SqlQueryRaw<string>(sql, prm.Cast<object>().ToArray())
+                .ToListAsync();
+
+            foreach (var h in existing)
+            {
+                if (!string.IsNullOrWhiteSpace(h))
+                {
+                    ExistingHashes.Add(h);
+                }
+            }
         }
     }
 
