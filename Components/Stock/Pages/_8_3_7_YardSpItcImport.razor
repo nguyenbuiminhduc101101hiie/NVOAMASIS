@@ -10,11 +10,15 @@
 @using NVOAMASIS.Models
 @using NVOAMASIS.Data
 @inject AppDbContext Db
+@inject AccountService asv
+@inject SharedServices ssv
+@inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<SharedResource> Localizer
 
 @using NVOAMASIS.Resources
 @using Microsoft.Extensions.Localization
+@using NVOAMASIS.Services
 
 <MudPaper Class="pa-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
@@ -44,6 +48,13 @@
                     <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
                 }
                 @Localizer["StockImport_SaveImport"]
+            </MudButton>
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.DeleteForever"
+                       OnClick="DeleteAllDataAsync"
+                       Disabled="@IsSaving">
+                Xóa toàn bộ data
             </MudButton>
         </MudItem>
     </MudGrid>
@@ -154,14 +165,61 @@
 @code {
     // IMPORTANT: nếu namespace AppDbContext khác NVOAMASIS.Data thì đổi dòng @using ở trên theo namespace thật trong AppDbContext.cs.
 
+    private const string PermissionMenuName = "Inventory";
+
     private readonly List<M_8_3_7_YARD_SP_ITC> PreviewRows = new();
     private readonly HashSet<string> ExistingHashes = new(StringComparer.OrdinalIgnoreCase);
     private string? SearchText;
     private string? ErrorMessage;
     private bool IsSaving;
+    private bool _canDelete;
+    private string _usr = string.Empty;
 
     private int DuplicateRowsCount => PreviewRows.Count(x => !string.IsNullOrWhiteSpace(x.RowHash) && ExistingHashes.Contains(x.RowHash));
     private int NewRowsCount => PreviewRows.Count - DuplicateRowsCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        _canDelete = await ssv.CheckPermission(_usr, "Delete", PermissionMenuName);
+    }
+
+    private async Task DeleteAllDataAsync()
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa toàn bộ",
+            "Xóa toàn bộ dữ liệu đã lưu của 8.3.7 (M_8_3_7_YARD_SP_ITC)? Thao tác không hoàn tác.",
+            yesText: "Xóa toàn bộ",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            IsSaving = true;
+            ErrorMessage = null;
+            var deleted = await Db.M_8_3_7_YARD_SP_ITC.ExecuteDeleteAsync();
+            ExistingHashes.Clear();
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng từ M_8_3_7_YARD_SP_ITC.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.InnerException?.Message ?? ex.Message;
+            Snackbar.Add($"Xóa lỗi: {ErrorMessage}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+    }
 
     private async Task PreviewExcel(InputFileChangeEventArgs e)
     {

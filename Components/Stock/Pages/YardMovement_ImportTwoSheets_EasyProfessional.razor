@@ -14,6 +14,7 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject AccountService asv
 @inject SharedServices ssv
+@inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<SharedResource> Localizer
 
@@ -76,6 +77,14 @@
                                OnClick="ClearPreview"
                                Disabled="@_busy">
                         @Localizer["StockImport_Reset"]
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Error"
+                               StartIcon="@Icons.Material.Filled.DeleteForever"
+                               OnClick="DeleteAllDataAsync"
+                               Disabled="@_busy">
+                        Xóa toàn bộ data
                     </MudButton>
                 </MudStack>
             </MudItem>
@@ -330,6 +339,7 @@
 
     private bool _busy;
     private bool _canAdd;
+    private bool _canDelete;
     private string _usr = string.Empty;
     private string _importDepot = string.Empty;
     private List<Terminal_> _terminals = new();
@@ -359,12 +369,48 @@
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
         _canAdd = await ssv.CheckPermission(_usr, "Add", PermissionMenuName);
+        _canDelete = await ssv.CheckPermission(_usr, "Delete", PermissionMenuName);
 
         await using var db = await DbFactory.CreateDbContextAsync();
         _terminals = await db.Terminal
             .Where(x => !string.IsNullOrEmpty(x.TermiNalName))
             .OrderBy(x => x.TermiNalName)
             .ToListAsync();
+    }
+
+    private async Task DeleteAllDataAsync()
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa toàn bộ",
+            "Xóa toàn bộ dữ liệu đã lưu của 8.3.4 (YardMovement_AMS_26040816_Current_In_Yard2 và YardMovement_AMS_26040816_Imp)? Thao tác không hoàn tác.",
+            yesText: "Xóa toàn bộ",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var deletedCurrent = await db.Set<M_YardMovement_AMS_26040816_Current_In_Yard2>().ExecuteDeleteAsync();
+            var deletedInOut = await db.Set<M_8_3_IN_OUT_YARD_1>().ExecuteDeleteAsync();
+            Snackbar.Add($"Đã xóa {deletedCurrent + deletedInOut:N0} dòng (Current In Yard: {deletedCurrent:N0}, In/Out Yard: {deletedInOut:N0}).", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private Task<IEnumerable<string?>> SearchTerminal(string? text)
@@ -1324,28 +1370,8 @@ END";
         if (_epplusConfigured)
             return;
 
-        try
-        {
-            var licenseProperty = typeof(ExcelPackage).GetProperty("License");
-            var license = licenseProperty?.GetValue(null);
-            var method = license?.GetType().GetMethod("SetNonCommercialOrganization");
-            if (method is not null)
-                method.Invoke(license, new object[] { "Logistics Management Software" });
-            else
-            {
-                var contextProperty = typeof(ExcelPackage).GetProperty("LicenseContext");
-                if (contextProperty is not null && contextProperty.PropertyType.IsEnum)
-                {
-                    var value = Enum.Parse(contextProperty.PropertyType, "NonCommercial");
-                    contextProperty.SetValue(null, value);
-                }
-            }
-        }
-        catch
-        {
-            // EPPlus will throw a clear error if runtime still requires license setup.
-        }
-
+        // EPPlus 6.x requires LicenseContext before any ExcelPackage usage.
+        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
         _epplusConfigured = true;
     }
 
