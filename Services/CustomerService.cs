@@ -95,7 +95,7 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
         {
             _context.ChangeTracker.Clear();
             var rs = await _context.Customer.OrderByDescending(x => x.Customer_Code).AsNoTracking().ToListAsync();
-            if (user.Department!.Contains("ADMIN"))
+            if (user.Department!.Contains("ADMIN") || user.Department!.Equals("SALES MANAGER", StringComparison.OrdinalIgnoreCase))
                 //rs = rs.Where(x => !string.IsNullOrEmpty(x.SaleName) && (x.SaleName == "NOMI" || x.SaleName.ToUpper() == user.Usr.ToUpper())).OrderBy(x => x.SaleName).ToList();
 
                 rs = rs.Where(x =>
@@ -503,6 +503,48 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
         catch (Exception ex)
         {
             return null;
+        }
+    }
+
+    public async Task<List<CustomerReportStatRow>> GetCustomerReportStatistics(DateTime? from, DateTime? to)
+    {
+        try
+        {
+            _context.ChangeTracker.Clear();
+            var query = from r in _context.CUSTOMERREPORT.AsNoTracking()
+                        join c in _context.Customer.AsNoTracking() on r.Customer_ID equals c.Customer_ID into cj
+                        from c in cj.DefaultIfEmpty()
+                        where r.continued == true
+                        select new CustomerReportStatRow
+                        {
+                            CusReport_ID = r.CusReport_ID,
+                            Customer_ID = r.Customer_ID,
+                            Customer_Code = c != null ? c.Customer_Code : null,
+                            COMPANY = c != null ? c.COMPANY : null,
+                            Visitdate = r.Visitdate,
+                            Daily = r.Daily,
+                            hoanThanh = r.hoanThanh,
+                            ValidUser = r.ValidUser,
+                            thoigian = r.thoigian,
+                            KPI = r.KPI,
+                            Remarks = r.Remarks,
+                            userid = r.userid,
+                            updatetime = r.updatetime
+                        };
+
+            if (from.HasValue)
+                query = query.Where(x => x.Visitdate == null || x.Visitdate >= from.Value.Date);
+            if (to.HasValue)
+            {
+                var toEnd = to.Value.Date.AddDays(1).AddTicks(-1);
+                query = query.Where(x => x.Visitdate == null || x.Visitdate <= toEnd);
+            }
+
+            return await query.OrderByDescending(x => x.Visitdate).ThenByDescending(x => x.updatetime).ToListAsync();
+        }
+        catch (Exception)
+        {
+            return new List<CustomerReportStatRow>();
         }
     }
     public async Task<List<MARKET>> GetListMarket()
