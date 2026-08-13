@@ -6,6 +6,7 @@
 @using System.Text
 @using ExcelDataReader
 @using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.Data.SqlClient
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @using NVOAMASIS.Data
@@ -15,6 +16,7 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject AccountService asv
 @inject SharedServices ssv
+@inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<SharedResource> Localizer
 
@@ -83,6 +85,14 @@
                                OnClick="ClearPreview"
                                Disabled="@_busy">
                         @Localizer["StockImport_Reset"]
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Error"
+                               StartIcon="@Icons.Material.Filled.DeleteForever"
+                               OnClick="DeleteAllDataAsync"
+                               Disabled="@_busy">
+                        Xóa toàn bộ data
                     </MudButton>
 
                 </MudStack>
@@ -386,6 +396,7 @@
 
     private bool _busy;
     private bool _canAdd;
+    private bool _canDelete;
     private string _usr = string.Empty;
     private string _importDepot = string.Empty;
     private List<Terminal_> _terminals = new();
@@ -428,12 +439,47 @@
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
         _canAdd = await ssv.CheckPermission(_usr, "Add", PermissionMenuName);
+        _canDelete = await ssv.CheckPermission(_usr, "Delete", PermissionMenuName);
 
         await using var db = await DbFactory.CreateDbContextAsync();
         _terminals = await db.Terminal
             .Where(x => !string.IsNullOrEmpty(x.TermiNalName))
             .OrderBy(x => x.TermiNalName)
             .ToListAsync();
+    }
+
+    private async Task DeleteAllDataAsync()
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa toàn bộ",
+            "Xóa toàn bộ dữ liệu đã lưu của 8.3.5 (YardMovement_VSS_26040808_Exp)? Thao tác không hoàn tác.",
+            yesText: "Xóa toàn bộ",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var deleted = await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>().ExecuteDeleteAsync();
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng từ YardMovement_VSS_26040808_Exp.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private Task<IEnumerable<string?>> SearchTerminal(string? text)
@@ -651,31 +697,12 @@
 
         await using var db = await DbFactory.CreateDbContextAsync();
 
+        // Không dùng LINQ Contains → EF Core 8 sinh OPENJSON(...) WITH (...),
+        // lỗi trên SQL Server compatibility cũ: "Incorrect syntax near the keyword 'WITH'".
         var existing = new List<M_8_3_VSS_IN_OUT_YARD_Exp>();
-
-        foreach (var chunk in Chunk(soconts, 200))
-        {
-            existing.AddRange(await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>()
-                .AsNoTracking()
-                .Where(x => x.SOCONT != null && chunk.Contains(x.SOCONT))
-                .ToListAsync());
-        }
-
-        foreach (var chunk in Chunk(itemKeys, 200))
-        {
-            existing.AddRange(await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>()
-                .AsNoTracking()
-                .Where(x => x.ITEM_KEY != null && chunk.Contains(x.ITEM_KEY))
-                .ToListAsync());
-        }
-
-        foreach (var chunk in Chunk(bookNos, 200))
-        {
-            existing.AddRange(await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>()
-                .AsNoTracking()
-                .Where(x => x.BOOK_NO != null && chunk.Contains(x.BOOK_NO))
-                .ToListAsync());
-        }
+        existing.AddRange(await LoadExistingByColumnAsync(db, "SOCONT", soconts));
+        existing.AddRange(await LoadExistingByColumnAsync(db, "ITEM_KEY", itemKeys));
+        existing.AddRange(await LoadExistingByColumnAsync(db, "BOOK_NO", bookNos));
 
         var existingSignatures = existing
             .GroupBy(x => x.Id)
@@ -1068,6 +1095,38 @@
     {
         for (var i = 0; i < values.Count; i += size)
             yield return values.Skip(i).Take(size).ToList();
+    }
+
+    private static async Task<List<M_8_3_VSS_IN_OUT_YARD_Exp>> LoadExistingByColumnAsync(
+        AppDbContext db, string columnName, List<string> values)
+    {
+        var result = new List<M_8_3_VSS_IN_OUT_YARD_Exp>();
+        if (values.Count == 0)
+            return result;
+
+        // Chỉ cho phép cột whitelist — tránh SQL injection qua tên cột.
+        if (columnName is not ("SOCONT" or "ITEM_KEY" or "BOOK_NO"))
+            throw new ArgumentOutOfRangeException(nameof(columnName), columnName, "Unsupported column.");
+
+        foreach (var chunk in Chunk(values, 200))
+        {
+            var names = new List<string>(chunk.Count);
+            var prm = new List<SqlParameter>(chunk.Count);
+            for (var j = 0; j < chunk.Count; j++)
+            {
+                var pname = "@p" + j;
+                names.Add(pname);
+                prm.Add(new SqlParameter(pname, chunk[j]));
+            }
+
+            var sql = "SELECT * FROM [YardMovement_VSS_26040808_Exp] WHERE [" + columnName + "] IN (" + string.Join(",", names) + ")";
+            result.AddRange(await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>()
+                .FromSqlRaw(sql, prm.Cast<object>().ToArray())
+                .AsNoTracking()
+                .ToListAsync());
+        }
+
+        return result;
     }
 
     private static string S(ExcelPreviewRow row, params string[] keys)
