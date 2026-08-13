@@ -1,0 +1,195 @@
+@attribute [Authorize]
+@using NVOAMASIS.Models
+@inject CustomerService csv
+@inject AccountService asv
+@inject SharedServices ssv
+@inject ISnackbar Snackbar
+
+<PageTitle>7.9 Customer Report</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="7.9 Customer Report" Subtitle="Thống kê Customer Report (visit / KPI / Valid User)" />
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudStack Spacing="2">
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="flex-wrap">
+                <MudDateRangePicker @bind-DateRange="_dateRange"
+                                    Label="Visit date"
+                                    Color="Color.Primary"
+                                    Style="min-width: 280px;" />
+                <MudTextField @bind-Value="_searchText"
+                              @bind-Value:after="ApplyLocalFilter"
+                              Label="Search (Customer / User / KPI / Remarks)"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Clearable="true"
+                              Immediate="true"
+                              Style="min-width: 280px;" />
+                <MudSelect T="string"
+                           @bind-Value="_finishFilter"
+                           @bind-Value:after="ApplyLocalFilter"
+                           Label="Finish"
+                           Dense="true"
+                           Style="min-width: 140px;">
+                    <MudSelectItem Value="@("All")">Tất cả</MudSelectItem>
+                    <MudSelectItem Value="@("Yes")">Đã hoàn thành</MudSelectItem>
+                    <MudSelectItem Value="@("No")">Chưa hoàn thành</MudSelectItem>
+                </MudSelect>
+                <MudButton Disabled="_loading"
+                           OnClick="Refresh"
+                           Color="Color.Primary"
+                           Variant="Variant.Filled"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search">
+                    @if (_loading)
+                    {
+                        <MudProgressCircular Indeterminate Size="Size.Small" Class="ms-n1" />
+                        <MudText Class="ms-2">Loading...</MudText>
+                    }
+                    else
+                    {
+                        <MudText>Search</MudText>
+                    }
+                </MudButton>
+            </MudStack>
+
+            <MudGrid>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Tổng report</MudText>
+                        <MudText Typo="Typo.h6">@_filtered.Count</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Đã hoàn thành</MudText>
+                        <MudText Typo="Typo.h6">@_filtered.Count(x => x.hoanThanh == true)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Daily</MudText>
+                        <MudText Typo="Typo.h6">@_filtered.Count(x => x.Daily == true)</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-3">
+                        <MudText Typo="Typo.caption">Chưa hoàn thành</MudText>
+                        <MudText Typo="Typo.h6">@_filtered.Count(x => x.hoanThanh != true)</MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            <MudDataGrid T="CustomerReportStatRow"
+                         Items="_filtered"
+                         Dense="true"
+                         Bordered="true"
+                         Hover="true"
+                         FixedHeader="true"
+                         Height="calc(100vh - 360px)"
+                         Loading="_loading"
+                         Filterable="true"
+                         FilterMode="DataGridFilterMode.Simple"
+                         ColumnResizeMode="ResizeMode.Column">
+                <Columns>
+                    <TemplateColumn Title="#">
+                        <CellTemplate>@((_filtered.IndexOf(context.Item) + 1))</CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.Customer_Code" Title="Customer Code" />
+                    <PropertyColumn Property="x => x.COMPANY" Title="Company" />
+                    <PropertyColumn Property="x => x.Visitdate" Title="Visit Date" Format="dd/MM/yyyy" />
+                    <TemplateColumn Title="Daily">
+                        <CellTemplate>@(context.Item.Daily == true ? "Yes" : "No")</CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="Finish">
+                        <CellTemplate>@(context.Item.hoanThanh == true ? "Yes" : "No")</CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.ValidUser" Title="Valid Users" />
+                    <PropertyColumn Property="x => x.thoigian" Title="Time" />
+                    <PropertyColumn Property="x => x.KPI" Title="KPI" />
+                    <PropertyColumn Property="x => x.Remarks" Title="Remarks" />
+                    <PropertyColumn Property="x => x.userid" Title="Created By" />
+                    <PropertyColumn Property="x => x.updatetime" Title="Update Time" Format="dd/MM/yyyy HH:mm" />
+                </Columns>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2">No data</MudText>
+                </NoRecordsContent>
+            </MudDataGrid>
+        </MudStack>
+    </MudPaper>
+</div>
+
+@code {
+    private bool _loading;
+    private DateRange? _dateRange;
+    private string _searchText = string.Empty;
+    private string _finishFilter = "All";
+    private List<CustomerReportStatRow> _rows = new();
+    private List<CustomerReportStatRow> _filtered = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var today = DateTime.Today;
+        _dateRange = new DateRange(new DateTime(today.Year, today.Month, 1), today);
+        await Refresh();
+    }
+
+    private async Task Refresh()
+    {
+        try
+        {
+            var usr = asv.GetAuth().Result.User.Identity?.Name ?? string.Empty;
+            if (!await ssv.CheckPermission(usr, "View", "System-Customer")
+                && !await ssv.CheckPermission(usr, "View", "Customer-Report"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _loading = true;
+            StateHasChanged();
+
+            _rows = await csv.GetCustomerReportStatistics(_dateRange?.Start, _dateRange?.End) ?? new();
+            ApplyLocalFilter();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Error: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ApplyLocalFilter()
+    {
+        IEnumerable<CustomerReportStatRow> q = _rows;
+
+        if (!string.IsNullOrWhiteSpace(_searchText))
+        {
+            var key = _searchText.Trim();
+            q = q.Where(x =>
+                (x.Customer_Code?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.COMPANY?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.ValidUser?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.userid?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.KPI?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.Remarks?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false));
+        }
+
+        if (_finishFilter == "Yes")
+            q = q.Where(x => x.hoanThanh == true);
+        else if (_finishFilter == "No")
+            q = q.Where(x => x.hoanThanh != true);
+
+        _filtered = q.ToList();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}

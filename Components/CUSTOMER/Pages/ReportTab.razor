@@ -1,170 +1,231 @@
-
-<MudStack Row="true" Justify="Justify.FlexStart" Class="py-2" Spacing="2">
-    <MudButton HtmlTag="label"
-               OnClick="Refresh"
-               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
-               StartIcon="@Icons.Material.Filled.Refresh">
-        Reload
-    </MudButton>
-    <MudButton HtmlTag="label"
-               @onclick="@(() => AddItem())"
-               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
-               StartIcon="@Icons.Material.Filled.Add">
-        New
-    </MudButton>
-</MudStack>
-<MudDataGrid T="CustomerReport" Items="@Listdata" Filterable="true" @ref="mudTable"
-             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
-             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
-             ReadOnly="false" CommittedItemChanges="@CommittedItem"
-             ColumnResizeMode="ResizeMode.Column" Loading="_loading">
-    <Columns>
-        <TemplateColumn CellClass="d-flex justify-end">
-            <CellTemplate>
-                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@context.Actions.StartEditingItemAsync" />
-                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
-            </CellTemplate>
-        </TemplateColumn>
-        <PropertyColumn Property="x => x.Visitdate" Title="Visit (Date)">
-            <EditTemplate>
-                <MudDatePicker @bind-Date="context.Item.Visitdate" Label="Visit Date"/>
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.Daily" Title="Daily" Required="false">
-            <EditTemplate>
-                <MudCheckBox @bind-Checked="context.Item.Daily" Label="Daily" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.hoanThanh" Title="Daily" Required="false">
-            <EditTemplate>
-                <MudCheckBox @bind-Checked="context.Item.hoanThanh" Label="Finish" />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.ValidUser" Title="Valid User" Required="false">
-            <EditTemplate>
-                <MudStack Row="true">
-                    <MudSelect Label="Select User" @bind-Value="selecteduser">
-                        @foreach(var item in users)
-                        {
-                            <MudSelectItem Value="@item.Usr">@item.Usr</MudSelectItem>
-                        }
-                    </MudSelect>
-                    <MudButton OnClick="@(() => context.Item.ValidUser = Addusertovalidusers(selecteduser,context.Item.ValidUser!))">></MudButton>
-                    <MudTextField Label="Valid Users" @bind-Value="context.Item.ValidUser" AutoGrow Disabled/>
-                </MudStack>
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.thoigian" Title="Time" Required="false">
-    <EditTemplate>
-        <MudTextField Label="Time" @bind-Value="context.Item.thoigian" AutoGrow />
-    </EditTemplate>
-</PropertyColumn>
-        <PropertyColumn Property="x => x.KPI" Title="KPI" Required="false">
-            <EditTemplate>
-                <MudTextField Label="KPI" @bind-Value="context.Item.KPI" AutoGrow />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.Remarks" Title="Remarks" Required="false">
-            <EditTemplate>
-                <MudTextField Label="Remarks" @bind-Value="context.Item.Remarks" AutoGrow />
-            </EditTemplate>
-        </PropertyColumn>
-        <PropertyColumn Property="x => x.updatetime" Title="Update Time" Required="false" IsEditable="false" />
-        <PropertyColumn Property="x => x.userid" Title="User Name" Required="false" IsEditable="false" />
-    </Columns>
-</MudDataGrid>
-@inject CustomerService csv
-@inject SharedServices ssv
-@inject AccountService asv
-@inject ISnackbar Snackbar
-@inject IDialogService DialogService
-@code {
-
-    [Parameter] public M_Customer customer { get; set; } = default!;
-    void CallSnackBar(string message, MudBlazor.Severity severity)
-    {
-        
-        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
-        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
-        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
-        Snackbar.Add(message, severity);
-    }
-    List<AuthUser> users = new List<AuthUser>();
-    string selecteduser;
-    protected async override Task OnInitializedAsync()
-    {
-        users = await asv.GetListUser();
-        Listdata = await csv.GetListCustomerReport(customer.Customer_ID);
-    }
-
-    string Addusertovalidusers(string userselected, string validusers)
-    {
-        if (!string.IsNullOrEmpty(validusers))
-            return validusers += ", " + userselected;
-        else return userselected;
-    }
-
-    bool _loading = false;
-    List<CustomerReport> Listdata = new List<CustomerReport>();
-    async Task Refresh()
-    {
-        try
-        {
-            _loading = true;
-            // Simulate asynchronous loading to demonstrate a loading indicator
-            Listdata.Clear();
-            StateHasChanged();
-            await Task.Delay(500);
-            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "System-Customer"))
-            {
-                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
-                return;
-            }
-            Listdata = await csv.GetListCustomerReport(customer.Customer_ID);
-        }
-        finally
-        {
-            _loading = false;
-        }
-
-    }
-
-    MudDataGrid<CustomerReport> mudTable;
-    async Task AddItem()
-    {
-        var item = new CustomerReport();
-        Listdata.Add(item);
-        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
-    }
-
-    async Task DeleteItem(CustomerReport item)
-    {
-        if (item == null)
-        {
-            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
-            return;
-        }
-        var resultMess = await DialogService.ShowMessageBox(
-                "Warning",
-                "Deleting can not be undone!",
-                yesText: "Delete!", cancelText: "Cancel");
-
-        if (resultMess.HasValue)
-        {
-            var rs = await csv.DeleteCustomerReport(item);
-            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
-            await Refresh();
-        }
-
-    }
-    async Task CommittedItem(CustomerReport item)
-    {
-        item.Customer_ID = customer.Customer_ID;
-        item.userid = asv.GetAuth().Result.User.Identity!.Name!;
-        item.updatetime = DateTime.Now;
-        item.continued = item.editable = true;
-        var rs = item.CusReport_ID != Guid.Empty ? await csv.UpdateCustomerReport(item) : await csv.CreateCustomerReport(item);
-        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
-        await Refresh();
-    }
-}
+
+<MudStack Row="true" Justify="Justify.FlexStart" Class="py-2" Spacing="2">
+    <MudButton HtmlTag="label"
+               OnClick="Refresh"
+               Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Refresh">
+        Reload
+    </MudButton>
+    <MudButton HtmlTag="label"
+               @onclick="@(() => AddItem())"
+               Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled"
+               StartIcon="@Icons.Material.Filled.Add">
+        New
+    </MudButton>
+</MudStack>
+<MudDataGrid T="CustomerReport" Items="@Listdata" Filterable="true" @ref="mudTable"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" CommittedItemChanges="@CommittedItem"
+             ColumnResizeMode="ResizeMode.Column" Loading="_loading">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end">
+            <CellTemplate>
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Edit" OnClick="@context.Actions.StartEditingItemAsync" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.Visitdate" Title="Visit (Date)">
+            <EditTemplate>
+                <MudDatePicker @bind-Date="context.Item.Visitdate" Label="Visit Date"/>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Daily" Title="Daily" Required="false">
+            <EditTemplate>
+                <MudCheckBox @bind-Checked="context.Item.Daily" Label="Daily" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.hoanThanh" Title="Daily" Required="false">
+            <EditTemplate>
+                <MudCheckBox @bind-Checked="context.Item.hoanThanh" Label="Finish" />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.ValidUser" Title="Valid User" Required="false">
+            <EditTemplate>
+                <MudStack Row="true">
+                    <MudSelect Label="Select User" @bind-Value="selecteduser">
+                        @foreach(var item in users)
+                        {
+                            <MudSelectItem Value="@item.Usr">@item.Usr</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudButton OnClick="@(() => context.Item.ValidUser = Addusertovalidusers(selecteduser,context.Item.ValidUser!))">></MudButton>
+                    <MudTextField Label="Valid Users" @bind-Value="context.Item.ValidUser" AutoGrow Disabled/>
+                </MudStack>
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.thoigian" Title="Time" Required="false">
+    <EditTemplate>
+        <MudTextField Label="Time" @bind-Value="context.Item.thoigian" AutoGrow />
+    </EditTemplate>
+</PropertyColumn>
+        <PropertyColumn Property="x => x.KPI" Title="KPI" Required="false">
+            <EditTemplate>
+                <MudTextField Label="KPI" @bind-Value="context.Item.KPI" AutoGrow />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.Remarks" Title="Remarks" Required="false">
+            <EditTemplate>
+                <MudTextField Label="Remarks" @bind-Value="context.Item.Remarks" AutoGrow />
+            </EditTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.updatetime" Title="Update Time" Required="false" IsEditable="false" />
+        <PropertyColumn Property="x => x.userid" Title="User Name" Required="false" IsEditable="false" />
+    </Columns>
+</MudDataGrid>
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject NotificationService _notificationService
+@inject GlobalServices gsv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@code {
+
+    [Parameter] public M_Customer customer { get; set; } = default!;
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+    List<AuthUser> users = new List<AuthUser>();
+    string selecteduser;
+    protected async override Task OnInitializedAsync()
+    {
+        users = await asv.GetListUser();
+        Listdata = await csv.GetListCustomerReport(customer.Customer_ID);
+    }
+
+    string Addusertovalidusers(string userselected, string validusers)
+    {
+        if (!string.IsNullOrEmpty(validusers))
+            return validusers += ", " + userselected;
+        else return userselected;
+    }
+
+    bool _loading = false;
+    List<CustomerReport> Listdata = new List<CustomerReport>();
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            // Simulate asynchronous loading to demonstrate a loading indicator
+            Listdata.Clear();
+            StateHasChanged();
+            await Task.Delay(500);
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity!.Name!, "View", "System-Customer"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            Listdata = await csv.GetListCustomerReport(customer.Customer_ID);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+    }
+
+    MudDataGrid<CustomerReport> mudTable;
+    async Task AddItem()
+    {
+        var item = new CustomerReport();
+        Listdata.Add(item);
+        await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
+    }
+
+    async Task DeleteItem(CustomerReport item)
+    {
+        if (item == null)
+        {
+            CallSnackBar("you must select 1 row.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox(
+                "Warning",
+                "Deleting can not be undone!",
+                yesText: "Delete!", cancelText: "Cancel");
+
+        if (resultMess.HasValue)
+        {
+            var rs = await csv.DeleteCustomerReport(item);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+
+    }
+    async Task CommittedItem(CustomerReport item)
+    {
+        var isNew = item.CusReport_ID == Guid.Empty;
+        item.Customer_ID = customer.Customer_ID;
+        item.userid = asv.GetAuth().Result.User.Identity!.Name!;
+        item.updatetime = DateTime.Now;
+        item.continued = item.editable = true;
+        var rs = isNew ? await csv.CreateCustomerReport(item) : await csv.UpdateCustomerReport(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+        if (rs.Flag && isNew)
+            await NotifyValidUsersAsync(item);
+
+        await Refresh();
+    }
+
+    async Task NotifyValidUsersAsync(CustomerReport item)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(item.ValidUser))
+                return;
+
+            var names = item.ValidUser
+                .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (names.Count == 0)
+                return;
+
+            var listid = new List<string>();
+            foreach (var name in names)
+            {
+                var matched = users.FirstOrDefault(u =>
+                    string.Equals(u.Usr, name, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(u.Name, name, StringComparison.OrdinalIgnoreCase));
+
+                if (matched != null && matched.UsrId != Guid.Empty)
+                {
+                    listid.Add(matched.UsrId.ToString());
+                    continue;
+                }
+
+                var id = await gsv.GetIdfromUser(name);
+                if (id != null && id != Guid.Empty)
+                    listid.Add(id.ToString()!);
+            }
+
+            listid = listid.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (listid.Count == 0)
+                return;
+
+            var visit = item.Visitdate?.ToString("dd/MM/yyyy") ?? "-";
+            var cus = string.IsNullOrWhiteSpace(customer.Customer_Code)
+                ? (customer.COMPANY ?? customer.Customer_ID.ToString())
+                : $"{customer.Customer_Code} - {customer.COMPANY}";
+            var noidung =
+                $"Customer Report mới cho {cus}. Visit: {visit}. KPI: {item.KPI ?? "-"}. By: {item.userid}";
+
+            await _notificationService.SendNotificationAsync(listid.ToArray(), noidung);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Save OK but notify failed: " + ex.Message, MudBlazor.Severity.Warning);
+        }
+    }
+}
