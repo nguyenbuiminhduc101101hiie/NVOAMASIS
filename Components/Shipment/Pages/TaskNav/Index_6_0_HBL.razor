@@ -7,6 +7,7 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ShipmentService shipsv
+@inject BookingService bksv
 @inject GlobalServices gsv
 @inject IStringLocalizer<SharedResource> Localizer
 @using System.Globalization
@@ -394,6 +395,9 @@
     string salecode_injob = "";
     /// <summary>Loại job (M_Job.Loai) — dùng tra TiepDauNgu khi ghép số HBL.</summary>
     string? _jobLoai;
+    /// <summary>Số booking của job — dùng lấy dữ liệu booking điền sẵn cho HBL mới.</summary>
+    string? _jobBookingNo;
+    List<PortModel> Ports = new List<PortModel>();
     protected async override Task OnInitializedAsync()
     {
         try
@@ -411,10 +415,12 @@
             Warehouse = await supsv.GetlistWhouse();
             SaleNames = await supsv.GetListSale();
             ListUsers = await supsv.GetListUsers();
+            Ports = await supsv.GetListPort();
             type = await shipsv.GetTypeByMBLID(MBLDetail.MblID); // Sea Air Truck HQ
             salecode_injob = await shipsv.GetsaleinJob_byJobId(MBLDetail.Jobid);
             var job = await shipsv.GetJob_byid(MBLDetail.Jobid);
             _jobLoai = job?.Loai_Nvo_Fre;
+            _jobBookingNo = job?.BookingNo;
             await Refresh();
 
         }
@@ -520,7 +526,42 @@
         }
         // HBL mới: form trống; số HBL chỉ sinh sau khi user chọn ngày (dialog / grid).
         var item = new M_HBL();
+        await ApplyMblAndBookingInfoAsync(item);
         await ShowHblEditDialogAsync(item, Localizer["Add"], checkApproved: false);
+    }
+
+    // HBL mới lấy tuyến, tàu và lịch tàu từ MBL cha; riêng số lượng cont thì lấy từ booking của job.
+    async Task ApplyMblAndBookingInfoAsync(M_HBL item)
+    {
+        if (MBLDetail != null)
+        {
+            item.bkno = MBLDetail.Bkno;
+            item.polname = MBLDetail.Polname;
+            item.polcode = MBLDetail.Polcode;
+            item.podname = MBLDetail.Podname;
+            item.podcode = MBLDetail.Podcode;
+            item.vessel = MBLDetail.Vessel;
+            item.voy = MBLDetail.Voy;
+            item.ETD = MBLDetail.ETD;
+            item.ETA = MBLDetail.ETA;
+        }
+
+        var bookingNo = _jobBookingNo?.Trim();
+        if (string.IsNullOrWhiteSpace(bookingNo))
+            return;
+
+        if (string.IsNullOrWhiteSpace(item.bkno))
+            item.bkno = bookingNo;
+
+        var bk = await bksv.GetDetailBookingFromBookingNo(bookingNo);
+        if (bk == null)
+            return;
+
+        if (string.IsNullOrWhiteSpace(item.remarks))
+            item.remarks = bk.congviecthuchien4;
+
+        if (string.IsNullOrWhiteSpace(item.Carrier))
+            item.Carrier = bk.Carrier;
     }
 
     async Task DeleteItem(M_HBL item)
@@ -1194,6 +1235,7 @@
                 { x => x.SaleNames, SaleNames ?? new List<string>() },
                 { x => x.ListUsers, ListUsers ?? new List<string>() },
                 { x => x.TrangThai, trangthais ?? new List<string>() },
+                { x => x.Ports, Ports ?? new List<PortModel>() },
                 { x => x.ListDebit, ListDebit ?? new List<M_Debit>() },
                 { x => x.ListCredit, ListCredit ?? new List<M_Credit>() },
                 { x => x.CurrentUserRole, currentUserRole },

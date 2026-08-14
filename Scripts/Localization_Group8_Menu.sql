@@ -10,6 +10,10 @@ BEGIN TRANSACTION;
 
 DELETE FROM LocalizationResources WHERE ResourceKey IN (
     'EqControl_Subtitle','Eq_SelectContainer','Eq_LoadContainersError',
+    'Eq_ContainerType','Eq_OwnershipType','Eq_Owner','Eq_CurrentLocation','Eq_CurrentDepot',
+    'Eq_ManufactureDate','Eq_LastInspectionDate','Eq_GetTemplate','Eq_Import','Eq_Add',
+    'Eq_ContainerNoRequired','Eq_ContainerNoHint','Eq_ConfirmDelete','Eq_TemplateDownloaded',
+    'Eq_ImportSheetNotFound','Eq_ImportSuccess','Eq_ImportError',
     'Eq_SearchContainerError','Eq_SearchMblError','Eq_SearchHblError','Eq_SearchJobError',
     'Eq_SaveGateInError','Eq_SaveGateOutError','Eq_NoRowsForContainer','Eq_ImportGateSuccess',
     'Eq_ImportGateInOutError','Eq_LoadContainersFirst','Eq_ContainerNotSelected',
@@ -53,7 +57,24 @@ DELETE FROM LocalizationResources WHERE ResourceKey IN (
 );
 
 INSERT INTO LocalizationResources (ResourceKey, Culture, Value) VALUES
-('EqControl_Subtitle','en-US',N'8.1 · Container control and gate timeline'),('EqControl_Subtitle','vi-VN',N'8.1 · Quản lý container và timeline cổng'),('EqControl_Subtitle','zh-CN',N'8.1 · 集装箱管控与闸口时间线'),
+('EqControl_Subtitle','en-US',N'8.1 · Container master and owner'),('EqControl_Subtitle','vi-VN',N'8.1 · Danh mục container và chủ container'),('EqControl_Subtitle','zh-CN',N'8.1 · 集装箱主数据与箱主'),
+('Eq_ContainerType','en-US',N'Container Type'),('Eq_ContainerType','vi-VN',N'Loại container'),('Eq_ContainerType','zh-CN',N'箱型'),
+('Eq_OwnershipType','en-US',N'Ownership Type'),('Eq_OwnershipType','vi-VN',N'Loại sở hữu'),('Eq_OwnershipType','zh-CN',N'所有权类型'),
+('Eq_Owner','en-US',N'Owner'),('Eq_Owner','vi-VN',N'Chủ container'),('Eq_Owner','zh-CN',N'箱主'),
+('Eq_CurrentLocation','en-US',N'Current Location'),('Eq_CurrentLocation','vi-VN',N'Vị trí hiện tại'),('Eq_CurrentLocation','zh-CN',N'当前位置'),
+('Eq_CurrentDepot','en-US',N'Current Depot'),('Eq_CurrentDepot','vi-VN',N'Depot hiện tại'),('Eq_CurrentDepot','zh-CN',N'当前堆场'),
+('Eq_ManufactureDate','en-US',N'Manufacture Date'),('Eq_ManufactureDate','vi-VN',N'Ngày sản xuất'),('Eq_ManufactureDate','zh-CN',N'生产日期'),
+('Eq_LastInspectionDate','en-US',N'Last Inspection Date'),('Eq_LastInspectionDate','vi-VN',N'Ngày kiểm định'),('Eq_LastInspectionDate','zh-CN',N'最近检验日期'),
+('Eq_GetTemplate','en-US',N'Get template import'),('Eq_GetTemplate','vi-VN',N'Tải mẫu import'),('Eq_GetTemplate','zh-CN',N'下载导入模板'),
+('Eq_Import','en-US',N'Import'),('Eq_Import','vi-VN',N'Import'),('Eq_Import','zh-CN',N'导入'),
+('Eq_Add','en-US',N'Add container'),('Eq_Add','vi-VN',N'Thêm container'),('Eq_Add','zh-CN',N'新增集装箱'),
+('Eq_ContainerNoRequired','en-US',N'ContainerNo is required.'),('Eq_ContainerNoRequired','vi-VN',N'Bắt buộc nhập số container.'),('Eq_ContainerNoRequired','zh-CN',N'集装箱号为必填。'),
+('Eq_ContainerNoHint','en-US',N'Search existing container no or type a new one.'),('Eq_ContainerNoHint','vi-VN',N'Tìm số container có sẵn hoặc nhập tay số mới.'),('Eq_ContainerNoHint','zh-CN',N'可搜索已有箱号或手动输入新箱号。'),
+('Eq_ConfirmDelete','en-US',N'Delete container {0}?'),('Eq_ConfirmDelete','vi-VN',N'Xóa container {0}?'),('Eq_ConfirmDelete','zh-CN',N'删除集装箱 {0}？'),
+('Eq_TemplateDownloaded','en-US',N'Import template downloaded.'),('Eq_TemplateDownloaded','vi-VN',N'Đã tải mẫu import.'),('Eq_TemplateDownloaded','zh-CN',N'导入模板已下载。'),
+('Eq_ImportSheetNotFound','en-US',N'ContainerMaster sheet not found in Excel file.'),('Eq_ImportSheetNotFound','vi-VN',N'Không tìm thấy sheet ContainerMaster trong file Excel.'),('Eq_ImportSheetNotFound','zh-CN',N'Excel 文件中未找到 ContainerMaster 工作表。'),
+('Eq_ImportSuccess','en-US',N'Imported {0} row(s). Skipped {1} empty row(s).'),('Eq_ImportSuccess','vi-VN',N'Đã import {0} dòng. Bỏ qua {1} dòng trống.'),('Eq_ImportSuccess','zh-CN',N'已导入 {0} 行，跳过 {1} 个空行。'),
+('Eq_ImportError','en-US',N'Import error: {0}'),('Eq_ImportError','vi-VN',N'Lỗi import: {0}'),('Eq_ImportError','zh-CN',N'导入错误：{0}'),
 ('Eq_SelectContainer','en-US',N'Please select a container.'),('Eq_SelectContainer','vi-VN',N'Vui lòng chọn container.'),('Eq_SelectContainer','zh-CN',N'请选择集装箱。'),
 ('Eq_LoadContainersError','en-US',N'Error loading containers: {0}'),('Eq_LoadContainersError','vi-VN',N'Lỗi tải container: {0}'),('Eq_LoadContainersError','zh-CN',N'加载集装箱失败：{0}'),
 ('Eq_SearchContainerError','en-US',N'Container search error: {0}'),('Eq_SearchContainerError','vi-VN',N'Lỗi tìm container: {0}'),('Eq_SearchContainerError','zh-CN',N'集装箱搜索错误：{0}'),

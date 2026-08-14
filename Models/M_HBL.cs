@@ -296,6 +296,8 @@ namespace NVOAMASIS.Models
         public DateTime? HanTraCont { get; set; }
         public Guid? Depo_id { get; set; }
         public string? Add_NoiTraContRong { get; set; }
+        public string? Carrier { get; set; }
+
         public M_HBL DeepCopy()
         {
             string json = JsonSerializer.Serialize(this);

@@ -354,6 +354,21 @@ namespace NVOAMASIS.Services
             return bk;
         }
 
+        public async Task<Booking?> GetDetailBookingFromBookingNo(string? bookingNo)
+        {
+            if (string.IsNullOrWhiteSpace(bookingNo))
+                return null;
+
+            _context.ChangeTracker.Clear();
+            var key = bookingNo.Trim();
+
+            return await _context.CONTAINEROUTBOUNDNOTIFY_sale
+                .AsNoTracking()
+                .Where(x => x.BookingNo == key)
+                .OrderByDescending(x => x.UpdateTime)
+                .FirstOrDefaultAsync();
+        }
+
         public async Task<BoolandMessReponse> DeleteBooking(Models.Booking IVM)
         {
             _context.ChangeTracker.Clear();

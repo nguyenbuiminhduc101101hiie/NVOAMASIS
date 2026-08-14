@@ -478,6 +478,9 @@ namespace NVOAMASIS.Migrations
                     b.Property<string>("hano_POTCode")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("hano_POT_Ext")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("hano_Payment")
                         .HasColumnType("nvarchar(max)");
 

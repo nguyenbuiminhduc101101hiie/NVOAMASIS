@@ -140,6 +140,7 @@
 
     <MudDialog>
         <DialogContent>
+            <MudForm @ref="_form">
             <MudContainer Class="hbl-container hbl-compact">
                 <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="hbl-header">
                     <div>
@@ -434,13 +435,73 @@
                                 }
                         </MudSelect>
                     </MudItem>
+
+                        <MudItem xs="12" md="3">
+                            <MudTextField @bind-Value="Item.Carrier"
+                                          Label="@Localizer["Carrier"]"
+                                          Margin="Margin.Dense" />
+                        </MudItem>
                 </MudGrid>
             </MudPaper>
 
-                <!-- 5. Parties -->
+                <!-- 5. Route & vessel -->
                 <MudPaper Class="hbl-section" Elevation="0">
                     <MudText Class="hbl-section-title">
-                        5. Parties
+                        5. Route &amp; Vessel
+                        <span class="hbl-section-subtitle">Lấy sẵn từ MBL cha — vẫn sửa được</span>
+                    </MudText>
+
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" md="3">
+                            <MudAutocomplete T="string"
+                                             Value="Item.polname"
+                                             ValueChanged="OnPolnameChanged"
+                                             Label="@Localizer["POL"]"
+                                             SearchFunc="SearchPort"
+                                             CoerceValue="true"
+                                             Clearable="true"
+                                             MaxItems="100"
+                                             Margin="Margin.Dense" />
+                        </MudItem>
+
+                        <MudItem xs="12" md="3">
+                            <MudAutocomplete T="string"
+                                             Value="Item.podname"
+                                             ValueChanged="OnPodnameChanged"
+                                             Label="@Localizer["POD"]"
+                                             SearchFunc="SearchPort"
+                                             CoerceValue="true"
+                                             Clearable="true"
+                                             MaxItems="100"
+                                             Margin="Margin.Dense" />
+                        </MudItem>
+
+                        <MudItem xs="12" md="3">
+                            <MudTextField @bind-Value="Item.vessel"
+                                          Label="@Localizer["Vessel/Fly"]"
+                                          Margin="Margin.Dense" />
+                        </MudItem>
+
+                        <MudItem xs="12" md="3">
+                            <MudTextField @bind-Value="Item.voy"
+                                          Label="@Localizer["voyage_no"]"
+                                          Margin="Margin.Dense" />
+                        </MudItem>
+
+                        <MudItem xs="12" md="3">
+                            <MudTextField Value="@($"{Item.polcode} / {Item.podcode}")"
+                                          Label="POL / POD Code"
+                                          ReadOnly="true"
+                                          Disabled="true"
+                                          Margin="Margin.Dense" />
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+
+                <!-- 6. Parties -->
+                <MudPaper Class="hbl-section" Elevation="0">
+                    <MudText Class="hbl-section-title">
+                        6. Parties
                         <span class="hbl-section-subtitle">Search customer information, then apply it into the text box</span>
                     </MudText>
 
@@ -490,7 +551,7 @@
                                 <MudTextField @bind-Value="Item.consignee"
                                               Label="@Localizer["Consignee"]"
                                               Lines="4"
-                                              Required="true"
+                                              Required="false"
                                               Margin="Margin.Dense" />
                             </div>
                         </MudItem>
@@ -514,17 +575,17 @@
                                 <MudTextField @bind-Value="Item.notify1"
                                               Label="@Localizer["Notify"]"
                                               Lines="4"
-                                              Required="true"
+                                              Required="false"
                                               Margin="Margin.Dense" />
                             </div>
                         </MudItem>
                     </MudGrid>
                 </MudPaper>
 
-                <!-- 6. Remarks and free time -->
+                <!-- 7. Remarks and free time -->
                 <MudPaper Class="hbl-section" Elevation="0">
                     <MudText Class="hbl-section-title">
-                        6. Remarks & Free Time
+                        7. Remarks & Free Time
                         <span class="hbl-section-subtitle">Internal remarks and DEM/DET information</span>
                     </MudText>
 
@@ -576,6 +637,7 @@
                     </MudGrid>
                 </MudPaper>
             </MudContainer>
+            </MudForm>
         </DialogContent>
 
         <DialogActions>
@@ -589,6 +651,8 @@
 @code {
     [CascadingParameter] public MudDialogInstance MudDialog { get; set; } = default!;
 
+    private MudForm? _form;
+
     [Parameter] public M_HBL Item { get; set; } = default!;
 
     [Parameter] public List<M_Customer> Customers { get; set; } = new();
@@ -597,6 +661,7 @@
     [Parameter] public List<string> SaleNames { get; set; } = new();
     [Parameter] public List<string> ListUsers { get; set; } = new();
     [Parameter] public List<string> TrangThai { get; set; } = new();
+    [Parameter] public List<PortModel> Ports { get; set; } = new();
 
     [Parameter] public List<M_Debit> ListDebit { get; set; } = new();
     [Parameter] public List<M_Credit> ListCredit { get; set; } = new();
@@ -736,8 +801,18 @@
 
     void Cancel() => MudDialog.Cancel();
 
-    void Submit()
+    async Task Submit()
     {
+        if (_form == null)
+            return;
+
+        await _form.Validate();
+        if (!_form.IsValid)
+        {
+            Snackbar.Add("Vui lòng nhập đầy đủ các trường bắt buộc.", MudBlazor.Severity.Warning);
+            return;
+        }
+
         RecalcCombine();
         MudDialog.Close(Item);
     }
@@ -847,6 +922,43 @@
     private Task Get_linkNotify()
     {
         Item.notify1 = search_Notify;
+        return Task.CompletedTask;
+    }
+
+    private async Task<IEnumerable<string>> SearchPort(string text)
+    {
+        await Task.Delay(1);
+        var names = Ports
+            .Where(x => !string.IsNullOrWhiteSpace(x.PORT))
+            .Select(x => x.PORT!)
+            .Distinct();
+
+        if (string.IsNullOrWhiteSpace(text))
+            return names;
+
+        return names.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string? LookupPortCode(string? portName)
+    {
+        if (string.IsNullOrWhiteSpace(portName))
+            return null;
+
+        return Ports.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PORT)
+            && x.PORT!.Equals(portName.Trim(), StringComparison.OrdinalIgnoreCase))?.PORT_CODE;
+    }
+
+    private Task OnPolnameChanged(string? value)
+    {
+        Item.polname = value;
+        Item.polcode = LookupPortCode(value);
+        return Task.CompletedTask;
+    }
+
+    private Task OnPodnameChanged(string? value)
+    {
+        Item.podname = value;
+        Item.podcode = LookupPortCode(value);
         return Task.CompletedTask;
     }
 

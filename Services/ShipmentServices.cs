@@ -839,6 +839,115 @@ namespace NVOAMASIS.Services
             }
         }
 
+        public List<M_ContainerMaster> GetListContainerMaster()
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                return _context.ContainerMaster
+                    .AsNoTracking()
+                    .OrderBy(x => x.ContainerNo)
+                    .ToList();
+            }
+            catch
+            {
+                return new List<M_ContainerMaster>();
+            }
+        }
+
+        public List<string> GetDistinctShipmentContainerNos()
+        {
+            try
+            {
+                return _context.Container
+                    .Where(x => x.CONTINUED == true && x.CONTAINER_NO != null && x.CONTAINER_NO.Trim() != "")
+                    .Select(x => x.CONTAINER_NO!.Trim())
+                    .Distinct()
+                    .OrderBy(x => x)
+                    .ToList();
+            }
+            catch
+            {
+                return new List<string>();
+            }
+        }
+
+        public async Task<BoolandMessReponse> SaveOrUpdateContainerMaster(M_ContainerMaster item)
+        {
+            try
+            {
+                if (item == null)
+                    return new BoolandMessReponse(false, "Nothing to save");
+
+                var containerNo = item.ContainerNo?.Trim();
+                if (string.IsNullOrWhiteSpace(containerNo))
+                    return new BoolandMessReponse(false, "ContainerNo is required");
+
+                item.ContainerNo = containerNo.ToUpperInvariant();
+
+                _context.ChangeTracker.Clear();
+                var duplicated = await _context.ContainerMaster.AsNoTracking()
+                    .AnyAsync(x => x.ContainerNo == item.ContainerNo && x.ID != item.ID);
+                if (duplicated)
+                    return new BoolandMessReponse(false, $"ContainerNo {item.ContainerNo} already exists");
+
+                if (item.ID == Guid.Empty)
+                {
+                    item.ID = Guid.NewGuid();
+                    _context.ContainerMaster.Add(item);
+                    await _context.SaveChangesAsync();
+                    return new BoolandMessReponse(true, "Create container master success");
+                }
+
+                var existing = await _context.ContainerMaster.FirstOrDefaultAsync(x => x.ID == item.ID);
+                if (existing == null)
+                {
+                    _context.ContainerMaster.Add(item);
+                    await _context.SaveChangesAsync();
+                    return new BoolandMessReponse(true, "Create container master success");
+                }
+
+                existing.ContainerNo = item.ContainerNo;
+                existing.ContainerType = item.ContainerType;
+                existing.OwnershipType = item.OwnershipType;
+                existing.OwnerID = item.OwnerID;
+                existing.Status = item.Status;
+                existing.CurrentLocation = item.CurrentLocation;
+                existing.CurrentDepot = item.CurrentDepot;
+                existing.ManufactureDate = item.ManufactureDate;
+                existing.LastInspectionDate = item.LastInspectionDate;
+                existing.Condition = item.Condition;
+                await _context.SaveChangesAsync();
+                return new BoolandMessReponse(true, "Update container master success");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Cannot save container master: " + ex.Message);
+            }
+        }
+
+        public async Task<BoolandMessReponse> DeleteContainerMaster(M_ContainerMaster item)
+        {
+            try
+            {
+                if (item == null || item.ID == Guid.Empty)
+                    return new BoolandMessReponse(false, "Nothing to Delete");
+
+                _context.ChangeTracker.Clear();
+                var existing = await _context.ContainerMaster.FirstOrDefaultAsync(x => x.ID == item.ID);
+                if (existing == null)
+                    return new BoolandMessReponse(false, "Container master not found");
+
+                _context.ContainerMaster.Remove(existing);
+                await _context.SaveChangesAsync();
+                return new BoolandMessReponse(true, "Delete successful");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Cannot Delete container master: " + ex.Message);
+            }
+        }
+
         public List<string> GetDistinctOwnerNames()
         {
             try

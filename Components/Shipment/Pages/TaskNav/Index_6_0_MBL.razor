@@ -6,6 +6,7 @@
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ShipmentService shipsv
+@inject BookingService bksv
 @inject IStringLocalizer<SharedResource> Localizer
 @using System.Globalization﻿
 @inject HistoryLogService HistoryLogService
@@ -300,8 +301,70 @@
             Jobid = JobDetail!.JobID,
             SaleName = salecode_injob
         };
+        await ApplyBookingInfoAsync(item);
         var addTitle = $"{Localizer["Add"]} MBL";
         await ShowMblEditDialogAsync(item, addTitle, checkApproved: false);
+    }
+
+    // Job có số booking thì lấy tuyến, tàu và lịch tàu từ booking đó điền sẵn cho MBL mới.
+    async Task ApplyBookingInfoAsync(M_MBL item)
+    {
+        var bookingNo = JobDetail?.BookingNo?.Trim();
+        if (string.IsNullOrWhiteSpace(bookingNo))
+            return;
+
+        var bk = await bksv.GetDetailBookingFromBookingNo(bookingNo);
+        if (bk == null)
+        {
+            CallSnackBar($"Không tìm thấy booking {bookingNo} để lấy dữ liệu.", MudBlazor.Severity.Info);
+            return;
+        }
+
+        item.Bkno = bookingNo;
+
+        var (polName, polCode) = ResolveBookingPort(bk.hano_POL, bk.hano_POLCode);
+        item.Polname = polName;
+        item.Polcode = polCode;
+
+        var (podName, podCode) = ResolveBookingPort(bk.hano_POD, bk.hano_PODCode);
+        item.Podname = podName;
+        item.Podcode = podCode;
+
+        item.Vessel = bk.Vessel;
+        item.Voy = bk.VoyNo;
+        item.ETD = bk.ETD;
+        item.ETA = bk.ETA;
+
+        if (!string.IsNullOrEmpty(JobDetail?.Loai))
+            await SetActualdeldate(item);
+    }
+
+    // Booking lưu cảng dạng "TÊN_CODE"; tách ra rồi đối chiếu danh mục cảng để lấy đúng tên và code.
+    (string? Name, string? Code) ResolveBookingPort(string? bookingPort, string? bookingPortCode)
+    {
+        var code = string.IsNullOrWhiteSpace(bookingPortCode) ? null : bookingPortCode.Trim();
+
+        if (string.IsNullOrWhiteSpace(bookingPort))
+            return (null, code);
+
+        var raw = bookingPort.Trim();
+        var name = raw;
+
+        var separator = raw.LastIndexOf('_');
+        if (separator > 0)
+        {
+            name = raw.Substring(0, separator).Trim();
+            var parsedCode = raw.Substring(separator + 1).Trim();
+            if (!string.IsNullOrWhiteSpace(parsedCode))
+                code = parsedCode;
+        }
+
+        var port = Ports.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PORT)
+                       && x.PORT!.Equals(name, StringComparison.OrdinalIgnoreCase))
+                   ?? Ports.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PORT_CODE)
+                       && x.PORT_CODE!.Equals(code, StringComparison.OrdinalIgnoreCase));
+
+        return port != null ? (port.PORT, port.PORT_CODE) : (name, code);
     }
 
     async Task DeleteItem(M_MBL item)
@@ -599,6 +662,7 @@
                 { x => x.FormTitle, title },
                 { x => x.Customers, Customers ?? new List<M_Customer>() },
                 { x => x.TrangThai, trangthais ?? new List<string>() },
+                { x => x.Ports, Ports ?? new List<PortModel>() },
                 { x => x.SetActualdeldateAsync, SetActualdeldate },
                 { x => x.UpdatebyCheckboxClickAsync, UpdatebyCheckboxClick }
             },
