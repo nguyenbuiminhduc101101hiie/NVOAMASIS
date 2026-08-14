@@ -180,18 +180,30 @@
                         </MudItem>
 
                         <MudItem xs="12" md="3">
-                            <MudAutocomplete Class="pl-0"
-                                             T="string"
-                                             @bind-Value="Item.bkno"
-                                             @bind-Value:after="OnBknoChangedAsync"
-                                             For="@(() => Item.bkno)"
-                                             Label="@Localizer["Bkno"]"
-                                             SearchFunc="SearchBookingNo"
-                                             Immediate="true"
-                                             CoerceText="true"
-                                             Clearable="true"
-                                             MaxItems="200"
-                                             Margin="Margin.Dense" />
+                            <MudStack Row="true" AlignItems="AlignItems.End" Spacing="1">
+                                <MudAutocomplete Class="pl-0 flex-grow-1"
+                                                 T="string"
+                                                 @bind-Value="Item.bkno"
+                                                 @bind-Value:after="OnBknoChangedAsync"
+                                                 For="@(() => Item.bkno)"
+                                                 Label="@Localizer["Bkno"]"
+                                                 SearchFunc="SearchBookingNo"
+                                                 Immediate="true"
+                                                 CoerceText="true"
+                                                 Clearable="true"
+                                                 MaxItems="200"
+                                                 Margin="Margin.Dense" />
+                                <MudTooltip Text="Link thông tin từ booking đã chọn">
+                                    <MudButton Variant="Variant.Filled"
+                                               Color="Color.Primary"
+                                               Size="Size.Small"
+                                               Class="hbl-party-button"
+                                               Style="min-width:42px;height:40px;margin-bottom:4px;"
+                                               Disabled="_linkingBooking"
+                                               StartIcon="@Icons.Material.Filled.Link"
+                                               OnClick="LinkFromBookingAsync" />
+                                </MudTooltip>
+                            </MudStack>
                         </MudItem>
 
                         <MudItem xs="12" md="3">
@@ -684,6 +696,7 @@
     private List<string> BookingNoList { get; set; } = new();
     private string _lastBknoValidated = string.Empty;
     private string _lastBknoWarned = string.Empty;
+    private bool _linkingBooking;
 
     List<string> Shippers = new();
     List<string> Consignees = new();
@@ -798,6 +811,118 @@
             Snackbar.Add($"Không kiểm tra được BKNO trùng: {ex.Message}", MudBlazor.Severity.Warning);
         }
     }
+
+    private async Task LinkFromBookingAsync()
+    {
+        var bkno = Item?.bkno?.Trim();
+        if (string.IsNullOrWhiteSpace(bkno))
+        {
+            Snackbar.Add("Vui lòng chọn số booking trước.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _linkingBooking = true;
+            await Task.Delay(1);
+
+            var bk = await bksv.GetDetailBookingFromBookingNo(bkno);
+            if (bk == null)
+            {
+                Snackbar.Add($"Không tìm thấy booking {bkno} để lấy dữ liệu.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            Item.bkno = bkno;
+
+            var (polName, polCode) = ResolveBookingPort(bk.hano_POL, bk.hano_POLCode);
+            if (!string.IsNullOrWhiteSpace(polName))
+                Item.polname = polName;
+            if (!string.IsNullOrWhiteSpace(polCode))
+                Item.polcode = polCode;
+
+            var (podName, podCode) = ResolveBookingPort(bk.hano_POD, bk.hano_PODCode);
+            if (!string.IsNullOrWhiteSpace(podName))
+                Item.podname = podName;
+            if (!string.IsNullOrWhiteSpace(podCode))
+                Item.podcode = podCode;
+
+            if (!string.IsNullOrWhiteSpace(bk.Vessel))
+                Item.vessel = bk.Vessel;
+            if (!string.IsNullOrWhiteSpace(bk.VoyNo))
+                Item.voy = bk.VoyNo;
+            if (bk.ETD.HasValue)
+                Item.ETD = bk.ETD;
+            if (bk.ETA.HasValue)
+                Item.ETA = bk.ETA;
+            if (!string.IsNullOrWhiteSpace(bk.Carrier))
+                Item.Carrier = bk.Carrier;
+            if (!string.IsNullOrWhiteSpace(bk.congviecthuchien4))
+                Item.remarks = bk.congviecthuchien4;
+
+            if (bk.Customer_ID.HasValue && bk.Customer_ID != Guid.Empty
+                && Customers.Any(x => x.Customer_ID == bk.Customer_ID.Value))
+            {
+                Item.CustomerID = bk.Customer_ID.Value;
+            }
+
+            var sale = FirstNonEmpty(bk.SaleCode, bk.SaleName);
+            if (!string.IsNullOrWhiteSpace(sale)
+                && SaleNames.Any(x => string.Equals(x, sale, StringComparison.OrdinalIgnoreCase)))
+            {
+                Item.SaleName = SaleNames.First(x => string.Equals(x, sale, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrWhiteSpace(bk.OPSCode)
+                && ListUsers.Any(x => string.Equals(x, bk.OPSCode, StringComparison.OrdinalIgnoreCase)))
+            {
+                Item.OPS = ListUsers.First(x => string.Equals(x, bk.OPSCode, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (SetActualdeldateAsync != null)
+                await SetActualdeldateAsync(Item);
+
+            Snackbar.Add($"Đã link thông tin từ booking {bkno}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Không link được booking: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _linkingBooking = false;
+        }
+    }
+
+    private (string? Name, string? Code) ResolveBookingPort(string? bookingPort, string? bookingPortCode)
+    {
+        var code = string.IsNullOrWhiteSpace(bookingPortCode) ? null : bookingPortCode.Trim();
+
+        if (string.IsNullOrWhiteSpace(bookingPort))
+            return (null, code);
+
+        var raw = bookingPort.Trim();
+        var name = raw;
+
+        var separator = raw.LastIndexOf('_');
+        if (separator > 0)
+        {
+            name = raw.Substring(0, separator).Trim();
+            var parsedCode = raw.Substring(separator + 1).Trim();
+            if (!string.IsNullOrWhiteSpace(parsedCode))
+                code = parsedCode;
+        }
+
+        var port = Ports.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PORT)
+                       && x.PORT!.Equals(name, StringComparison.OrdinalIgnoreCase))
+                   ?? Ports.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PORT_CODE)
+                       && x.PORT_CODE!.Equals(code, StringComparison.OrdinalIgnoreCase));
+
+        return port != null ? (port.PORT, port.PORT_CODE) : (name, code);
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
 
     void Cancel() => MudDialog.Cancel();
 
