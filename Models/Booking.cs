@@ -38,6 +38,8 @@ namespace NVOAMASIS.Models
         public string? hano_PODCode { get; set; }
         public string? hano_POT { get; set; }
         public string? hano_POTCode { get; set; }
+        /// <summary>POT thứ 2 trở đi, ngăn cách bằng " | ". POT đầu tiên luôn nằm ở hano_POT vì report chỉ in POT 1.</summary>
+        public string? hano_POT_Ext { get; set; }
         public string? hano_Payment { get; set; }
         public string? hanoLCL_Consolidator { get; set; }
         public string? hanoLCL_CFSWH { get; set; }
@@ -189,7 +191,6 @@ namespace NVOAMASIS.Models
         public string? Code { get; set; }
         public string? Freight_Payable { get; set; }
 
-        
 
     }
 }

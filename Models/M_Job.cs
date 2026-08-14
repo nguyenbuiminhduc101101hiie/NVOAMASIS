@@ -22,6 +22,8 @@ namespace NVOAMASIS.Models
         public string? Branch { get; set; }
         public string? Salecode { get; set; }
         public string? CompanyCode { get; set; }
+        public string? BookingNo { get; set; }
+
 
         [JsonIgnore]
         public List<M_MBL>? MBLs { get; set; }

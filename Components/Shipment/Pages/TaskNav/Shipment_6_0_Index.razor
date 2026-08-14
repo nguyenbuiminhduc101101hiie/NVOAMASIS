@@ -39,6 +39,18 @@
         </MudAlert>
     }
 
+    @if (!string.IsNullOrWhiteSpace(NewJobBookingNo))
+    {
+        <MudAlert Severity="MudBlazor.Severity.Success" Variant="Variant.Filled" Dense="true" Class="mb-2">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                <MudIcon Icon="@Icons.Material.Filled.PostAdd" />
+                <MudText Typo="Typo.body2">
+                    <b>Tạo Job từ Booking:</b> @NewJobBookingNo
+                </MudText>
+            </MudStack>
+        </MudAlert>
+    }
+
     <MudPaper Class="shipment-shell" Elevation="0">
         @if (showSummarySection)
         {
@@ -331,7 +343,13 @@
             <PropertyColumn Property="x => DebitCreditCompletedStatus(x.JobID)" Title="@Localizer["Debit/Credit Done"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => joinmbl(x.JobID)" Title="@Localizer["MBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => joinhbl(x.JobID)" Title="@Localizer["HBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
-            <PropertyColumn Property="x => joinbooking(x.JobID)" Title="@Localizer["Booking No"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
+            <PropertyColumn Property="x => joinbooking(x.JobID)" Title="@Localizer["Booking No"]" CellStyleFunc="_cellStyleFunc">
+                <EditTemplate>
+                    <MudTextField @bind-Value="context.Item.BookingNo"
+                                  Label="@Localizer["Booking No"]"
+                                  Immediate="true" />
+                </EditTemplate>
+            </PropertyColumn>
             
             <PropertyColumn Property="x => x.FLC" Title="@Localizer["FLC"]" Required CellStyleFunc="_cellStyleFunc">
                 <EditTemplate>
@@ -890,6 +908,12 @@
             await Refresh();
             await ApplyViewDocFilterToGrid();
         }
+        else if (!string.IsNullOrWhiteSpace(NewJobBookingNo) && !_newJobFromBookingHandled)
+        {
+            _newJobFromBookingHandled = true;
+            await Refresh();
+            await AddNewJobRow(NewJobBookingNo);
+        }
 
         await InvokeAsync(StateHasChanged);
     }
@@ -991,10 +1015,14 @@
     [Parameter] public string? InitialBK { get; set; }
     [Parameter] public string? InitialContainer { get; set; }
 
+    // Số booking được đưa qua từ 6.1 Booking Request để tạo Job mới.
+    [Parameter] public string? NewJobBookingNo { get; set; }
+
     private string? SearchJobNo;
     private string? SearchMBL;
     private string? SearchBK;
     private bool _viewDocAutoLoaded = false;
+    private bool _newJobFromBookingHandled = false;
 
     private bool HasViewDocFilter =>
         !string.IsNullOrWhiteSpace(InitialJobNo)
@@ -1144,7 +1172,9 @@
         item.JobNo = tiepdaungu + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D5") : "RefNoError!");
     }
 
-    async Task AddItem()
+    async Task AddItem() => await AddNewJobRow(null);
+
+    async Task AddNewJobRow(string? bookingNo)
     {
         if (!await ssv.CheckPermission(usr, "Add", "Shipment6"))
         {
@@ -1153,6 +1183,8 @@
         }
         CopyOps = new();
         var item = new M_Job();
+        if (!string.IsNullOrWhiteSpace(bookingNo))
+            item.BookingNo = bookingNo.Trim();
         Listdata.Add(item);
         await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
     }
@@ -1676,6 +1708,11 @@
             .Select(x => NormalizeDisplayText(x.bkno))
             .Where(x => x is not null)
             .Select(x => x!)
+            .Concat(Listdata
+                .Where(x => x.JobID == jobid)
+                .Select(x => NormalizeDisplayText(x.BookingNo))
+                .Where(x => x is not null)
+                .Select(x => x!))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 

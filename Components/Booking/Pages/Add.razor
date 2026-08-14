@@ -185,6 +185,8 @@
                                                                              Label="@Localizer["toshipper"]"
                                                                              @bind-Value="_BookingDetail.CONSIGNEEID"
                                                                              Required="true"
+                                                                             Clearable="true"
+                                                                             ResetValueOnEmptyText="true"
                                                                              AdornmentColor="@ColorTextFields"
                                                                              SearchFunc="Search_customer"
                                                                              ToStringFunc="GetCustomerLabel"
@@ -199,7 +201,8 @@
                                                                              @bind-Value="_BookingDetail.Customer_ID"
                                                                              AdornmentColor="@ColorTextFields"
                                                                              SearchFunc="Search_customer"
-                                                                             Required="true"
+                                                                             Clearable="true"
+                                                                             ResetValueOnEmptyText="true"
                                                                              ToStringFunc="GetCustomerLabel" />
                                                         </MudItem>
                                                         <MudItem xs="12" md="4">
@@ -212,6 +215,8 @@
                                                                              OnBlur="OnMainCusSelected"
                                                                              AdornmentColor="@ColorTextFields"
                                                                              SearchFunc="Search_customer"
+                                                                             Clearable="true"
+                                                                             ResetValueOnEmptyText="true"
                                                                              ToStringFunc="GetCustomerLabel" />
                                                         </MudItem>
                                                     </MudGrid>
@@ -295,18 +300,48 @@
                                                                              MaxItems="100" />
                                                         </MudItem>
                                                         <MudItem xs="12" md="6">
-                                                            <MudAutocomplete Class="booking-field labelCustomColor"
-                                                                             T="string"
-                                                                             Variant="Variant.Outlined"
-                                                                             Margin="Margin.Dense"
-                                                                             @bind-Value="_BookingDetail.hano_POT"
-                                                                             Label="@Localizer["POT"]"
-                                                                             SearchFunc="Search_Port"
-                                                                             AdornmentColor="@ColorTextFields"
-                                                                             Immediate="true"
-                                                                             CoerceText="true"
-                                                                             Clearable="true"
-                                                                             MaxItems="100" />
+                                                            <MudStack Spacing="1">
+                                                                @for (var i = 0; i < potEntries.Count; i++)
+                                                                {
+                                                                    var entry = potEntries[i];
+                                                                    var isLast = i == potEntries.Count - 1;
+                                                                    var potLabel = i == 0 ? $"{Localizer["POT"]}" : $"{Localizer["POT"]} {i + 1}";
+
+                                                                    <div class="d-flex align-center ga-2" @key="entry.Id">
+                                                                        <MudAutocomplete Class="booking-field labelCustomColor flex-grow-1"
+                                                                                         T="string"
+                                                                                         Variant="Variant.Outlined"
+                                                                                         Margin="Margin.Dense"
+                                                                                         @bind-Value="entry.Value"
+                                                                                         @bind-Value:after="SyncPotToBookingDetail"
+                                                                                         Label="@potLabel"
+                                                                                         SearchFunc="Search_Port"
+                                                                                         AdornmentColor="@ColorTextFields"
+                                                                                         Immediate="true"
+                                                                                         CoerceText="true"
+                                                                                         Clearable="true"
+                                                                                         MaxItems="100" />
+                                                                        @if (potEntries.Count > 1)
+                                                                        {
+                                                                            <MudTooltip Text="@Localizer["Delete"]">
+                                                                                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                                                                               Color="Color.Error"
+                                                                                               Size="Size.Small"
+                                                                                               OnClick="@(() => RemovePot(entry))" />
+                                                                            </MudTooltip>
+                                                                        }
+                                                                        @if (isLast)
+                                                                        {
+                                                                            <MudTooltip Text="@Localizer["Add"]">
+                                                                                <MudIconButton Icon="@Icons.Material.Filled.Add"
+                                                                                               Color="Color.Primary"
+                                                                                               Size="Size.Small"
+                                                                                               OnClick="AddPot" />
+                                                                            </MudTooltip>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                            </MudStack>
                                                         </MudItem>
                                                         <MudItem xs="12" md="6">
                                                             <MudAutocomplete Class="booking-field labelCustomColor"
@@ -1701,6 +1736,33 @@
                                                                   Label="@Localizer["Userhandle"]"
                                                                   @bind-Value="_BookingDetail.OperationCode_" />
                                                 </MudItem>
+                                                <MudItem xs="12" md="8">
+                                                    <MudTextField Class="booking-field labelCustomColor"
+                                                                  Variant="Variant.Outlined"
+                                                                  Margin="Margin.Dense"
+                                                                  Lines="3"
+                                                                  Label="@Localizer["noidung"]"
+                                                                  @bind-Value="EmailContent" />
+                                                </MudItem>
+                                                <MudItem xs="12" md="4" Class="d-flex justify-content-start justify-content-md-end align-items-end">
+                                                    <MudButton Variant="Variant.Filled"
+                                                               Color="Color.Tertiary"
+                                                               Class="booking-field"
+                                                               Style="max-width:100%;text-transform:none;font-weight:600;"
+                                                               Disabled="_processingSendNotification"
+                                                               StartIcon="@Icons.Material.Filled.Notifications"
+                                                               OnClick="SendNotificationAsync_send">
+                                                        @if (_processingSendNotification)
+                                                        {
+                                                            <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                                                            <MudText Class="ms-2">Processing</MudText>
+                                                        }
+                                                        else
+                                                        {
+                                                            @Localizer["sendnotification"]
+                                                        }
+                                                    </MudButton>
+                                                </MudItem>
                                             </MudGrid>
                                         </div>
                                     </MudItem>
@@ -1933,6 +1995,69 @@
     List<string> trangthais = new List<string>();
     private List<string> ListVessel { get; set; } = new List<string>();
 
+    private const string PotSeparator = " | ";
+
+    private sealed class PotEntry
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public string? Value { get; set; }
+    }
+
+    private List<PotEntry> potEntries = new List<PotEntry> { new PotEntry() };
+
+    private void LoadPotEntries()
+    {
+        var entries = new List<PotEntry>();
+
+        if (!string.IsNullOrWhiteSpace(_BookingDetail?.hano_POT))
+            entries.Add(new PotEntry { Value = _BookingDetail.hano_POT });
+
+        if (!string.IsNullOrWhiteSpace(_BookingDetail?.hano_POT_Ext))
+        {
+            var extras = _BookingDetail.hano_POT_Ext
+                .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(x => new PotEntry { Value = x });
+            entries.AddRange(extras);
+        }
+
+        if (entries.Count == 0)
+            entries.Add(new PotEntry());
+
+        potEntries = entries;
+    }
+
+    private void SyncPotToBookingDetail()
+    {
+        if (_BookingDetail == null)
+            return;
+
+        var values = potEntries
+            .Select(x => x.Value?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+
+        // Report BookingRequestNVOCC.mrt đọc thẳng cột hano_POT nên cột này chỉ giữ POT đầu tiên.
+        _BookingDetail.hano_POT = values.FirstOrDefault();
+        _BookingDetail.hano_POT_Ext = values.Count > 1
+            ? string.Join(PotSeparator, values.Skip(1))
+            : null;
+    }
+
+    private void AddPot()
+    {
+        potEntries.Add(new PotEntry());
+    }
+
+    private void RemovePot(PotEntry entry)
+    {
+        potEntries.Remove(entry);
+
+        if (potEntries.Count == 0)
+            potEntries.Add(new PotEntry());
+
+        SyncPotToBookingDetail();
+    }
+
 
     MudForm form;
 
@@ -2046,6 +2171,8 @@
         if ((await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "Booking-Request") || await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "New", "Booking-Request")))
         {
 
+            SyncPotToBookingDetail();
+
             await form.Validate();
 
             if (form.IsValid)
@@ -2071,6 +2198,7 @@
     protected override async Task OnInitializedAsync()
     {
         SyncDatePickersFromBookingDetail();
+        LoadPotEntries();
 
         ListFrom = await bksv.GetList_From() ?? new List<string>();
 
@@ -2590,6 +2718,65 @@
 
 
 
+    private bool _processingSendNotification;
+
+    private async Task SendNotificationAsync_send()
+    {
+        if (string.IsNullOrWhiteSpace(_BookingDetail.OperationCode_))
+        {
+            CallSnackBar(Localizer["UserEmpty"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var noidung = EmailContent?.Trim();
+        if (string.IsNullOrWhiteSpace(noidung))
+        {
+            noidung = string.IsNullOrWhiteSpace(_BookingDetail.BookingNo)
+                ? "Booking"
+                : $"Booking: {_BookingDetail.BookingNo}";
+        }
+
+        try
+        {
+            _processingSendNotification = true;
+            await Task.Delay(1);
+            StateHasChanged();
+
+            string[] users = _BookingDetail.OperationCode_.Split(',');
+            var listid = new List<string>();
+
+            foreach (var user in users)
+            {
+                var userName = user?.Trim();
+                if (string.IsNullOrEmpty(userName))
+                    continue;
+
+                Guid? inputid = await gsv.GetIdfromUser(userName);
+                if (inputid != null && inputid != Guid.Empty)
+                {
+                    listid.Add(inputid.ToString()!);
+                }
+            }
+
+            if (listid.Count == 0)
+            {
+                CallSnackBar(Localizer["UserEmpty"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            await _notificationService.SendNotificationAsync(listid.ToArray(), noidung);
+            CallSnackBar(Localizer["SendSuccess"], MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(string.Format(Localizer["SomethingWentWrong"], ex.Message), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingSendNotification = false;
+        }
+    }
+
     private async Task SendEmailAsync_send()
     {
         if (string.IsNullOrWhiteSpace(_BookingDetail.OperationCode_))
@@ -2600,7 +2787,6 @@
 
         string[] users = _BookingDetail.OperationCode_.Split(',');
         List<string> emails = new List<string>();
-        List<string> listid = new List<string>();
 
         foreach (var user in users)
         {
@@ -2613,12 +2799,6 @@
             {
                 emails.Add(inputemail);
             }
-
-            Guid? inputid = await gsv.GetIdfromUser(userName);
-            if (inputid != null && inputid != Guid.Empty)
-            {
-                listid.Add(inputid.ToString()!);
-            }
         }
 
         string[] emailarray = emails.ToArray();
@@ -2627,11 +2807,6 @@
             bool result = await emsv.SendEmailAsync_1(EmailContent, emailarray, Attachments);
             if (result)
             {
-                if (listid.Count > 0 && !string.IsNullOrWhiteSpace(EmailContent))
-                {
-                    await _notificationService.SendNotificationAsync(listid.ToArray(), EmailContent);
-                }
-
                 CallSnackBar(Localizer["EmailSentSuccess"], MudBlazor.Severity.Success);
             }
             else

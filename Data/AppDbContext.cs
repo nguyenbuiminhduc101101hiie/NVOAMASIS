@@ -134,6 +134,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_ContainerMovement> ContainerMovement { get; set; }
         public DbSet<M_ContainerSeal> ContainerSeal { get; set; }
         public DbSet<M_ContainerDamage> ContainerDamage { get; set; }
+        public DbSet<M_ContainerMaster> ContainerMaster { get; set; }
         public DbSet<M_GateIn> GateIn { get; set; }
         public DbSet<M_GateOut> GateOut { get; set; }
         public DbSet<M_Stock> Stock { get; set; }
@@ -217,6 +218,15 @@ namespace NVOAMASIS.Data
                 .HasKey(e => e.Token);
             modelBuilder.Entity<ArrivalNoticeQrTokenRecord>()
                 .HasIndex(e => new { e.HblId, e.Type, e.BillType, e.Branches })
+                .IsUnique();
+
+            // Danh mục container / chủ container — script Create_ContainerMaster.sql
+            modelBuilder.Entity<M_ContainerMaster>().ToTable("ContainerMaster");
+            modelBuilder.Entity<M_ContainerMaster>()
+                .Property(x => x.ID)
+                .HasDefaultValueSql("NEWID()");
+            modelBuilder.Entity<M_ContainerMaster>()
+                .HasIndex(x => x.ContainerNo)
                 .IsUnique();
 
             modelBuilder.Entity<M_Stock>().ToTable("Stock");

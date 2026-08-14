@@ -11,9 +11,13 @@
 @inject SupportServices supsv
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject NotificationService _notificationService
+@inject GlobalServices gsv
 
 @inject IStringLocalizer<SharedResource> Localizer
 @inject HistoryLogService HistoryLogService
+@using System.Reflection;
+@using System.Text;
 @using System.Text.Json;
 
 @attribute [Authorize]
@@ -76,6 +80,15 @@
                            StartIcon="@Icons.Material.Filled.Download">
                     @Localizer["Export_Bill"]
                 </MudButton>
+
+                <MudTooltip Text="Tạo Job từ booking đang chọn">
+                    <MudButton OnClick="CreateJobFromBooking"
+                               Size="Size.Small" Color="Color.Success" Variant="Variant.Filled"
+                               Class="action-btn"
+                               StartIcon="@Icons.Material.Filled.PostAdd">
+                        Tạo Job
+                    </MudButton>
+                </MudTooltip>
             </MudStack>
         </Toolbar>
     </PpScreenHeader>
@@ -441,6 +454,8 @@
 </style>
 
 @code {
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
     private string search_BookingNo;
 
     Guid? BookingId;
@@ -629,7 +644,10 @@
                 await HistoryLogService.LogAsync(usr, "Update Booking-Request", "Booking-Request", data.ContainerOutBoundNotifyId, data.BookingNo, new { OldData = OldData, NewData = data });
                 MudBlazor.Severity severity;
                 if (rs[1] == "1")
+                {
                     severity = MudBlazor.Severity.Success;
+                    await SendBookingUpdateNotificationAsync(OldData, data);
+                }
                 else
                     severity = MudBlazor.Severity.Error;
 
@@ -744,6 +762,47 @@
         CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
     }
 
+    // Mở tab 6.0 Shipment ở chế độ tạo Job mới, gán sẵn số booking đang chọn.
+    private async Task CreateJobFromBooking()
+    {
+        if (Booking_Detail == null)
+        {
+            CallSnackBar(Localizer["PleaseSelectData"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var bookingNo = Booking_Detail.BookingNo?.Trim();
+        if (string.IsNullOrWhiteSpace(bookingNo))
+        {
+            CallSnackBar("Booking đang chọn chưa có số booking.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Shipment6"))
+        {
+            CallSnackBar(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!OnTabRequest.HasDelegate)
+        {
+            CallSnackBar("Không mở được tab tạo Job. Vui lòng mở màn hình 6.1 từ menu.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent<Components.Shipment.Pages.TaskNav.Shipment_6_0_Index>(0);
+            builder.AddAttribute(1, nameof(Components.Shipment.Pages.TaskNav.Shipment_6_0_Index.NewJobBookingNo), bookingNo);
+            builder.CloseComponent();
+        };
+
+        await OnTabRequest.InvokeAsync((
+            $"Shipment6.0_NewJob_{bookingNo}",
+            $"6.0 {Localizer["Shipment"]} - {bookingNo}",
+            content));
+    }
+
 
 
     private async Task OpenDialogDuplicate(Models.Booking tr)
@@ -837,5 +896,185 @@
             return;
         }
 
+    }
+
+    private static readonly HashSet<string> BookingNotifySkipFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(Booking.ContainerOutBoundNotifyId),
+        nameof(Booking.UpdateTime),
+        nameof(Booking.UserID),
+        nameof(Booking.daguitimeline),
+        nameof(Booking.ngaytimeline),
+        nameof(Booking.giotimeline),
+        nameof(Booking.userstimeline),
+        nameof(Booking.noidungtimeline),
+        nameof(Booking.OperationCode_)
+    };
+
+    private static readonly Dictionary<string, string> BookingFieldLabels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [nameof(Booking.BookingNo)] = "Booking No",
+        [nameof(Booking.Vessel)] = "Vessel",
+        [nameof(Booking.VoyNo)] = "Voyage",
+        [nameof(Booking.ETD)] = "ETD",
+        [nameof(Booking.ETA)] = "ETA",
+        [nameof(Booking.etdtime)] = "ETD time",
+        [nameof(Booking.etatime)] = "ETA time",
+        [nameof(Booking.Carrier)] = "Carrier",
+        [nameof(Booking.trangthai)] = "Status",
+        [nameof(Booking.hano_POL)] = "POL",
+        [nameof(Booking.hano_POD)] = "POD",
+        [nameof(Booking.hano_POR)] = "POR",
+        [nameof(Booking.hano_POT)] = "POT",
+        [nameof(Booking.hano_POT_Ext)] = "POT extra",
+        [nameof(Booking.hano_from)] = "From",
+        [nameof(Booking.hano_Commodity)] = "Commodity",
+        [nameof(Booking.hanoFCL_Quality)] = "Quantity",
+        [nameof(Booking.ATTN)] = "ATTN",
+        [nameof(Booking.PIC)] = "PIC",
+        [nameof(Booking.OPSCode)] = "OPS",
+        [nameof(Booking.Emptydepot)] = "Empty depot",
+        [nameof(Booking.PickupAt)] = "Pickup at",
+        [nameof(Booking.DropOff)] = "Drop off",
+        [nameof(Booking.OperationCode_)] = "User handle",
+        [nameof(Booking.Remarks_)] = "Remarks",
+        [nameof(Booking.remarksFCL)] = "FCL remarks",
+        [nameof(Booking.iol)] = "Service",
+        [nameof(Booking.FCL_LCL_Air)] = "FCL/LCL/Air",
+        [nameof(Booking.DC20)] = "20DC",
+        [nameof(Booking.RF20)] = "20RF",
+        [nameof(Booking.DC40)] = "40DC",
+        [nameof(Booking.HC40)] = "40HC",
+        [nameof(Booking.RF40)] = "40RF",
+        [nameof(Booking.RH40)] = "40RH",
+        [nameof(Booking.HC45)] = "45HC"
+    };
+
+    private async Task SendBookingUpdateNotificationAsync(Booking? oldData, Booking newData)
+    {
+        try
+        {
+            var oldHandles = ParseUserHandles(oldData?.OperationCode_);
+            var newHandles = ParseUserHandles(newData?.OperationCode_);
+            var addedHandles = newHandles.Except(oldHandles, StringComparer.OrdinalIgnoreCase).ToList();
+            var removedHandles = oldHandles.Except(newHandles, StringComparer.OrdinalIgnoreCase).ToList();
+
+            // Gửi cho cả list cũ và list mới để user vừa thêm vào handle vẫn nhận noti.
+            var recipientNames = oldHandles.Union(newHandles, StringComparer.OrdinalIgnoreCase).ToList();
+            var recipients = await ResolveUserIdsFromNamesAsync(recipientNames);
+            if (recipients.Count == 0)
+                return;
+
+            var summary = BuildBookingChangeSummary(oldData, newData, addedHandles, removedHandles);
+            if (string.IsNullOrWhiteSpace(summary))
+                return;
+
+            await _notificationService.SendNotificationAsync(recipients.ToArray(), summary);
+        }
+        catch
+        {
+            // Save already succeeded; do not fail the edit flow if notify fails.
+        }
+    }
+
+    private static List<string> ParseUserHandles(string? operationCode)
+    {
+        if (string.IsNullOrWhiteSpace(operationCode))
+            return new List<string>();
+
+        return operationCode
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrEmpty(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task<List<string>> ResolveUserIdsFromNamesAsync(IEnumerable<string> userNames)
+    {
+        var listid = new List<string>();
+        foreach (var userName in userNames)
+        {
+            if (string.IsNullOrWhiteSpace(userName))
+                continue;
+
+            Guid? inputid = await gsv.GetIdfromUser(userName.Trim());
+            if (inputid != null && inputid != Guid.Empty)
+                listid.Add(inputid.ToString()!);
+        }
+
+        return listid.Distinct().ToList();
+    }
+
+    private string BuildBookingChangeSummary(Booking? oldData, Booking newData, List<string> addedHandles, List<string> removedHandles)
+    {
+        var bookingNo = string.IsNullOrWhiteSpace(newData.BookingNo) ? "(no number)" : newData.BookingNo;
+        var header = FormatLocal("BookingUpdatedNotify", "Booking {0} đã được cập nhật bởi {1}.", bookingNo, usr);
+
+        var changes = new List<string>();
+        if (addedHandles.Count > 0)
+            changes.Add(FormatLocal("BookingHandleAdded", "User handle thêm: {0}", string.Join(", ", addedHandles)));
+        if (removedHandles.Count > 0)
+            changes.Add(FormatLocal("BookingHandleRemoved", "User handle gỡ: {0}", string.Join(", ", removedHandles)));
+
+        if (oldData != null)
+        {
+            foreach (var prop in typeof(Booking).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!prop.CanRead || BookingNotifySkipFields.Contains(prop.Name))
+                    continue;
+
+                var oldValue = FormatBookingValue(prop.GetValue(oldData));
+                var newValue = FormatBookingValue(prop.GetValue(newData));
+                if (string.Equals(oldValue, newValue, StringComparison.Ordinal))
+                    continue;
+
+                var label = BookingFieldLabels.TryGetValue(prop.Name, out var mapped) ? mapped : prop.Name;
+                var empty = FormatLocal("BookingEmptyValue", "(trống)");
+                changes.Add($"{label}: {(string.IsNullOrEmpty(oldValue) ? empty : oldValue)} → {(string.IsNullOrEmpty(newValue) ? empty : newValue)}");
+            }
+        }
+
+        if (changes.Count == 0)
+            return string.Empty;
+
+        const int maxLines = 15;
+        var sb = new StringBuilder();
+        sb.Append(header);
+        foreach (var line in changes.Take(maxLines))
+        {
+            sb.Append('\n');
+            sb.Append(line);
+        }
+
+        if (changes.Count > maxLines)
+        {
+            sb.Append('\n');
+            sb.Append(FormatLocal("BookingMoreChanges", "... và {0} thay đổi khác.", changes.Count - maxLines));
+        }
+
+        return sb.ToString();
+    }
+
+    private string FormatLocal(string key, string fallback, params object[] args)
+    {
+        var localized = Localizer[key];
+        var template = localized.ResourceNotFound ? fallback : localized.Value;
+        return args.Length == 0 ? template : string.Format(template, args);
+    }
+
+    private static string FormatBookingValue(object? value)
+    {
+        if (value == null)
+            return string.Empty;
+        if (value is DateTime dt)
+            return dt.TimeOfDay == TimeSpan.Zero ? dt.ToString("yyyy-MM-dd") : dt.ToString("yyyy-MM-dd HH:mm");
+        if (value is Guid g)
+            return g == Guid.Empty ? string.Empty : g.ToString();
+        if (value is bool b)
+            return b ? "Yes" : "No";
+
+        var text = Convert.ToString(value)?.Trim() ?? string.Empty;
+        return text.Length <= 80 ? text : text[..77] + "...";
     }
 }

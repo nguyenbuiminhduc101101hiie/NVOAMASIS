@@ -26,7 +26,9 @@ DELETE FROM LocalizationResources WHERE ResourceKey IN (
     'Shipment_Colors','Color','CBM','Size','Status','Collect','Invoice','Rate','Qty','DebitCreditFor',
     'QuanLyCont_Container','QuanLyCont_Principal','QuanLyCont_Owner','QuanLyCont_GateOut','QuanLyCont_EmptyReturn','QuanLyCont_Yard',
     'QuanLyTau_EstHours','QuanLyTau_Items','QuanLyTau_BasedOn','QuanLyTau_TurnTime',
-    'CamKet_No','CamKet_PrivateWarehouse','CamKet_ReturnLocation'
+    'CamKet_No','CamKet_PrivateWarehouse','CamKet_ReturnLocation',
+    'sendnotification','BookingUpdatedNotify','BookingEmptyValue','BookingMoreChanges',
+    'BookingHandleAdded','BookingHandleRemoved'
 );
 
 INSERT INTO LocalizationResources (ResourceKey, Culture, Value) VALUES
@@ -122,7 +124,13 @@ INSERT INTO LocalizationResources (ResourceKey, Culture, Value) VALUES
 ('QuanLyTau_TurnTime','en-US',N'Turn/Time'),('QuanLyTau_TurnTime','vi-VN',N'Turn/Time'),('QuanLyTau_TurnTime','zh-CN',N'Turn/Time'),
 ('CamKet_No','en-US',N'Commitment no.'),('CamKet_No','vi-VN',N'Số cam kết'),('CamKet_No','zh-CN',N'承诺编号'),
 ('CamKet_PrivateWarehouse','en-US',N'Private warehouse'),('CamKet_PrivateWarehouse','vi-VN',N'Kho riêng'),('CamKet_PrivateWarehouse','zh-CN',N'专用仓库'),
-('CamKet_ReturnLocation','en-US',N'Empty return location'),('CamKet_ReturnLocation','vi-VN',N'Nơi trả rỗng'),('CamKet_ReturnLocation','zh-CN',N'还空地点');
+('CamKet_ReturnLocation','en-US',N'Empty return location'),('CamKet_ReturnLocation','vi-VN',N'Nơi trả rỗng'),('CamKet_ReturnLocation','zh-CN',N'还空地点'),
+('sendnotification','en-US',N'Send notification'),('sendnotification','vi-VN',N'Gửi thông báo'),('sendnotification','zh-CN',N'发送通知'),
+('BookingUpdatedNotify','en-US',N'Booking {0} updated by {1}.'),('BookingUpdatedNotify','vi-VN',N'Booking {0} đã được cập nhật bởi {1}.'),('BookingUpdatedNotify','zh-CN',N'订舱 {0} 已由 {1} 更新。'),
+('BookingEmptyValue','en-US',N'(empty)'),('BookingEmptyValue','vi-VN',N'(trống)'),('BookingEmptyValue','zh-CN',N'(空)'),
+('BookingMoreChanges','en-US',N'... and {0} more change(s).'),('BookingMoreChanges','vi-VN',N'... và {0} thay đổi khác.'),('BookingMoreChanges','zh-CN',N'... 以及其他 {0} 项更改。'),
+('BookingHandleAdded','en-US',N'User handle added: {0}'),('BookingHandleAdded','vi-VN',N'User handle thêm: {0}'),('BookingHandleAdded','zh-CN',N'新增经办人：{0}'),
+('BookingHandleRemoved','en-US',N'User handle removed: {0}'),('BookingHandleRemoved','vi-VN',N'User handle gỡ: {0}'),('BookingHandleRemoved','zh-CN',N'移除经办人：{0}');
 
 COMMIT;
 -- After run: DbStringLocalizerFactory.ClearCache() or restart app.
