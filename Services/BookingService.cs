@@ -4,6 +4,7 @@ using Microsoft.Office.Interop.Excel;
 using Stimulsoft.Report;
 using Stimulsoft.Report.Blazor;
 using System.Buffers;
+using System.Linq.Expressions;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
 using NVOAMASIS.Response;
@@ -367,6 +368,49 @@ namespace NVOAMASIS.Services
                 .Where(x => x.BookingNo == key)
                 .OrderByDescending(x => x.UpdateTime)
                 .FirstOrDefaultAsync();
+        }
+
+        public async Task<List<Booking>> GetListBookingByNos(IEnumerable<string> bookingNos)
+        {
+            var keys = bookingNos
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (keys.Count == 0)
+                return new List<Booking>();
+
+            _context.ChangeTracker.Clear();
+
+            // Avoid keys.Contains(...) — EF Core 8 translates it to OPENJSON ... WITH,
+            // which fails on SQL Server compatibility levels below 130.
+            var result = new List<Booking>();
+            foreach (var chunk in keys.Chunk(80))
+            {
+                var predicate = BuildBookingNoOrPredicate(chunk.ToList());
+                var batch = await _context.CONTAINEROUTBOUNDNOTIFY_sale
+                    .AsNoTracking()
+                    .Where(predicate)
+                    .ToListAsync();
+                result.AddRange(batch);
+            }
+
+            return result;
+        }
+
+        private static Expression<Func<Booking, bool>> BuildBookingNoOrPredicate(List<string> keys)
+        {
+            var param = Expression.Parameter(typeof(Booking), "x");
+            var prop = Expression.Property(param, nameof(Booking.BookingNo));
+            Expression? body = null;
+            foreach (var key in keys)
+            {
+                var eq = Expression.Equal(prop, Expression.Constant(key, typeof(string)));
+                body = body == null ? eq : Expression.OrElse(body, eq);
+            }
+
+            return Expression.Lambda<Func<Booking, bool>>(body ?? Expression.Constant(false), param);
         }
 
         public async Task<BoolandMessReponse> DeleteBooking(Models.Booking IVM)
