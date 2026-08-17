@@ -28,6 +28,8 @@ namespace NVOAMASIS.Models
         public string FontFamily { get; set; } = "Times New Roman";
         public double FontSize { get; set; } = 8;
         public bool FontBold { get; set; }
+        public bool FontItalic { get; set; }
+        public bool FontUnderline { get; set; }
         /// <summary>Stimulsoft HorAlignment: Left, Center, Right.</summary>
         public string HorAlignment { get; set; } = "Left";
         /// <summary>Stimulsoft VertAlignment: Top, Center, Bottom.</summary>

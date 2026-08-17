@@ -3149,23 +3149,17 @@ namespace NVOAMASIS.Services
             if (string.IsNullOrWhiteSpace(connectionString))
                 return;
 
-            if (report.Dictionary.Variables.Contains("connectDB"))
+            if (!report.Dictionary.Variables.Contains("connectDB"))
+                report.Dictionary.Variables.Add(new StiVariable("connectDB", connectionString));
+            else
                 report.Dictionary.Variables["connectDB"].Value = connectionString;
-
-            const string defaultDatabaseName = "MS SQL";
-            if (report.Dictionary.Databases.Contains(defaultDatabaseName))
-            {
-                ((StiSqlDatabase)report.Dictionary.Databases[defaultDatabaseName]).ConnectionString = connectionString;
-                return;
-            }
 
             foreach (StiDatabase database in report.Dictionary.Databases)
             {
-                if (database is StiSqlDatabase sqlDatabase)
-                {
-                    sqlDatabase.ConnectionString = connectionString;
-                    break;
-                }
+                if (database is not StiSqlDatabase sqlDatabase)
+                    continue;
+
+                sqlDatabase.ConnectionString = connectionString;
             }
         }
 

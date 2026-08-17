@@ -16,6 +16,7 @@ namespace NVOAMASIS.Services
         public const string Do = "BillDeliveryOrderNVOCC.mrt";
         public const string Trang2 = "BillTrang2.mrt";
         public const string Booking = "BookingRequestNVOCC.mrt";
+        public const string Quotation = "Quotation.mrt";
     }
 
     public static class BillLayoutFormKindHelper
@@ -28,6 +29,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.Do => BillSeaReportTemplateNames.Do,
             BillLayoutFormKind.Trang2 => BillSeaReportTemplateNames.Trang2,
             BillLayoutFormKind.Booking => BillSeaReportTemplateNames.Booking,
+            BillLayoutFormKind.Quotation => BillSeaReportTemplateNames.Quotation,
             _ => BillSeaReportTemplateNames.Main
         };
 
@@ -45,6 +47,8 @@ namespace NVOAMASIS.Services
                 return BillLayoutFormKind.Trang2;
             if (string.Equals(value, nameof(BillLayoutFormKind.Booking), StringComparison.OrdinalIgnoreCase))
                 return BillLayoutFormKind.Booking;
+            if (string.Equals(value, nameof(BillLayoutFormKind.Quotation), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.Quotation;
             return BillLayoutFormKind.Sea;
         }
 
@@ -56,6 +60,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.Do => nameof(BillLayoutFormKind.Do),
             BillLayoutFormKind.Trang2 => nameof(BillLayoutFormKind.Trang2),
             BillLayoutFormKind.Booking => nameof(BillLayoutFormKind.Booking),
+            BillLayoutFormKind.Quotation => nameof(BillLayoutFormKind.Quotation),
             _ => nameof(BillLayoutFormKind.Sea)
         };
 
@@ -67,6 +72,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.Do => "DO",
             BillLayoutFormKind.Trang2 => "Trang 2",
             BillLayoutFormKind.Booking => "Booking",
+            BillLayoutFormKind.Quotation => "Quotation",
             _ => "Sea"
         };
 
@@ -78,6 +84,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.Do => "DO",
             BillLayoutFormKind.Trang2 => "Trang 2",
             BillLayoutFormKind.Booking => "Booking",
+            BillLayoutFormKind.Quotation => "Quotation",
             _ => "Bill Sea"
         };
 
@@ -92,7 +99,8 @@ namespace NVOAMASIS.Services
         /// <summary>Trang 2 dùng FormBillAir để lưu ảnh full-page (PageImage).</summary>
         public static bool SupportsTrang2Content(BillLayoutFormKind kind) => kind == BillLayoutFormKind.Trang2;
 
-        public static bool UsesImage1AsLogo(BillLayoutFormKind kind) => kind == BillLayoutFormKind.AnAir;
+        public static bool UsesImage1AsLogo(BillLayoutFormKind kind) =>
+            kind is BillLayoutFormKind.AnAir or BillLayoutFormKind.Quotation;
     }
 
     public sealed class BillSeaLayoutFormSummary

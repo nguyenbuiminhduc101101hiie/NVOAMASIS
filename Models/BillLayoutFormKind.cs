@@ -8,6 +8,7 @@ namespace NVOAMASIS.Models
         AnAir,
         Do,
         Trang2,
-        Booking
+        Booking,
+        Quotation
     }
 }
