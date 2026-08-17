@@ -5331,9 +5331,11 @@ namespace NVOAMASIS.Services
                 var report = new StiReport();
                 //Load report template
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "LenhCapContRong.mrt");
+                var connectionString = ResolveReportConnectionString();
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
+                ApplyReportConnectionString(report, connectionString);
                 report.Dictionary.Variables["ID"].Value = id_bk.ToString();
                 report.Dictionary.Variables["ID_Lenh"].Value = id.ToString();
                 try
