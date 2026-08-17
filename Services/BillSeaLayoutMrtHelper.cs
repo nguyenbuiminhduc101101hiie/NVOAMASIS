@@ -483,7 +483,12 @@ namespace NVOAMASIS.Services
             }
 
             if (parts.Length > 2)
-                target.FontBold = parts.Skip(2).Any(x => x.Contains("Bold", StringComparison.OrdinalIgnoreCase));
+            {
+                var style = string.Join(",", parts.Skip(2));
+                target.FontBold = style.Contains("Bold", StringComparison.OrdinalIgnoreCase);
+                target.FontItalic = style.Contains("Italic", StringComparison.OrdinalIgnoreCase);
+                target.FontUnderline = style.Contains("Underline", StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         public static string BuildFontValue(BillSeaDesignElement element)
@@ -491,7 +496,16 @@ namespace NVOAMASIS.Services
             var size = Math.Clamp(element.FontSize, 4, 72)
                 .ToString("0.##", CultureInfo.InvariantCulture);
             var family = string.IsNullOrWhiteSpace(element.FontFamily) ? "Times New Roman" : element.FontFamily.Trim();
-            return element.FontBold ? $"{family},{size},Bold" : $"{family},{size}";
+            var styles = new List<string>();
+            if (element.FontBold)
+                styles.Add("Bold");
+            if (element.FontItalic)
+                styles.Add("Italic");
+            if (element.FontUnderline)
+                styles.Add("Underline");
+            return styles.Count == 0
+                ? $"{family},{size}"
+                : $"{family},{size},{string.Join("| ", styles)}";
         }
 
         private static double ParseLineSize(XElement node)
@@ -919,13 +933,14 @@ namespace NVOAMASIS.Services
         private static void SyncVerticalLinePoints(XElement pageNode, BillSeaDesignElement element)
         {
             var guid = EnsureLineGuid(element);
-            var relativeLeft = element.Left - element.ParentOffsetLeft;
-            var relativeTop = element.Top - element.ParentOffsetTop;
             foreach (var point in pageNode.Descendants().Where(x => x.Element("ReferenceToGuid")?.Value == guid))
             {
-                var isStart = IsStartPointNode(point);
-                var x = relativeLeft;
-                var y = isStart ? relativeTop : relativeTop + element.Height;
+                // Start/End points nằm trong từng band (tọa độ relative band), không phải relative page của line.
+                // Chỉ cập nhật X khi user kéo cột; giữ nguyên Y sẵn có để không làm lệch lưới DataBand.
+                var (pointOffsetLeft, _) = GetParentOffsets(point, pageNode);
+                var x = element.Left - pointOffsetLeft;
+                var existing = ParseClientRectangle(point.Element("ClientRectangle")?.Value);
+                var y = existing?.Top ?? 0;
                 var rectElement = point.Element("ClientRectangle");
                 if (rectElement is null)
                     point.Add(new XElement("ClientRectangle", BuildPointRectangle(x, y)));

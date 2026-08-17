@@ -5,16 +5,19 @@ using Org.BouncyCastle.Ocsp;
 using Stimulsoft.Blockly.Model;
 using Stimulsoft.Report;
 using Stimulsoft.Report.Blazor;
+using Stimulsoft.Report.Components;
+using Stimulsoft.Report.Dictionary;
 using System.Text.Json;
 using NVOAMASIS.Components.Report_RFQ.Pages;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
 using NVOAMASIS.Response;
+using NVOAMASIS.Services.MultiTenant;
 using static NVOAMASIS.Components.Report_RFQ.Pages.Index;
 
 namespace NVOAMASIS.Services
 {
-    public class QuotationService(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv, HistoryLogService HistoryLogService)
+    public class QuotationService(AppDbContext _context, IJSRuntime JSRuntime, AccountService asv, HistoryLogService HistoryLogService, BillSeaLayoutFormService billSeaLayoutFormService, ITenantContext tenantContext)
     {
         public async Task<List<M_Quotation>> GetListQuotation()
         {
@@ -393,56 +396,21 @@ namespace NVOAMASIS.Services
                 return new List<M_Debit>();
             }
         }
-        public async Task<BoolandMessReponse> ExportQuotation(Guid? id,string currency)
+        public async Task<BoolandMessReponse> ExportQuotation(Guid? id, string currency, Guid? layoutFormId = null)
         {
             try
             {
-                //Create empty report object
-                var report = new StiReport();
-                //Load report template
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "Quotation.mrt");
+                var (templateBytes, reportLogo) = await ResolveQuotationTemplateAsync(layoutFormId);
+
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StimulsoftLicenseHelper.CreateReport();
-                report.Load(rpt);
+                var report = StimulsoftLicenseHelper.CreateReport();
+                report.Load(new MemoryStream(templateBytes));
+                ApplyQuotationReportSetup(report, reportLogo);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["Currency"].Value = currency;
-              
-                double? total_amount = 0;
-                var list_debit = await GetListDebit_quotationid(id);
-                foreach (var item_debit in list_debit)
-                {
-                    if (currency == "VND")
-                    {
-                        if (item_debit.tiente == "VND")
-                        {
-                            total_amount += item_debit.thanhtiensauthue;
-                        
-                        }
-                        else
-                        {
-                            total_amount += item_debit.thanhtiensauthue * item_debit.tigiadebit;
-               
-                        }
 
-                    }
-                    else
-                    {
-                        if (item_debit.tiente == "USD")
-                        {
-                            total_amount += item_debit.thanhtiensauthue;
-                          
-                        }
-                        else
-                        {
-                            total_amount += item_debit.thanhtiensauthue / item_debit.tigiadebit;
-                       
-
-                        }
-                    }
-                }
-                //Total_amount
-                report.Dictionary.Variables["Total_amount"].Value = (total_amount ?? 0).ToString("#,##0.##");
-
+                report.Dictionary.Variables["Total_amount"].Value =
+                    (await ComputeQuotationTotalAsync(id, currency)).ToString("#,##0.##");
 
                 try
                 {
@@ -454,7 +422,6 @@ namespace NVOAMASIS.Services
                     return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
                 }
 
-
                 using (var ms = new MemoryStream())
                 {
                     report.ExportDocument(StiExportFormat.Pdf, ms);
@@ -462,10 +429,7 @@ namespace NVOAMASIS.Services
                     await JSRuntime.InvokeVoidAsync("openReportInNewTab", pdfData);
                 }
 
-
                 return new BoolandMessReponse(true, "Export successfully!");
-
-
             }
             catch (Exception ex)
             {
@@ -474,16 +438,25 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<(bool, string, byte[])> ExportQuotation_file(Guid? id)
+        public async Task<(bool, string, byte[])> ExportQuotation_file(Guid? id, Guid? layoutFormId = null)
         {
             try
             {
-                var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "Quotation.mrt");
+                var (templateBytes, reportLogo) = await ResolveQuotationTemplateAsync(layoutFormId);
+
                 StiBlazorHelper.Initialize(JSRuntime);
-                report = StimulsoftLicenseHelper.CreateReport();
-                report.Load(rpt);
+                var report = StimulsoftLicenseHelper.CreateReport();
+                report.Load(new MemoryStream(templateBytes));
+                ApplyQuotationReportSetup(report, reportLogo);
                 report.Dictionary.Variables["ID"].Value = id.ToString();
+                if (report.Dictionary.Variables.Contains("Currency")
+                    && string.IsNullOrWhiteSpace(report.Dictionary.Variables["Currency"].Value))
+                    report.Dictionary.Variables["Currency"].Value = "VND";
+                var currency = report.Dictionary.Variables.Contains("Currency")
+                    ? report.Dictionary.Variables["Currency"].Value
+                    : "VND";
+                report.Dictionary.Variables["Total_amount"].Value =
+                    (await ComputeQuotationTotalAsync(id, currency)).ToString("#,##0.##");
 
                 try
                 {
@@ -505,6 +478,115 @@ namespace NVOAMASIS.Services
             {
                 Console.WriteLine(ex.Message);
                 return (false, "Export failed! Error: " + ex.Message, null);
+            }
+        }
+
+        private async Task<(byte[] TemplateBytes, byte[]? Logo)> ResolveQuotationTemplateAsync(Guid? layoutFormId)
+        {
+            if (layoutFormId is Guid formId && formId != Guid.Empty)
+            {
+                var form = await billSeaLayoutFormService.GetFormAsync(formId);
+                if (form is null || !form.IsActive)
+                    throw new InvalidOperationException("Không tìm thấy form Quotation.");
+
+                if (BillLayoutFormKindHelper.ParseFormKind(form.FormKind) != BillLayoutFormKind.Quotation)
+                    throw new InvalidOperationException("Form đã chọn không phải loại Quotation.");
+
+                var templateBytes = await billSeaLayoutFormService.GetFormBytesAsync(formId);
+                // Chỉ thay logo template khi user upload logo riêng cho form.
+                // Không fallback CompanyInfo.Logo — Image1 của Quotation.mrt dùng resource://Logo (form gốc).
+                var logo = await billSeaLayoutFormService.GetFormLogoAsync(formId);
+                return (templateBytes, logo);
+            }
+
+            var defaultBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(BillSeaReportTemplateNames.Quotation);
+            return (defaultBytes, null);
+        }
+
+        private void ApplyQuotationReportSetup(StiReport report, byte[]? companyLogo)
+        {
+            ApplyReportConnectionString(report, ResolveReportConnectionString());
+            ApplyLogoToImageComponent(report, "Image1", companyLogo);
+        }
+
+        private string ResolveReportConnectionString()
+        {
+            tenantContext.EnsureInitializedFromHttpContext();
+            if (!string.IsNullOrWhiteSpace(tenantContext.ConnectionString))
+                return tenantContext.ConnectionString;
+
+            var connectionString = _context.Database.GetConnectionString();
+            if (!string.IsNullOrWhiteSpace(connectionString))
+                return connectionString;
+
+            return _context.Database.GetDbConnection().ConnectionString;
+        }
+
+        private static void ApplyReportConnectionString(StiReport report, string connectionString)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return;
+
+            if (!report.Dictionary.Variables.Contains("connectDB"))
+                report.Dictionary.Variables.Add(new StiVariable("connectDB", connectionString));
+            else
+                report.Dictionary.Variables["connectDB"].Value = connectionString;
+
+            foreach (StiDatabase database in report.Dictionary.Databases)
+            {
+                if (database is not StiSqlDatabase sqlDatabase)
+                    continue;
+
+                sqlDatabase.ConnectionString = connectionString;
+            }
+        }
+
+        private async Task<double> ComputeQuotationTotalAsync(Guid? id, string? currency)
+        {
+            _context.ChangeTracker.Clear();
+            // Khớp SQL của Quotation.mrt (không lọc continued) để TOTAL trùng các dòng trên bill.
+            var listDebit = await _context.Debit.Where(x => x.quotationid == id).ToListAsync();
+            double total = 0;
+            var useVnd = string.Equals(currency, "VND", StringComparison.OrdinalIgnoreCase);
+            foreach (var item in listDebit)
+            {
+                var amount = item.thanhtiensauthue ?? 0;
+                var rate = item.tigiadebit is > 0 ? item.tigiadebit.Value : 1;
+                if (useVnd)
+                    total += item.tiente == "VND" ? amount : amount * rate;
+                else
+                    total += item.tiente == "USD" ? amount : amount / rate;
+            }
+
+            return total;
+        }
+
+        private static void ApplyLogoToImageComponent(StiReport report, string componentName, byte[]? logo)
+        {
+            if (logo is not { Length: > 0 })
+                return;
+
+            // Giữ ImageURL = resource://Logo như form gốc; chỉ thay nội dung resource.
+            if (report.Dictionary.Resources.Contains("Logo"))
+                report.Dictionary.Resources["Logo"].Content = logo;
+
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is not StiImage image)
+                    continue;
+
+                if (!string.Equals(image.Name, componentName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                image.Enabled = true;
+                if (image.Expressions is { Count: > 0 })
+                {
+                    for (var i = image.Expressions.Count - 1; i >= 0; i--)
+                    {
+                        if (string.Equals(image.Expressions[i].Name, "Enabled", StringComparison.OrdinalIgnoreCase))
+                            image.Expressions.RemoveAt(i);
+                    }
+                }
             }
         }
 
