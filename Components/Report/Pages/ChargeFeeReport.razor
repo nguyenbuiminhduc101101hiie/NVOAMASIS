@@ -73,7 +73,23 @@
             </MudStack>
         </MudItem>
         <MudItem xs="12" md="4" lg="5">
-            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mt-1">
+            <MudAutocomplete T="Guid"
+                             @bind-Value="SelectedCustomerId"
+                             Label="@Localizer["Customer"]"
+                             Placeholder="@Localizer["SearchCustomers"]"
+                             Variant="Variant.Outlined"
+                             Margin="Margin.Dense"
+                             SearchFunc="SearchCustomer"
+                             ToStringFunc="CusidtoCusCode"
+                             Clearable="true"
+                             ResetValueOnEmptyText="true"
+                             Adornment="Adornment.Start"
+                             AdornmentIcon="@Icons.Material.Filled.Search"
+                             MaxItems="50"
+                             Dense="true" />
+        </MudItem>
+        <MudItem xs="12">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
                            Disabled="@Loading" OnClick="SearchAsync">
                     @Localizer["Search"]
@@ -151,6 +167,7 @@
             <div>
                 <b>@Localizer["Keyword"]:</b> @(SelectedChargeId == Guid.Empty ? Localizer["All"] : Charidtocharge(SelectedChargeId))
                 | <b>@Localizer["ChargeReport_RowType"]:</b> @GetChargeSideLabel()
+                | <b>@Localizer["Customer"]:</b> @CusidtoCusCode(SelectedCustomerId)
             </div>
             <div><b>@Localizer["PrintDate"]:</b> @DateTime.Now.ToString("dd/MM/yyyy HH:mm")</div>
             <div>
@@ -403,8 +420,10 @@
     private readonly int[] _pageSizeOptions = { 25, 50, 100, 300, 500 };
 
     private Guid SelectedChargeId { get; set; }
+    private Guid SelectedCustomerId { get; set; }
     private string SelectedChargeSide { get; set; } = "ALL";
     private List<ChargeModel> Charges { get; set; } = new();
+    private List<CustomerOption> Customers { get; set; } = new();
     private bool Loading { get; set; }
     private string? Message { get; set; }
     private MudBlazor.Severity MessageSeverity { get; set; } = MudBlazor.Severity.Info;
@@ -422,6 +441,19 @@
             .AsNoTracking()
             .OrderBy(c => c.CHARGE_CODE)
             .ThenBy(c => c.CHARGE)
+            .ToListAsync();
+
+        Customers = await _context.Set<M_Customer>()
+            .AsNoTracking()
+            .Select(c => new CustomerOption
+            {
+                CustomerId = c.Customer_ID,
+                CustomerCode = c.Customer_Code,
+                ShortName = c.shortname,
+                Company = c.COMPANY
+            })
+            .OrderBy(c => c.ShortName)
+            .ThenBy(c => c.Company)
             .ToListAsync();
     }
 
@@ -453,6 +485,43 @@
 
         var rs = Charges.FirstOrDefault(x => x.CHARGE_ID == id);
         return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}";
+    }
+
+    private Task<IEnumerable<Guid>> SearchCustomer(string text)
+    {
+        IEnumerable<Guid> result;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            result = new[] { Guid.Empty }.Concat(Customers.Select(x => x.CustomerId).Take(50));
+        }
+        else
+        {
+            result = Customers
+                .Where(x =>
+                    (x.CustomerCode ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || (x.ShortName ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || (x.Company ?? string.Empty).Contains(text, StringComparison.OrdinalIgnoreCase)
+                    || $"{x.CustomerCode}_{x.ShortName}_{x.Company}".Contains(text, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.CustomerId)
+                .Take(50);
+        }
+
+        return Task.FromResult(result);
+    }
+
+    private string CusidtoCusCode(Guid id)
+    {
+        if (id == Guid.Empty)
+            return Localizer["All"];
+
+        var rs = Customers.FirstOrDefault(x => x.CustomerId == id);
+        if (rs == null)
+            return string.Empty;
+
+        var name = !string.IsNullOrWhiteSpace(rs.ShortName) ? rs.ShortName : rs.Company;
+        return string.IsNullOrWhiteSpace(rs.CustomerCode)
+            ? (name ?? string.Empty)
+            : $"{rs.CustomerCode} - {name}";
     }
 
     private List<ChargeReportRow> FilteredRows => Rows.Where(PassesAllFilters).ToList();
@@ -631,6 +700,7 @@
     private async Task ClearAsync()
     {
         SelectedChargeId = Guid.Empty;
+        SelectedCustomerId = Guid.Empty;
         SelectedChargeSide = "ALL";
         Rows.Clear();
         ColumnFilters.Clear();
@@ -746,6 +816,7 @@
                 on d.hblid equals h.hblID into hj
             from h in hj.DefaultIfEmpty()
             where chargeIdQuery.Contains(d.itemid)
+                && (SelectedCustomerId == Guid.Empty || d.customerid == SelectedCustomerId)
                 && (agentCustomerIds == null || agentCustomerIds.Contains(d.customerid))
             select new ChargeReportRow
             {
@@ -798,6 +869,7 @@
                 on c.hblid equals h.hblID into hj
             from h in hj.DefaultIfEmpty()
             where chargeIdQuery.Contains(c.itemid)
+                && (SelectedCustomerId == Guid.Empty || c.customerid == SelectedCustomerId)
                 && (agentCustomerIds == null || agentCustomerIds.Contains(c.customerid))
             select new ChargeReportRow
             {
@@ -890,7 +962,8 @@
 
         sb.Append($"<h2>{E(Localizer["ChargeReport_PrintTitle"])}</h2>");
         sb.Append($"<div><b>{E(Localizer["Keyword"])}:</b> {E(SelectedChargeId == Guid.Empty ? Localizer["All"] : Charidtocharge(SelectedChargeId))}"
-            + $" | <b>{E(Localizer["ChargeReport_RowType"])}:</b> {E(GetChargeSideLabel())}</div>");
+            + $" | <b>{E(Localizer["ChargeReport_RowType"])}:</b> {E(GetChargeSideLabel())}"
+            + $" | <b>{E(Localizer["Customer"])}:</b> {E(CusidtoCusCode(SelectedCustomerId))}</div>");
         sb.Append($"<div><b>{E(Localizer["PrintDate"])}:</b> {DateTime.Now:dd/MM/yyyy HH:mm}</div>");
         sb.Append($"<div><b>{E(Localizer["ChargeReport_RowCountLabel"])}:</b> {rows.Count:N0}"
             + $" | <b>VND Debit:</b> {E(FormatNumber(TotalVndDebit))}"
@@ -1066,6 +1139,14 @@
     private static Color GetRowColor(string rowType)
     {
         return rowType == "DEBIT" ? Color.Success : Color.Warning;
+    }
+
+    private sealed class CustomerOption
+    {
+        public Guid CustomerId { get; set; }
+        public string? CustomerCode { get; set; }
+        public string? ShortName { get; set; }
+        public string? Company { get; set; }
     }
 
     private sealed class ChargeInfo
