@@ -28,7 +28,7 @@ DELETE FROM LocalizationResources WHERE ResourceKey IN (
     'QuanLyTau_EstHours','QuanLyTau_Items','QuanLyTau_BasedOn','QuanLyTau_TurnTime',
     'CamKet_No','CamKet_PrivateWarehouse','CamKet_ReturnLocation',
     'sendnotification','BookingUpdatedNotify','BookingEmptyValue','BookingMoreChanges',
-    'BookingHandleAdded','BookingHandleRemoved'
+    'BookingHandleAdded','BookingHandleRemoved','Shipment_CheckListHblBooking'
 );
 
 INSERT INTO LocalizationResources (ResourceKey, Culture, Value) VALUES
@@ -130,7 +130,8 @@ INSERT INTO LocalizationResources (ResourceKey, Culture, Value) VALUES
 ('BookingEmptyValue','en-US',N'(empty)'),('BookingEmptyValue','vi-VN',N'(trống)'),('BookingEmptyValue','zh-CN',N'(空)'),
 ('BookingMoreChanges','en-US',N'... and {0} more change(s).'),('BookingMoreChanges','vi-VN',N'... và {0} thay đổi khác.'),('BookingMoreChanges','zh-CN',N'... 以及其他 {0} 项更改。'),
 ('BookingHandleAdded','en-US',N'User handle added: {0}'),('BookingHandleAdded','vi-VN',N'User handle thêm: {0}'),('BookingHandleAdded','zh-CN',N'新增经办人：{0}'),
-('BookingHandleRemoved','en-US',N'User handle removed: {0}'),('BookingHandleRemoved','vi-VN',N'User handle gỡ: {0}'),('BookingHandleRemoved','zh-CN',N'移除经办人：{0}');
+('BookingHandleRemoved','en-US',N'User handle removed: {0}'),('BookingHandleRemoved','vi-VN',N'User handle gỡ: {0}'),('BookingHandleRemoved','zh-CN',N'移除经办人：{0}'),
+('Shipment_CheckListHblBooking','en-US',N'Check List HBL-Booking'),('Shipment_CheckListHblBooking','vi-VN',N'Check List HBL-Booking'),('Shipment_CheckListHblBooking','zh-CN',N'HBL-订舱核对清单');
 
 COMMIT;
 -- After run: DbStringLocalizerFactory.ClearCache() or restart app.

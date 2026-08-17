@@ -1,0 +1,574 @@
+@using System.Globalization
+@inject IStringLocalizer<SharedResource> Localizer
+@inject BookingService bksv
+@inject ShipmentService shipsv
+@inject SupportServices supsv
+@inject CustomerService csv
+@inject ISnackbar Snackbar
+
+<style>
+    .hbl-bk-check {
+        min-width: 1100px;
+    }
+
+    .hbl-bk-check-toolbar {
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .hbl-bk-check-grid-title {
+        font-weight: 700;
+        font-size: 14px;
+        color: #118AB2;
+        margin-bottom: 6px;
+    }
+
+    .hbl-bk-mismatch-row {
+        background: #fff1f2 !important;
+    }
+
+    .hbl-bk-selected-row {
+        outline: 2px solid #2563eb;
+        outline-offset: -2px;
+    }
+
+    .hbl-bk-cell-mismatch {
+        color: #b91c1c !important;
+        font-weight: 700;
+        background: #fee2e2;
+        display: block;
+        padding: 2px 4px;
+        border-radius: 4px;
+    }
+
+    .hbl-bk-cell {
+        display: block;
+        padding: 2px 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 180px;
+    }
+</style>
+
+<MudDialog>
+    <DialogContent>
+        <div class="hbl-bk-check">
+            <MudStack Row="true" AlignItems="AlignItems.End" Class="hbl-bk-check-toolbar flex-wrap">
+                <MudTextField @bind-Value="_searchHbl"
+                              @bind-Value:after="ApplyFilter"
+                              Label="@Localizer["HBL"]"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Style="min-width:180px;" />
+                <MudTextField @bind-Value="_searchBookingNo"
+                              @bind-Value:after="ApplyFilter"
+                              Label="@Localizer["Booking No"]"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Clearable="true"
+                              Style="min-width:180px;" />
+                <MudButton Variant="Variant.Filled"
+                           Color="@(_autoCheck ? Color.Error : Color.Warning)"
+                           StartIcon="@Icons.Material.Filled.FactCheck"
+                           Disabled="_loading"
+                           OnClick="AutoCheck">
+                    Auto check
+                </MudButton>
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           Disabled="_loading"
+                           OnClick="LoadAsync">
+                    @Localizer["Reload"]
+                </MudButton>
+                <MudChip T="string" Color="Color.Default" Size="Size.Small">
+                    @FilteredRows.Count / @_allRows.Count
+                </MudChip>
+                <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Filled">
+                    @MismatchCount không khớp
+                </MudChip>
+                @if (_autoCheck)
+                {
+                    <MudChip T="string" Color="Color.Warning" Size="Size.Small">Auto check</MudChip>
+                }
+            </MudStack>
+
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="6">
+                    <div class="hbl-bk-check-grid-title">Booking</div>
+                    <MudDataGrid T="HblBookingCheckRow"
+                                 Items="@FilteredRows"
+                                 Dense="true"
+                                 Bordered="true"
+                                 Hover="true"
+                                 Virtualize="true"
+                                 Height="62vh"
+                                 FixedHeader="true"
+                                 SortMode="SortMode.None"
+                                 Filterable="false"
+                                 Loading="_loading"
+                                 RowClassFunc="RowClass"
+                                 RowClick="OnRowClick"
+                                 ColumnResizeMode="ResizeMode.Column">
+                        <Columns>
+                            <TemplateColumn Title="@Localizer["Booking No"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.BookingMissing)" title="@context.Item.BookingNo">@context.Item.BookingNoDisplay</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["POL"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.PolMismatch)" title="@context.Item.BkPol">@context.Item.BkPol</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["POD"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.PodMismatch)" title="@context.Item.BkPod">@context.Item.BkPod</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="Vessel">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.VesselMismatch)" title="@context.Item.BkVessel">@context.Item.BkVessel</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="Voy">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.VoyMismatch)" title="@context.Item.BkVoy">@context.Item.BkVoy</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["ETD"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.EtdMismatch)">@context.Item.BkEtd</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["ETA"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.EtaMismatch)">@context.Item.BkEta</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Carrier"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.CarrierMismatch)" title="@context.Item.BkCarrier">@context.Item.BkCarrier</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Remarks"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.RemarksMismatch)" title="@context.Item.BkRemarks">@context.Item.BkRemarks</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Customer"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.CustomerMismatch)" title="@context.Item.BkCustomer">@context.Item.BkCustomer</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Sale Name"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.SaleMismatch)" title="@context.Item.BkSale">@context.Item.BkSale</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["OPS"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.OpsMismatch)" title="@context.Item.BkOps">@context.Item.BkOps</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                        </Columns>
+                    </MudDataGrid>
+                </MudItem>
+
+                <MudItem xs="12" md="6">
+                    <div class="hbl-bk-check-grid-title">HBL</div>
+                    <MudDataGrid T="HblBookingCheckRow"
+                                 Items="@FilteredRows"
+                                 Dense="true"
+                                 Bordered="true"
+                                 Hover="true"
+                                 Virtualize="true"
+                                 Height="62vh"
+                                 FixedHeader="true"
+                                 SortMode="SortMode.None"
+                                 Filterable="false"
+                                 Loading="_loading"
+                                 RowClassFunc="RowClass"
+                                 RowClick="OnRowClick"
+                                 ColumnResizeMode="ResizeMode.Column">
+                        <Columns>
+                            <TemplateColumn Title="@Localizer["HBL"]">
+                                <CellTemplate>
+                                    <span class="hbl-bk-cell" title="@context.Item.HblNo">@context.Item.HblNo</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Bkno"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.BookingMissing)" title="@context.Item.HblBkno">@context.Item.HblBkno</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["POL"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.PolMismatch)" title="@context.Item.HblPol">@context.Item.HblPol</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["POD"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.PodMismatch)" title="@context.Item.HblPod">@context.Item.HblPod</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="Vessel">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.VesselMismatch)" title="@context.Item.HblVessel">@context.Item.HblVessel</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="Voy">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.VoyMismatch)" title="@context.Item.HblVoy">@context.Item.HblVoy</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["ETD"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.EtdMismatch)">@context.Item.HblEtd</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["ETA"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.EtaMismatch)">@context.Item.HblEta</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Carrier"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.CarrierMismatch)" title="@context.Item.HblCarrier">@context.Item.HblCarrier</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Remarks"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.RemarksMismatch)" title="@context.Item.HblRemarks">@context.Item.HblRemarks</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Customer"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.CustomerMismatch)" title="@context.Item.HblCustomer">@context.Item.HblCustomer</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["Sale Name"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.SaleMismatch)" title="@context.Item.HblSale">@context.Item.HblSale</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn Title="@Localizer["OPS"]">
+                                <CellTemplate>
+                                    <span class="@CellClass(context.Item.OpsMismatch)" title="@context.Item.HblOps">@context.Item.HblOps</span>
+                                </CellTemplate>
+                            </TemplateColumn>
+                        </Columns>
+                    </MudDataGrid>
+                </MudItem>
+            </MudGrid>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] public MudDialogInstance MudDialog { get; set; } = default!;
+
+    private bool _loading;
+    private bool _autoCheck;
+    private string? _searchHbl;
+    private string? _searchBookingNo;
+    private Guid? _selectedHblId;
+
+    private List<HblBookingCheckRow> _allRows = new();
+    private List<HblBookingCheckRow> FilteredRows { get; set; } = new();
+    private List<PortModel> _ports = new();
+    private List<M_Customer> _customers = new();
+
+    private int MismatchCount => _allRows.Count(x => x.HasMismatch);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    void Cancel() => MudDialog.Cancel();
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _autoCheck = false;
+            StateHasChanged();
+
+            _ports = await supsv.GetListPort() ?? new List<PortModel>();
+            _customers = await csv.GetList() ?? new List<M_Customer>();
+            var hbls = (await shipsv.GetListHBLALL() ?? new List<M_HBL>())
+                .Where(x => !string.IsNullOrWhiteSpace(x.bkno))
+                .OrderByDescending(x => x.datereport)
+                .ThenBy(x => x.hbl)
+                .ToList();
+
+            var bookings = await bksv.GetListBookingByNos(hbls.Select(x => x.bkno!));
+            var bookingLookup = bookings
+                .Where(x => !string.IsNullOrWhiteSpace(x.BookingNo))
+                .GroupBy(x => x.BookingNo!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.UpdateTime).First(), StringComparer.OrdinalIgnoreCase);
+
+            _allRows = hbls.Select(hbl => BuildRow(hbl, bookingLookup)).ToList();
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Không tải được checklist: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void AutoCheck()
+    {
+        _autoCheck = !_autoCheck;
+        ApplyFilter();
+
+        if (_autoCheck)
+        {
+            var count = FilteredRows.Count;
+            Snackbar.Add(count == 0
+                ? "Không có dòng nào lệch giữa Booking và HBL."
+                : $"Auto check: {count} dòng không khớp.",
+                count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        IEnumerable<HblBookingCheckRow> query = _allRows;
+
+        if (!string.IsNullOrWhiteSpace(_searchHbl))
+        {
+            var key = _searchHbl.Trim();
+            query = query.Where(x => (x.HblNo ?? "").Contains(key, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(_searchBookingNo))
+        {
+            var key = _searchBookingNo.Trim();
+            query = query.Where(x =>
+                (x.HblBkno ?? "").Contains(key, StringComparison.OrdinalIgnoreCase)
+                || (x.BookingNo ?? "").Contains(key, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (_autoCheck)
+            query = query.Where(x => x.HasMismatch);
+
+        FilteredRows = query.ToList();
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<HblBookingCheckRow> args)
+    {
+        _selectedHblId = args.Item.HblId;
+    }
+
+    private string RowClass(HblBookingCheckRow row, int _)
+    {
+        var cls = row.HasMismatch ? "hbl-bk-mismatch-row" : "";
+        if (_selectedHblId == row.HblId)
+            cls += " hbl-bk-selected-row";
+        return cls.Trim();
+    }
+
+    private static string CellClass(bool mismatch)
+        => mismatch ? "hbl-bk-cell hbl-bk-cell-mismatch" : "hbl-bk-cell";
+
+    private HblBookingCheckRow BuildRow(M_HBL hbl, Dictionary<string, Booking> bookingLookup)
+    {
+        var bkno = hbl.bkno?.Trim() ?? "";
+        bookingLookup.TryGetValue(bkno, out var bk);
+
+        var row = new HblBookingCheckRow
+        {
+            HblId = hbl.hblID,
+            HblNo = hbl.hbl ?? "",
+            HblBkno = bkno,
+            BookingNo = bk?.BookingNo?.Trim() ?? bkno,
+            BookingMissing = bk == null
+        };
+
+        var (bkPolName, bkPolCode) = ResolveBookingPort(bk?.hano_POL, bk?.hano_POLCode);
+        var (bkPodName, bkPodCode) = ResolveBookingPort(bk?.hano_POD, bk?.hano_PODCode);
+
+        row.BkPol = FormatPort(bkPolName, bkPolCode);
+        row.HblPol = FormatPort(hbl.polname, hbl.polcode);
+        row.BkPod = FormatPort(bkPodName, bkPodCode);
+        row.HblPod = FormatPort(hbl.podname, hbl.podcode);
+        row.BkVessel = bk?.Vessel?.Trim() ?? "";
+        row.HblVessel = hbl.vessel?.Trim() ?? "";
+        row.BkVoy = bk?.VoyNo?.Trim() ?? "";
+        row.HblVoy = hbl.voy?.Trim() ?? "";
+        row.BkEtd = FormatDate(bk?.ETD);
+        row.HblEtd = FormatDate(hbl.ETD);
+        row.BkEta = FormatDate(bk?.ETA);
+        row.HblEta = FormatDate(hbl.ETA);
+        row.BkCarrier = bk?.Carrier?.Trim() ?? "";
+        row.HblCarrier = hbl.Carrier?.Trim() ?? "";
+        row.BkRemarks = bk?.congviecthuchien4?.Trim() ?? "";
+        row.HblRemarks = hbl.remarks?.Trim() ?? "";
+        row.BkCustomer = CustomerName(bk?.Customer_ID);
+        row.HblCustomer = CustomerName(hbl.CustomerID);
+        row.BkSale = FirstNonEmpty(bk?.SaleCode, bk?.SaleName) ?? "";
+        row.HblSale = hbl.SaleName?.Trim() ?? "";
+        row.BkOps = bk?.OPSCode?.Trim() ?? "";
+        row.HblOps = hbl.OPS?.Trim() ?? "";
+
+        if (bk == null)
+        {
+            row.BookingNoDisplay = $"{bkno} (không tìm thấy)";
+            row.HasMismatch = true;
+            row.PolMismatch = row.PodMismatch = row.VesselMismatch = row.VoyMismatch =
+                row.EtdMismatch = row.EtaMismatch = row.CarrierMismatch = row.RemarksMismatch =
+                row.CustomerMismatch = row.SaleMismatch = row.OpsMismatch = true;
+            return row;
+        }
+
+        row.BookingNoDisplay = row.BookingNo;
+        row.PolMismatch = IsPortMismatch(bkPolName, bkPolCode, hbl.polname, hbl.polcode);
+        row.PodMismatch = IsPortMismatch(bkPodName, bkPodCode, hbl.podname, hbl.podcode);
+        row.VesselMismatch = IsTextMismatch(row.BkVessel, row.HblVessel);
+        row.VoyMismatch = IsTextMismatch(row.BkVoy, row.HblVoy);
+        row.EtdMismatch = IsTextMismatch(row.BkEtd, row.HblEtd);
+        row.EtaMismatch = IsTextMismatch(row.BkEta, row.HblEta);
+        row.CarrierMismatch = IsTextMismatch(row.BkCarrier, row.HblCarrier);
+        row.RemarksMismatch = IsTextMismatch(row.BkRemarks, row.HblRemarks);
+        row.CustomerMismatch = bk.Customer_ID.HasValue && bk.Customer_ID != Guid.Empty
+            && bk.Customer_ID.Value != hbl.CustomerID;
+        row.SaleMismatch = IsTextMismatch(row.BkSale, row.HblSale);
+        row.OpsMismatch = IsTextMismatch(row.BkOps, row.HblOps);
+
+        row.HasMismatch = row.PolMismatch || row.PodMismatch || row.VesselMismatch || row.VoyMismatch
+            || row.EtdMismatch || row.EtaMismatch || row.CarrierMismatch || row.RemarksMismatch
+            || row.CustomerMismatch || row.SaleMismatch || row.OpsMismatch;
+        return row;
+    }
+
+    private static bool IsTextMismatch(string bookingValue, string hblValue)
+    {
+        if (string.IsNullOrWhiteSpace(bookingValue))
+            return false;
+        return !string.Equals(bookingValue.Trim(), hblValue?.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPortMismatch(string? bkName, string? bkCode, string? hblName, string? hblCode)
+    {
+        if (string.IsNullOrWhiteSpace(bkName) && string.IsNullOrWhiteSpace(bkCode))
+            return false;
+
+        var nameMatch = !string.IsNullOrWhiteSpace(bkName) && !string.IsNullOrWhiteSpace(hblName)
+            && string.Equals(bkName.Trim(), hblName.Trim(), StringComparison.OrdinalIgnoreCase);
+        var codeMatch = !string.IsNullOrWhiteSpace(bkCode) && !string.IsNullOrWhiteSpace(hblCode)
+            && string.Equals(bkCode.Trim(), hblCode.Trim(), StringComparison.OrdinalIgnoreCase);
+
+        return !(nameMatch || codeMatch);
+    }
+
+    private (string? Name, string? Code) ResolveBookingPort(string? bookingPort, string? bookingPortCode)
+    {
+        var code = string.IsNullOrWhiteSpace(bookingPortCode) ? null : bookingPortCode.Trim();
+        if (string.IsNullOrWhiteSpace(bookingPort))
+            return (null, code);
+
+        var raw = bookingPort.Trim();
+        var name = raw;
+        var separator = raw.LastIndexOf('_');
+        if (separator > 0)
+        {
+            name = raw.Substring(0, separator).Trim();
+            var parsedCode = raw.Substring(separator + 1).Trim();
+            if (!string.IsNullOrWhiteSpace(parsedCode))
+                code = parsedCode;
+        }
+
+        var port = _ports.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PORT)
+                       && x.PORT!.Equals(name, StringComparison.OrdinalIgnoreCase))
+                   ?? _ports.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x.PORT_CODE)
+                       && x.PORT_CODE!.Equals(code, StringComparison.OrdinalIgnoreCase));
+
+        return port != null ? (port.PORT, port.PORT_CODE) : (name, code);
+    }
+
+    private static string FormatPort(string? name, string? code)
+    {
+        name = name?.Trim();
+        code = code?.Trim();
+        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(code))
+            return "";
+        if (string.IsNullOrWhiteSpace(code))
+            return name ?? "";
+        if (string.IsNullOrWhiteSpace(name))
+            return code ?? "";
+        return $"{name} ({code})";
+    }
+
+    private static string FormatDate(DateTime? value)
+        => value.HasValue ? value.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "";
+
+    private string CustomerName(Guid? id)
+    {
+        if (id == null || id == Guid.Empty)
+            return "";
+        var cus = _customers.FirstOrDefault(x => x.Customer_ID == id.Value);
+        return cus?.COMPANY?.Trim() ?? cus?.shortname?.Trim() ?? id.Value.ToString();
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim();
+
+    private sealed class HblBookingCheckRow
+    {
+        public Guid HblId { get; set; }
+        public string BookingNo { get; set; } = "";
+        public string BookingNoDisplay { get; set; } = "";
+        public string HblNo { get; set; } = "";
+        public string HblBkno { get; set; } = "";
+        public bool BookingMissing { get; set; }
+        public bool HasMismatch { get; set; }
+
+        public string BkPol { get; set; } = "";
+        public string HblPol { get; set; } = "";
+        public bool PolMismatch { get; set; }
+        public string BkPod { get; set; } = "";
+        public string HblPod { get; set; } = "";
+        public bool PodMismatch { get; set; }
+        public string BkVessel { get; set; } = "";
+        public string HblVessel { get; set; } = "";
+        public bool VesselMismatch { get; set; }
+        public string BkVoy { get; set; } = "";
+        public string HblVoy { get; set; } = "";
+        public bool VoyMismatch { get; set; }
+        public string BkEtd { get; set; } = "";
+        public string HblEtd { get; set; } = "";
+        public bool EtdMismatch { get; set; }
+        public string BkEta { get; set; } = "";
+        public string HblEta { get; set; } = "";
+        public bool EtaMismatch { get; set; }
+        public string BkCarrier { get; set; } = "";
+        public string HblCarrier { get; set; } = "";
+        public bool CarrierMismatch { get; set; }
+        public string BkRemarks { get; set; } = "";
+        public string HblRemarks { get; set; } = "";
+        public bool RemarksMismatch { get; set; }
+        public string BkCustomer { get; set; } = "";
+        public string HblCustomer { get; set; } = "";
+        public bool CustomerMismatch { get; set; }
+        public string BkSale { get; set; } = "";
+        public string HblSale { get; set; } = "";
+        public bool SaleMismatch { get; set; }
+        public string BkOps { get; set; } = "";
+        public string HblOps { get; set; } = "";
+        public bool OpsMismatch { get; set; }
+    }
+}

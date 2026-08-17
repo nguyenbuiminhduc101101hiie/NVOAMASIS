@@ -2716,15 +2716,10 @@ namespace NVOAMASIS.Services
         {
             try
             {
-                // Luôn lấy cấu trúc band từ file .mrt mới (đã gộp Title/Summary).
-                // Layout form chỉ lấy logo — tránh form DB cũ còn HeaderBand lặp trang.
-                var templateBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(
-                    BillSeaReportTemplateNames.Do);
-                byte[]? reportLogo;
-                if (layoutFormId is Guid formId && formId != Guid.Empty)
-                    reportLogo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(formId);
-                else
-                    reportLogo = await GetCompanyLogoAsync();
+                // Load MRT đã design ở 1.17 (giống AN). SoftenDoPageBreakSettings vẫn
+                // xử lý form DB cũ còn HeaderBand lặp trang.
+                var (templateBytes, reportLogo) = await ResolveArrivalOrDoTemplateAsync(
+                    BillLayoutFormKind.Do, layoutFormId);
 
                 var report = new StiReport();
                 StiBlazorHelper.Initialize(JSRuntime);
@@ -3001,10 +2996,10 @@ namespace NVOAMASIS.Services
 
         /// <summary>
         /// Sửa layout DO trước khi Render:
-        /// - Tắt CanGrow/CanBreak (tránh phình band / tách dòng sang trang)
-        /// - HeaderBand không phải cột bảng: OnlyFirstPage (form cũ còn HeaderBand1..3)
+        /// - Tắt CanBreak (tránh tách dòng sang trang)
+        /// - Cho Title/Data/Summary CanGrow để text wrap đẩy band xuống, không đè header bảng lên DataBand
+        /// - HeaderBand form cũ: OnlyFirstPage (tránh lặp mọi trang)
         /// - FooterBand cũ: OnlyLastPage
-        /// - ReportTitle/Summary: CanGrow=false để nhét được 1 trang
         /// </summary>
         private static void SoftenDoPageBreakSettings(StiReport report)
         {
@@ -3020,16 +3015,15 @@ namespace NVOAMASIS.Services
                     dataBand.CanBreak = false;
                     dataBand.NewPageBefore = false;
                     dataBand.NewPageAfter = false;
-                    dataBand.CanGrow = true; // 1 dòng container có thể wrap nhẹ
+                    dataBand.CanGrow = true;
                 }
                 else if (component is StiHeaderBand headerBand)
                 {
-                    headerBand.CanGrow = false;
+                    headerBand.CanGrow = true;
                     headerBand.CanBreak = false;
                     headerBand.NewPageBefore = false;
                     headerBand.NewPageAfter = false;
                     // Form cũ: HeaderBand1..3 lặp mọi trang. Chỉ cho in trang đầu.
-                    // HeaderBand4 (cột bảng) cũng OnlyFirstPage — DO thường 1 trang data.
                     headerBand.PrintOn = StiPrintOnType.OnlyFirstPage;
                 }
                 else if (component is StiPageHeaderBand pageHeader)
@@ -3039,12 +3033,12 @@ namespace NVOAMASIS.Services
                 }
                 else if (component is StiReportTitleBand titleBand)
                 {
-                    titleBand.CanGrow = false;
+                    titleBand.CanGrow = true;
                     titleBand.CanBreak = false;
                 }
                 else if (component is StiReportSummaryBand summaryBand)
                 {
-                    summaryBand.CanGrow = false;
+                    summaryBand.CanGrow = true;
                     summaryBand.CanBreak = false;
                     summaryBand.PrintAtBottom = false;
                     summaryBand.PrintIfEmpty = true;
