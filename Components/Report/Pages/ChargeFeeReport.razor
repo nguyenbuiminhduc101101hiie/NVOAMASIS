@@ -48,23 +48,31 @@
     </MudStack>
 
     <MudGrid Class="mb-3">
-        <MudItem xs="12" md="6" lg="5">
-            <MudAutocomplete T="Guid"
-                             @bind-Value="SelectedChargeId"
-                             Label="@Localizer["ChargeReport_ChargeLabel"]"
-                             Placeholder="@Localizer["ChargeReport_ChargePlaceholder"]"
-                             Variant="Variant.Outlined"
-                             Margin="Margin.Dense"
-                             SearchFunc="SearchCharge"
-                             ToStringFunc="Charidtocharge"
-                             Clearable="true"
-                             ResetValueOnEmptyText="true"
-                             Adornment="Adornment.Start"
-                             AdornmentIcon="@Icons.Material.Filled.Search"
-                             MaxItems="50"
-                             Dense="true" />
+        <MudItem xs="12" md="8" lg="7">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudAutocomplete T="Guid"
+                                 @bind-Value="SelectedChargeId"
+                                 Label="@Localizer["ChargeReport_ChargeLabel"]"
+                                 Placeholder="@Localizer["ChargeReport_ChargePlaceholder"]"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 SearchFunc="SearchCharge"
+                                 ToStringFunc="Charidtocharge"
+                                 Clearable="true"
+                                 ResetValueOnEmptyText="true"
+                                 Adornment="Adornment.Start"
+                                 AdornmentIcon="@Icons.Material.Filled.Search"
+                                 MaxItems="50"
+                                 Dense="true"
+                                 Style="flex:1; min-width: 220px;" />
+                <MudRadioGroup T="string" @bind-Value="SelectedChargeSide" Class="d-flex flex-row flex-shrink-0 mt-1">
+                    <MudRadio Value="@("ALL")" Color="Color.Primary" Dense="true" Size="Size.Small">@Localizer["All"]</MudRadio>
+                    <MudRadio Value="@("DEBIT")" Color="Color.Primary" Dense="true" Size="Size.Small">@Localizer["Debit"]</MudRadio>
+                    <MudRadio Value="@("CREDIT")" Color="Color.Primary" Dense="true" Size="Size.Small">@Localizer["Credit"]</MudRadio>
+                </MudRadioGroup>
+            </MudStack>
         </MudItem>
-        <MudItem xs="12" md="6" lg="7">
+        <MudItem xs="12" md="4" lg="5">
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mt-1">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
                            Disabled="@Loading" OnClick="SearchAsync">
@@ -140,7 +148,10 @@
     <div id="charge-fee-report-print-area">
         <div class="print-header">
             <h2>@Localizer["ChargeReport_PrintTitle"]</h2>
-            <div><b>@Localizer["Keyword"]:</b> @(SelectedChargeId == Guid.Empty ? Localizer["All"] : Charidtocharge(SelectedChargeId))</div>
+            <div>
+                <b>@Localizer["Keyword"]:</b> @(SelectedChargeId == Guid.Empty ? Localizer["All"] : Charidtocharge(SelectedChargeId))
+                | <b>@Localizer["ChargeReport_RowType"]:</b> @GetChargeSideLabel()
+            </div>
             <div><b>@Localizer["PrintDate"]:</b> @DateTime.Now.ToString("dd/MM/yyyy HH:mm")</div>
             <div>
                 <b>@Localizer["ChargeReport_RowCountLabel"]:</b> @FilteredRows.Count.ToString("N0")
@@ -392,6 +403,7 @@
     private readonly int[] _pageSizeOptions = { 25, 50, 100, 300, 500 };
 
     private Guid SelectedChargeId { get; set; }
+    private string SelectedChargeSide { get; set; } = "ALL";
     private List<ChargeModel> Charges { get; set; } = new();
     private bool Loading { get; set; }
     private string? Message { get; set; }
@@ -609,9 +621,17 @@
         return 0;
     }
 
+    private string GetChargeSideLabel() => SelectedChargeSide switch
+    {
+        "DEBIT" => Localizer["Debit"],
+        "CREDIT" => Localizer["Credit"],
+        _ => Localizer["All"]
+    };
+
     private async Task ClearAsync()
     {
         SelectedChargeId = Guid.Empty;
+        SelectedChargeSide = "ALL";
         Rows.Clear();
         ColumnFilters.Clear();
         Message = null;
@@ -668,8 +688,12 @@
                     .Select(x => x.Customer_ID);
             }
 
-            var debitRows = await LoadDebitRows(chargeIdQuery, agentCustomerIds);
-            var creditRows = await LoadCreditRows(chargeIdQuery, agentCustomerIds);
+            var debitRows = SelectedChargeSide != "CREDIT"
+                ? await LoadDebitRows(chargeIdQuery, agentCustomerIds)
+                : new List<ChargeReportRow>();
+            var creditRows = SelectedChargeSide != "DEBIT"
+                ? await LoadCreditRows(chargeIdQuery, agentCustomerIds)
+                : new List<ChargeReportRow>();
 
             var allRows = debitRows.Concat(creditRows).ToList();
             foreach (var row in allRows)
@@ -865,7 +889,8 @@
         sb.Append("</style></head><body>");
 
         sb.Append($"<h2>{E(Localizer["ChargeReport_PrintTitle"])}</h2>");
-        sb.Append($"<div><b>{E(Localizer["Keyword"])}:</b> {E(SelectedChargeId == Guid.Empty ? Localizer["All"] : Charidtocharge(SelectedChargeId))}</div>");
+        sb.Append($"<div><b>{E(Localizer["Keyword"])}:</b> {E(SelectedChargeId == Guid.Empty ? Localizer["All"] : Charidtocharge(SelectedChargeId))}"
+            + $" | <b>{E(Localizer["ChargeReport_RowType"])}:</b> {E(GetChargeSideLabel())}</div>");
         sb.Append($"<div><b>{E(Localizer["PrintDate"])}:</b> {DateTime.Now:dd/MM/yyyy HH:mm}</div>");
         sb.Append($"<div><b>{E(Localizer["ChargeReport_RowCountLabel"])}:</b> {rows.Count:N0}"
             + $" | <b>VND Debit:</b> {E(FormatNumber(TotalVndDebit))}"

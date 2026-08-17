@@ -45,6 +45,9 @@
                          SearchFunc="SearchFuncPort" ResetValueOnEmptyText Clearable
                          Variant="Variant.Outlined" Dense="true" Style="min-width: 160px;"
                          Disabled="@(_filterPolOrPod != "POD")" />
+        <MudAutocomplete @bind-Value="_selectedAgent" T="string" Label="@Localizer["Agent"]"
+                         SearchFunc="SearchFuncAgent" ResetValueOnEmptyText Clearable
+                         Variant="Variant.Outlined" Dense="true" Style="min-width: 200px;" />
     </MudStack>
     <MudDataGrid T="M_Job" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-shipment-bg"
                  FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="calc(100vh - 40vh);" QuickFilter="_quickFilter"
@@ -96,6 +99,13 @@
                     @Localizer["Total"]
                 </FooterTemplate>
             </PropertyColumn>
+            <PropertyColumn Property="x => GetMainCus(x.JobID)" Title="@Localizer["Main Customer"]" />
+            <PropertyColumn Property="x => GetHblField(x.JobID, h => h.shipper)" Title="@Localizer["Shipper"]" />
+            <PropertyColumn Property="x => GetHblField(x.JobID, h => h.consignee)" Title="@Localizer["Consignee"]" />
+            <PropertyColumn Property="x => GetAgent(x.JobID)" Title="@Localizer["Agent"]" />
+            <PropertyColumn Property="x => GetHblField(x.JobID, h => h.SaleName)" Title="@Localizer["Sale Name"]" />
+            <PropertyColumn Property="x => GetHblField(x.JobID, h => h.polname)" Title="@Localizer["POL"]" />
+            <PropertyColumn Property="x => GetHblField(x.JobID, h => h.podname)" Title="@Localizer["POD"]" />
 
             <PropertyColumn Property="x => TDebit_Job(x.JobID)" Title="@Localizer["Debit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
                 <FooterTemplate>
@@ -174,6 +184,11 @@
         charges = await supsv.GetListCharge();
         ListSales = await supsv.GetListSale();
         ListPorts = await supsv.GetListPort();
+        ListCustomers = await csv.GetList(userdetail);
+        _customerNames = ListCustomers
+            .Where(x => x.Customer_ID != Guid.Empty && !string.IsNullOrEmpty(x.COMPANY))
+            .GroupBy(x => x.Customer_ID)
+            .ToDictionary(g => g.Key, g => g.First().COMPANY!);
         _loading = false;
     }
 
@@ -185,8 +200,10 @@
     List<M_Credit> ListCredit = new List<M_Credit>();
     List<string> ListSales = new();
     List<PortModel> ListPorts = new();
+    List<M_Customer> ListCustomers = new();
+    Dictionary<Guid, string> _customerNames = new();
     string _filterPolOrPod = "POL";
-    string _selectedPOL, _selectedPOD;
+    string _selectedPOL, _selectedPOD, _selectedAgent;
     M_Job jobdetail;
     async Task Refresh(DateRange frmtoDate)
     {
@@ -208,6 +225,8 @@
                 ListHBLs = ListHBLs.Where(x => x.polname != null && x.polname.Contains(_selectedPOL, StringComparison.OrdinalIgnoreCase)).ToList();
             else if (_filterPolOrPod == "POD" && !string.IsNullOrWhiteSpace(_selectedPOD))
                 ListHBLs = ListHBLs.Where(x => x.podname != null && x.podname.Contains(_selectedPOD, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (!string.IsNullOrWhiteSpace(_selectedAgent))
+                ListHBLs = ListHBLs.Where(x => CusIdToCompany(x.AgentID).Equals(_selectedAgent, StringComparison.OrdinalIgnoreCase)).ToList();
             var hblids = ListHBLs.Select(x => x.hblID).Distinct().ToList();
             var mblids = ListHBLs.Select(x => x.mblid).Distinct().ToList();
             ListMBLs = await shipsv.GetListMBLALL();
@@ -348,6 +367,27 @@
     DateRange frmtoDate = new DateRange(new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-1),
                                         new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
 
+    IEnumerable<M_HBL> GetHblsOfJob(Guid? jobId)
+    {
+        var mblIds = ListMBLs.Where(m => m.Jobid == jobId).Select(m => m.MblID).ToHashSet();
+        return ListHBLs.Where(h => mblIds.Contains(h.mblid));
+    }
+    string GetHblField(Guid? jobId, Func<M_HBL, string?> selector)
+    {
+        return string.Join(", ", GetHblsOfJob(jobId)
+            .Select(selector)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+    string CusIdToCompany(Guid id)
+    {
+        if (id == Guid.Empty)
+            return string.Empty;
+        return _customerNames.TryGetValue(id, out var name) ? name : string.Empty;
+    }
+    string GetMainCus(Guid? jobId) => GetHblField(jobId, h => CusIdToCompany(h.CustomerID));
+    string GetAgent(Guid? jobId) => GetHblField(jobId, h => CusIdToCompany(h.AgentID));
     string Charidtocharge(Guid id)
     {
         if (id == Guid.Empty)
@@ -620,6 +660,22 @@
                 (x.PORT_CODE?.Contains(text, StringComparison.OrdinalIgnoreCase) == true));
         }
         var result = query.Select(x => x.PORT!).Distinct().ToList();
+        return Task.FromResult(result.AsEnumerable());
+    }
+    private Task<IEnumerable<string?>> SearchFuncAgent(string? text)
+    {
+        var query = ListCustomers.Where(x =>
+            !string.IsNullOrWhiteSpace(x.COMPANY) &&
+            !string.IsNullOrWhiteSpace(x.MainCode) &&
+            x.MainCode.Contains("Agent", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            query = query.Where(x =>
+                x.COMPANY!.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+                (x.shortname?.Contains(text, StringComparison.OrdinalIgnoreCase) == true) ||
+                (x.Customer_Code?.Contains(text, StringComparison.OrdinalIgnoreCase) == true));
+        }
+        var result = query.Select(x => x.COMPANY!).Distinct().ToList();
         return Task.FromResult(result.AsEnumerable());
     }
     public List<ChartSeries> Series = new List<ChartSeries>
