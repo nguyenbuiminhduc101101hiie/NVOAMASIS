@@ -8,12 +8,15 @@ using static NVOAMASIS.Components.BaoCaoQuyTienMat.Pages.BaoCaoQuyTienMat_Index;
 using Microsoft.JSInterop;
 using Stimulsoft.Report.Blazor;
 using Stimulsoft.Report;
+using Stimulsoft.Report.Components;
+using Stimulsoft.Report.Dictionary;
 using System.Globalization;
 using NVOAMASIS.Components.CUSTOMER.Pages;
+using NVOAMASIS.Services.MultiTenant;
 
 namespace NVOAMASIS.Services
 {
-    public class PhieuThu_Chi_Services(AppDbContext _context, IWebHostEnvironment _env, AccountService asv ,CustomerService Cussv, IJSRuntime JSRuntime)
+    public class PhieuThu_Chi_Services(AppDbContext _context, IWebHostEnvironment _env, AccountService asv ,CustomerService Cussv, IJSRuntime JSRuntime, ITenantContext tenantContext)
     {
         public async Task<List<M_PhieuThu>> GetList_PhieuThu()
         {
@@ -423,6 +426,7 @@ namespace NVOAMASIS.Services
                 report = StimulsoftLicenseHelper.CreateReport();
          
                 report.Load(rpt);
+                await ApplyPhieuReportSetupAsync(report);
                 report.Culture = "en-US";
                 report.Dictionary.Variables["ID"].Value = id.ToString();
                 report.Dictionary.Variables["SoPhieuKeToan"].Value = sophieu;
@@ -512,6 +516,7 @@ namespace NVOAMASIS.Services
                 report = StimulsoftLicenseHelper.CreateReport();
 
                 report.Load(rpt);
+                await ApplyPhieuReportSetupAsync(report);
                 report.Culture = "en-US";
                 report.Dictionary.Variables["ID"].Value = id.ToString();
 
@@ -575,6 +580,7 @@ namespace NVOAMASIS.Services
                 report = StimulsoftLicenseHelper.CreateReport();
 
                 report.Load(rpt);
+                await ApplyPhieuReportSetupAsync(report);
                 report.Culture = "en-US";
                 report.Dictionary.Variables["ID"].Value = id.ToString();
 
@@ -624,6 +630,74 @@ namespace NVOAMASIS.Services
             }
         }
 
+        private async Task ApplyPhieuReportSetupAsync(StiReport report)
+        {
+            ApplyReportConnectionString(report, ResolveReportConnectionString());
+            var logo = await _context.CompanyInfomation
+                .AsNoTracking()
+                .Select(x => x.Logo)
+                .FirstOrDefaultAsync();
+            ApplyCompanyLogoToReport(report, logo);
+        }
+
+        private string ResolveReportConnectionString()
+        {
+            tenantContext.EnsureInitializedFromHttpContext();
+            if (!string.IsNullOrWhiteSpace(tenantContext.ConnectionString))
+                return tenantContext.ConnectionString;
+
+            var connectionString = _context.Database.GetConnectionString();
+            if (!string.IsNullOrWhiteSpace(connectionString))
+                return connectionString;
+
+            return _context.Database.GetDbConnection().ConnectionString;
+        }
+
+        private static void ApplyReportConnectionString(StiReport report, string connectionString)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return;
+
+            if (!report.Dictionary.Variables.Contains("connectDB"))
+                report.Dictionary.Variables.Add(new StiVariable("connectDB", connectionString));
+            else
+                report.Dictionary.Variables["connectDB"].Value = connectionString;
+
+            foreach (StiDatabase database in report.Dictionary.Databases)
+            {
+                if (database is not StiSqlDatabase sqlDatabase)
+                    continue;
+
+                sqlDatabase.ConnectionString = connectionString;
+            }
+        }
+
+        private static void ApplyCompanyLogoToReport(StiReport report, byte[]? logo)
+        {
+            if (logo is not { Length: > 0 })
+                return;
+
+            // Image1 dùng resource://Logo — chỉ thay nội dung resource, giữ ImageURL.
+            if (report.Dictionary.Resources.Contains("Logo"))
+                report.Dictionary.Resources["Logo"].Content = logo;
+
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is not StiImage image)
+                    continue;
+
+                if (!string.Equals(image.Name, "Image1", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(image.Name, "Image2", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                image.Enabled = true;
+                image.Stretch = true;
+                image.AspectRatio = true;
+                var imageUrl = image.ImageURL?.Value ?? string.Empty;
+                if (!imageUrl.Contains("Logo", StringComparison.OrdinalIgnoreCase))
+                    image.ImageURL.Value = "resource://Logo";
+            }
+        }
 
         public static string ConvertToWords(double? number, string currency)
         {
