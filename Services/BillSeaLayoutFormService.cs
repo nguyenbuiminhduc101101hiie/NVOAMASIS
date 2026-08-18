@@ -14,9 +14,11 @@ namespace NVOAMASIS.Services
         public const string AnSea = "BillArrivalNoticeNVOCC.mrt";
         public const string AnAir = "BillArrivalNotice_Air.mrt";
         public const string Do = "BillDeliveryOrderNVOCC.mrt";
+        public const string LenhDieuXe = "BillLenhDieuXe.mrt";
         public const string Trang2 = "BillTrang2.mrt";
         public const string Booking = "BookingRequestNVOCC.mrt";
         public const string Quotation = "Quotation.mrt";
+        public const string Bbgn = "BienBanGiaoNhan.mrt";
     }
 
     public static class BillLayoutFormKindHelper
@@ -27,9 +29,11 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnSea => BillSeaReportTemplateNames.AnSea,
             BillLayoutFormKind.AnAir => BillSeaReportTemplateNames.AnAir,
             BillLayoutFormKind.Do => BillSeaReportTemplateNames.Do,
+            BillLayoutFormKind.LenhDieuXe => BillSeaReportTemplateNames.LenhDieuXe,
             BillLayoutFormKind.Trang2 => BillSeaReportTemplateNames.Trang2,
             BillLayoutFormKind.Booking => BillSeaReportTemplateNames.Booking,
             BillLayoutFormKind.Quotation => BillSeaReportTemplateNames.Quotation,
+            BillLayoutFormKind.Bbgn => BillSeaReportTemplateNames.Bbgn,
             _ => BillSeaReportTemplateNames.Main
         };
 
@@ -43,12 +47,16 @@ namespace NVOAMASIS.Services
                 return BillLayoutFormKind.AnAir;
             if (string.Equals(value, nameof(BillLayoutFormKind.Do), StringComparison.OrdinalIgnoreCase))
                 return BillLayoutFormKind.Do;
+            if (string.Equals(value, nameof(BillLayoutFormKind.LenhDieuXe), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.LenhDieuXe;
             if (string.Equals(value, nameof(BillLayoutFormKind.Trang2), StringComparison.OrdinalIgnoreCase))
                 return BillLayoutFormKind.Trang2;
             if (string.Equals(value, nameof(BillLayoutFormKind.Booking), StringComparison.OrdinalIgnoreCase))
                 return BillLayoutFormKind.Booking;
             if (string.Equals(value, nameof(BillLayoutFormKind.Quotation), StringComparison.OrdinalIgnoreCase))
                 return BillLayoutFormKind.Quotation;
+            if (string.Equals(value, nameof(BillLayoutFormKind.Bbgn), StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.Bbgn;
             return BillLayoutFormKind.Sea;
         }
 
@@ -58,9 +66,11 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnSea => nameof(BillLayoutFormKind.AnSea),
             BillLayoutFormKind.AnAir => nameof(BillLayoutFormKind.AnAir),
             BillLayoutFormKind.Do => nameof(BillLayoutFormKind.Do),
+            BillLayoutFormKind.LenhDieuXe => nameof(BillLayoutFormKind.LenhDieuXe),
             BillLayoutFormKind.Trang2 => nameof(BillLayoutFormKind.Trang2),
             BillLayoutFormKind.Booking => nameof(BillLayoutFormKind.Booking),
             BillLayoutFormKind.Quotation => nameof(BillLayoutFormKind.Quotation),
+            BillLayoutFormKind.Bbgn => nameof(BillLayoutFormKind.Bbgn),
             _ => nameof(BillLayoutFormKind.Sea)
         };
 
@@ -70,9 +80,11 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnSea => "AN Sea",
             BillLayoutFormKind.AnAir => "AN Air",
             BillLayoutFormKind.Do => "DO",
+            BillLayoutFormKind.LenhDieuXe => "Lệnh Điều Xe",
             BillLayoutFormKind.Trang2 => "Trang 2",
             BillLayoutFormKind.Booking => "Booking",
             BillLayoutFormKind.Quotation => "Quotation",
+            BillLayoutFormKind.Bbgn => "BBGN",
             _ => "Sea"
         };
 
@@ -82,9 +94,11 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.AnSea => "AN Sea",
             BillLayoutFormKind.AnAir => "AN Air",
             BillLayoutFormKind.Do => "DO",
+            BillLayoutFormKind.LenhDieuXe => "Lệnh Điều Xe",
             BillLayoutFormKind.Trang2 => "Trang 2",
             BillLayoutFormKind.Booking => "Booking",
             BillLayoutFormKind.Quotation => "Quotation",
+            BillLayoutFormKind.Bbgn => "BBGN",
             _ => "Bill Sea"
         };
 
@@ -100,7 +114,8 @@ namespace NVOAMASIS.Services
         public static bool SupportsTrang2Content(BillLayoutFormKind kind) => kind == BillLayoutFormKind.Trang2;
 
         public static bool UsesImage1AsLogo(BillLayoutFormKind kind) =>
-            kind is BillLayoutFormKind.AnAir or BillLayoutFormKind.Quotation;
+            kind is BillLayoutFormKind.AnAir or BillLayoutFormKind.Quotation or BillLayoutFormKind.Booking or
+            BillLayoutFormKind.Bbgn or BillLayoutFormKind.LenhDieuXe;
     }
 
     public sealed class BillSeaLayoutFormSummary

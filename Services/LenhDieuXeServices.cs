@@ -2,15 +2,104 @@
 using Microsoft.JSInterop;
 using Stimulsoft.Report;
 using Stimulsoft.Report.Blazor;
+using Stimulsoft.Report.Components;
+using Stimulsoft.Report.Dictionary;
 using NVOAMASIS.Components.CUSTOMER.Pages;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
 using NVOAMASIS.Response;
+using NVOAMASIS.Services.MultiTenant;
 
 namespace NVOAMASIS.Services
 {
-    public class LenhDieuXeServices(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv)
+    public class LenhDieuXeServices(
+        AppDbContext _context,
+        IWebHostEnvironment _env,
+        IJSRuntime JSRuntime,
+        AccountService asv,
+        ITenantContext tenantContext,
+        BillSeaLayoutFormService formService)
     {
+        private async Task ApplyReportSetupAsync(StiReport report)
+        {
+            ApplyReportConnectionString(report, ResolveReportConnectionString());
+
+            var logo = await _context.CompanyInfomation
+                .AsNoTracking()
+                .Select(x => x.Logo)
+                .FirstOrDefaultAsync();
+
+            if (logo is { Length: > 0 })
+                ApplyCompanyLogoToReport(report, logo);
+        }
+
+        private string ResolveReportConnectionString()
+        {
+            tenantContext.EnsureInitializedFromHttpContext();
+            if (!string.IsNullOrWhiteSpace(tenantContext.ConnectionString))
+                return tenantContext.ConnectionString;
+
+            var connectionString = _context.Database.GetConnectionString();
+            if (!string.IsNullOrWhiteSpace(connectionString))
+                return connectionString;
+
+            return _context.Database.GetDbConnection().ConnectionString;
+        }
+
+        private static void ApplyReportConnectionString(StiReport report, string connectionString)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return;
+
+            if (!report.Dictionary.Variables.Contains("connectDB"))
+                report.Dictionary.Variables.Add(new StiVariable("connectDB", connectionString));
+            else
+                report.Dictionary.Variables["connectDB"].Value = connectionString;
+
+            foreach (StiDatabase database in report.Dictionary.Databases)
+            {
+                if (database is not StiSqlDatabase sqlDatabase)
+                    continue;
+
+                sqlDatabase.ConnectionString = connectionString;
+            }
+        }
+
+        private static void ApplyCompanyLogoToReport(StiReport report, byte[] logo)
+        {
+            // Template dùng Image1 -> ImageURL = resource://Logo
+            if (report.Dictionary.Resources.Contains("Logo"))
+                report.Dictionary.Resources["Logo"].Content = logo;
+
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is not StiImage image)
+                    continue;
+
+                if (!string.Equals(image.Name, "Image1", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                image.Enabled = true;
+                image.Stretch = true;
+                image.AspectRatio = true;
+
+                if (image.ImageURL != null)
+                    image.ImageURL.Value = "resource://Logo";
+
+                // Set Image để đảm bảo hiển thị ngay cả khi runtime không resolve resource.
+                image.Image = CreateLogoImage(logo);
+            }
+        }
+
+        private static System.Drawing.Image? CreateLogoImage(byte[]? logo)
+        {
+            if (logo is not { Length: > 0 })
+                return null;
+
+            using var ms = new MemoryStream(logo);
+            using var temp = System.Drawing.Image.FromStream(ms);
+            return new System.Drawing.Bitmap(temp);
+        }
 
         public async Task<List<M_LenhDieuXe>> GetListLenhDieuXe()
         {
@@ -185,17 +274,26 @@ namespace NVOAMASIS.Services
 
         }
 
-        public async Task<BoolandMessReponse> ExportLenhDieuXe(Guid? id)
+        public async Task<BoolandMessReponse> ExportLenhDieuXe(Guid? id, Guid? layoutFormId = null)
         {
             try
             {
                 //Create empty report object
                 var report = new StiReport();
-                //Load report template
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "BillLenhDieuXe.mrt");
+
+                // Load MRT template (từ 1.17 nếu có chọn form)
+                byte[] templateBytes;
+                if (layoutFormId is Guid lfId)
+                    templateBytes = await formService.GetFormBytesAsync(lfId);
+                else
+                    templateBytes = await formService.GetDefaultTemplateBytesAsync(
+                        BillLayoutFormKindHelper.GetDefaultTemplateFile(BillLayoutFormKind.LenhDieuXe));
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
-                report.Load(rpt);
+                report.Load(new MemoryStream(templateBytes));
+
+                await ApplyReportSetupAsync(report);
                 var lenhdieuxeinfo = await Get_LDXinfo(id);
        
 

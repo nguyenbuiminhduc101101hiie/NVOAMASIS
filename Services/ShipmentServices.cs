@@ -2764,43 +2764,30 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportBBGN(M_HBL detail)
+        public async Task<BoolandMessReponse> ExportBBGN(M_HBL detail, Guid? layoutFormId = null)
         {
             try
             {
+                var (templateBytes, reportLogo) = await ResolveArrivalOrDoTemplateAsync(BillLayoutFormKind.Bbgn, layoutFormId);
                 var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "BienBanGiaoNhan.mrt");
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
-                report.Load(rpt);
+                report.Load(new MemoryStream(templateBytes));
+                ApplyArrivalReportSetup(report, reportLogo);
+                ApplyLogoToImageComponent(report, "Image1", reportLogo);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
 
                 var shippername = string.Join("\n", detail.shipper);
                 shippername = shippername.Trim();
                 var shipper_id = await GetIDCus_englishname(shippername);
-                if (shipper_id.HasValue)
-                {
-                    report.Dictionary.Variables["shipper_id"].Value = shipper_id.Value.ToString();
-                }
-                else
-                {
-                    report.Dictionary.Variables["shipper_id"].Value = shipper_id?.ToString() ?? "00000000-0000-0000-0000-000000000000";
-
-                }
+                report.Dictionary.Variables["shipper_id"].Value =
+                    shipper_id?.ToString() ?? "00000000-0000-0000-0000-000000000000";
 
                 var consigneename = string.Join("\n", detail.consignee);
                 consigneename = consigneename.Trim();
                 var consignee_id = await GetIDCus_englishname(consigneename);
-                if (shipper_id.HasValue)
-                {
-                    report.Dictionary.Variables["consignee_id"].Value = consignee_id.Value.ToString();
-                }
-                else
-                {
-                    report.Dictionary.Variables["consignee_id"].Value = consignee_id?.ToString() ?? "00000000-0000-0000-0000-000000000000";
-
-                }
-
+                report.Dictionary.Variables["consignee_id"].Value =
+                    consignee_id?.ToString() ?? "00000000-0000-0000-0000-000000000000";
 
                 StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
@@ -2927,7 +2914,8 @@ namespace NVOAMASIS.Services
             "VietStartLogo",
             "AMSSLogo",
             "HDSLogo",
-            "CompanyLogo"
+            "CompanyLogo",
+            "Logo"
         ];
 
         private static readonly string[] CompanyLogoComponentNames =
@@ -3095,6 +3083,9 @@ namespace NVOAMASIS.Services
             if (logo is not { Length: > 0 })
                 return;
 
+            if (report.Dictionary.Resources.Contains("Logo"))
+                report.Dictionary.Resources["Logo"].Content = logo;
+
             foreach (StiComponent component in report.GetComponents())
             {
                 if (component is not StiImage image)
@@ -3104,6 +3095,8 @@ namespace NVOAMASIS.Services
                     continue;
 
                 image.Enabled = true;
+                image.Stretch = true;
+                image.AspectRatio = true;
                 if (image.Expressions is { Count: > 0 })
                 {
                     for (var i = image.Expressions.Count - 1; i >= 0; i--)
