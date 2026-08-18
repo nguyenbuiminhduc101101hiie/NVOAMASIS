@@ -9,6 +9,8 @@ namespace NVOAMASIS.Models
         Do,
         Trang2,
         Booking,
-        Quotation
+        Quotation,
+        Bbgn,
+        LenhDieuXe
     }
 }
