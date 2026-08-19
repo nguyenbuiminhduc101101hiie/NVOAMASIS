@@ -12,6 +12,7 @@ using Microsoft.Extensions.Localization;
 using Microsoft.IdentityModel.Tokens;
 using MudBlazor.Services;
 using MudExtensions.Services;
+using NVOAMASIS.Accounting.B09.Extensions;
 using NVOAMASIS.Components;
 using NVOAMASIS.Data;
 using NVOAMASIS.Hubs;
@@ -262,6 +263,7 @@ builder.Services.AddScoped<ResxImportService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFixedAssetDepreciationService, FixedAssetDepreciationService>();
+builder.Services.AddB09FinancialStatements(builder.Configuration);
 
 // Forwarded headers (X-Forwarded-For / X-Forwarded-Proto) — clear known lists for IIS/reverse proxy
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
