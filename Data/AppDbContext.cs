@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NVOAMASIS.Accounting.B09.Data;
 using NVOAMASIS.Components.Accounting.Pages;
 using NVOAMASIS.Models;
 using NVOAMASIS.Models.Accounting;
@@ -569,8 +570,7 @@ namespace NVOAMASIS.Data
                     .OnDelete(DeleteBehavior.Restrict);
             });
 
-
-
+            modelBuilder.ConfigureB09();
         }
 
     }

@@ -1,0 +1,83 @@
+@namespace NVOAMASIS.Components.Accounting.Pages
+@using NVOAMASIS.Accounting.B09.DTOs
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@Line.Code - @Line.Name</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.caption" Class="mb-2">
+            GL năm nay: @Format(Line.CurrentSystemValue) |
+            GL năm trước: @Format(Line.PreviousSystemValue)
+            @if (!string.IsNullOrWhiteSpace(Line.UpdatedBy) || Line.UpdatedAt.HasValue)
+            {
+                <span> | Cập nhật: @Line.UpdatedBy @Line.UpdatedAt?.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span>
+            }
+        </MudText>
+        <MudTextField @bind-Value="_narrative"
+                      Label="@(Line.IsRequiredNarrative ? "Thuyết minh *" : "Thuyết minh")"
+                      Variant="Variant.Outlined"
+                      Lines="4"
+                      Disabled="!CanEdit" />
+        <MudNumericField T="decimal" @bind-Value="_currentAdj" Label="Điều chỉnh năm nay" Variant="Variant.Outlined" HideSpinButtons="true" Disabled="!CanEdit" />
+        <MudNumericField T="decimal" @bind-Value="_previousAdj" Label="Điều chỉnh năm trước" Variant="Variant.Outlined" HideSpinButtons="true" Disabled="!CanEdit" />
+        <MudTextField @bind-Value="_reason"
+                      Label="Lý do điều chỉnh (bắt buộc nếu số điều chỉnh ≠ 0)"
+                      Variant="Variant.Outlined"
+                      Lines="2"
+                      Disabled="!CanEdit" />
+        <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mt-2">
+            Số báo cáo năm nay = @Format((_currentSys ?? 0) + _currentAdj) |
+            năm trước = @Format((_previousSys ?? 0) + _previousAdj)
+        </MudAlert>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Đóng</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Save" Disabled="!CanEdit">Lưu</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public B09LineDto Line { get; set; } = new();
+    [Parameter] public bool CanEdit { get; set; } = true;
+
+    private string? _narrative;
+    private decimal _currentAdj;
+    private decimal _previousAdj;
+    private string? _reason;
+    private decimal? _currentSys;
+    private decimal? _previousSys;
+
+    protected override void OnInitialized()
+    {
+        _narrative = Line.Narrative;
+        _currentAdj = Line.CurrentAdjustment;
+        _previousAdj = Line.PreviousAdjustment;
+        _reason = Line.AdjustmentReason;
+        _currentSys = Line.CurrentSystemValue;
+        _previousSys = Line.PreviousSystemValue;
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Save()
+    {
+        if ((_currentAdj != 0m || _previousAdj != 0m) && string.IsNullOrWhiteSpace(_reason))
+        {
+            Snackbar.Add("Điều chỉnh tay bắt buộc phải có lý do.", MudBlazor.Severity.Error);
+            return;
+        }
+
+        MudDialog.Close(DialogResult.Ok(new B09LineEditResult(
+            _narrative,
+            _currentAdj,
+            _previousAdj,
+            _reason)));
+    }
+
+    private static string Format(decimal? value) => value.HasValue ? value.Value.ToString("N0") : "-";
+
+    public sealed record B09LineEditResult(string? Narrative, decimal CurrentAdjustment, decimal PreviousAdjustment, string? Reason);
+}

@@ -1,0 +1,827 @@
+@page "/accounting/financial-statements/b09-dn"
+@namespace NVOAMASIS.Components.Accounting.Pages
+@attribute [Authorize]
+@using Microsoft.EntityFrameworkCore
+@using OfficeOpenXml
+@using NVOAMASIS.Accounting.B09.Domain
+@using NVOAMASIS.Accounting.B09.DTOs
+@using NVOAMASIS.Accounting.B09.Services
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@inject IB09FinancialStatementService B09Service
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>B09-DN</PageTitle>
+
+<MudPaper Class="pa-4">
+    <MudText Typo="Typo.h5">B09-DN - Thuyết minh Báo cáo tài chính</MudText>
+    <MudText Typo="Typo.body2" Class="mb-4">TT99/2025 — lớp báo cáo trên sổ cái, không sửa GeneralLedgerEntries</MudText>
+
+    <MudGrid>
+        <MudItem xs="12" md="5">
+            <MudAutocomplete T="Guid"
+                             Label="Công ty"
+                             Variant="Variant.Outlined"
+                             Value="_companyId"
+                             ValueChanged="OnCompanyChangedAsync"
+                             SearchFunc="SearchCompanyAsync"
+                             ToStringFunc="CompanyToString"
+                             Clearable="true"
+                             CoerceText="true"
+                             CoerceValue="true"
+                             ResetValueOnEmptyText="true"
+                             MaxItems="30" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudNumericField T="int"
+                             Value="_fiscalYear"
+                             ValueChanged="OnYearChangedAsync"
+                             Label="Năm tài chính"
+                             Variant="Variant.Outlined"
+                             Min="2000"
+                             Max="2200" />
+        </MudItem>
+        <MudItem xs="12" Class="d-flex flex-wrap align-center gap-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Info" OnClick="LoadReportAsync" Disabled="_busy">Xem lại</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="GenerateAsync" Disabled="_busy || IsLocked">Generate</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ValidateAsync" Disabled="@(_busy || _report is null)">Validate</MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="ReviewAsync" Disabled="@(_busy || _report is null || IsLocked || _report.Status < B09ReportStatus.Validated)">Review</MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="ApproveAsync" Disabled="@(_busy || _report is null || IsLocked || _report.Status < B09ReportStatus.Reviewed)">Approve</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" OnClick="LockAsync" Disabled="@(_busy || _report is null || IsLocked || _report.Status < B09ReportStatus.Validated)">Lock</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Warning" OnClick="UnlockAsync" Disabled="@(_busy || _report is null || !IsLocked)">Unlock</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="ExportExcelAsync" Disabled="@(_busy || _report is null)">Excel</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<MudTabs Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-4" Class="mt-3">
+    <MudTabPanel Text="Báo cáo">
+        @if (_report is not null)
+        {
+            <MudStack Row="true" Justify="Justify.SpaceBetween" Class="mb-2">
+                <MudText Typo="Typo.h6">@CompanyToString(_report.CompanyId) — Năm @_report.FiscalYear</MudText>
+                <MudChip T="string" Color="StatusColor(_report.Status)">@_report.Status</MudChip>
+            </MudStack>
+            <MudText Typo="Typo.caption" Class="mb-3">
+                Tạo: @_report.CreatedBy @_report.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                @if (_report.GeneratedAt.HasValue) { <span> | Generate: @_report.GeneratedAt.Value.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</span> }
+                @if (_report.LockedBy is not null) { <span> | Lock: @_report.LockedBy</span> }
+            </MudText>
+
+            @foreach (var group in _report.Lines.GroupBy(x => new { x.SectionCode, x.SectionName }))
+            {
+                <MudExpansionPanels Class="mt-2">
+                    <MudExpansionPanel Text="@($"{group.Key.SectionCode}. {group.Key.SectionName}")">
+                        <MudTable Items="group.ToList()" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+                            <HeaderContent>
+                                <MudTh>Mã</MudTh>
+                                <MudTh>Chỉ tiêu</MudTh>
+                                <MudTh Align="Align.Right">GL năm nay</MudTh>
+                                <MudTh Align="Align.Right">Đ.chỉnh NY</MudTh>
+                                <MudTh Align="Align.Right">BC năm nay</MudTh>
+                                <MudTh Align="Align.Right">GL năm trước</MudTh>
+                                <MudTh Align="Align.Right">Đ.chỉnh NT</MudTh>
+                                <MudTh Align="Align.Right">BC năm trước</MudTh>
+                                <MudTh>Nguồn</MudTh>
+                                <MudTh></MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Mã">
+                                    @context.Code
+                                    @if (context.IsRequiredNarrative)
+                                    {
+                                        <MudIcon Icon="@Icons.Material.Filled.Star" Size="Size.Small" Color="Color.Warning" Title="Bắt buộc thuyết minh" />
+                                    }
+                                </MudTd>
+                                <MudTd DataLabel="Chỉ tiêu">
+                                    <MudText>@context.Name</MudText>
+                                    @if (!string.IsNullOrWhiteSpace(context.Narrative))
+                                    {
+                                        <MudText Typo="Typo.caption">@context.Narrative</MudText>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(context.AdjustmentReason))
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">Lý do ĐC: @context.AdjustmentReason</MudText>
+                                    }
+                                </MudTd>
+                                <MudTd Align="Align.Right">@Format(context.CurrentSystemValue)</MudTd>
+                                <MudTd Align="Align.Right">@Format(context.CurrentAdjustment == 0 ? null : context.CurrentAdjustment)</MudTd>
+                                <MudTd Align="Align.Right">@Format(context.CurrentReportedValue)</MudTd>
+                                <MudTd Align="Align.Right">@Format(context.PreviousSystemValue)</MudTd>
+                                <MudTd Align="Align.Right">@Format(context.PreviousAdjustment == 0 ? null : context.PreviousAdjustment)</MudTd>
+                                <MudTd Align="Align.Right">@Format(context.PreviousReportedValue)</MudTd>
+                                <MudTd>@context.SourceType</MudTd>
+                                <MudTd>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" OnClick="@(() => EditLineAsync(context))" />
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
+            }
+        }
+        else
+        {
+            <MudText>Chọn công ty / năm rồi bấm <b>Xem lại</b> hoặc <b>Generate</b>.</MudText>
+        }
+
+        @if (_validation?.Items.Count > 0)
+        {
+            <MudPaper Class="pa-4 mt-4" Outlined="true">
+                <MudText Typo="Typo.h6">Validation</MudText>
+                <MudList T="string">
+                    @foreach (var item in _validation.Items)
+                    {
+                        <MudListItem T="string" Icon="@ValidationIcon(item.Severity)">
+                            <MudText>@item.Severity: @item.Message</MudText>
+                        </MudListItem>
+                    }
+                </MudList>
+            </MudPaper>
+        }
+    </MudTabPanel>
+
+    <MudTabPanel Text="Snapshot đã tạo">
+        <MudButton Class="mb-3" Variant="Variant.Outlined" OnClick="LoadHistoryAsync" Disabled="_busy">Tải danh sách</MudButton>
+        <MudTable Items="_history" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Công ty</MudTh>
+                <MudTh>Năm</MudTh>
+                <MudTh>Trạng thái</MudTh>
+                <MudTh>Generate</MudTh>
+                <MudTh>Người tạo</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@CompanyToString(context.CompanyId)</MudTd>
+                <MudTd>@context.FiscalYear</MudTd>
+                <MudTd>@context.Status</MudTd>
+                <MudTd>@(context.GeneratedAt?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "-")</MudTd>
+                <MudTd>@context.CreatedBy</MudTd>
+                <MudTd>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => OpenHistoryAsync(context))">Mở</MudButton>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudTabPanel>
+
+    <MudTabPanel Text="Mapping TK">
+        <MudText Typo="Typo.caption" Class="mb-2">Sửa prefix tài khoản / dấu. Không nhập CustomSql trên màn này. Generate lại sau khi lưu mapping.</MudText>
+        <MudButton Class="mb-3" Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveMappingsAsync" Disabled="_busy || IsLocked">Lưu mapping</MudButton>
+        <MudTable Items="_mappings" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>Mã</MudTh>
+                <MudTh>Chỉ tiêu</MudTh>
+                <MudTh>Mode</MudTh>
+                <MudTh>Prefix TK</MudTh>
+                <MudTh>Dấu</MudTh>
+                <MudTh>% ngưỡng</MudTh>
+                <MudTh>Bật</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.LineCode</MudTd>
+                <MudTd>@context.LineName</MudTd>
+                <MudTd>
+                    <MudSelect T="B09MappingMode" @bind-Value="context.Mode" Dense="true" Disabled="IsLocked || context.HasCustomSql">
+                        <MudSelectItem Value="@B09MappingMode.AccountBalance">Số dư</MudSelectItem>
+                        <MudSelectItem Value="@B09MappingMode.PeriodActivity">Phát sinh</MudSelectItem>
+                    </MudSelect>
+                </MudTd>
+                <MudTd><MudTextField @bind-Value="context.AccountPrefixesCsv" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="IsLocked" /></MudTd>
+                <MudTd><MudNumericField T="decimal" @bind-Value="context.SignMultiplier" Variant="Variant.Outlined" Margin="Margin.Dense" HideSpinButtons="true" Disabled="IsLocked" /></MudTd>
+                <MudTd><MudNumericField T="decimal?" @bind-Value="context.DetailThresholdPercent" Variant="Variant.Outlined" Margin="Margin.Dense" HideSpinButtons="true" Disabled="IsLocked" /></MudTd>
+                <MudTd><MudSwitch T="bool" @bind-Value="context.IsEnabled" Color="Color.Primary" Disabled="IsLocked" /></MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudTabPanel>
+
+    <MudTabPanel Text="Bên liên quan">
+        @if (_companyId == Guid.Empty)
+        {
+            <MudText>Chọn công ty trước.</MudText>
+        }
+        else
+        {
+            <MudGrid Class="mb-3">
+                <MudItem xs="12" md="3"><MudTextField @bind-Value="_partyEdit.RelatedPartyType" Label="Loại quan hệ" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="12" md="5"><MudTextField @bind-Value="_partyEdit.RelationshipDescription" Label="Tên / mô tả bên liên quan" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="12" md="2"><MudDatePicker Date="_partyFrom" DateChanged="d => _partyFrom = d" Label="Hiệu lực từ" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="12" md="2" Class="d-flex align-center">
+                    <MudSwitch T="bool" @bind-Value="_partyEdit.IsActive" Color="Color.Primary" Label="Active" />
+                    <MudButton Class="ml-2" Variant="Variant.Filled" Color="Color.Primary" OnClick="SavePartyAsync" Disabled="_busy || IsLocked">Lưu</MudButton>
+                </MudItem>
+            </MudGrid>
+            <MudTable Items="_parties" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Loại</MudTh>
+                    <MudTh>Tên / mô tả</MudTh>
+                    <MudTh>Từ</MudTh>
+                    <MudTh>Active</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.RelatedPartyType</MudTd>
+                    <MudTd>@context.RelationshipDescription</MudTd>
+                    <MudTd>@context.EffectiveFrom.ToString("dd/MM/yyyy")</MudTd>
+                    <MudTd>@(context.IsActive ? "Có" : "Không")</MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" OnClick="@(() => EditParty(context))" Disabled="IsLocked" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="@(() => DeletePartyAsync(context.Id))" Disabled="IsLocked" />
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudTabPanel>
+
+    <MudTabPanel Text="Hàng giữ hộ">
+        @if (_companyId == Guid.Empty)
+        {
+            <MudText>Chọn công ty trước.</MudText>
+        }
+        else
+        {
+            <MudGrid Class="mb-3">
+                <MudItem xs="12" md="2"><MudTextField @bind-Value="_custodyEdit.CustodyType" Label="Loại" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="12" md="3"><MudTextField @bind-Value="_custodyEdit.CommodityGroup" Label="Nhóm hàng" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="12" md="4"><MudTextField @bind-Value="_custodyEdit.Description" Label="Mô tả" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="12" md="1"><MudNumericField T="decimal?" @bind-Value="_custodyEdit.Quantity" Label="SL" Variant="Variant.Outlined" HideSpinButtons="true" /></MudItem>
+                <MudItem xs="12" md="1"><MudTextField @bind-Value="_custodyEdit.Unit" Label="ĐVT" Variant="Variant.Outlined" /></MudItem>
+                <MudItem xs="12" md="1" Class="d-flex align-center">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveCustodyAsync" Disabled="_busy || IsLocked">Lưu</MudButton>
+                </MudItem>
+            </MudGrid>
+            <MudTable Items="_custody" Dense="true" Hover="true">
+                <HeaderContent>
+                    <MudTh>Loại</MudTh>
+                    <MudTh>Nhóm hàng</MudTh>
+                    <MudTh>Mô tả</MudTh>
+                    <MudTh>SL</MudTh>
+                    <MudTh>Ngày nhận</MudTh>
+                    <MudTh>Ngày trả</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.CustodyType</MudTd>
+                    <MudTd>@context.CommodityGroup</MudTd>
+                    <MudTd>@context.Description</MudTd>
+                    <MudTd>@Format(context.Quantity)</MudTd>
+                    <MudTd>@(context.ReceivedDate?.ToString("dd/MM/yyyy") ?? "-")</MudTd>
+                    <MudTd>@(context.ReleasedDate?.ToString("dd/MM/yyyy") ?? "-")</MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" OnClick="@(() => EditCustody(context))" Disabled="IsLocked" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="@(() => DeleteCustodyAsync(context.Id))" Disabled="IsLocked" />
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudTabPanel>
+
+    <MudTabPanel Text="KH/NCC ≥ 10%">
+        <MudButton Class="mb-3" Variant="Variant.Outlined" OnClick="LoadConcentrationsAsync" Disabled="_busy || _companyId == Guid.Empty">Tính từ sổ cái</MudButton>
+        <MudText Typo="Typo.subtitle1">Phải thu khách hàng (131) — dòng ≥ 10% tổng</MudText>
+        <MudTable Items="_arRows" Dense="true" Hover="true" Class="mb-4">
+            <HeaderContent>
+                <MudTh>Đối tượng</MudTh>
+                <MudTh Align="Align.Right">Số dư</MudTh>
+                <MudTh Align="Align.Right">%</MudTh>
+                <MudTh>≥10%</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.PartyLabel</MudTd>
+                <MudTd Align="Align.Right">@Format(context.Amount)</MudTd>
+                <MudTd Align="Align.Right">@context.PercentOfTotal.ToString("N2")</MudTd>
+                <MudTd>@(context.MeetsThreshold ? "Có" : "")</MudTd>
+            </RowTemplate>
+        </MudTable>
+        <MudText Typo="Typo.subtitle1">Phải trả người bán (331) — dòng ≥ 10% tổng</MudText>
+        <MudTable Items="_apRows" Dense="true" Hover="true">
+            <HeaderContent>
+                <MudTh>Đối tượng</MudTh>
+                <MudTh Align="Align.Right">Số dư</MudTh>
+                <MudTh Align="Align.Right">%</MudTh>
+                <MudTh>≥10%</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.PartyLabel</MudTd>
+                <MudTd Align="Align.Right">@Format(context.Amount)</MudTd>
+                <MudTd Align="Align.Right">@context.PercentOfTotal.ToString("N2")</MudTd>
+                <MudTd>@(context.MeetsThreshold ? "Có" : "")</MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudTabPanel>
+
+    <MudTabPanel Text="TSCĐ">
+        <MudButton Class="mb-3" Variant="Variant.Outlined" OnClick="LoadFixedAssetsAsync" Disabled="_busy || _companyId == Guid.Empty">Tải sổ TSCĐ</MudButton>
+        <MudTable Items="_fixedAssets" Dense="true" Hover="true">
+            <HeaderContent>
+                <MudTh>Mã</MudTh>
+                <MudTh>Tên</MudTh>
+                <MudTh>Loại</MudTh>
+                <MudTh Align="Align.Right">Nguyên giá</MudTh>
+                <MudTh Align="Align.Right">KH lũy kế</MudTh>
+                <MudTh Align="Align.Right">Còn lại</MudTh>
+                <MudTh>Trạng thái</MudTh>
+                <MudTh>Ghi nhận</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.AssetCode</MudTd>
+                <MudTd>@context.AssetName</MudTd>
+                <MudTd>@context.AssetType</MudTd>
+                <MudTd Align="Align.Right">@Format(context.OriginalCost)</MudTd>
+                <MudTd Align="Align.Right">@Format(context.OpeningAccumulatedDepreciation)</MudTd>
+                <MudTd Align="Align.Right">@Format(context.RemainingValue)</MudTd>
+                <MudTd>@context.Status</MudTd>
+                <MudTd>@context.RecognitionDate.ToString("dd/MM/yyyy")</MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudTabPanel>
+</MudTabs>
+
+@code {
+    private Guid _companyId;
+    private int _fiscalYear = DateTime.Today.Year;
+    private bool _busy;
+    private string? _userName;
+    private B09ReportDto? _report;
+    private B09ValidationResultDto? _validation;
+    private List<M_Customer> _companies = new();
+    private List<B09ReportListItemDto> _history = new();
+    private List<B09MappingDto> _mappings = new();
+    private List<RelatedPartyProfile> _parties = new();
+    private List<CustodyAsset> _custody = new();
+    private List<B09ConcentrationDto> _arRows = new();
+    private List<B09ConcentrationDto> _apRows = new();
+    private List<B09FixedAssetDto> _fixedAssets = new();
+    private RelatedPartyProfile _partyEdit = new() { IsActive = true, EffectiveFrom = DateTime.Today };
+    private DateTime? _partyFrom = DateTime.Today;
+    private CustodyAsset _custodyEdit = new() { CustodyType = "GoodsHeld" };
+
+    private bool IsLocked => _report?.Status == B09ReportStatus.Locked;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var user = state.User;
+            _userName = user.Identity?.Name
+                        ?? user.FindFirst("email")?.Value
+                        ?? user.FindFirst("preferred_username")?.Value
+                        ?? "SYSTEM";
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _companies = await db.Customer.AsNoTracking()
+                .Where(x => x.Customer_ID != Guid.Empty)
+                .OrderBy(x => x.TaxCode)
+                .ThenBy(x => x.COMPANY)
+                .ToListAsync();
+
+            var claimId = FindClaim(user, "CompanyId", "companyId", "company_id");
+            if (Guid.TryParse(claimId, out var companyId) && _companies.Any(x => x.Customer_ID == companyId))
+                _companyId = companyId;
+
+            await B09Service.EnsureTemplateSeededAsync();
+            await LoadMappingsAsync();
+            await LoadHistoryAsync();
+            if (_companyId != Guid.Empty)
+                await LoadAllForCompanyAsync();
+        }
+        catch
+        {
+            _userName = "SYSTEM";
+        }
+    }
+
+    private async Task OnCompanyChangedAsync(Guid companyId)
+    {
+        _companyId = companyId;
+        ResetPartyEdit();
+        ResetCustodyEdit();
+        await LoadAllForCompanyAsync();
+    }
+
+    private async Task OnYearChangedAsync(int year)
+    {
+        _fiscalYear = year;
+        await LoadReportAsync();
+        if (_companyId != Guid.Empty)
+            await LoadConcentrationsAsync();
+    }
+
+    private async Task LoadAllForCompanyAsync()
+    {
+        _validation = null;
+        await LoadReportAsync();
+        await LoadHistoryAsync();
+        if (_companyId == Guid.Empty)
+        {
+            _parties.Clear();
+            _custody.Clear();
+            _arRows.Clear();
+            _apRows.Clear();
+            _fixedAssets.Clear();
+            return;
+        }
+
+        _parties = (await B09Service.ListRelatedPartiesAsync(_companyId)).ToList();
+        _custody = (await B09Service.ListCustodyAssetsAsync(_companyId)).ToList();
+        await LoadConcentrationsAsync();
+        await LoadFixedAssetsAsync();
+    }
+
+    private async Task LoadReportAsync()
+    {
+        if (_companyId == Guid.Empty)
+        {
+            _report = null;
+            return;
+        }
+
+        _report = await B09Service.GetByCompanyYearAsync(_companyId, _fiscalYear);
+        if (_report is null)
+            Snackbar.Add("Chưa có snapshot cho công ty/năm này. Bấm Generate.", MudBlazor.Severity.Info);
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        _history = (await B09Service.ListReportsAsync(_companyId == Guid.Empty ? null : _companyId)).ToList();
+    }
+
+    private async Task LoadMappingsAsync()
+    {
+        _mappings = (await B09Service.GetMappingsAsync()).ToList();
+    }
+
+    private async Task OpenHistoryAsync(B09ReportListItemDto item)
+    {
+        _companyId = item.CompanyId;
+        _fiscalYear = item.FiscalYear;
+        await LoadAllForCompanyAsync();
+        Snackbar.Add($"Đã mở B09 năm {item.FiscalYear}.", MudBlazor.Severity.Success);
+    }
+
+    private Task<IEnumerable<Guid>> SearchCompanyAsync(string value)
+    {
+        IEnumerable<M_Customer> query = _companies;
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            var key = value.Trim();
+            query = query.Where(x =>
+                (x.TaxCode?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.COMPANY?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (x.BIZName?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                CompanyToString(x.Customer_ID).Contains(key, StringComparison.OrdinalIgnoreCase));
+        }
+        return Task.FromResult(query.Select(x => x.Customer_ID).Take(30));
+    }
+
+    private string CompanyToString(Guid id)
+    {
+        if (id == Guid.Empty) return string.Empty;
+        var customer = _companies.FirstOrDefault(x => x.Customer_ID == id);
+        if (customer is null) return id.ToString();
+        var taxCode = (customer.TaxCode ?? string.Empty).Trim();
+        var companyName = (customer.COMPANY ?? customer.BIZName ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(taxCode) && !string.IsNullOrWhiteSpace(companyName))
+            return $"{taxCode}_{companyName}";
+        if (!string.IsNullOrWhiteSpace(taxCode)) return taxCode;
+        if (!string.IsNullOrWhiteSpace(companyName)) return companyName;
+        return customer.Customer_ID.ToString();
+    }
+
+    private async Task GenerateAsync()
+    {
+        if (_companyId == Guid.Empty)
+        {
+            Snackbar.Add("Chọn công ty trước khi Generate.", MudBlazor.Severity.Error);
+            return;
+        }
+        await RunAsync(async () =>
+        {
+            _validation = null;
+            _report = await B09Service.GenerateAsync(_companyId, _fiscalYear, _userName);
+            await LoadHistoryAsync();
+            Snackbar.Add("Generate B09-DN xong.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private async Task ValidateAsync()
+    {
+        if (_report is null) return;
+        await RunAsync(async () =>
+        {
+            _validation = await B09Service.ValidateAsync(_report.Id);
+            _report = await B09Service.GetAsync(_report.Id);
+            await LoadHistoryAsync();
+            Snackbar.Add(_validation.IsValid ? "Validate xong." : "Có lỗi validation.",
+                _validation.IsValid ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        });
+    }
+
+    private async Task ReviewAsync()
+    {
+        if (_report is null) return;
+        await RunAsync(async () =>
+        {
+            await B09Service.ReviewAsync(_report.Id, _userName);
+            _report = await B09Service.GetAsync(_report.Id);
+            await LoadHistoryAsync();
+            Snackbar.Add("Đã Review.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private async Task ApproveAsync()
+    {
+        if (_report is null) return;
+        await RunAsync(async () =>
+        {
+            await B09Service.ApproveAsync(_report.Id, _userName);
+            _report = await B09Service.GetAsync(_report.Id);
+            await LoadHistoryAsync();
+            Snackbar.Add("Đã Approve.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private async Task LockAsync()
+    {
+        if (_report is null) return;
+        await RunAsync(async () =>
+        {
+            await B09Service.LockAsync(_report.Id, _userName);
+            _report = await B09Service.GetAsync(_report.Id);
+            await LoadHistoryAsync();
+            Snackbar.Add("Đã lock B09-DN.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private async Task UnlockAsync()
+    {
+        if (_report is null) return;
+        await RunAsync(async () =>
+        {
+            await B09Service.UnlockAsync(_report.Id, _userName);
+            _report = await B09Service.GetAsync(_report.Id);
+            await LoadHistoryAsync();
+            Snackbar.Add("Đã unlock. Có thể Generate / sửa lại.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private async Task EditLineAsync(B09LineDto line)
+    {
+        if (_report is null) return;
+        var parameters = new DialogParameters
+        {
+            [nameof(B09LineEditDialog.Line)] = line,
+            [nameof(B09LineEditDialog.CanEdit)] = !IsLocked
+        };
+        var dialog = DialogService.Show<B09LineEditDialog>($"{line.Code}", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not B09LineEditDialog.B09LineEditResult edit)
+            return;
+
+        await RunAsync(async () =>
+        {
+            await B09Service.UpdateNarrativeAsync(_report.Id, line.NoteLineId, edit.Narrative, _userName);
+            await B09Service.ApplyAdjustmentAsync(_report.Id, line.NoteLineId, edit.CurrentAdjustment, edit.PreviousAdjustment, edit.Reason ?? string.Empty, _userName);
+            _report = await B09Service.GetAsync(_report.Id);
+            Snackbar.Add($"Đã lưu {line.Code}.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private async Task SaveMappingsAsync()
+    {
+        await RunAsync(async () =>
+        {
+            foreach (var mapping in _mappings.Where(x => !x.HasCustomSql))
+                await B09Service.SaveMappingAsync(mapping, _userName);
+            await LoadMappingsAsync();
+            Snackbar.Add("Đã lưu mapping. Generate lại để lấy số theo mapping mới.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private void EditParty(RelatedPartyProfile party)
+    {
+        _partyEdit = new RelatedPartyProfile
+        {
+            Id = party.Id,
+            CompanyId = party.CompanyId,
+            RelatedPartyType = party.RelatedPartyType,
+            RelationshipDescription = party.RelationshipDescription,
+            EffectiveFrom = party.EffectiveFrom,
+            EffectiveTo = party.EffectiveTo,
+            IsActive = party.IsActive
+        };
+        _partyFrom = party.EffectiveFrom;
+    }
+
+    private void ResetPartyEdit()
+    {
+        _partyEdit = new RelatedPartyProfile { IsActive = true, EffectiveFrom = DateTime.Today, CompanyId = _companyId };
+        _partyFrom = DateTime.Today;
+    }
+
+    private async Task SavePartyAsync()
+    {
+        _partyEdit.CompanyId = _companyId;
+        _partyEdit.EffectiveFrom = _partyFrom ?? DateTime.Today;
+        await RunAsync(async () =>
+        {
+            await B09Service.SaveRelatedPartyAsync(_partyEdit);
+            _parties = (await B09Service.ListRelatedPartiesAsync(_companyId)).ToList();
+            ResetPartyEdit();
+            Snackbar.Add("Đã lưu bên liên quan.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private async Task DeletePartyAsync(int id)
+    {
+        await RunAsync(async () =>
+        {
+            await B09Service.DeleteRelatedPartyAsync(id);
+            _parties = (await B09Service.ListRelatedPartiesAsync(_companyId)).ToList();
+        });
+    }
+
+    private void EditCustody(CustodyAsset asset)
+    {
+        _custodyEdit = new CustodyAsset
+        {
+            Id = asset.Id,
+            CompanyId = asset.CompanyId,
+            CustodyType = asset.CustodyType,
+            CommodityGroup = asset.CommodityGroup,
+            Description = asset.Description,
+            Quantity = asset.Quantity,
+            Unit = asset.Unit,
+            ReceivedDate = asset.ReceivedDate,
+            ReleasedDate = asset.ReleasedDate
+        };
+    }
+
+    private void ResetCustodyEdit() =>
+        _custodyEdit = new CustodyAsset { CustodyType = "GoodsHeld", CompanyId = _companyId };
+
+    private async Task SaveCustodyAsync()
+    {
+        _custodyEdit.CompanyId = _companyId;
+        if (_custodyEdit.ReceivedDate is null)
+            _custodyEdit.ReceivedDate = DateTime.Today;
+        await RunAsync(async () =>
+        {
+            await B09Service.SaveCustodyAssetAsync(_custodyEdit);
+            _custody = (await B09Service.ListCustodyAssetsAsync(_companyId)).ToList();
+            ResetCustodyEdit();
+            Snackbar.Add("Đã lưu hàng giữ hộ.", MudBlazor.Severity.Success);
+        });
+    }
+
+    private async Task DeleteCustodyAsync(long id)
+    {
+        await RunAsync(async () =>
+        {
+            await B09Service.DeleteCustodyAssetAsync(id);
+            _custody = (await B09Service.ListCustodyAssetsAsync(_companyId)).ToList();
+        });
+    }
+
+    private async Task LoadConcentrationsAsync()
+    {
+        if (_companyId == Guid.Empty) return;
+        _arRows = (await B09Service.GetConcentrationsAsync(_companyId, _fiscalYear, "131", 10m)).ToList();
+        _apRows = (await B09Service.GetConcentrationsAsync(_companyId, _fiscalYear, "331", 10m)).ToList();
+    }
+
+    private async Task LoadFixedAssetsAsync()
+    {
+        if (_companyId == Guid.Empty) return;
+        _fixedAssets = (await B09Service.GetFixedAssetsAsync(_companyId)).ToList();
+    }
+
+    private async Task ExportExcelAsync()
+    {
+        if (_report is null) return;
+        await RunAsync(async () =>
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("B09-DN");
+            ws.Cells[1, 1].Value = "B09-DN Thuyết minh BCTC TT99/2025";
+            ws.Cells[2, 1].Value = CompanyToString(_report.CompanyId);
+            ws.Cells[3, 1].Value = $"Năm {_report.FiscalYear} — {_report.Status}";
+            var headers = new[] { "Mục", "Mã", "Chỉ tiêu", "GL năm nay", "Đ.chỉnh NY", "BC năm nay", "GL năm trước", "Đ.chỉnh NT", "BC năm trước", "Nguồn", "Thuyết minh", "Lý do ĐC" };
+            for (var i = 0; i < headers.Length; i++)
+                ws.Cells[5, i + 1].Value = headers[i];
+
+            var row = 6;
+            foreach (var line in _report.Lines)
+            {
+                ws.Cells[row, 1].Value = line.SectionCode;
+                ws.Cells[row, 2].Value = line.Code;
+                ws.Cells[row, 3].Value = line.Name;
+                ws.Cells[row, 4].Value = line.CurrentSystemValue;
+                ws.Cells[row, 5].Value = line.CurrentAdjustment;
+                ws.Cells[row, 6].Value = line.CurrentReportedValue;
+                ws.Cells[row, 7].Value = line.PreviousSystemValue;
+                ws.Cells[row, 8].Value = line.PreviousAdjustment;
+                ws.Cells[row, 9].Value = line.PreviousReportedValue;
+                ws.Cells[row, 10].Value = line.SourceType.ToString();
+                ws.Cells[row, 11].Value = line.Narrative;
+                ws.Cells[row, 12].Value = line.AdjustmentReason;
+                row++;
+            }
+
+            var ar = package.Workbook.Worksheets.Add("AR_10pct");
+            ar.Cells[1, 1].Value = "Phải thu ≥ 10%";
+            WriteConcentrationSheet(ar, _arRows);
+            var ap = package.Workbook.Worksheets.Add("AP_10pct");
+            ap.Cells[1, 1].Value = "Phải trả ≥ 10%";
+            WriteConcentrationSheet(ap, _apRows);
+
+            var fa = package.Workbook.Worksheets.Add("TSCD");
+            fa.Cells[1, 1].Value = "Tài sản cố định";
+            fa.Cells[2, 1].Value = "Mã";
+            fa.Cells[2, 2].Value = "Tên";
+            fa.Cells[2, 3].Value = "Nguyên giá";
+            fa.Cells[2, 4].Value = "KH lũy kế";
+            fa.Cells[2, 5].Value = "Còn lại";
+            fa.Cells[2, 6].Value = "Trạng thái";
+            var r = 3;
+            foreach (var asset in _fixedAssets)
+            {
+                fa.Cells[r, 1].Value = asset.AssetCode;
+                fa.Cells[r, 2].Value = asset.AssetName;
+                fa.Cells[r, 3].Value = asset.OriginalCost;
+                fa.Cells[r, 4].Value = asset.OpeningAccumulatedDepreciation;
+                fa.Cells[r, 5].Value = asset.RemainingValue;
+                fa.Cells[r, 6].Value = asset.Status;
+                r++;
+            }
+
+            var fileName = $"B09-DN_{_report.FiscalYear}_{DateTime.Now:yyyyMMddHHmmss}.xlsx";
+            await JS.InvokeVoidAsync("saveAsFile", fileName, Convert.ToBase64String(package.GetAsByteArray()));
+        });
+    }
+
+    private static void WriteConcentrationSheet(OfficeOpenXml.ExcelWorksheet sheet, List<B09ConcentrationDto> rows)
+    {
+        sheet.Cells[2, 1].Value = "Đối tượng";
+        sheet.Cells[2, 2].Value = "Số dư";
+        sheet.Cells[2, 3].Value = "%";
+        sheet.Cells[2, 4].Value = "≥10%";
+        var row = 3;
+        foreach (var item in rows)
+        {
+            sheet.Cells[row, 1].Value = item.PartyLabel;
+            sheet.Cells[row, 2].Value = item.Amount;
+            sheet.Cells[row, 3].Value = item.PercentOfTotal;
+            sheet.Cells[row, 4].Value = item.MeetsThreshold ? "Có" : "";
+            row++;
+        }
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        try
+        {
+            _busy = true;
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally { _busy = false; }
+    }
+
+    private static string Format(decimal? value) => value.HasValue ? value.Value.ToString("N0") : "-";
+
+    private static Color StatusColor(B09ReportStatus status) => status switch
+    {
+        B09ReportStatus.Locked => Color.Error,
+        B09ReportStatus.Approved => Color.Success,
+        B09ReportStatus.Validated or B09ReportStatus.Reviewed => Color.Info,
+        _ => Color.Default
+    };
+
+    private static string ValidationIcon(B09ValidationSeverity severity) => severity switch
+    {
+        B09ValidationSeverity.Error => Icons.Material.Filled.Error,
+        B09ValidationSeverity.Warning => Icons.Material.Filled.Warning,
+        _ => Icons.Material.Filled.Info
+    };
+
+    private static string? FindClaim(System.Security.Claims.ClaimsPrincipal user, params string[] types)
+    {
+        foreach (var type in types)
+        {
+            var value = user.FindFirst(type)?.Value;
+            if (!string.IsNullOrWhiteSpace(value))
+                return value;
+        }
+        return null;
+    }
+}
