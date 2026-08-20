@@ -1,0 +1,246 @@
+@using MudBlazor
+@using NVOAMASIS.Models
+
+<style>
+    .port-preview-dialog .mud-dialog-content {
+        padding: 12px 16px 8px 16px !important;
+        overflow: hidden;
+    }
+
+    .port-preview-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        max-height: calc(100vh - 160px);
+    }
+
+    .port-preview-summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .port-preview-muted {
+        color: #64748b;
+        font-size: 0.75rem;
+    }
+
+    .port-preview-dialog .row-excluded td {
+        opacity: 0.45;
+    }
+</style>
+
+<MudDialog Class="port-preview-dialog">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.Preview" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Xem trước dữ liệu import cảng</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <div class="port-preview-wrap">
+            <div class="port-preview-summary">
+                <MudChip T="string" Color="Color.Success" Variant="Variant.Filled" Size="Size.Small">
+                    Sẽ import: @ReadyCount
+                </MudChip>
+                <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Size="Size.Small">
+                    Tổng dòng: @PreviewResult.Rows.Count
+                </MudChip>
+                @if (PreviewResult.DuplicateInDb > 0)
+                {
+                    <MudChip T="string" Color="Color.Warning" Variant="Variant.Filled" Size="Size.Small">
+                        Đã tồn tại: @PreviewResult.DuplicateInDb
+                    </MudChip>
+                }
+                @if (PreviewResult.DuplicateInFile > 0)
+                {
+                    <MudChip T="string" Color="Color.Secondary" Variant="Variant.Filled" Size="Size.Small">
+                        Trùng trong file: @PreviewResult.DuplicateInFile
+                    </MudChip>
+                }
+                @if (PreviewResult.InvalidCount > 0)
+                {
+                    <MudChip T="string" Color="Color.Error" Variant="Variant.Filled" Size="Size.Small">
+                        Lỗi: @PreviewResult.InvalidCount
+                    </MudChip>
+                }
+                @if (ExcludedCount > 0)
+                {
+                    <MudChip T="string" Color="Color.Default" Variant="Variant.Outlined" Size="Size.Small">
+                        User bỏ: @ExcludedCount
+                    </MudChip>
+                }
+                <span class="port-preview-muted">Bỏ tick dòng không muốn import, rồi nhấn Xác nhận</span>
+            </div>
+
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudTextField @bind-Value="_search"
+                              Immediate="true"
+                              DebounceInterval="200"
+                              Placeholder="Tìm Port Code / Tên / Country..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search"
+                              Clearable="true"
+                              Style="max-width: 360px;" />
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("All")" Color="Color.Default" OnClick="@(_ => SetFilter("All"))">Tất cả</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("New")" Color="Color.Success" OnClick="@(_ => SetFilter("New"))">Mới</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("DuplicateDb")" Color="Color.Warning" OnClick="@(_ => SetFilter("DuplicateDb"))">Đã tồn tại</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("DuplicateFile")" Color="Color.Secondary" OnClick="@(_ => SetFilter("DuplicateFile"))">Trùng file</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("Invalid")" Color="Color.Error" OnClick="@(_ => SetFilter("Invalid"))">Lỗi</MudChip>
+                <MudSpacer />
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="SelectAllNew">Chọn tất cả dòng mới</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" OnClick="ClearNewSelection">Bỏ chọn tất cả</MudButton>
+            </MudStack>
+
+            <MudDataGrid T="PortExcelPreviewRow"
+                         Items="@FilteredRows"
+                         Dense="true"
+                         Bordered="true"
+                         Hover="true"
+                         Striped="true"
+                         Virtualize="true"
+                         FixedHeader="true"
+                         Height="58vh"
+                         Filterable="false"
+                         RowsPerPage="100"
+                         RowClassFunc="RowClass"
+                         ColumnResizeMode="ResizeMode.Container">
+                <Columns>
+                    <TemplateColumn Title="" HeaderStyle="width:48px">
+                        <CellTemplate>
+                            <MudCheckBox @bind-Checked="context.Item.Selected"
+                                         Disabled="@(!context.Item.CanImport)"
+                                         Dense="true" />
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.ExcelRow" Title="Dòng" />
+                    <TemplateColumn Title="Trạng thái">
+                        <CellTemplate>
+                            <MudTooltip Text="@(context.Item.StatusReason ?? StatusLabel(context.Item.Status))">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@StatusColor(context.Item.Status)">
+                                    @StatusLabel(context.Item.Status)
+                                </MudChip>
+                            </MudTooltip>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.Port.PORT_CODE" Title="Port Code" />
+                    <PropertyColumn Property="x => x.Port.PORT" Title="Port Name" />
+                    <PropertyColumn Property="x => x.Port.COUNTRY" Title="Country" />
+                    <PropertyColumn Property="x => x.Port.dept" Title="Dept / Mode" />
+                    <PropertyColumn Property="x => x.Port.MARKETCODESALE" Title="Zone" />
+                    <PropertyColumn Property="x => x.Port.MARKETCODETS" Title="Region" />
+                    <PropertyColumn Property="x => x.Port.IG" Title="Identifier" />
+                    <PropertyColumn Property="x => x.Port.ADDRESS" Title="City / Address" />
+                    <PropertyColumn Property="x => x.Port.TRADECODE" Title="CBP / WH" />
+                    <PropertyColumn Property="x => x.Port.OverW20" Title="CBM/KGS" />
+                    <TemplateColumn Title="Ghi chú">
+                        <CellTemplate>
+                            <MudText Typo="Typo.caption" Color="Color.Warning">@context.Item.StatusReason</MudText>
+                        </CellTemplate>
+                    </TemplateColumn>
+                </Columns>
+            </MudDataGrid>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Hủy</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="@(ReadyCount == 0)"
+                   StartIcon="@Icons.Material.Filled.Save"
+                   OnClick="Confirm">
+            Xác nhận Import (@ReadyCount)
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public PortExcelParseResult PreviewResult { get; set; } = new();
+
+    private string _search = "";
+    private string _statusFilter = "All";
+
+    private int ReadyCount => PreviewResult.Rows.Count(x => x.CanImport && x.Selected);
+    private int ExcludedCount => PreviewResult.Rows.Count(x => x.CanImport && !x.Selected);
+
+    private IEnumerable<PortExcelPreviewRow> FilteredRows
+    {
+        get
+        {
+            IEnumerable<PortExcelPreviewRow> rows = PreviewResult.Rows;
+            if (!string.Equals(_statusFilter, "All", StringComparison.OrdinalIgnoreCase))
+                rows = rows.Where(x => x.Status == _statusFilter);
+
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var q = _search.Trim();
+                rows = rows.Where(x =>
+                    (x.Port.PORT_CODE?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (x.Port.PORT?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (x.Port.COUNTRY?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (x.Port.dept?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (x.Port.MARKETCODESALE?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            return rows.ToList();
+        }
+    }
+
+    private void SetFilter(string status)
+    {
+        _statusFilter = status;
+    }
+
+    private Variant FilterVariant(string status) =>
+        string.Equals(_statusFilter, status, StringComparison.OrdinalIgnoreCase) ? Variant.Filled : Variant.Outlined;
+
+    private void SelectAllNew()
+    {
+        foreach (var row in PreviewResult.Rows.Where(x => x.CanImport))
+            row.Selected = true;
+    }
+
+    private void ClearNewSelection()
+    {
+        foreach (var row in PreviewResult.Rows.Where(x => x.CanImport))
+            row.Selected = false;
+    }
+
+    private static string RowClass(PortExcelPreviewRow row, int _) =>
+        row.CanImport ? (row.Selected ? "" : "row-excluded") : "row-excluded";
+
+    private static string StatusLabel(string status) => status switch
+    {
+        PortExcelRowStatus.New => "Mới",
+        PortExcelRowStatus.DuplicateDb => "Đã tồn tại",
+        PortExcelRowStatus.DuplicateFile => "Trùng file",
+        PortExcelRowStatus.Invalid => "Lỗi",
+        _ => status
+    };
+
+    private static Color StatusColor(string status) => status switch
+    {
+        PortExcelRowStatus.New => Color.Success,
+        PortExcelRowStatus.DuplicateDb => Color.Warning,
+        PortExcelRowStatus.DuplicateFile => Color.Secondary,
+        PortExcelRowStatus.Invalid => Color.Error,
+        _ => Color.Default
+    };
+
+    private void Confirm()
+    {
+        var toSave = PreviewResult.Rows
+            .Where(x => x.CanImport && x.Selected)
+            .Select(x => x.Port)
+            .ToList();
+        if (toSave.Count == 0)
+            return;
+        MudDialog.Close(DialogResult.Ok(toSave));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

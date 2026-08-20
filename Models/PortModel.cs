@@ -28,4 +28,33 @@ namespace NVOAMASIS.Models
         public bool? show { get; set; } = true;
         public string? dept { get; set; }
     }
+
+    public class PortExcelPreviewRow
+    {
+        public int ExcelRow { get; set; }
+        public PortModel Port { get; set; } = new();
+        public string Status { get; set; } = PortExcelRowStatus.New;
+        public string? StatusReason { get; set; }
+        public bool Selected { get; set; }
+        public bool CanImport => Status == PortExcelRowStatus.New;
+    }
+
+    public static class PortExcelRowStatus
+    {
+        public const string New = "New";
+        public const string DuplicateDb = "DuplicateDb";
+        public const string DuplicateFile = "DuplicateFile";
+        public const string Invalid = "Invalid";
+    }
+
+    public class PortExcelParseResult
+    {
+        public string? ErrorMessage { get; set; }
+        public List<PortExcelPreviewRow> Rows { get; set; } = new();
+        public List<PortModel> ToImport { get; set; } = new();
+        public int DuplicateInDb { get; set; }
+        public int DuplicateInFile { get; set; }
+        public int EmptySkipped { get; set; }
+        public int InvalidCount { get; set; }
+    }
 }

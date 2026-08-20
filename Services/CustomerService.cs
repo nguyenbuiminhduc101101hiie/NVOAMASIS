@@ -949,6 +949,13 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
         return noSpace.Trim().ToUpperInvariant();
     }
 
+    /// <summary>
+    /// AMSS Partner list uses "xxx" as a dummy tax code for many different companies.
+    /// It must not participate in uniqueness checks, otherwise only the first row is imported.
+    /// </summary>
+    private static bool IsPlaceholderTaxCode(string? taxCode)
+        => NormalizeTaxCodeForCompare(taxCode) == "XXX";
+
     public async Task<BoolandMessReponse> UpdateCustomerCode(CustomerCode c)
     {
         try
@@ -1597,7 +1604,7 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
 
             var existingTaxCodes = new HashSet<string>(
                 existing
-                    .Where(x => !string.IsNullOrWhiteSpace(x.TaxCode))
+                    .Where(x => !string.IsNullOrWhiteSpace(x.TaxCode) && !IsPlaceholderTaxCode(x.TaxCode))
                     .Select(x => NormalizeTaxCodeForCompare(x.TaxCode!)),
                 StringComparer.OrdinalIgnoreCase);
 
@@ -1640,10 +1647,12 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
                     continue;
 
                 var mappedMainCode = MapPartnerGroupToMainCode(groupM);
-                var normalizedTax = NormalizeTaxCodeForCompare(taxCode);
+                var isPlaceholderTax = IsPlaceholderTaxCode(taxCode);
+                var normalizedTax = isPlaceholderTax ? string.Empty : NormalizeTaxCodeForCompare(taxCode);
                 var companyKey = company.Trim();
 
-                bool taxExists = !string.IsNullOrWhiteSpace(normalizedTax) &&
+                bool taxExists = !isPlaceholderTax &&
+                    !string.IsNullOrWhiteSpace(normalizedTax) &&
                     (existingTaxCodes.Contains(normalizedTax) || batchTaxCodes.Contains(normalizedTax));
                 bool companyExists = existingCompanies.Contains(companyKey) || batchCompanies.Contains(companyKey);
 
@@ -1681,7 +1690,7 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
                 }
 
                 string customerCode;
-                if (!string.IsNullOrWhiteSpace(taxCode))
+                if (!string.IsNullOrWhiteSpace(taxCode) && !isPlaceholderTax)
                 {
                     customerCode = taxCode.Trim();
                 }
