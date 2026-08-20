@@ -187,6 +187,335 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Cannot Add Port with error code: " + ex.Message);
             }
         }
+
+        public async Task<PortExcelParseResult> PreviewPortsFromExcelAsync(Stream fileStream)
+        {
+            return await ParsePortsFromExcelAsync(fileStream);
+        }
+
+        public async Task<BoolandMessReponse> SaveImportedPortsAsync(List<PortModel> ports)
+        {
+            try
+            {
+                if (ports == null || ports.Count == 0)
+                    return new BoolandMessReponse(false, "Không có dữ liệu để import.");
+
+                _context.ChangeTracker.Clear();
+                string currentUser = asv.GetAuth().Result.User?.Identity?.Name ?? "Unknown";
+
+                var existingCodes = (await _context.Port
+                        .Where(x => x.PORT_CODE != null && x.PORT_CODE != "")
+                        .Select(x => x.PORT_CODE!)
+                        .ToListAsync())
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                var toAdd = new List<PortModel>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                int duplicateInDb = 0;
+                int duplicateInFile = 0;
+
+                foreach (var port in ports)
+                {
+                    var code = port.PORT_CODE?.Trim();
+                    if (string.IsNullOrWhiteSpace(code))
+                        continue;
+
+                    if (!seen.Add(code))
+                    {
+                        duplicateInFile++;
+                        continue;
+                    }
+
+                    if (existingCodes.Contains(code))
+                    {
+                        duplicateInDb++;
+                        continue;
+                    }
+
+                    port.PORT_ID = Guid.NewGuid();
+                    port.PORT_CODE = code;
+                    port.USERID = currentUser;
+                    port.UPDATETIME = DateTime.Now;
+                    port.show ??= true;
+                    port.APPROVE ??= true;
+                    port.EDITABLE ??= true;
+                    port.CONTINUED ??= true;
+                    if (string.IsNullOrWhiteSpace(port.dept))
+                        port.dept = "SEA";
+
+                    toAdd.Add(port);
+                }
+
+                if (toAdd.Count > 0)
+                {
+                    _context.Port.AddRange(toAdd);
+                    await _context.SaveChangesAsync();
+                    await HistoryLogService.LogAsync(currentUser, "Import Port Excel", "ListPort", null, $"{toAdd.Count} ports", new { Count = toAdd.Count });
+                }
+
+                var skipNote = (duplicateInDb + duplicateInFile) > 0
+                    ? $" Bỏ qua {duplicateInDb} mã đã tồn tại, {duplicateInFile} mã trùng trong file."
+                    : "";
+                return new BoolandMessReponse(true, $"Import thành công {toAdd.Count} cảng.{skipNote}");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Import thất bại: " + ex.Message);
+            }
+        }
+
+        private async Task<PortExcelParseResult> ParsePortsFromExcelAsync(Stream fileStream)
+        {
+            var result = new PortExcelParseResult();
+            try
+            {
+                ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+                using var memoryStream = new MemoryStream();
+                await fileStream.CopyToAsync(memoryStream);
+                memoryStream.Position = 0;
+
+                using var package = new ExcelPackage(memoryStream);
+                var worksheet = package.Workbook.Worksheets.FirstOrDefault();
+                if (worksheet?.Dimension == null)
+                {
+                    result.ErrorMessage = "Không tìm thấy sheet hoặc dữ liệu trong Excel.";
+                    return result;
+                }
+
+                int startCol = worksheet.Dimension.Start.Column;
+                int endCol = worksheet.Dimension.End.Column;
+                int startRow = worksheet.Dimension.Start.Row;
+                int endRow = worksheet.Dimension.End.Row;
+
+                int headerRow = -1;
+                var colMap = new Dictionary<int, string>();
+                int scanTo = Math.Min(endRow, startRow + 20);
+                for (int r = startRow; r <= scanTo; r++)
+                {
+                    var map = new Dictionary<int, string>();
+                    bool hasPortCode = false;
+                    for (int c = startCol; c <= endCol; c++)
+                    {
+                        var key = NormalizeExcelHeader(worksheet.Cells[r, c].Text);
+                        if (string.IsNullOrEmpty(key))
+                            continue;
+                        map[c] = key;
+                        if (IsPortCodeHeader(key))
+                            hasPortCode = true;
+                    }
+
+                    if (hasPortCode)
+                    {
+                        headerRow = r;
+                        colMap = map;
+                        break;
+                    }
+                }
+
+                if (headerRow < 0)
+                {
+                    result.ErrorMessage = "Không tìm thấy cột Port Code trong file Excel.";
+                    return result;
+                }
+
+                var existingCodes = (await _context.Port
+                        .Where(x => x.PORT_CODE != null && x.PORT_CODE != "")
+                        .Select(x => x.PORT_CODE!)
+                        .ToListAsync())
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var seenInFile = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                string currentUser = asv.GetAuth().Result.User?.Identity?.Name ?? "Unknown";
+
+                for (int row = headerRow + 1; row <= endRow; row++)
+                {
+                    var port = new PortModel();
+                    for (int c = startCol; c <= endCol; c++)
+                    {
+                        if (!colMap.TryGetValue(c, out var headerKey))
+                            continue;
+                        ApplyPortExcelValue(port, headerKey, worksheet.Cells[row, c].Text);
+                    }
+
+                    var code = port.PORT_CODE?.Trim();
+                    bool hasData = !string.IsNullOrWhiteSpace(code)
+                        || !string.IsNullOrWhiteSpace(port.PORT)
+                        || !string.IsNullOrWhiteSpace(port.COUNTRY)
+                        || !string.IsNullOrWhiteSpace(port.dept)
+                        || !string.IsNullOrWhiteSpace(port.MARKETCODESALE);
+
+                    if (!hasData)
+                    {
+                        result.EmptySkipped++;
+                        continue;
+                    }
+
+                    port.PORT_CODE = code;
+                    port.PORT_ID = Guid.NewGuid();
+                    port.USERID = currentUser;
+                    port.UPDATETIME = DateTime.Now;
+                    port.show = true;
+                    port.APPROVE = true;
+                    port.EDITABLE = true;
+                    port.CONTINUED = true;
+                    port.dept = NormalizePortDept(port.dept);
+
+                    var previewRow = new PortExcelPreviewRow
+                    {
+                        ExcelRow = row,
+                        Port = port
+                    };
+
+                    if (string.IsNullOrWhiteSpace(code))
+                    {
+                        previewRow.Status = PortExcelRowStatus.Invalid;
+                        previewRow.StatusReason = "Thiếu Port Code";
+                        previewRow.Selected = false;
+                        result.InvalidCount++;
+                    }
+                    else if (!seenInFile.Add(code))
+                    {
+                        previewRow.Status = PortExcelRowStatus.DuplicateFile;
+                        previewRow.StatusReason = $"Trùng Port Code trong file: {code}";
+                        previewRow.Selected = false;
+                        result.DuplicateInFile++;
+                    }
+                    else if (existingCodes.Contains(code))
+                    {
+                        previewRow.Status = PortExcelRowStatus.DuplicateDb;
+                        previewRow.StatusReason = $"Port Code đã tồn tại: {code}";
+                        previewRow.Selected = false;
+                        result.DuplicateInDb++;
+                    }
+                    else
+                    {
+                        previewRow.Status = PortExcelRowStatus.New;
+                        previewRow.StatusReason = string.IsNullOrWhiteSpace(port.PORT) ? "Thiếu Port Name" : null;
+                        previewRow.Selected = true;
+                        result.ToImport.Add(port);
+                    }
+
+                    result.Rows.Add(previewRow);
+                }
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = "Không đọc được file Excel: " + ex.Message;
+                return result;
+            }
+        }
+
+        private static string NormalizeExcelHeader(string? header)
+        {
+            if (string.IsNullOrWhiteSpace(header))
+                return "";
+            var chars = header.Trim().ToLowerInvariant()
+                .Where(ch => char.IsLetterOrDigit(ch))
+                .ToArray();
+            return new string(chars);
+        }
+
+        private static bool IsPortCodeHeader(string key) =>
+            key is "portcode" or "macang" or "macảng";
+
+        private static void ApplyPortExcelValue(PortModel port, string headerKey, string? raw)
+        {
+            var value = raw?.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            switch (headerKey)
+            {
+                case "portcode":
+                case "macang":
+                case "macảng":
+                    port.PORT_CODE = value;
+                    break;
+                case "portname":
+                case "port":
+                case "tencang":
+                case "têncảng":
+                case "tencảng":
+                    port.PORT = value;
+                    break;
+                case "country":
+                case "quocgia":
+                case "quốcgia":
+                    port.COUNTRY = value;
+                    break;
+                case "mode":
+                case "dept":
+                case "department":
+                    port.dept = value;
+                    break;
+                case "zone":
+                case "marketcodesale":
+                    port.MARKETCODESALE = value;
+                    break;
+                case "region":
+                case "inlandcode":
+                case "marketcodets":
+                    port.MARKETCODETS = value;
+                    break;
+                case "identifier":
+                case "ig":
+                    port.IG = value;
+                    break;
+                case "city":
+                case "address":
+                case "diachi":
+                case "địachỉ":
+                    port.ADDRESS = string.IsNullOrWhiteSpace(port.ADDRESS) ? value : port.ADDRESS;
+                    break;
+                case "tel":
+                case "telephone":
+                case "phone":
+                    port.TEL = value;
+                    break;
+                case "fax":
+                    port.FAX = value;
+                    break;
+                case "cbpcode":
+                case "tradecode":
+                case "whousecode":
+                case "warehousecode":
+                    port.TRADECODE = value;
+                    break;
+                case "cbmkgs":
+                case "overw20":
+                    port.OverW20 = value;
+                    break;
+                case "overw40":
+                    port.OverW40 = value;
+                    break;
+                case "state":
+                    if (string.IsNullOrWhiteSpace(port.ADDRESS))
+                        port.ADDRESS = value;
+                    else if (!port.ADDRESS.Contains(value, StringComparison.OrdinalIgnoreCase))
+                        port.ADDRESS = $"{port.ADDRESS}, {value}";
+                    break;
+            }
+        }
+
+        private static string NormalizePortDept(string? mode)
+        {
+            if (string.IsNullOrWhiteSpace(mode))
+                return "SEA";
+
+            var m = new string(mode.Trim().ToUpperInvariant().Where(ch => ch is not ' ' and not '&' and not '-').ToArray());
+            if (m.Contains("SEA"))
+                return "SEA";
+            if (m.Contains("AIR"))
+                return "AIR";
+            if (m.Contains("INLAND") || m.Contains("TRUCK") || m == "DOM")
+                return "DOM";
+            if (m.Contains("DEPOT") || m.Contains("WAREHOUSE") || m == "WH")
+                return "WH";
+            return "SEA";
+        }
+
         public async Task<List<TrangThai>> GetListTrangThai()
         {
             try

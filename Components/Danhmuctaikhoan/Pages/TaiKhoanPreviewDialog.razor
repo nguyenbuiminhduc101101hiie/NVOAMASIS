@@ -1,0 +1,240 @@
+@using MudBlazor
+@using NVOAMASIS.Models
+
+<style>
+    .tk-preview-dialog .mud-dialog-content {
+        padding: 12px 16px 8px 16px !important;
+        overflow: hidden;
+    }
+
+    .tk-preview-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        max-height: calc(100vh - 160px);
+    }
+
+    .tk-preview-summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .tk-preview-muted {
+        color: #64748b;
+        font-size: 0.75rem;
+    }
+
+    .tk-preview-dialog .row-excluded td {
+        opacity: 0.45;
+    }
+</style>
+
+<MudDialog Class="tk-preview-dialog">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.Preview" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Xem trước dữ liệu import danh mục tài khoản</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <div class="tk-preview-wrap">
+            <div class="tk-preview-summary">
+                <MudChip T="string" Color="Color.Success" Variant="Variant.Filled" Size="Size.Small">
+                    Sẽ import: @ReadyCount
+                </MudChip>
+                <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Size="Size.Small">
+                    Tổng dòng: @PreviewResult.Rows.Count
+                </MudChip>
+                @if (PreviewResult.DuplicateInDb > 0)
+                {
+                    <MudChip T="string" Color="Color.Warning" Variant="Variant.Filled" Size="Size.Small">
+                        Đã tồn tại: @PreviewResult.DuplicateInDb
+                    </MudChip>
+                }
+                @if (PreviewResult.DuplicateInFile > 0)
+                {
+                    <MudChip T="string" Color="Color.Secondary" Variant="Variant.Filled" Size="Size.Small">
+                        Trùng trong file: @PreviewResult.DuplicateInFile
+                    </MudChip>
+                }
+                @if (PreviewResult.InvalidCount > 0)
+                {
+                    <MudChip T="string" Color="Color.Error" Variant="Variant.Filled" Size="Size.Small">
+                        Lỗi: @PreviewResult.InvalidCount
+                    </MudChip>
+                }
+                @if (ExcludedCount > 0)
+                {
+                    <MudChip T="string" Color="Color.Default" Variant="Variant.Outlined" Size="Size.Small">
+                        User bỏ: @ExcludedCount
+                    </MudChip>
+                }
+                <span class="tk-preview-muted">Bỏ tick dòng không muốn import, rồi nhấn Xác nhận</span>
+            </div>
+
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudTextField @bind-Value="_search"
+                              Immediate="true"
+                              DebounceInterval="200"
+                              Placeholder="Tìm số TK / tên tài khoản..."
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search"
+                              Clearable="true"
+                              Style="max-width: 360px;" />
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("All")" Color="Color.Default" OnClick="@(_ => SetFilter("All"))">Tất cả</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("New")" Color="Color.Success" OnClick="@(_ => SetFilter("New"))">Mới</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("DuplicateDb")" Color="Color.Warning" OnClick="@(_ => SetFilter("DuplicateDb"))">Đã tồn tại</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("DuplicateFile")" Color="Color.Secondary" OnClick="@(_ => SetFilter("DuplicateFile"))">Trùng file</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="@FilterVariant("Invalid")" Color="Color.Error" OnClick="@(_ => SetFilter("Invalid"))">Lỗi</MudChip>
+                <MudSpacer />
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="SelectAllNew">Chọn tất cả dòng mới</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" OnClick="ClearNewSelection">Bỏ chọn tất cả</MudButton>
+            </MudStack>
+
+            <MudDataGrid T="AccountExcelPreviewRow"
+                         Items="@FilteredRows"
+                         Dense="true"
+                         Bordered="true"
+                         Hover="true"
+                         Striped="true"
+                         Virtualize="true"
+                         FixedHeader="true"
+                         Height="58vh"
+                         Filterable="false"
+                         RowsPerPage="100"
+                         RowClassFunc="RowClass"
+                         ColumnResizeMode="ResizeMode.Container">
+                <Columns>
+                    <TemplateColumn Title="" HeaderStyle="width:48px">
+                        <CellTemplate>
+                            <MudCheckBox @bind-Checked="context.Item.Selected"
+                                         Disabled="@(!context.Item.CanImport)"
+                                         Dense="true" />
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.ExcelRow" Title="Dòng" />
+                    <TemplateColumn Title="Trạng thái">
+                        <CellTemplate>
+                            <MudTooltip Text="@(context.Item.StatusReason ?? StatusLabel(context.Item.Status))">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@StatusColor(context.Item.Status)">
+                                    @StatusLabel(context.Item.Status)
+                                </MudChip>
+                            </MudTooltip>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.Account.Taikhoan" Title="A/C No." />
+                    <PropertyColumn Property="x => x.Account.Tentaikhoan" Title="Tên tài khoản" />
+                    <PropertyColumn Property="x => x.Account.Accountname" Title="Account Name" />
+                    <PropertyColumn Property="x => x.Account.Diengiai" Title="Diễn giải" />
+                    <PropertyColumn Property="x => x.Account.Manguyente" Title="Tiền tệ" />
+                    <PropertyColumn Property="x => x.Account.AccountType" Title="Account Type" />
+                    <PropertyColumn Property="x => x.Account.IsPosting" Title="IsPosting" />
+                    <PropertyColumn Property="x => x.Account.IsActive" Title="IsActive" />
+                    <TemplateColumn Title="Ghi chú">
+                        <CellTemplate>
+                            <MudText Typo="Typo.caption" Color="Color.Warning">@context.Item.StatusReason</MudText>
+                        </CellTemplate>
+                    </TemplateColumn>
+                </Columns>
+            </MudDataGrid>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Hủy</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="@(ReadyCount == 0)"
+                   StartIcon="@Icons.Material.Filled.Save"
+                   OnClick="Confirm">
+            Xác nhận Import (@ReadyCount)
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public AccountExcelParseResult PreviewResult { get; set; } = new();
+
+    private string _search = "";
+    private string _statusFilter = "All";
+
+    private int ReadyCount => PreviewResult.Rows.Count(x => x.CanImport && x.Selected);
+    private int ExcludedCount => PreviewResult.Rows.Count(x => x.CanImport && !x.Selected);
+
+    private IEnumerable<AccountExcelPreviewRow> FilteredRows
+    {
+        get
+        {
+            IEnumerable<AccountExcelPreviewRow> rows = PreviewResult.Rows;
+            if (!string.Equals(_statusFilter, "All", StringComparison.OrdinalIgnoreCase))
+                rows = rows.Where(x => x.Status == _statusFilter);
+
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var q = _search.Trim();
+                rows = rows.Where(x =>
+                    (x.Account.Taikhoan?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (x.Account.Tentaikhoan?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (x.Account.Accountname?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (x.Account.AccountType?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            return rows.ToList();
+        }
+    }
+
+    private void SetFilter(string status) => _statusFilter = status;
+
+    private Variant FilterVariant(string status) =>
+        string.Equals(_statusFilter, status, StringComparison.OrdinalIgnoreCase) ? Variant.Filled : Variant.Outlined;
+
+    private void SelectAllNew()
+    {
+        foreach (var row in PreviewResult.Rows.Where(x => x.CanImport))
+            row.Selected = true;
+    }
+
+    private void ClearNewSelection()
+    {
+        foreach (var row in PreviewResult.Rows.Where(x => x.CanImport))
+            row.Selected = false;
+    }
+
+    private static string RowClass(AccountExcelPreviewRow row, int _) =>
+        row.CanImport ? (row.Selected ? "" : "row-excluded") : "row-excluded";
+
+    private static string StatusLabel(string status) => status switch
+    {
+        AccountExcelRowStatus.New => "Mới",
+        AccountExcelRowStatus.DuplicateDb => "Đã tồn tại",
+        AccountExcelRowStatus.DuplicateFile => "Trùng file",
+        AccountExcelRowStatus.Invalid => "Lỗi",
+        _ => status
+    };
+
+    private static Color StatusColor(string status) => status switch
+    {
+        AccountExcelRowStatus.New => Color.Success,
+        AccountExcelRowStatus.DuplicateDb => Color.Warning,
+        AccountExcelRowStatus.DuplicateFile => Color.Secondary,
+        AccountExcelRowStatus.Invalid => Color.Error,
+        _ => Color.Default
+    };
+
+    private void Confirm()
+    {
+        var toSave = PreviewResult.Rows
+            .Where(x => x.CanImport && x.Selected)
+            .Select(x => x.Account)
+            .ToList();
+        if (toSave.Count == 0)
+            return;
+        MudDialog.Close(DialogResult.Ok(toSave));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

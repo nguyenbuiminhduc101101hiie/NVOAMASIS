@@ -28,6 +28,27 @@
                StartIcon="@Icons.Material.Filled.Add">
         @Localizer["new"]
     </MudButton>
+    <MudFileUpload T="IBrowserFile" Accept=".xlsx,.xls" FilesChanged="HandleImportPort" MaximumFileCount="1">
+        <ButtonTemplate Context="btnCtx">
+            <MudButton HtmlTag="label"
+                       for="@btnCtx"
+                       Size="Size.Small"
+                       Color="Color.Tertiary"
+                       Variant="Variant.Filled"
+                       StartIcon="@Icons.Material.Filled.UploadFile"
+                       Disabled="_processingUpload">
+                @if (_processingUpload)
+                {
+                    <MudProgressCircular Class="ms-n1" Size="Size.Small" Indeterminate="true" />
+                    <span>Processing</span>
+                }
+                else
+                {
+                    <span>@Localizer["ImportExcel"]</span>
+                }
+            </MudButton>
+        </ButtonTemplate>
+    </MudFileUpload>
     <a href="HDSDhtml/HDSD_PortList.html" target="_blank">
         <MudButton Color="Color.Info" Size=Size.Small StartIcon="@Icons.Material.Filled.Info">@Localizer["Help"]</MudButton>
     </a>
@@ -130,6 +151,7 @@
     }
 
     bool _loading = false;
+    bool _processingUpload = false;
     List<PortModel> Listdata = new List<PortModel>();
     async Task Refresh()
     {
@@ -251,5 +273,79 @@
     {
 
         //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
+    }
+
+    private async Task HandleImportPort(IBrowserFile? file)
+    {
+        if (file == null)
+            return;
+
+        MemoryStream? streamCopy = null;
+        try
+        {
+            // Copy file bytes first. Re-rendering before OpenReadStream
+            // causes Blazor "_blazorFilesById" because the JS file input is disposed.
+            streamCopy = new MemoryStream();
+            await using (var browserStream = file.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024))
+            {
+                await browserStream.CopyToAsync(streamCopy);
+            }
+            streamCopy.Position = 0;
+
+            _processingUpload = true;
+            await InvokeAsync(StateHasChanged);
+
+            var preview = await supsv.PreviewPortsFromExcelAsync(streamCopy);
+            if (!string.IsNullOrEmpty(preview.ErrorMessage))
+            {
+                CallSnackBar(preview.ErrorMessage, MudBlazor.Severity.Error);
+                return;
+            }
+
+            if (preview.Rows.Count == 0)
+            {
+                CallSnackBar("Không có dữ liệu hợp lệ trong Excel.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var parameters = new DialogParameters
+            {
+                { "PreviewResult", preview }
+            };
+            var options = new DialogOptions
+            {
+                MaxWidth = MaxWidth.ExtraExtraLarge,
+                FullWidth = true,
+                CloseButton = true,
+                CloseOnEscapeKey = true
+            };
+            var dialog = DialogService.Show<PortPreviewDialog>("Preview Import Port", parameters, options);
+            var result = await dialog.Result;
+
+            if (result == null || result.Canceled)
+                return;
+
+            var toSave = result.Data as List<PortModel>;
+            if (toSave == null || toSave.Count == 0)
+            {
+                CallSnackBar("Không có dòng nào được chọn để import.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var rs = await supsv.SaveImportedPortsAsync(toSave);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (rs.Flag)
+                await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(string.Format(Localizer["ThrowException"], ex.Message), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingUpload = false;
+            if (streamCopy != null)
+                await streamCopy.DisposeAsync();
+        }
     }
 }
