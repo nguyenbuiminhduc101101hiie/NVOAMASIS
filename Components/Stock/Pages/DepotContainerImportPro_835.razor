@@ -418,6 +418,17 @@
 
     private string DisplayDepot => string.IsNullOrWhiteSpace(_importDepot) ? "not entered" : _importDepot.Trim();
 
+    private Guid? ResolveSelectedDepotId()
+    {
+        var name = _importDepot?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        return _terminals
+            .FirstOrDefault(x => string.Equals(x.TermiNalName, name, StringComparison.OrdinalIgnoreCase))
+            ?.TerminalID;
+    }
+
     private string StatusText => _preview is null
         ? "No file selected"
         : (_preview.HasImportableRows ? "Ready to import" : "No new rows to import");
@@ -588,6 +599,8 @@
             _busy = true;
 
             var now = DateTime.Now;
+            var depotName = _importDepot.Trim();
+            var depotId = ResolveSelectedDepotId();
             var rows = new List<M_8_3_VSS_IN_OUT_YARD_Exp>();
             var importSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -595,7 +608,7 @@
             {
                 foreach (var row in sheet.Rows.Where(CanImportRow))
                 {
-                    var entity = MapVSSInOutYard(row, now, _usr, _importDepot);
+                    var entity = MapVSSInOutYard(row, now, _usr, depotName, depotId);
 
                     if (string.IsNullOrWhiteSpace(entity.SOCONT) && string.IsNullOrWhiteSpace(entity.ITEM_KEY))
                         continue;
@@ -619,6 +632,7 @@
             }
 
             await using var db = await DbFactory.CreateDbContextAsync();
+            await EnsureDepotColumnsAsync(db);
 
             await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>().AddRangeAsync(rows);
             await db.SaveChangesAsync();
@@ -649,11 +663,15 @@
 
     private async Task MarkDuplicateRowsAsync(ImportPreview preview)
     {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await EnsureDepotColumnsAsync(db);
+
+        var depotId = ResolveSelectedDepotId();
         var previewEntities = preview.Sheets
             .SelectMany(s => s.Rows.Where(HasRequiredData).Select(r => new
             {
                 Row = r,
-                Entity = MapVSSInOutYard(r, DateTime.MinValue, string.Empty, _importDepot)
+                Entity = MapVSSInOutYard(r, DateTime.MinValue, string.Empty, _importDepot, depotId)
             }))
             .Where(x => !string.IsNullOrWhiteSpace(x.Entity.SOCONT) || !string.IsNullOrWhiteSpace(x.Entity.ITEM_KEY))
             .ToList();
@@ -694,8 +712,6 @@
 
         if (!soconts.Any() && !itemKeys.Any() && !bookNos.Any())
             return;
-
-        await using var db = await DbFactory.CreateDbContextAsync();
 
         // Không dùng LINQ Contains → EF Core 8 sinh OPENJSON(...) WITH (...),
         // lỗi trên SQL Server compatibility cũ: "Incorrect syntax near the keyword 'WITH'".
@@ -920,7 +936,7 @@
         return result.Count > 0 ? result : sheet.Headers;
     }
 
-    private static M_8_3_VSS_IN_OUT_YARD_Exp MapVSSInOutYard(ExcelPreviewRow row, DateTime now, string user, string depot)
+    private static M_8_3_VSS_IN_OUT_YARD_Exp MapVSSInOutYard(ExcelPreviewRow row, DateTime now, string user, string depot, Guid? depotId = null)
     {
         return new M_8_3_VSS_IN_OUT_YARD_Exp
         {
@@ -974,6 +990,7 @@
             STORAGEDAY = I(row, "STORAGEDAY", "STORAGE_DAY", "STORAGEDAYS"),
 
             DEPOT = string.IsNullOrWhiteSpace(S(row, "DEPOT")) ? depot.Trim() : S(row, "DEPOT"),
+            DepotId = depotId,
 
             DateImport = now,
             UserImport = user,
@@ -1084,6 +1101,21 @@
     }
 
     private static string SheetTabTitle(ExcelSheetPreview sheet) => $"{sheet.SheetName} ({sheet.Rows.Count:N0})";
+
+    private static async Task EnsureDepotColumnsAsync(AppDbContext db)
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH(N'dbo.YardMovement_VSS_26040808_Exp', N'DEPOT') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[YardMovement_VSS_26040808_Exp] ADD DEPOT NVARCHAR(100) NULL;
+END");
+
+        await db.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH(N'dbo.YardMovement_VSS_26040808_Exp', N'DepotId') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[YardMovement_VSS_26040808_Exp] ADD DepotId UNIQUEIDENTIFIER NULL;
+END");
+    }
 
     private static bool IsSupportedExcelFile(string fileName)
     {

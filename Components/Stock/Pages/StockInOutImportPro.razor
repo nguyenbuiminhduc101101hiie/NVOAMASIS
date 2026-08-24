@@ -405,6 +405,17 @@
     private string StatusText => _preview is null ? "No file selected" : (_preview.HasImportableRows ? "Ready to import" : "No new rows");
     private string ValidationText => _preview is null ? $"Depot: {DisplayDepot}" : $"New {ImportableTotal:N0} · Existing {ExistingTotal:N0} · Duplicate {BatchDuplicateTotal:N0} · Errors {InvalidTotal:N0}";
     private string DisplayDepot => string.IsNullOrWhiteSpace(_importDepot) ? "not entered" : _importDepot.Trim();
+
+    private Guid? ResolveSelectedDepotId()
+    {
+        var name = _importDepot?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        return _terminals
+            .FirstOrDefault(x => string.Equals(x.TermiNalName, name, StringComparison.OrdinalIgnoreCase))
+            ?.TerminalID;
+    }
     private string StatusIcon => _preview is null ? Icons.Material.Filled.Pending : (_preview.HasImportableRows ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Warning);
     private Color StatusColor => _preview is null ? Color.Default : (_preview.HasImportableRows ? Color.Success : Color.Warning);
 
@@ -564,11 +575,12 @@
             await EnsureTablesAsync();
 
             var payloads = new List<ImportPayload>();
+            var depotId = ResolveSelectedDepotId();
             foreach (var sheet in _preview.Sheets.Where(x => x.Target != ImportTarget.Unknown))
             {
                 foreach (var row in sheet.Rows.Where(r => CanImportRow(sheet, r)))
                 {
-                    var payload = BuildPayload(sheet, row, _importDepot, _preview.FileName);
+                    var payload = BuildPayload(sheet, row, _importDepot, _preview.FileName, depotId);
                     if (payload is not null)
                         payloads.Add(payload);
                 }
@@ -627,7 +639,10 @@
         }
 
         if (missing.Count == 0)
+        {
+            await EnsureDepotIdColumnsAsync(db);
             return;
+        }
 
         try
         {
@@ -638,6 +653,20 @@
             throw new InvalidOperationException(
                 $"Thiếu bảng import: {string.Join(", ", missing.Select(t => "dbo." + t))}. Tài khoản SQL không có quyền CREATE TABLE. Hãy chạy Scripts/Create_M_8_3_6_YARD_APS_Import_Tables.sql bằng tài khoản DBA rồi import lại.");
         }
+
+        await EnsureDepotIdColumnsAsync(db);
+    }
+
+    private static async Task EnsureDepotIdColumnsAsync(AppDbContext db)
+    {
+        foreach (var table in ImportTableNames)
+        {
+            await db.Database.ExecuteSqlRawAsync($@"
+IF COL_LENGTH(N'dbo.{table}', N'DepotId') IS NULL
+BEGIN
+    ALTER TABLE [dbo].{QuoteName(table)} ADD DepotId UNIQUEIDENTIFIER NULL;
+END");
+        }
     }
 
     private async Task MarkDuplicateRowsAsync(ImportPreview preview)
@@ -645,6 +674,7 @@
         var fileSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         await using var db = await DbFactory.CreateDbContextAsync();
+        var depotId = ResolveSelectedDepotId();
 
         foreach (var group in preview.Sheets.Where(x => x.Target != ImportTarget.Unknown).GroupBy(x => x.Target))
         {
@@ -654,7 +684,7 @@
                             .Where(x => HasRequiredBusinessKey(x.Sheet, x.Row))
                             .ToList();
 
-            var payloads = rows.Select(x => new { x.Sheet, x.Row, Payload = BuildPayload(x.Sheet, x.Row, _importDepot, preview.FileName) })
+            var payloads = rows.Select(x => new { x.Sheet, x.Row, Payload = BuildPayload(x.Sheet, x.Row, _importDepot, preview.FileName, depotId) })
                                .Where(x => x.Payload is not null)
                                .ToList();
 
@@ -1120,7 +1150,7 @@
         _ => "This sheet target was not recognized"
     };
 
-    private static ImportPayload? BuildPayload(ExcelSheetPreview sheet, ExcelPreviewRow row, string depot, string sourceFile)
+    private static ImportPayload? BuildPayload(ExcelSheetPreview sheet, ExcelPreviewRow row, string depot, string sourceFile, Guid? depotId = null)
     {
         if (!HasRequiredBusinessKey(sheet, row))
         {
@@ -1139,6 +1169,7 @@
         };
 
         values["DEPOT"] = depot.Trim();
+        values["DepotId"] = depotId is Guid id && id != Guid.Empty ? id : null;
         values["REPORT_FROM"] = sheet.ReportFrom;
         values["REPORT_TO"] = sheet.ReportTo;
         values["REPORT_DATE"] = sheet.ReportDate;
@@ -1653,7 +1684,7 @@ IF OBJECT_ID(N'dbo.M_8_3_6_YARD_APS_GATEIN', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.M_8_3_6_YARD_APS_GATEIN(
         ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_M_8_3_6_YARD_APS_GATEIN PRIMARY KEY,
-        DEPOT NVARCHAR(100) NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
+        DEPOT NVARCHAR(100) NULL, DepotId UNIQUEIDENTIFIER NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
         REPORT_FROM DATETIME2 NULL, REPORT_TO DATETIME2 NULL, REPORT_DATE DATETIME2 NULL,
         SEQ DECIMAL(18,4) NULL, EIR NVARCHAR(100) NULL, DATE_IN DATETIME2 NULL, TIME_IN NVARCHAR(50) NULL,
         CONTAINER NVARCHAR(50) NULL, CONTAINER_TYPE NVARCHAR(50) NULL, ISO_SZTP NVARCHAR(50) NULL, OPT NVARCHAR(50) NULL, FE NVARCHAR(20) NULL, MOVE NVARCHAR(50) NULL,
@@ -1670,7 +1701,7 @@ IF OBJECT_ID(N'dbo.M_8_3_6_YARD_APS_GATEOUT', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.M_8_3_6_YARD_APS_GATEOUT(
         ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_M_8_3_6_YARD_APS_GATEOUT PRIMARY KEY,
-        DEPOT NVARCHAR(100) NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
+        DEPOT NVARCHAR(100) NULL, DepotId UNIQUEIDENTIFIER NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
         REPORT_FROM DATETIME2 NULL, REPORT_TO DATETIME2 NULL, REPORT_DATE DATETIME2 NULL,
         SEQ DECIMAL(18,4) NULL, EIR NVARCHAR(100) NULL, DATE_IN DATETIME2 NULL, TIME_IN NVARCHAR(50) NULL,
         CONTAINER NVARCHAR(50) NULL, CONTAINER_TYPE NVARCHAR(50) NULL, ISO_SZTP NVARCHAR(50) NULL, OPT NVARCHAR(50) NULL, FE NVARCHAR(20) NULL, MOVE NVARCHAR(50) NULL,
@@ -1687,7 +1718,7 @@ IF OBJECT_ID(N'dbo.M_8_3_6_YARD_APS_STOCK', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.M_8_3_6_YARD_APS_STOCK(
         ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_M_8_3_6_YARD_APS_STOCK PRIMARY KEY,
-        DEPOT NVARCHAR(100) NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
+        DEPOT NVARCHAR(100) NULL, DepotId UNIQUEIDENTIFIER NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
         REPORT_FROM DATETIME2 NULL, REPORT_TO DATETIME2 NULL, REPORT_DATE DATETIME2 NULL,
         SEQ DECIMAL(18,4) NULL, CONTAINER NVARCHAR(50) NULL, CONTAINER_TYPE NVARCHAR(50) NULL, ISO_TYPE NVARCHAR(50) NULL, OPR NVARCHAR(50) NULL, FE NVARCHAR(20) NULL, MOVE NVARCHAR(50) NULL,
         DATE_IN DATETIME2 NULL, TIME_IN NVARCHAR(50) NULL, CONSIGNEE NVARCHAR(300) NULL, POSITION NVARCHAR(100) NULL, DAYS DECIMAL(18,4) NULL, LOCATION NVARCHAR(200) NULL,
@@ -1705,7 +1736,7 @@ IF OBJECT_ID(N'dbo.M_8_3_6_YARD_APS_GENERAL', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.M_8_3_6_YARD_APS_GENERAL(
         ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_M_8_3_6_YARD_APS_GENERAL PRIMARY KEY,
-        DEPOT NVARCHAR(100) NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
+        DEPOT NVARCHAR(100) NULL, DepotId UNIQUEIDENTIFIER NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
         REPORT_FROM DATETIME2 NULL, REPORT_TO DATETIME2 NULL, REPORT_DATE DATETIME2 NULL,
         SECTION NVARCHAR(100) NULL, ROW_TYPE NVARCHAR(50) NULL, OPERATOR NVARCHAR(100) NULL, CONTAINER_TYPE NVARCHAR(100) NULL, QUANTITY_CONT DECIMAL(18,4) NULL, TEU DECIMAL(18,4) NULL,
         RAW_JSON NVARCHAR(MAX) NULL, ROW_SIGNATURE NVARCHAR(64) NOT NULL, DATE_IMPORT DATETIME2 NULL, USER_IMPORT NVARCHAR(100) NULL, CREATED_AT DATETIME2 NULL
@@ -1718,7 +1749,7 @@ IF OBJECT_ID(N'dbo.M_8_3_6_YARD_APS_GENERAL_STATUS', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.M_8_3_6_YARD_APS_GENERAL_STATUS(
         ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_M_8_3_6_YARD_APS_GENERAL_STATUS PRIMARY KEY,
-        DEPOT NVARCHAR(100) NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
+        DEPOT NVARCHAR(100) NULL, DepotId UNIQUEIDENTIFIER NULL, SOURCE_FILE NVARCHAR(260) NULL, SHEET_NAME NVARCHAR(100) NULL, EXCEL_ROW INT NULL,
         REPORT_FROM DATETIME2 NULL, REPORT_TO DATETIME2 NULL, REPORT_DATE DATETIME2 NULL,
         OPR NVARCHAR(100) NULL, GRADE NVARCHAR(50) NULL, STATUS NVARCHAR(100) NULL,
         C20_DC DECIMAL(18,4) NULL, C20_RF DECIMAL(18,4) NULL, C20_FR DECIMAL(18,4) NULL, C20_OT DECIMAL(18,4) NULL, C20_TK DECIMAL(18,4) NULL,

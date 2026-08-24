@@ -7,6 +7,7 @@ public class M_YardMovement_AMS_26040816_Current_In_Yard2 : IExcelImportEntity
     [Key]
     public Guid Id { get; set; }
     public string? DEPOT { get; set; }
+    public Guid? DepotId { get; set; }
     public string? AGENT { get; set; }
     public string? LINE { get; set; }
     public string? ITEM_KEY { get; set; }
