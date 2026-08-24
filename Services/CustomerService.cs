@@ -89,6 +89,27 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
             return new List<M_Customer>();
         }
     }
+    public async Task<List<M_Customer>> GetList_booking()
+    {
+        try
+        {
+            _context.ChangeTracker.Clear();
+            var rs = await _context.Customer
+                .Where(x =>
+                    string.IsNullOrEmpty(x.MainCode) ||
+                    !x.MainCode.Contains("Customer") ||
+                    x.SaleName != "NOMI")
+                .OrderByDescending(x => x.Customer_Code)
+                .AsNoTracking()
+                .ToListAsync();
+            rs.Insert(0, new M_Customer { COMPANY = "" });
+            return rs;
+        }
+        catch (Exception ex)
+        {
+            return new List<M_Customer>();
+        }
+    }
     public async Task<List<M_Customer>> GetListBySale(AuthUser user)
     {
         try
