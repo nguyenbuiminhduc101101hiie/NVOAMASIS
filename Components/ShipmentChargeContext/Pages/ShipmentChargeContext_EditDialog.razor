@@ -140,6 +140,9 @@
 
                 <MudItem xs="12" Class="mt-2 mb-n2">
                     <MudText Typo="Typo.subtitle2" Color="Color.Primary">Storage</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        STO = Storage Out − Storage In − Free days
+                    </MudText>
                 </MudItem>
                 <MudItem xs="12" md="4">
                     <MudDatePicker @bind-Date="_storageInDate" Label="@Localizer["Scc_Lbl_StorageIn"]" Variant="Variant.Outlined" Margin="Margin.Dense" DateFormat="dd/MM/yyyy" Clearable="true" />
@@ -638,7 +641,10 @@
                 return;
             }
 
-            var jobLoai = await GetJobLoaiByHblAsync(dbCtx, _hblItem.Id);
+            // STO không phụ thuộc Job.Loai nên khỏi truy vấn cho đỡ tốn 1 query không cần thiết.
+            var jobLoai = demDetKind.Value == DemDetKind.Sto
+                ? null
+                : await GetJobLoaiByHblAsync(dbCtx, _hblItem.Id);
             if (!TryComputeBillableDaysByJobLoai(jobLoai, demDetKind.Value, out var computed, out var computeError))
             {
                 Snackbar.Add(computeError, MudBlazor.Severity.Warning);
@@ -649,11 +655,11 @@
         }
         else if (!_billableDays.HasValue || _billableDays.Value < 0)
         {
-            Snackbar.Add("Vui lòng nhập Billable days hợp lệ (hoặc chọn loại phí DEM/DET với Job SI/SE để tự tính).", MudBlazor.Severity.Warning);
+            Snackbar.Add("Vui lòng nhập Billable days hợp lệ (hoặc chọn loại phí DEM/DET với Job SI/SE, hoặc STO, để tự tính).", MudBlazor.Severity.Warning);
             return;
         }
 
-        var amount = await TinhTienAsync(_tariffHeaderItem.Id, _billableDays.Value);
+        var (amount, breakdownText) = await TinhTienAsync(_tariffHeaderItem.Id, _billableDays.Value);
         if (!amount.HasValue)
         {
             Snackbar.Add("Không tìm thấy dòng TariffTier phù hợp với Billable days.", MudBlazor.Severity.Warning);
@@ -661,6 +667,11 @@
         }
 
         _amount = amount.Value;
+
+        if (!string.IsNullOrWhiteSpace(breakdownText))
+        {
+            Snackbar.Add(breakdownText, MudBlazor.Severity.Info);
+        }
     }
 
     private async Task ApplyDateMappingsFromContainerAsync(AppDbContext dbCtx)
@@ -791,7 +802,7 @@
         return rows;
     }
 
-    private enum DemDetKind { Dem, Det }
+    private enum DemDetKind { Dem, Det, Sto }
 
     private static DemDetKind? ClassifyDemDetCharge(string? code)
     {
@@ -805,6 +816,8 @@
             return DemDetKind.Dem;
         if (string.Equals(head, "DET", StringComparison.OrdinalIgnoreCase))
             return DemDetKind.Det;
+        if (string.Equals(head, "STO", StringComparison.OrdinalIgnoreCase))
+            return DemDetKind.Sto;
         return null;
     }
 
@@ -821,54 +834,65 @@
     /// <summary>
     /// SI: DEM = FullDelivery − FullDischarge − free; DET = EmptyReturn − FullDelivery − free.
     /// SE: DET = FullDischarge − EmptyPickup − free.
+    /// STO: StorageOut − StorageIn − free (áp dụng cho cả SI lẫn SE, không phụ thuộc Job.Loai).
     /// </summary>
     private bool TryComputeBillableDaysByJobLoai(string? jobLoai, DemDetKind kind, out int billableDays, out string? error)
     {
         billableDays = 0;
         error = null;
 
-        var loai = jobLoai?.Trim();
-        if (string.IsNullOrEmpty(loai))
-        {
-            error = "Không lấy được Job.Loai từ HBL → MBL → Job.";
-            return false;
-        }
-
         DateTime? start;
         DateTime? end;
         string needMsg;
 
-        if (string.Equals(loai, "SI", StringComparison.OrdinalIgnoreCase))
+        if (kind == DemDetKind.Sto)
         {
-            if (kind == DemDetKind.Dem)
-            {
-                start = _fullDischargeDate;
-                end = _fullDeliveryDate;
-                needMsg = "SI/DEM: nhập Full Discharge và Full Delivery (FullDelivery − FullDischarge − free).";
-            }
-            else
-            {
-                start = _fullDeliveryDate;
-                end = _emptyReturnDate;
-                needMsg = "SI/DET: nhập Full Delivery và Empty Return (EmptyReturn − FullDelivery − free).";
-            }
-        }
-        else if (string.Equals(loai, "SE", StringComparison.OrdinalIgnoreCase))
-        {
-            if (kind != DemDetKind.Det)
-            {
-                error = "Job.Loai = SE chỉ hỗ trợ tự tính Billable days cho DET (FullDischarge − EmptyPickup − free).";
-                return false;
-            }
-
-            start = _emptyPickupDate;
-            end = _fullDischargeDate;
-            needMsg = "SE/DET: nhập Empty Pickup và Full Discharge (FullDischarge − EmptyPickup − free).";
+            // Storage không phụ thuộc Job.Loai (SI/SE) - luôn tính từ Storage In/Out.
+            start = _storageInDate;
+            end = _storageOutDate;
+            needMsg = "STO: nhập Storage In và Storage Out (StorageOut − StorageIn − free).";
         }
         else
         {
-            error = $"Job.Loai = '{loai}' chưa hỗ trợ tự tính Billable days (chỉ SI/SE). Vui lòng nhập Billable days thủ công.";
-            return false;
+            var loai = jobLoai?.Trim();
+            if (string.IsNullOrEmpty(loai))
+            {
+                error = "Không lấy được Job.Loai từ HBL → MBL → Job.";
+                return false;
+            }
+
+            if (string.Equals(loai, "SI", StringComparison.OrdinalIgnoreCase))
+            {
+                if (kind == DemDetKind.Dem)
+                {
+                    start = _fullDischargeDate;
+                    end = _fullDeliveryDate;
+                    needMsg = "SI/DEM: nhập Full Discharge và Full Delivery (FullDelivery − FullDischarge − free).";
+                }
+                else
+                {
+                    start = _fullDeliveryDate;
+                    end = _emptyReturnDate;
+                    needMsg = "SI/DET: nhập Full Delivery và Empty Return (EmptyReturn − FullDelivery − free).";
+                }
+            }
+            else if (string.Equals(loai, "SE", StringComparison.OrdinalIgnoreCase))
+            {
+                if (kind != DemDetKind.Det)
+                {
+                    error = "Job.Loai = SE chỉ hỗ trợ tự tính Billable days cho DET (FullDischarge − EmptyPickup − free).";
+                    return false;
+                }
+
+                start = _emptyPickupDate;
+                end = _fullDischargeDate;
+                needMsg = "SE/DET: nhập Empty Pickup và Full Discharge (FullDischarge − EmptyPickup − free).";
+            }
+            else
+            {
+                error = $"Job.Loai = '{loai}' chưa hỗ trợ tự tính Billable days (chỉ SI/SE). Vui lòng nhập Billable days thủ công.";
+                return false;
+            }
         }
 
         if (!start.HasValue || !end.HasValue)
@@ -889,22 +913,68 @@
         return true;
     }
 
-    private async Task<decimal?> TinhTienAsync(Guid tariffHeaderId, int billableDays)
+    /// <summary>
+    /// Tính tiền LŨY TIẾN theo số ngày (progressive/bracket): mỗi bậc TariffTier (FromDay..ToDay)
+    /// chỉ tính tiền cho phần số ngày thực sự rơi vào bậc đó, rồi cộng dồn qua các bậc - KHÔNG
+    /// còn lấy nguyên đơn giá của bậc chứa ngày cuối cùng như trước.
+    /// Ví dụ bậc 1-5 giá 0, 6-10 giá 25, 11-15 giá 50, billableDays = 12:
+    ///   (5 ngày x 0) + (5 ngày x 25) + (2 ngày x 50) = 225.
+    /// Nếu TariffTier.MinCharge lớn hơn số tiền tính được CỦA RIÊNG BẬC ĐÓ thì áp dụng MinCharge
+    /// cho phần đóng góp của bậc đó (mức phí tối thiểu khi có sử dụng tới bậc này).
+    /// Trả về cả BreakdownText (từng bậc một dòng) để hiện cho người dùng xem lại cách tính.
+    /// </summary>
+    private async Task<(decimal? Amount, string? BreakdownText)> TinhTienAsync(Guid tariffHeaderId, int billableDays)
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        var tier = await db.TariffTier
+        var tiers = await db.TariffTier
             .AsNoTracking()
-            .Where(x => x.TariffHeaderId == tariffHeaderId
-                        && x.FromDay <= billableDays
-                        && (!x.ToDay.HasValue || x.ToDay.Value >= billableDays))
+            .Where(x => x.TariffHeaderId == tariffHeaderId)
             .OrderBy(x => x.FromDay)
             .ThenBy(x => x.SequenceNo)
-            .FirstOrDefaultAsync();
+            .ToListAsync();
 
-        if (tier is null)
-            return null;
+        if (tiers.Count == 0)
+            return (null, null);
 
-        return tier.Rate;
+        return ComputeProgressiveAmount(tiers, billableDays);
+    }
+
+    private static (decimal? Amount, string? BreakdownText) ComputeProgressiveAmount(List<M_TariffTier> tiers, int billableDays)
+    {
+        if (billableDays <= 0)
+            return (0m, null);
+
+        decimal total = 0m;
+        var matchedAny = false;
+        var lines = new List<string>();
+
+        foreach (var tier in tiers)
+        {
+            var from = Math.Max(tier.FromDay, 1);
+            var to = tier.ToDay.HasValue ? Math.Min(tier.ToDay.Value, billableDays) : billableDays;
+            var daysInTier = to - from + 1;
+            if (daysInTier <= 0)
+                continue;
+
+            matchedAny = true;
+            var bandAmount = daysInTier * tier.Rate;
+            var minChargeNote = string.Empty;
+            if (tier.MinCharge.HasValue && tier.MinCharge.Value > bandAmount)
+            {
+                bandAmount = tier.MinCharge.Value;
+                minChargeNote = $" (áp mức tối thiểu {tier.MinCharge.Value:N0})";
+            }
+
+            total += bandAmount;
+            var range = tier.ToDay.HasValue ? $"{tier.FromDay}-{tier.ToDay}" : $"từ {tier.FromDay} trở đi";
+            lines.Add($"Ngày {range}: {daysInTier} ngày × {tier.Rate:N0} = {bandAmount:N0}{minChargeNote}");
+        }
+
+        if (!matchedAny)
+            return (null, null);
+
+        lines.Add($"Tổng = {total:N0}");
+        return (total, string.Join("\n", lines));
     }
 
     private async Task SaveAsync()
