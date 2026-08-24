@@ -1,0 +1,29 @@
+-- 8.3.8 YARD Alpine Inventory: thêm DepotId (Terminal.TerminalID).
+-- Chạy 1 lần trên database ứng dụng. Cột DEPOT (tên) giữ nguyên.
+
+SET ANSI_NULLS ON;
+GO
+SET QUOTED_IDENTIFIER ON;
+GO
+
+IF COL_LENGTH(N'dbo.M_8_3_8_YARD_ALPINE_INVENTORY', N'DepotId') IS NULL
+    ALTER TABLE [dbo].[M_8_3_8_YARD_ALPINE_INVENTORY] ADD [DepotId] UNIQUEIDENTIFIER NULL;
+GO
+
+UPDATE y
+SET y.DepotId = t.TerminalID
+FROM [dbo].[M_8_3_8_YARD_ALPINE_INVENTORY] y
+INNER JOIN [dbo].[Terminal] t
+    ON LTRIM(RTRIM(y.DEPOT)) = LTRIM(RTRIM(t.TermiNalName))
+WHERE y.DepotId IS NULL
+  AND y.DEPOT IS NOT NULL
+  AND LTRIM(RTRIM(y.DEPOT)) <> N'';
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = N'IX_M_8_3_8_YARD_ALPINE_INVENTORY_DepotId'
+      AND object_id = OBJECT_ID(N'dbo.M_8_3_8_YARD_ALPINE_INVENTORY'))
+    CREATE NONCLUSTERED INDEX [IX_M_8_3_8_YARD_ALPINE_INVENTORY_DepotId]
+        ON [dbo].[M_8_3_8_YARD_ALPINE_INVENTORY] ([DepotId]);
+GO

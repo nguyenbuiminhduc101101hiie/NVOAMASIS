@@ -361,6 +361,18 @@
     private string StatusText => _preview is null ? "No file selected" : (_preview.HasImportableRows ? "Ready to import" : "No new rows to import");
     private string ValidationText => _preview is null ? $"Depot: {DisplayDepot}" : $"Depot {DisplayDepot} · New {ImportableTotal:N0} · Existing DB {ExistingTotal:N0} · File duplicate {BatchDuplicateTotal:N0} · Errors {InvalidTotal:N0}";
     private string DisplayDepot => string.IsNullOrWhiteSpace(_importDepot) ? "not entered" : _importDepot.Trim();
+
+    private Guid? ResolveSelectedDepotId()
+    {
+        var name = _importDepot?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        return _terminals
+            .FirstOrDefault(x => string.Equals(x.TermiNalName, name, StringComparison.OrdinalIgnoreCase))
+            ?.TerminalID;
+    }
+
     private string StatusIcon => _preview is null ? Icons.Material.Filled.Pending : (_preview.HasImportableRows ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Warning);
     private Color StatusColor => _preview is null ? Color.Default : (_preview.HasImportableRows ? Color.Success : Color.Warning);
 
@@ -515,6 +527,8 @@
         {
             _busy = true;
             var now = DateTime.Now;
+            var depotName = _importDepot.Trim();
+            var depotId = ResolveSelectedDepotId();
             var currentRows = new List<M_YardMovement_AMS_26040816_Current_In_Yard2>();
             var inOutRows = new List<M_8_3_IN_OUT_YARD_1>();
             var currentSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -526,11 +540,11 @@
                 {
                     foreach (var row in sheet.Rows.Where(r => CanImportRow(sheet, r)))
                     {
-                        var entity = MapCurrentInYard(row, now, _usr);
+                        var entity = MapCurrentInYard(row, now, _usr, depotName, depotId);
                         if (string.IsNullOrWhiteSpace(entity.ITEM_NO))
                             continue;
 
-                        var signature = CurrentSignature(entity, _importDepot);
+                        var signature = CurrentSignature(entity);
                         if (currentSignatures.Add(signature))
                             currentRows.Add(entity);
                         else
@@ -544,11 +558,11 @@
                 {
                     foreach (var row in sheet.Rows.Where(r => CanImportRow(sheet, r)))
                     {
-                        var entity = MapInOutYard(row, now, _usr);
+                        var entity = MapInOutYard(row, now, _usr, depotName, depotId);
                         if (string.IsNullOrWhiteSpace(entity.SOCONT))
                             continue;
 
-                        var signature = InOutSignature(entity, _importDepot);
+                        var signature = InOutSignature(entity);
                         if (inOutSignatures.Add(signature))
                             inOutRows.Add(entity);
                         else
@@ -573,10 +587,10 @@
             await db.SaveChangesAsync();
 
             if (currentRows.Count > 0)
-                await UpdateDepotForRowsAsync<M_YardMovement_AMS_26040816_Current_In_Yard2>(db, currentRows.Select(x => x.Id), _importDepot);
+                await UpdateDepotForRowsAsync<M_YardMovement_AMS_26040816_Current_In_Yard2>(db, currentRows.Select(x => x.Id), depotName, depotId);
 
             if (inOutRows.Count > 0)
-                await UpdateDepotForRowsAsync<M_8_3_IN_OUT_YARD_1>(db, inOutRows.Select(x => x.Id), _importDepot);
+                await UpdateDepotForRowsAsync<M_8_3_IN_OUT_YARD_1>(db, inOutRows.Select(x => x.Id), depotName, depotId);
 
             await tran.CommitAsync();
 
@@ -608,15 +622,18 @@
         await using var db = await DbFactory.CreateDbContextAsync();
         await EnsureDepotColumnsAsync(db);
 
+        var depotName = _importDepot?.Trim();
+        var depotId = ResolveSelectedDepotId();
+
         var currentPreview = preview.Sheets
             .Where(s => s.Target == ImportTarget.CurrentInYard)
-            .SelectMany(s => s.Rows.Where(r => HasRequiredContainer(s, r)).Select(r => new { Sheet = s, Row = r, Entity = MapCurrentInYard(r, DateTime.MinValue, string.Empty) }))
+            .SelectMany(s => s.Rows.Where(r => HasRequiredContainer(s, r)).Select(r => new { Sheet = s, Row = r, Entity = MapCurrentInYard(r, DateTime.MinValue, string.Empty, depotName, depotId) }))
             .Where(x => !string.IsNullOrWhiteSpace(x.Entity.ITEM_NO))
             .ToList();
 
         var inOutPreview = preview.Sheets
             .Where(s => s.Target == ImportTarget.InOutYard)
-            .SelectMany(s => s.Rows.Where(r => HasRequiredContainer(s, r)).Select(r => new { Sheet = s, Row = r, Entity = MapInOutYard(r, DateTime.MinValue, string.Empty) }))
+            .SelectMany(s => s.Rows.Where(r => HasRequiredContainer(s, r)).Select(r => new { Sheet = s, Row = r, Entity = MapInOutYard(r, DateTime.MinValue, string.Empty, depotName, depotId) }))
             .Where(x => !string.IsNullOrWhiteSpace(x.Entity.SOCONT))
             .ToList();
 
@@ -643,11 +660,8 @@
                 .ToListAsync());
         }
 
-        var existingCurrentDepotMap = await LoadDepotMapAsync<M_YardMovement_AMS_26040816_Current_In_Yard2>(db, existingCurrent.Select(x => x.Id));
-        var existingInOutDepotMap = await LoadDepotMapAsync<M_8_3_IN_OUT_YARD_1>(db, existingInOut.Select(x => x.Id));
-
-        var existingCurrentSignatures = existingCurrent.Select(x => CurrentSignature(x, existingCurrentDepotMap.TryGetValue(x.Id, out var depot) ? depot : string.Empty)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var existingInOutSignatures = existingInOut.Select(x => InOutSignature(x, existingInOutDepotMap.TryGetValue(x.Id, out var depot) ? depot : string.Empty)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingCurrentSignatures = existingCurrent.Select(x => CurrentSignature(x)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingInOutSignatures = existingInOut.Select(x => InOutSignature(x)).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var fileCurrentSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in currentPreview)
@@ -944,7 +958,7 @@
         _ => "The sheet target was not recognized"
     };
 
-    private static M_YardMovement_AMS_26040816_Current_In_Yard2 MapCurrentInYard(ExcelPreviewRow row, DateTime now, string user)
+    private static M_YardMovement_AMS_26040816_Current_In_Yard2 MapCurrentInYard(ExcelPreviewRow row, DateTime now, string user, string? depot = null, Guid? depotId = null)
     {
         var itemNo = S(row, "ITEM_NO", "ITEMNO", "SOCONT", "CNTRNO", "CONTAINERNO");
         var note = MergeNote(row, CurrentKnownKeys, S(row, "GHICHU", "GHI_CHU", "NOTE", "REMARK"));
@@ -952,6 +966,8 @@
         return new M_YardMovement_AMS_26040816_Current_In_Yard2
         {
             Id = Guid.NewGuid(),
+            DEPOT = string.IsNullOrWhiteSpace(depot) ? null : depot.Trim(),
+            DepotId = depotId,
             AGENT = S(row, "AGENT"),
             LINE = S(row, "LINE"),
             ITEM_KEY = S(row, "ITEM_KEY", "ITEMKEY"),
@@ -990,7 +1006,7 @@
         };
     }
 
-    private static M_8_3_IN_OUT_YARD_1 MapInOutYard(ExcelPreviewRow row, DateTime now, string user)
+    private static M_8_3_IN_OUT_YARD_1 MapInOutYard(ExcelPreviewRow row, DateTime now, string user, string? depot = null, Guid? depotId = null)
     {
         var soCont = S(row, "SOCONT", "ITEM_NO", "ITEMNO", "CNTRNO", "CONTAINERNO");
         var note = MergeNote(row, InOutKnownKeys, S(row, "GHICHU", "GHI_CHU", "NOTE", "REMARK"));
@@ -998,6 +1014,8 @@
         return new M_8_3_IN_OUT_YARD_1
         {
             Id = Guid.NewGuid(),
+            DEPOT = string.IsNullOrWhiteSpace(depot) ? null : depot.Trim(),
+            DepotId = depotId,
             METHOD = S(row, "METHOD"),
             EXEC_TS = DT(row, "EXEC_TS", "EXECTS", "NGAYNHAPBAI", "ARR_TS", "ARRTS"),
             LINE = S(row, "LINE"),
@@ -1060,7 +1078,7 @@
     private static string CurrentSignature(M_YardMovement_AMS_26040816_Current_In_Yard2 x, string? depot = null)
         => string.Join("␟", new[]
         {
-            N(depot), N(x.AGENT), N(x.LINE), N(x.ITEM_KEY), N(x.ITEM_NO), N(x.ISO), N(x.FEL), N(x.TEMP), N(x.WEIGHT), N(x.VGM_WEIGHT),
+            N(depot ?? x.DEPOT), N(x.AGENT), N(x.LINE), N(x.ITEM_KEY), N(x.ITEM_NO), N(x.ISO), N(x.FEL), N(x.TEMP), N(x.WEIGHT), N(x.VGM_WEIGHT),
             N(x.BOOK_NO), N(x.BILL_OF_LADING), N(x.LOCATION), N(x.CATEGORY), N(x.ARR_BY), N(x.ARR_CAR), N(x.ARR_VES_NAME), N(x.ARR_TS),
             N(x.DEP_BY), N(x.DEP_CAR), N(x.DEP_VES_NAME), N(x.DEP_TS), N(x.DISCH_PORT), N(x.FINAL_DISCH_PORT), N(x.PLACE_OF_RECEIPT),
             N(x.PLACE_OF_DELIVERY), N(x.CUSTOM_CLEARANCE), N(x.CC_TS), N(x.DGS_CLASS), N(x.UN_NO), N(x.DAM), N(x.GHICHU), N(x.SOSEAL)
@@ -1069,7 +1087,7 @@
     private static string InOutSignature(M_8_3_IN_OUT_YARD_1 x, string? depot = null)
         => string.Join("␟", new[]
         {
-            N(depot), N(x.METHOD), N(x.EXEC_TS), N(x.LINE), N(x.ITEM_KEY), N(x.SOCONT), N(x.KICHCO), N(x.TRANGTHAI), N(x.TRONGLUONG), N(x.TRONGLUONG_VGM),
+            N(depot ?? x.DEPOT), N(x.METHOD), N(x.EXEC_TS), N(x.LINE), N(x.ITEM_KEY), N(x.SOCONT), N(x.KICHCO), N(x.TRANGTHAI), N(x.TRONGLUONG), N(x.TRONGLUONG_VGM),
             N(x.BL_NO), N(x.BOOK_NO), N(x.RELEASE_NO), N(x.HUONG), N(x.HUONG1), N(x.CANGCT), N(x.CANGDEN), N(x.GIAO), N(x.NHAN),
             N(x.DGS_CLASS), N(x.GHICHU), N(x.ENTRY_VOY_NO), N(x.ENTRY_VES_NAME), N(x.EXIT_VOY_NO), N(x.EXIT_VES_NAME),
             N(x.ENTRY_TRUCK_ID), N(x.EXIT_TRUCK_ID), N(x.SOSEAL)
@@ -1088,15 +1106,22 @@
     private static async Task EnsureDepotColumnAsync<T>(AppDbContext db) where T : class
     {
         var table = GetMappedTable<T>(db);
-        var sql = $@"
+        var quoted = $"{QuoteName(table.SchemaName)}.{QuoteName(table.TableName)}";
+
+        await db.Database.ExecuteSqlRawAsync($@"
 IF COL_LENGTH(N'{table.SchemaName}.{table.TableName}', N'DEPOT') IS NULL
 BEGIN
-    ALTER TABLE {QuoteName(table.SchemaName)}.{QuoteName(table.TableName)} ADD DEPOT NVARCHAR(100) NULL;
-END";
-        await db.Database.ExecuteSqlRawAsync(sql);
+    ALTER TABLE {quoted} ADD DEPOT NVARCHAR(100) NULL;
+END");
+
+        await db.Database.ExecuteSqlRawAsync($@"
+IF COL_LENGTH(N'{table.SchemaName}.{table.TableName}', N'DepotId') IS NULL
+BEGIN
+    ALTER TABLE {quoted} ADD DepotId UNIQUEIDENTIFIER NULL;
+END");
     }
 
-    private static async Task UpdateDepotForRowsAsync<T>(AppDbContext db, IEnumerable<Guid> ids, string depot) where T : class
+    private static async Task UpdateDepotForRowsAsync<T>(AppDbContext db, IEnumerable<Guid> ids, string depot, Guid? depotId) where T : class
     {
         var idList = ids.Where(x => x != Guid.Empty).Distinct().ToList();
         if (idList.Count == 0)
@@ -1117,6 +1142,11 @@ END";
             depotParam.Value = string.IsNullOrWhiteSpace(depot) ? DBNull.Value : depot.Trim();
             cmd.Parameters.Add(depotParam);
 
+            var depotIdParam = cmd.CreateParameter();
+            depotIdParam.ParameterName = "@DepotId";
+            depotIdParam.Value = depotId is Guid id && id != Guid.Empty ? id : DBNull.Value;
+            cmd.Parameters.Add(depotIdParam);
+
             for (var i = 0; i < chunk.Count; i++)
             {
                 var pName = "@Id" + i;
@@ -1127,49 +1157,9 @@ END";
                 cmd.Parameters.Add(p);
             }
 
-            cmd.CommandText = $"UPDATE {QuoteName(table.SchemaName)}.{QuoteName(table.TableName)} SET DEPOT = @Depot WHERE Id IN ({string.Join(",", placeholders)});";
+            cmd.CommandText = $"UPDATE {QuoteName(table.SchemaName)}.{QuoteName(table.TableName)} SET DEPOT = @Depot, DepotId = @DepotId WHERE Id IN ({string.Join(",", placeholders)});";
             await cmd.ExecuteNonQueryAsync();
         }
-    }
-
-    private static async Task<Dictionary<Guid, string>> LoadDepotMapAsync<T>(AppDbContext db, IEnumerable<Guid> ids) where T : class
-    {
-        var result = new Dictionary<Guid, string>();
-        var idList = ids.Where(x => x != Guid.Empty).Distinct().ToList();
-        if (idList.Count == 0)
-            return result;
-
-        var table = GetMappedTable<T>(db);
-        foreach (var chunk in Chunk(idList.Select(x => x.ToString()).ToList(), 200))
-        {
-            await using var cmd = db.Database.GetDbConnection().CreateCommand();
-            if (db.Database.CurrentTransaction is not null)
-                cmd.Transaction = db.Database.CurrentTransaction.GetDbTransaction();
-            if (cmd.Connection!.State != System.Data.ConnectionState.Open)
-                await cmd.Connection.OpenAsync();
-
-            var placeholders = new List<string>();
-            for (var i = 0; i < chunk.Count; i++)
-            {
-                var pName = "@Id" + i;
-                placeholders.Add(pName);
-                var p = cmd.CreateParameter();
-                p.ParameterName = pName;
-                p.Value = Guid.Parse(chunk[i]);
-                cmd.Parameters.Add(p);
-            }
-
-            cmd.CommandText = $"SELECT Id, DEPOT FROM {QuoteName(table.SchemaName)}.{QuoteName(table.TableName)} WITH (NOLOCK) WHERE Id IN ({string.Join(",", placeholders)});";
-            await using var reader = await cmd.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
-            {
-                var id = reader.GetGuid(0);
-                var depot = reader.IsDBNull(1) ? string.Empty : Convert.ToString(reader.GetValue(1)) ?? string.Empty;
-                result[id] = depot.Trim();
-            }
-        }
-
-        return result;
     }
 
     private static (string SchemaName, string TableName) GetMappedTable<T>(AppDbContext db) where T : class

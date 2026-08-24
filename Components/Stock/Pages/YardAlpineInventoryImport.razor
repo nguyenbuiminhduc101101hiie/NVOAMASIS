@@ -44,16 +44,21 @@
 
             <MudItem xs="12" lg="4">
                 <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="flex-wrap action-bar">
-                    <MudTextField T="string"
-                                  @bind-Value="_importDepot"
-                                  Label="@Localizer["StockImport_DepotName"]"
-                                  Placeholder="@Localizer["StockImport_DepotPlaceholder838"]"
-                                  Variant="Variant.Outlined"
-                                  Margin="Margin.Dense"
-                                  Style="min-width:220px;background:#fff;border-radius:12px;"
-                                  Disabled="@(_busy || _preview is not null)"
-                                  Adornment="Adornment.Start"
-                                  AdornmentIcon="@Icons.Material.Filled.LocationOn" />
+                    <MudAutocomplete T="string"
+                                     @bind-Value="_importDepot"
+                                     Label="@Localizer["StockImport_DepotName"]"
+                                     Placeholder="@Localizer["StockImport_SelectDepotBeforePreview"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Style="min-width:220px;background:#fff;border-radius:12px;"
+                                     Disabled="@(_busy || _preview is not null)"
+                                     Adornment="Adornment.Start"
+                                     AdornmentIcon="@Icons.Material.Filled.Warehouse"
+                                     SearchFunc="SearchTerminal"
+                                     CoerceText
+                                     ResetValueOnEmptyText
+                                     Clearable
+                                     MaxItems="30" />
 
                     <MudButton HtmlTag="label"
                                Variant="Variant.Filled"
@@ -308,6 +313,7 @@
     private bool _canDelete;
     private string _usr = string.Empty;
     private string _importDepot = "PHUONG DONG DEPOT";
+    private List<Terminal_> _terminals = new();
     private ImportPreview? _preview;
     private int _activeTab;
     private int _previewLimit = 100;
@@ -326,6 +332,37 @@
         _usr = auth.User.Identity?.Name ?? string.Empty;
         _canAdd = await ssv.CheckPermission(_usr, "Add", PermissionMenuName);
         _canDelete = await ssv.CheckPermission(_usr, "Delete", PermissionMenuName);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _terminals = await db.Terminal
+            .Where(x => !string.IsNullOrEmpty(x.TermiNalName))
+            .OrderBy(x => x.TermiNalName)
+            .ToListAsync();
+    }
+
+    private Guid? ResolveSelectedDepotId()
+    {
+        var name = _importDepot?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        return _terminals
+            .FirstOrDefault(x => string.Equals(x.TermiNalName, name, StringComparison.OrdinalIgnoreCase))
+            ?.TerminalID;
+    }
+
+    private Task<IEnumerable<string?>> SearchTerminal(string? text)
+    {
+        var query = _terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName));
+
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            query = query.Where(x =>
+                x.TermiNalName!.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+                (x.Code?.Contains(text, StringComparison.OrdinalIgnoreCase) == true));
+        }
+
+        return Task.FromResult<IEnumerable<string?>>(query.Select(x => x.TermiNalName).Distinct());
     }
 
     private async Task DeleteAllDataAsync()
@@ -446,7 +483,7 @@
             await EnsureTableAsync();
 
             var rows = _preview.Sheets.SelectMany(s => s.Rows).Where(CanImport).ToList();
-            var inserted = await InsertRowsAsync(rows, _preview.FileName, _importDepot.Trim());
+            var inserted = await InsertRowsAsync(rows, _preview.FileName, _importDepot.Trim(), ResolveSelectedDepotId());
 
             Snackbar.Add(string.Format(Localizer["StockImport_AlpineCompleted"], inserted, TableName), MudBlazor.Severity.Success);
             ClearPreview();
@@ -603,7 +640,10 @@
             check.CommandText = $"SELECT CASE WHEN OBJECT_ID(N'dbo.{TableName}', N'U') IS NULL THEN 0 ELSE 1 END;";
             var exists = Convert.ToInt32(await check.ExecuteScalarAsync());
             if (exists == 1)
+            {
+                await EnsureDepotIdColumnAsync(db);
                 return;
+            }
         }
 
         try
@@ -615,6 +655,17 @@
             throw new InvalidOperationException(
                 $"Bảng dbo.{TableName} chưa tồn tại và tài khoản SQL không có quyền CREATE TABLE. Hãy chạy script tạo bảng bằng tài khoản DBA rồi import lại.");
         }
+
+        await EnsureDepotIdColumnAsync(db);
+    }
+
+    private static async Task EnsureDepotIdColumnAsync(AppDbContext db)
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH(N'dbo.M_8_3_8_YARD_ALPINE_INVENTORY', N'DepotId') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[M_8_3_8_YARD_ALPINE_INVENTORY] ADD DepotId UNIQUEIDENTIFIER NULL;
+END");
     }
 
     private async Task MarkDuplicatesAsync(ImportPreview preview)
@@ -680,7 +731,7 @@
         return result;
     }
 
-    private async Task<int> InsertRowsAsync(List<PreviewRow> rows, string sourceFile, string depot)
+    private async Task<int> InsertRowsAsync(List<PreviewRow> rows, string sourceFile, string depot, Guid? depotId)
     {
         var inserted = 0;
         var now = DateTime.Now;
@@ -699,6 +750,7 @@
 
             Add(cmd, "@ID", Guid.NewGuid());
             Add(cmd, "@DEPOT", depot);
+            Add(cmd, "@DepotId", depotId is Guid id && id != Guid.Empty ? id : null);
             Add(cmd, "@SOURCE_FILE", sourceFile);
             Add(cmd, "@SHEET_NAME", r.SheetName);
             Add(cmd, "@EXCEL_ROW", r.ExcelRow);
@@ -1096,6 +1148,7 @@ BEGIN
     (
         ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_M_8_3_8_YARD_ALPINE_INVENTORY PRIMARY KEY,
         DEPOT NVARCHAR(150) NULL,
+        DepotId UNIQUEIDENTIFIER NULL,
         SOURCE_FILE NVARCHAR(260) NULL,
         SHEET_NAME NVARCHAR(100) NULL,
         EXCEL_ROW INT NULL,
@@ -1169,7 +1222,7 @@ IF NOT EXISTS (SELECT 1 FROM dbo.M_8_3_8_YARD_ALPINE_INVENTORY WITH (UPDLOCK, HO
 BEGIN
     INSERT INTO dbo.M_8_3_8_YARD_ALPINE_INVENTORY
     (
-        ID, DEPOT, SOURCE_FILE, SHEET_NAME, EXCEL_ROW, REPORT_FROM, REPORT_TO, REPORT_DATE,
+        ID, DEPOT, DepotId, SOURCE_FILE, SHEET_NAME, EXCEL_ROW, REPORT_FROM, REPORT_TO, REPORT_DATE,
         SEQ, EIR, CONTAINER, CONTAINER_TYPE, ISO_SZTP, ISO_TYPE, OPT, OPR, FE, MOVE,
         DATE_IN, TIME_IN, DATE_OUT, LOCATION, BOOKING, VESSEL, VOYAGE, POL, POD, SHIPPER, CONSIGNEE,
         YOM, SEAL_NO, SEAL_NO2, NOTE1, NOTE2, NOTE3, REQUIRED_GRADE, VGM, MAX_GROSS, TARE_WEIGHT,
@@ -1179,7 +1232,7 @@ BEGIN
     )
     VALUES
     (
-        @ID, @DEPOT, @SOURCE_FILE, @SHEET_NAME, @EXCEL_ROW, @REPORT_FROM, @REPORT_TO, @REPORT_DATE,
+        @ID, @DEPOT, @DepotId, @SOURCE_FILE, @SHEET_NAME, @EXCEL_ROW, @REPORT_FROM, @REPORT_TO, @REPORT_DATE,
         @SEQ, @EIR, @CONTAINER, @CONTAINER_TYPE, @ISO_SZTP, @ISO_TYPE, @OPT, @OPR, @FE, @MOVE,
         @DATE_IN, @TIME_IN, @DATE_OUT, @LOCATION, @BOOKING, @VESSEL, @VOYAGE, @POL, @POD, @SHIPPER, @CONSIGNEE,
         @YOM, @SEAL_NO, @SEAL_NO2, @NOTE1, @NOTE2, @NOTE3, @REQUIRED_GRADE, @VGM, @MAX_GROSS, @TARE_WEIGHT,

@@ -764,7 +764,7 @@
 
     private static readonly string[] SourceColumns =
     {
-        "Id", "ID",
+        "Id", "ID", "DepotId",
         "AGENT", "LINE", "DEPOT", "ITEM_KEY", "ITEM_NO", "ISO", "FEL", "TEMP", "WEIGHT", "VGM_WEIGHT",
         "BOOK_NO", "BILL_OF_LADING", "LOCATION", "CATEGORY", "ARR_BY", "ARR_CAR", "ARR_VES_NAME", "ARR_TS",
         "DEP_BY", "DEP_CAR", "DEP_VES_NAME", "DEP_TS", "DISCH_PORT", "FINAL_DISCH_PORT", "PLACE_OF_RECEIPT",
@@ -1294,6 +1294,9 @@ ORDER BY {orderBy};";
                 DEPOT = FirstNonEmpty(
                     GetString(reader, ordinals, "DEPOT"),
                     GetString(reader, ordinals, "Depot")),
+                DepotId = FirstNonEmptyGuid(
+                    GetGuid(reader, ordinals, "DepotId"),
+                    GetGuid(reader, ordinals, "DepotID")),
                 REPORT_FROM = GetDateTime(reader, ordinals, "REPORT_FROM"),
                 REPORT_TO = GetDateTime(reader, ordinals, "REPORT_TO"),
                 REPORT_DATE = GetDateTime(reader, ordinals, "REPORT_DATE"),
@@ -1625,6 +1628,7 @@ ORDER BY {orderBy};";
                 return new TariffCacheEntry(
                     header.Id, header.TariffCode, header.TariffName, chargeCode.Trim(),
                     header.ContainerTypeId, header.CargoTypeId, header.Direction,
+                    header.DepotId, header.PortId,
                     t.FromDay, t.ToDay, t.Rate, t.RateBasis, t.Unit, t.MinCharge, t.SequenceNo);
             })
             .ToList();
@@ -1671,9 +1675,9 @@ ORDER BY {orderBy};";
     /// CargoTypeId là NVARCHAR - lưu code dạng "20DC"/"FCL" chứ không phải FK guid, nên so
     /// khớp trực tiếp với SizeType/ISO của container được):
     ///   - Ưu tiên cao nhất: ContainerTypeId khớp đúng loại/kích cỡ container (20DC, 40HC...).
-    ///   - Cộng thêm nếu Depot trong TariffCode/TariffName chứa tên Depot của container - vì
-    ///     dữ liệu container ở màn này không có DepotId (FK) để so trực tiếp với
-    ///     TariffHeader.DepotId, chỉ có tên Depot dạng text.
+    ///   - Depot: so DepotId của dòng container (Terminal.TerminalID lưu lúc import) với
+    ///     TariffHeader.PortId (combo Terminal 8.5) hoặc TariffHeader.DepotId. Không còn khớp
+    ///     theo tên depot trong TariffCode/TariffName.
     /// Sau khi chọn được TariffHeader, tra TariffTier theo billable days (FromDay..ToDay) -
     /// giống công thức "Tính Tiền" ở màn Shipment charge context (8.7). Nếu TariffTier có
     /// MinCharge lớn hơn Rate của bậc đó thì áp dụng mức tối thiểu MinCharge (quy ước "phí tối
@@ -1702,7 +1706,7 @@ ORDER BY {orderBy};";
         // trượt vì khoảng trắng/ký tự ẩn khác nhau giữa dữ liệu container và TariffHeader.ContainerTypeId.
         var containerTypeRaw = !string.IsNullOrWhiteSpace(x.SizeType) ? x.SizeType.Trim() : (x.ISO ?? string.Empty).Trim();
         var containerTypeNorm = NormalizeTypeCode(containerTypeRaw);
-        var depotToken = (x.DepotDisplay ?? string.Empty).Trim();
+        var containerDepotId = x.DepotId is Guid depotId && depotId != Guid.Empty ? depotId : (Guid?)null;
 
         var headerGroups = candidates
             .GroupBy(e => e.TariffHeaderId)
@@ -1713,9 +1717,10 @@ ORDER BY {orderBy};";
                 var containerTypeMatch = containerTypeSpecified
                     && containerTypeNorm.Length > 0
                     && NormalizeTypeCode(first.ContainerTypeId) == containerTypeNorm;
-                var depotMatch = depotToken.Length > 0
-                    && ((first.TariffCode != null && first.TariffCode.Contains(depotToken, StringComparison.OrdinalIgnoreCase))
-                        || (first.TariffName != null && first.TariffName.Contains(depotToken, StringComparison.OrdinalIgnoreCase)));
+                var depotMatch = MatchesTariffDepot(first, containerDepotId);
+
+                var headerHasDepotLink = first.PortId != Guid.Empty || first.DepotId != Guid.Empty;
+                var depotConflict = containerDepotId.HasValue && headerHasDepotLink && !depotMatch;
 
                 return new
                 {
@@ -1726,8 +1731,9 @@ ORDER BY {orderBy};";
                     ContainerTypeSpecified = containerTypeSpecified,
                     // Header khai báo rõ ContainerTypeId nhưng KHÔNG khớp container hiện tại -> loại hẳn,
                     // tránh lấy nhầm tariff của loại cont khác khi có nhiều dòng cùng ChargeType.
-                    Eligible = !containerTypeSpecified || containerTypeMatch,
-                    Score = (containerTypeMatch ? 3 : 0) + (depotMatch ? 1 : 0)
+                    // Header đã gắn Terminal/Depot khác DepotId của container -> loại hẳn.
+                    Eligible = (!containerTypeSpecified || containerTypeMatch) && !depotConflict,
+                    Score = (containerTypeMatch ? 3 : 0) + (depotMatch ? 2 : 0)
                 };
             })
             .Where(g => g.Eligible)
@@ -1741,7 +1747,7 @@ ORDER BY {orderBy};";
                 .Select(g => $"{g.First().TariffCode}: ContainerTypeId='{g.First().ContainerTypeId}'")
                 .Distinct();
             return new ChargeEstimate(grossDays, billableDays, null, null, null, null,
-                $"Có Tariff {chargeCodePrefix} nhưng không khớp loại container '{containerTypeRaw}'. Tariff khai báo: {string.Join(" | ", declaredTypes)}.");
+                $"Có Tariff {chargeCodePrefix} nhưng không khớp loại container '{containerTypeRaw}' hoặc DepotId. Tariff khai báo: {string.Join(" | ", declaredTypes)}.");
         }
 
         var best = headerGroups.First();
@@ -1808,6 +1814,18 @@ ORDER BY {orderBy};";
         }
 
         return (total, matchedAny, lastBand, breakdown);
+    }
+
+    /// <summary>
+    /// Khớp DepotId của container (Terminal.TerminalID lưu lúc import) với TariffHeader:
+    /// PortId = combo Terminal, DepotId = combo Depot trên màn 8.5.
+    /// </summary>
+    private static bool MatchesTariffDepot(TariffCacheEntry tariff, Guid? containerDepotId)
+    {
+        if (containerDepotId is not Guid id || id == Guid.Empty)
+            return false;
+
+        return tariff.PortId == id || tariff.DepotId == id;
     }
 
     /// <summary>
@@ -1880,6 +1898,7 @@ ORDER BY {orderBy};";
     private sealed record TariffCacheEntry(
         Guid TariffHeaderId, string? TariffCode, string? TariffName, string ChargeCode,
         string? ContainerTypeId, string? CargoTypeId, string? Direction,
+        Guid DepotId, Guid PortId,
         int FromDay, int? ToDay, decimal Rate, string? RateBasis, string? Unit, decimal? MinCharge, int SequenceNo);
 
     private List<TariffCacheEntry> _tariffCache = new();
@@ -2488,6 +2507,7 @@ ORDER BY {orderBy};";
         public string AGENT { get; set; } = string.Empty;
         public string LINE { get; set; } = string.Empty;
         public string DEPOT { get; set; } = string.Empty;
+        public Guid? DepotId { get; set; }
         public DateTime? REPORT_FROM { get; set; }
         public DateTime? REPORT_TO { get; set; }
         public DateTime? REPORT_DATE { get; set; }

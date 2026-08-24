@@ -166,6 +166,8 @@
     // IMPORTANT: nếu namespace AppDbContext khác NVOAMASIS.Data thì đổi dòng @using ở trên theo namespace thật trong AppDbContext.cs.
 
     private const string PermissionMenuName = "Inventory";
+    private static readonly Guid SpItcDepotId = Guid.Parse("47DEC189-7AED-4AF0-94AF-DAA2B1C14F9A");
+    private const string SpItcDepotName = "SP-ITC";
 
     private readonly List<M_8_3_7_YARD_SP_ITC> PreviewRows = new();
     private readonly HashSet<string> ExistingHashes = new(StringComparer.OrdinalIgnoreCase);
@@ -282,6 +284,7 @@
             PreviewRows.Clear();
             PreviewRows.AddRange(distinctRows);
 
+            await EnsureDepotIdColumnAsync();
             await LoadExistingHashes();
 
             Snackbar.Add(string.Format(Localizer["StockImport_PreviewDone"], PreviewRows.Count, NewRowsCount, DuplicateRowsCount), MudBlazor.Severity.Success);
@@ -362,6 +365,14 @@
             {
                 Snackbar.Add(Localizer["StockImport_AllDuplicate"], MudBlazor.Severity.Warning);
                 return;
+            }
+
+            await EnsureDepotIdColumnAsync();
+
+            foreach (var row in rowsToSave)
+            {
+                row.Depot = SpItcDepotName;
+                row.DepotId = SpItcDepotId;
             }
 
             await Db.M_8_3_7_YARD_SP_ITC.AddRangeAsync(rowsToSave);
@@ -529,7 +540,8 @@
             ImportFileName = fileName,
             SourceSheet = sheetName,
             ReportType = reportType,
-            Depot = "SP-ITC",
+            Depot = SpItcDepotName,
+            DepotId = SpItcDepotId,
             Line = line,
             RowNo = rowNo,
             CreatedAt = DateTime.Now,
@@ -553,6 +565,15 @@
         item.ContrNo = item.ContrNo.Trim().ToUpperInvariant();
         item.RowHash = MakeHash(item);
         PreviewRows.Add(item);
+    }
+
+    private async Task EnsureDepotIdColumnAsync()
+    {
+        await Db.Database.ExecuteSqlRawAsync(@"
+IF COL_LENGTH(N'dbo.M_8_3_7_YARD_SP_ITC', N'DepotId') IS NULL
+BEGIN
+    ALTER TABLE [dbo].[M_8_3_7_YARD_SP_ITC] ADD DepotId UNIQUEIDENTIFIER NULL;
+END");
     }
 
     private static string MakeHash(M_8_3_7_YARD_SP_ITC x)

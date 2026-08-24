@@ -14,6 +14,7 @@ namespace NVOAMASIS.Models
         public string? SourceSheet { get; set; }
         public string? ReportType { get; set; }
         public string? Depot { get; set; }
+        public Guid? DepotId { get; set; }
         public string? Line { get; set; }
         public int? RowNo { get; set; }
         public int? STT { get; set; }
