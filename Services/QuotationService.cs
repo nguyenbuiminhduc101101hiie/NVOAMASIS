@@ -8,6 +8,7 @@ using Stimulsoft.Report.Blazor;
 using Stimulsoft.Report.Components;
 using Stimulsoft.Report.Dictionary;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using NVOAMASIS.Components.Report_RFQ.Pages;
 using NVOAMASIS.Data;
 using NVOAMASIS.Models;
@@ -493,20 +494,60 @@ namespace NVOAMASIS.Services
                     throw new InvalidOperationException("Form đã chọn không phải loại Quotation.");
 
                 var templateBytes = await billSeaLayoutFormService.GetFormBytesAsync(formId);
-                // Chỉ thay logo template khi user upload logo riêng cho form.
-                // Không fallback CompanyInfo.Logo — Image1 của Quotation.mrt dùng resource://Logo (form gốc).
-                var logo = await billSeaLayoutFormService.GetFormLogoAsync(formId);
+                // Logo riêng của form nếu có, không thì CompanyInfo.Logo.
+                var logo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(formId);
                 return (templateBytes, logo);
             }
 
             var defaultBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(BillSeaReportTemplateNames.Quotation);
-            return (defaultBytes, null);
+            var companyLogo = await billSeaLayoutFormService.GetCompanyLogoAsync();
+            return (defaultBytes, companyLogo);
         }
 
         private void ApplyQuotationReportSetup(StiReport report, byte[]? companyLogo)
         {
             ApplyReportConnectionString(report, ResolveReportConnectionString());
+            AlignCompanyInfoExpressions(report);
             ApplyLogoToImageComponent(report, "Image1", companyLogo);
+        }
+
+        /// <summary>
+        /// Quotation.mrt đặt data source tên <c>companyinfomation</c>, nhưng một số text
+        /// (và form đã lưu) dùng <c>{CompanyInfomation.xxx}</c>. Stimulsoft compile C# phân biệt hoa/thường.
+        /// </summary>
+        private static void AlignCompanyInfoExpressions(StiReport report)
+        {
+            string? sourceName = null;
+            foreach (StiDataSource ds in report.Dictionary.DataSources)
+            {
+                if (string.Equals(ds.Name, "companyinfomation", StringComparison.OrdinalIgnoreCase))
+                {
+                    sourceName = ds.Name;
+                    break;
+                }
+            }
+
+            if (string.IsNullOrEmpty(sourceName))
+                return;
+
+            foreach (StiComponent component in report.GetComponents())
+            {
+                if (component is not StiText text)
+                    continue;
+
+                var current = text.Text?.Value;
+                if (string.IsNullOrEmpty(current))
+                    continue;
+
+                var updated = Regex.Replace(
+                    current,
+                    @"\{CompanyInfomation\.",
+                    "{" + sourceName + ".",
+                    RegexOptions.IgnoreCase);
+
+                if (!string.Equals(current, updated, StringComparison.Ordinal))
+                    text.Text.Value = updated;
+            }
         }
 
         private string ResolveReportConnectionString()
@@ -579,6 +620,10 @@ namespace NVOAMASIS.Services
                     continue;
 
                 image.Enabled = true;
+                image.Stretch = true;
+                image.AspectRatio = true;
+                if (image.ImageURL != null)
+                    image.ImageURL.Value = "resource://Logo";
                 if (image.Expressions is { Count: > 0 })
                 {
                     for (var i = image.Expressions.Count - 1; i >= 0; i--)
