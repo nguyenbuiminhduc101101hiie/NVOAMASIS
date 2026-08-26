@@ -200,7 +200,7 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
     options.UseSqlServer(connectionString
         ?? throw new InvalidOperationException("Sorry, your connection is not found"));
-});
+}, contextLifetime: ServiceLifetime.Transient);
 
 builder.Services.AddSingleton<IDbContextFactory<AppDbContext>, TenantAwareDbContextFactory>();
 builder.Services.AddScoped<AccountService>();
