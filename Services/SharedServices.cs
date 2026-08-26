@@ -14,7 +14,7 @@ using static MudBlazor.CategoryTypes;
 
 namespace NVOAMASIS.Services
 {
-    public class SharedServices(AppDbContext _context, CustomAuthenticationStateProvider _auth, NavigationManager nav, HistoryLogService HistoryLogService,AccountService asv, IJSRuntime JSRuntime, GlobalServices gl,DNTUServices DNTUSV, QuotationService Quosv, PhieuThu_Chi_Services ThuchiSV,IssueReportServices IRSV)
+    public class SharedServices(AppDbContext _context, IDbContextFactory<AppDbContext> _dbFactory, CustomAuthenticationStateProvider _auth, NavigationManager nav, HistoryLogService HistoryLogService,AccountService asv, IJSRuntime JSRuntime, GlobalServices gl,DNTUServices DNTUSV, QuotationService Quosv, PhieuThu_Chi_Services ThuchiSV,IssueReportServices IRSV)
     {
         //demo
 
@@ -150,9 +150,10 @@ namespace NVOAMASIS.Services
         {
             try
             {
-                _context.ChangeTracker.Clear();
-                var rs = _context.Permissions.FromSqlInterpolated($"select * from [Permissions] where username = {Username} and MenuName = {MenuName}")
-                    .FirstOrDefault();
+                await using var db = await _dbFactory.CreateDbContextAsync();
+                var rs = await db.Permissions
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.UserName == Username && x.MenuName == MenuName);
                 if (rs == null)
                     return false;
                 return func.ToLower() switch{
@@ -177,8 +178,8 @@ namespace NVOAMASIS.Services
             if (string.IsNullOrWhiteSpace(username))
                 return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            _context.ChangeTracker.Clear();
-            var menuNames = await _context.Permissions
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var menuNames = await db.Permissions
                 .AsNoTracking()
                 .Where(x => x.UserName == username && x.See == true)
                 .Select(x => x.MenuName)
