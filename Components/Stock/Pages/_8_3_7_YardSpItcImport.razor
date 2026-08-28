@@ -59,6 +59,11 @@
         </MudItem>
     </MudGrid>
 
+    <ImportedFileDeleteCard Batches="_importedFiles"
+                            Busy="IsSaving"
+                            OnRefresh="LoadImportedFilesAsync"
+                            OnDeleteSelected="DeleteSelectedImportedFilesAsync" />
+
     <MudGrid Class="mb-4">
         <MudItem xs="6" md="2">
             <MudPaper Class="pa-3" Elevation="0" Outlined="true">
@@ -105,7 +110,7 @@
 
     @if (PreviewRows.Any())
     {
-        <MudTable Items="@PreviewRows" Filter="new Func<M_8_3_7_YARD_SP_ITC, bool>(IsVisible)" Dense="true" Hover="true" Bordered="true" Striped="true" FixedHeader="true" Height="560px">
+        <MudTable Items="@PreviewRows" Filter="new Func<M_8_3_7_Yard_Spltc_Import, bool>(IsVisible)" Dense="true" Hover="true" Bordered="true" Striped="true" FixedHeader="true" Height="560px">
             <ToolBarContent>
                 <MudText Typo="Typo.subtitle1">Preview SP-ITC Yard Import</MudText>
                 <MudSpacer />
@@ -169,13 +174,19 @@
     private static readonly Guid SpItcDepotId = Guid.Parse("47DEC189-7AED-4AF0-94AF-DAA2B1C14F9A");
     private const string SpItcDepotName = "SP-ITC";
 
-    private readonly List<M_8_3_7_YARD_SP_ITC> PreviewRows = new();
+    private readonly List<M_8_3_7_Yard_Spltc_Import> PreviewRows = new();
     private readonly HashSet<string> ExistingHashes = new(StringComparer.OrdinalIgnoreCase);
     private string? SearchText;
     private string? ErrorMessage;
     private bool IsSaving;
     private bool _canDelete;
     private string _usr = string.Empty;
+    private List<ImportedFileBatch> _importedFiles = new();
+
+    private static readonly ImportedFileSource[] ImportedFileSources =
+    {
+        new("8_3_7_Yard_Spltc_Import", "ImportFileName", "CreatedAt", "CreatedBy")
+    };
 
     private int DuplicateRowsCount => PreviewRows.Count(x => !string.IsNullOrWhiteSpace(x.RowHash) && ExistingHashes.Contains(x.RowHash));
     private int NewRowsCount => PreviewRows.Count - DuplicateRowsCount;
@@ -185,6 +196,53 @@
         var auth = await asv.GetAuth();
         _usr = auth.User.Identity?.Name ?? string.Empty;
         _canDelete = await ssv.CheckPermission(_usr, "Delete", PermissionMenuName);
+        _importedFiles = await ImportedFileBatchHelper.LoadAsync(Db.Database, ImportedFileSources);
+    }
+
+    private async Task LoadImportedFilesAsync()
+    {
+        _importedFiles = await ImportedFileBatchHelper.LoadAsync(Db.Database, ImportedFileSources);
+    }
+
+    private async Task DeleteSelectedImportedFilesAsync(IReadOnlyList<ImportedFileBatch> batches)
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (batches.Count == 0)
+            return;
+
+        var label = string.Join(", ", batches.Select(x => x.DisplayLabel));
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa theo file",
+            $"Xóa dữ liệu của file đã chọn?\n{label}\nThao tác không hoàn tác.",
+            yesText: "Xóa file đã chọn",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            IsSaving = true;
+            ErrorMessage = null;
+            var deleted = await ImportedFileBatchHelper.DeleteAsync(Db.Database, ImportedFileSources, batches);
+            await LoadImportedFilesAsync();
+            ExistingHashes.Clear();
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng theo file đã chọn.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.InnerException?.Message ?? ex.Message;
+            Snackbar.Add($"Xóa lỗi: {ErrorMessage}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            IsSaving = false;
+        }
     }
 
     private async Task DeleteAllDataAsync()
@@ -197,7 +255,7 @@
 
         var confirm = await DialogService.ShowMessageBox(
             "Xác nhận xóa toàn bộ",
-            "Xóa toàn bộ dữ liệu đã lưu của 8.3.7 (M_8_3_7_YARD_SP_ITC)? Thao tác không hoàn tác.",
+            "Xóa toàn bộ dữ liệu đã lưu của 8.3.7 (8_3_7_Yard_Spltc_Import)? Thao tác không hoàn tác.",
             yesText: "Xóa toàn bộ",
             cancelText: "Hủy");
 
@@ -208,9 +266,10 @@
         {
             IsSaving = true;
             ErrorMessage = null;
-            var deleted = await Db.M_8_3_7_YARD_SP_ITC.ExecuteDeleteAsync();
+            var deleted = await Db.Yard_Spltc_Import.ExecuteDeleteAsync();
             ExistingHashes.Clear();
-            Snackbar.Add($"Đã xóa {deleted:N0} dòng từ M_8_3_7_YARD_SP_ITC.", MudBlazor.Severity.Success);
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng từ 8_3_7_Yard_Spltc_Import.", MudBlazor.Severity.Success);
+            await LoadImportedFilesAsync();
         }
         catch (Exception ex)
         {
@@ -327,7 +386,7 @@
                 prm.Add(new SqlParameter(pname, chunk[j]));
             }
 
-            var sql = ";SELECT [RowHash] AS [Value] FROM [M_8_3_7_YARD_SP_ITC] WHERE [RowHash] IN (" + string.Join(",", names) + ")";
+            var sql = ";SELECT [RowHash] AS [Value] FROM [8_3_7_Yard_Spltc_Import] WHERE [RowHash] IN (" + string.Join(",", names) + ")";
             var existing = await Db.Database
                 .SqlQueryRaw<string>(sql, prm.Cast<object>().ToArray())
                 .ToListAsync();
@@ -375,11 +434,12 @@
                 row.DepotId = SpItcDepotId;
             }
 
-            await Db.M_8_3_7_YARD_SP_ITC.AddRangeAsync(rowsToSave);
+            await Db.Yard_Spltc_Import.AddRangeAsync(rowsToSave);
             await Db.SaveChangesAsync();
 
             Snackbar.Add(string.Format(Localizer["StockImport_SpItcSaved"], rowsToSave.Count), MudBlazor.Severity.Success);
             await LoadExistingHashes();
+            await LoadImportedFilesAsync();
         }
         catch (DbUpdateException ex)
         {
@@ -531,9 +591,9 @@
         }
     }
 
-    private M_8_3_7_YARD_SP_ITC NewBase(string fileName, string batchNo, string sheetName, string reportType, int rowNo, string? line)
+    private M_8_3_7_Yard_Spltc_Import NewBase(string fileName, string batchNo, string sheetName, string reportType, int rowNo, string? line)
     {
-        return new M_8_3_7_YARD_SP_ITC
+        return new M_8_3_7_Yard_Spltc_Import
         {
             Id = Guid.NewGuid(),
             ImportBatchNo = batchNo,
@@ -545,11 +605,11 @@
             Line = line,
             RowNo = rowNo,
             CreatedAt = DateTime.Now,
-            CreatedBy = "system"
+            CreatedBy = string.IsNullOrWhiteSpace(_usr) ? "system" : _usr
         };
     }
 
-    private void AddIfValid(M_8_3_7_YARD_SP_ITC item)
+    private void AddIfValid(M_8_3_7_Yard_Spltc_Import item)
     {
         if (string.IsNullOrWhiteSpace(item.ContrNo))
         {
@@ -570,13 +630,13 @@
     private async Task EnsureDepotIdColumnAsync()
     {
         await Db.Database.ExecuteSqlRawAsync(@"
-IF COL_LENGTH(N'dbo.M_8_3_7_YARD_SP_ITC', N'DepotId') IS NULL
+IF COL_LENGTH(N'dbo.[8_3_7_Yard_Spltc_Import]', N'DepotId') IS NULL
 BEGIN
-    ALTER TABLE [dbo].[M_8_3_7_YARD_SP_ITC] ADD DepotId UNIQUEIDENTIFIER NULL;
+    ALTER TABLE [dbo].[8_3_7_Yard_Spltc_Import] ADD DepotId UNIQUEIDENTIFIER NULL;
 END");
     }
 
-    private static string MakeHash(M_8_3_7_YARD_SP_ITC x)
+    private static string MakeHash(M_8_3_7_Yard_Spltc_Import x)
     {
         var raw = string.Join("|", new[]
         {
@@ -678,7 +738,7 @@ END");
         return null;
     }
 
-    private bool IsVisible(M_8_3_7_YARD_SP_ITC x)
+    private bool IsVisible(M_8_3_7_Yard_Spltc_Import x)
     {
         if (string.IsNullOrWhiteSpace(SearchText))
         {

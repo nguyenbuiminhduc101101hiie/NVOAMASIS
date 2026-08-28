@@ -91,6 +91,11 @@
         </MudGrid>
     </MudPaper>
 
+    <ImportedFileDeleteCard Batches="_importedFiles"
+                            Busy="_busy"
+                            OnRefresh="LoadImportedFilesAsync"
+                            OnDeleteSelected="DeleteSelectedImportedFilesAsync" />
+
     <MudGrid Spacing="2" Class="mb-3">
         <MudItem xs="12" sm="6" md="3">
             <MudPaper Class="kpi-card pa-3" Elevation="0">
@@ -345,6 +350,13 @@
     private List<Terminal_> _terminals = new();
     private ImportPreview? _preview;
     private byte[]? _fileBytes;
+    private List<ImportedFileBatch> _importedFiles = new();
+
+    private static readonly ImportedFileSource[] ImportedFileSources =
+    {
+        new("8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard", "SourceFile", "DateImport", "UserImport"),
+        new("8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard", "SourceFile", "DateImport", "UserImport")
+    };
 
     private int _activeSheetTab;
     private int _previewLimit = 100;
@@ -388,6 +400,55 @@
             .Where(x => !string.IsNullOrEmpty(x.TermiNalName))
             .OrderBy(x => x.TermiNalName)
             .ToListAsync();
+        await EnsureSourceFileColumnsAsync(db);
+        _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+    }
+
+    private async Task LoadImportedFilesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await EnsureSourceFileColumnsAsync(db);
+        _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+    }
+
+    private async Task DeleteSelectedImportedFilesAsync(IReadOnlyList<ImportedFileBatch> batches)
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (batches.Count == 0)
+            return;
+
+        var label = string.Join(", ", batches.Select(x => x.DisplayLabel));
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa theo file",
+            $"Xóa dữ liệu của file đã chọn?\n{label}\nThao tác không hoàn tác.",
+            yesText: "Xóa file đã chọn",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await EnsureSourceFileColumnsAsync(db);
+            var deleted = await ImportedFileBatchHelper.DeleteAsync(db.Database, ImportedFileSources, batches);
+            _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng theo file đã chọn.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task DeleteAllDataAsync()
@@ -400,7 +461,7 @@
 
         var confirm = await DialogService.ShowMessageBox(
             "Xác nhận xóa toàn bộ",
-            "Xóa toàn bộ dữ liệu đã lưu của 8.3.4 (YardMovement_AMS_26040816_Current_In_Yard2 và YardMovement_AMS_26040816_Imp)? Thao tác không hoàn tác.",
+            "Xóa toàn bộ dữ liệu đã lưu của 8.3.4 (8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard và 8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard)? Thao tác không hoàn tác.",
             yesText: "Xóa toàn bộ",
             cancelText: "Hủy");
 
@@ -411,9 +472,10 @@
         {
             _busy = true;
             await using var db = await DbFactory.CreateDbContextAsync();
-            var deletedCurrent = await db.Set<M_YardMovement_AMS_26040816_Current_In_Yard2>().ExecuteDeleteAsync();
-            var deletedInOut = await db.Set<M_8_3_IN_OUT_YARD_1>().ExecuteDeleteAsync();
+            var deletedCurrent = await db.Set<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>().ExecuteDeleteAsync();
+            var deletedInOut = await db.Set<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>().ExecuteDeleteAsync();
             Snackbar.Add($"Đã xóa {deletedCurrent + deletedInOut:N0} dòng (Current In Yard: {deletedCurrent:N0}, In/Out Yard: {deletedInOut:N0}).", MudBlazor.Severity.Success);
+            await LoadImportedFilesAsync();
         }
         catch (Exception ex)
         {
@@ -529,8 +591,8 @@
             var now = DateTime.Now;
             var depotName = _importDepot.Trim();
             var depotId = ResolveSelectedDepotId();
-            var currentRows = new List<M_YardMovement_AMS_26040816_Current_In_Yard2>();
-            var inOutRows = new List<M_8_3_IN_OUT_YARD_1>();
+            var currentRows = new List<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>();
+            var inOutRows = new List<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>();
             var currentSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var inOutSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -540,7 +602,7 @@
                 {
                     foreach (var row in sheet.Rows.Where(r => CanImportRow(sheet, r)))
                     {
-                        var entity = MapCurrentInYard(row, now, _usr, depotName, depotId);
+                        var entity = MapCurrentInYard(row, now, _usr, depotName, depotId, _preview.FileName);
                         if (string.IsNullOrWhiteSpace(entity.ITEM_NO))
                             continue;
 
@@ -558,7 +620,7 @@
                 {
                     foreach (var row in sheet.Rows.Where(r => CanImportRow(sheet, r)))
                     {
-                        var entity = MapInOutYard(row, now, _usr, depotName, depotId);
+                        var entity = MapInOutYard(row, now, _usr, depotName, depotId, _preview.FileName);
                         if (string.IsNullOrWhiteSpace(entity.SOCONT))
                             continue;
 
@@ -579,24 +641,25 @@
             await using var tran = await db.Database.BeginTransactionAsync();
 
             if (currentRows.Count > 0)
-                await db.Set<M_YardMovement_AMS_26040816_Current_In_Yard2>().AddRangeAsync(currentRows);
+                await db.Set<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>().AddRangeAsync(currentRows);
 
             if (inOutRows.Count > 0)
-                await db.Set<M_8_3_IN_OUT_YARD_1>().AddRangeAsync(inOutRows);
+                await db.Set<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>().AddRangeAsync(inOutRows);
 
             await db.SaveChangesAsync();
 
             if (currentRows.Count > 0)
-                await UpdateDepotForRowsAsync<M_YardMovement_AMS_26040816_Current_In_Yard2>(db, currentRows.Select(x => x.Id), depotName, depotId);
+                await UpdateDepotForRowsAsync<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>(db, currentRows.Select(x => x.Id), depotName, depotId);
 
             if (inOutRows.Count > 0)
-                await UpdateDepotForRowsAsync<M_8_3_IN_OUT_YARD_1>(db, inOutRows.Select(x => x.Id), depotName, depotId);
+                await UpdateDepotForRowsAsync<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>(db, inOutRows.Select(x => x.Id), depotName, depotId);
 
             await tran.CommitAsync();
 
             Snackbar.Add(string.Format(Localizer["StockImport_YardMovementCompleted"],
                 currentRows.Count, inOutRows.Count, ExistingTotal, BatchDuplicateTotal, InvalidTotal), MudBlazor.Severity.Success);
             ClearPreview();
+            await LoadImportedFilesAsync();
         }
         catch (Exception ex)
         {
@@ -640,21 +703,21 @@
         var currentItemNos = currentPreview.Select(x => x.Entity.ITEM_NO!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var inOutSoConts = inOutPreview.Select(x => x.Entity.SOCONT!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-        var existingCurrent = new List<M_YardMovement_AMS_26040816_Current_In_Yard2>();
+        var existingCurrent = new List<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>();
         foreach (var chunk in Chunk(currentItemNos, 200))
         {
             var filter = BuildCurrentItemNoFilter(chunk);
-            existingCurrent.AddRange(await db.Set<M_YardMovement_AMS_26040816_Current_In_Yard2>()
+            existingCurrent.AddRange(await db.Set<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>()
                 .AsNoTracking()
                 .Where(filter)
                 .ToListAsync());
         }
 
-        var existingInOut = new List<M_8_3_IN_OUT_YARD_1>();
+        var existingInOut = new List<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>();
         foreach (var chunk in Chunk(inOutSoConts, 200))
         {
             var filter = BuildInOutSoContFilter(chunk);
-            existingInOut.AddRange(await db.Set<M_8_3_IN_OUT_YARD_1>()
+            existingInOut.AddRange(await db.Set<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>()
                 .AsNoTracking()
                 .Where(filter)
                 .ToListAsync());
@@ -953,17 +1016,17 @@
 
     private static string TargetLongLabel(ImportTarget target) => target switch
     {
-        ImportTarget.CurrentInYard => "Import into table M_YardMovement_AMS_26040816_Current_In_Yard2",
-        ImportTarget.InOutYard => "Import into table M_8_3_IN_OUT_YARD_1",
+        ImportTarget.CurrentInYard => "Import into table 8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard",
+        ImportTarget.InOutYard => "Import into table 8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard",
         _ => "The sheet target was not recognized"
     };
 
-    private static M_YardMovement_AMS_26040816_Current_In_Yard2 MapCurrentInYard(ExcelPreviewRow row, DateTime now, string user, string? depot = null, Guid? depotId = null)
+    private static M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard MapCurrentInYard(ExcelPreviewRow row, DateTime now, string user, string? depot = null, Guid? depotId = null, string? sourceFile = null)
     {
         var itemNo = S(row, "ITEM_NO", "ITEMNO", "SOCONT", "CNTRNO", "CONTAINERNO");
         var note = MergeNote(row, CurrentKnownKeys, S(row, "GHICHU", "GHI_CHU", "NOTE", "REMARK"));
 
-        return new M_YardMovement_AMS_26040816_Current_In_Yard2
+        return new M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard
         {
             Id = Guid.NewGuid(),
             DEPOT = string.IsNullOrWhiteSpace(depot) ? null : depot.Trim(),
@@ -1000,18 +1063,19 @@
             DAM = S(row, "DAM", "DAMAGE"),
             GHICHU = Truncate(note, 1000),
             SOSEAL = S(row, "SOSEAL", "SEAL", "SEALNO"),
+            SourceFile = string.IsNullOrWhiteSpace(sourceFile) ? null : sourceFile.Trim(),
             DateImport = now,
             UserImport = user,
             CreatedAt = now
         };
     }
 
-    private static M_8_3_IN_OUT_YARD_1 MapInOutYard(ExcelPreviewRow row, DateTime now, string user, string? depot = null, Guid? depotId = null)
+    private static M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard MapInOutYard(ExcelPreviewRow row, DateTime now, string user, string? depot = null, Guid? depotId = null, string? sourceFile = null)
     {
         var soCont = S(row, "SOCONT", "ITEM_NO", "ITEMNO", "CNTRNO", "CONTAINERNO");
         var note = MergeNote(row, InOutKnownKeys, S(row, "GHICHU", "GHI_CHU", "NOTE", "REMARK"));
 
-        return new M_8_3_IN_OUT_YARD_1
+        return new M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard
         {
             Id = Guid.NewGuid(),
             DEPOT = string.IsNullOrWhiteSpace(depot) ? null : depot.Trim(),
@@ -1043,6 +1107,7 @@
             ENTRY_TRUCK_ID = S(row, "ENTRY_TRUCK_ID", "ENTRYTRUCKID", "PHUONGTIEN_VAO", "PHUONGTIENVAO", "ARR_CAR", "ARRCAR"),
             EXIT_TRUCK_ID = S(row, "EXIT_TRUCK_ID", "EXITTRUCKID", "PHUONGTIEN_RA", "PHUONGTIENRA", "DEP_CAR", "DEPCAR"),
             SOSEAL = S(row, "SOSEAL", "SEAL", "SEALNO"),
+            SourceFile = string.IsNullOrWhiteSpace(sourceFile) ? null : sourceFile.Trim(),
             DateImport = now,
             UserImport = user,
             CreatedAt = now
@@ -1075,7 +1140,7 @@
         "EXITTRUCKID","EXIT_TRUCK_ID","PHUONGTIENRA","PHUONGTIEN_RA","SOSEAL","SEAL","SEALNO"
     };
 
-    private static string CurrentSignature(M_YardMovement_AMS_26040816_Current_In_Yard2 x, string? depot = null)
+    private static string CurrentSignature(M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard x, string? depot = null)
         => string.Join("␟", new[]
         {
             N(depot ?? x.DEPOT), N(x.AGENT), N(x.LINE), N(x.ITEM_KEY), N(x.ITEM_NO), N(x.ISO), N(x.FEL), N(x.TEMP), N(x.WEIGHT), N(x.VGM_WEIGHT),
@@ -1084,7 +1149,7 @@
             N(x.PLACE_OF_DELIVERY), N(x.CUSTOM_CLEARANCE), N(x.CC_TS), N(x.DGS_CLASS), N(x.UN_NO), N(x.DAM), N(x.GHICHU), N(x.SOSEAL)
         });
 
-    private static string InOutSignature(M_8_3_IN_OUT_YARD_1 x, string? depot = null)
+    private static string InOutSignature(M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard x, string? depot = null)
         => string.Join("␟", new[]
         {
             N(depot ?? x.DEPOT), N(x.METHOD), N(x.EXEC_TS), N(x.LINE), N(x.ITEM_KEY), N(x.SOCONT), N(x.KICHCO), N(x.TRANGTHAI), N(x.TRONGLUONG), N(x.TRONGLUONG_VGM),
@@ -1099,8 +1164,15 @@
 
     private async Task EnsureDepotColumnsAsync(AppDbContext db)
     {
-        await EnsureDepotColumnAsync<M_YardMovement_AMS_26040816_Current_In_Yard2>(db);
-        await EnsureDepotColumnAsync<M_8_3_IN_OUT_YARD_1>(db);
+        await EnsureDepotColumnAsync<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>(db);
+        await EnsureDepotColumnAsync<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>(db);
+        await EnsureSourceFileColumnsAsync(db);
+    }
+
+    private static async Task EnsureSourceFileColumnsAsync(AppDbContext db)
+    {
+        await ImportedFileBatchHelper.EnsureNvarcharColumnAsync(db.Database, "8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard", "SourceFile");
+        await ImportedFileBatchHelper.EnsureNvarcharColumnAsync(db.Database, "8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard", "SourceFile");
     }
 
     private static async Task EnsureDepotColumnAsync<T>(AppDbContext db) where T : class
@@ -1182,10 +1254,10 @@ END");
             yield return values.Skip(i).Take(size).ToList();
     }
 
-    private static Expression<Func<M_YardMovement_AMS_26040816_Current_In_Yard2, bool>> BuildCurrentItemNoFilter(List<string> values)
+    private static Expression<Func<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard, bool>> BuildCurrentItemNoFilter(List<string> values)
     {
-        var parameter = Expression.Parameter(typeof(M_YardMovement_AMS_26040816_Current_In_Yard2), "x");
-        var property = Expression.PropertyOrField(parameter, nameof(M_YardMovement_AMS_26040816_Current_In_Yard2.ITEM_NO));
+        var parameter = Expression.Parameter(typeof(M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard), "x");
+        var property = Expression.PropertyOrField(parameter, nameof(M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard.ITEM_NO));
         Expression body = Expression.Constant(false);
 
         foreach (var value in values.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -1194,13 +1266,13 @@ END");
             body = Expression.OrElse(body, Expression.Equal(property, constant));
         }
 
-        return Expression.Lambda<Func<M_YardMovement_AMS_26040816_Current_In_Yard2, bool>>(body, parameter);
+        return Expression.Lambda<Func<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard, bool>>(body, parameter);
     }
 
-    private static Expression<Func<M_8_3_IN_OUT_YARD_1, bool>> BuildInOutSoContFilter(List<string> values)
+    private static Expression<Func<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard, bool>> BuildInOutSoContFilter(List<string> values)
     {
-        var parameter = Expression.Parameter(typeof(M_8_3_IN_OUT_YARD_1), "x");
-        var property = Expression.PropertyOrField(parameter, nameof(M_8_3_IN_OUT_YARD_1.SOCONT));
+        var parameter = Expression.Parameter(typeof(M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard), "x");
+        var property = Expression.PropertyOrField(parameter, nameof(M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard.SOCONT));
         Expression body = Expression.Constant(false);
 
         foreach (var value in values.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -1209,7 +1281,7 @@ END");
             body = Expression.OrElse(body, Expression.Equal(property, constant));
         }
 
-        return Expression.Lambda<Func<M_8_3_IN_OUT_YARD_1, bool>>(body, parameter);
+        return Expression.Lambda<Func<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard, bool>>(body, parameter);
     }
 
 

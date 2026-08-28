@@ -3,8 +3,8 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace NVOAMASIS.Models
 {
-    [Table("M_8_3_7_YARD_SP_ITC")]
-    public class M_8_3_7_YARD_SP_ITC
+    [Table("8_3_7_Yard_Spltc_Import")]
+    public class M_8_3_7_Yard_Spltc_Import
     {
         [Key]
         public Guid Id { get; set; } = Guid.NewGuid();

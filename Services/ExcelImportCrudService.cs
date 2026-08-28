@@ -55,14 +55,14 @@ public class ExcelImportCrudService(AppDbContext context)
     public Task<List<M_8_3_VSS_IN_OUT_YARD_Imp>> GetVssImpAsync(CancellationToken ct = default) =>
         context.YardMovement_VSS_26040808_Imp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
-    public Task<List<M_8_3_VSS_IN_OUT_YARD_Exp>> GetVssExpAsync(CancellationToken ct = default) =>
-        context.YardMovement_VSS_26040808_Exp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+    public Task<List<M_8_3_5_Cang_VICT>> GetVssExpAsync(CancellationToken ct = default) =>
+        context.Cang_VICT.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
-    public Task<List<M_8_3_IN_OUT_YARD_1>> GetAmsImpAsync(CancellationToken ct = default) =>
-        context.YardMovement_AMS_26040816_Imp.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+    public Task<List<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>> GetAmsImpAsync(CancellationToken ct = default) =>
+        context.Import_Yard_Movement_CatLai_In_Out_Yard.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
-    public Task<List<M_YardMovement_AMS_26040816_Current_In_Yard2>> GetAmsExpAsync(CancellationToken ct = default) =>
-        context.YardMovement_AMS_26040816_Current_In_Yard2.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
+    public Task<List<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>> GetAmsExpAsync(CancellationToken ct = default) =>
+        context.Import_Yard_Movement_CatLai_Current_In_Yard.AsNoTracking().OrderByDescending(x => x.CreatedAt).ToListAsync(ct);
 
     public async Task<(bool Ok, string? Error)> UpsertAsync<T>(T entity, CancellationToken ct = default)
         where T : class, IExcelImportEntity
@@ -157,8 +157,8 @@ public class ExcelImportCrudService(AppDbContext context)
         var content = await reader.ReadToEndAsync();
         ct.ThrowIfCancellationRequested();
 
-        var incomingImp = new List<M_8_3_IN_OUT_YARD_1>();
-        var incomingExp = new List<M_YardMovement_AMS_26040816_Current_In_Yard2>();
+        var incomingImp = new List<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>();
+        var incomingExp = new List<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>();
         var importedAt = DateTime.UtcNow;
 
         var worksheetRegex = new Regex("<Worksheet\\b[^>]*ss:Name=\"(?<name>[^\"]+)\"[^>]*>(?<body>.*?)</Worksheet\\s*>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -215,7 +215,7 @@ public class ExcelImportCrudService(AppDbContext context)
 
                 if (IsAmsImpSheet(sheetName))
                 {
-                    incomingImp.Add(new M_8_3_IN_OUT_YARD_1
+                    incomingImp.Add(new M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard
                     {
                         Id = Guid.NewGuid(),
                         METHOD = GetValue("METHOD"),
@@ -252,7 +252,7 @@ public class ExcelImportCrudService(AppDbContext context)
                 }
                 else
                 {
-                    incomingExp.Add(new M_YardMovement_AMS_26040816_Current_In_Yard2
+                    incomingExp.Add(new M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard
                     {
                         Id = Guid.NewGuid(),
                         AGENT = GetValue("AGENT"),
@@ -299,10 +299,10 @@ public class ExcelImportCrudService(AppDbContext context)
             return new ExcelImportCrudResult(0, "Không đọc được dữ liệu AMS từ file XML Spreadsheet.");
 
         var existingImpSignatures = new HashSet<string>(
-            (await context.YardMovement_AMS_26040816_Imp.ToListAsync(ct)).Select(BuildAmsImpSignature),
+            (await context.Import_Yard_Movement_CatLai_In_Out_Yard.ToListAsync(ct)).Select(BuildAmsImpSignature),
             StringComparer.OrdinalIgnoreCase);
         var existingExpSignatures = new HashSet<string>(
-            (await context.YardMovement_AMS_26040816_Current_In_Yard2.ToListAsync(ct)).Select(BuildAmsExpSignature),
+            (await context.Import_Yard_Movement_CatLai_Current_In_Yard.ToListAsync(ct)).Select(BuildAmsExpSignature),
             StringComparer.OrdinalIgnoreCase);
         var inserted = 0;
 
@@ -311,7 +311,7 @@ public class ExcelImportCrudService(AppDbContext context)
             var signature = BuildAmsImpSignature(inc);
             if (existingImpSignatures.Contains(signature))
                 continue;
-            await context.YardMovement_AMS_26040816_Imp.AddAsync(inc, ct);
+            await context.Import_Yard_Movement_CatLai_In_Out_Yard.AddAsync(inc, ct);
             existingImpSignatures.Add(signature);
             inserted++;
         }
@@ -321,7 +321,7 @@ public class ExcelImportCrudService(AppDbContext context)
             var signature = BuildAmsExpSignature(inc);
             if (existingExpSignatures.Contains(signature))
                 continue;
-            await context.YardMovement_AMS_26040816_Current_In_Yard2.AddAsync(inc, ct);
+            await context.Import_Yard_Movement_CatLai_Current_In_Yard.AddAsync(inc, ct);
             existingExpSignatures.Add(signature);
             inserted++;
         }
@@ -702,7 +702,7 @@ public class ExcelImportCrudService(AppDbContext context)
     private async Task<ExcelImportCrudResult> ImportVssAsync(DataSet ds, string? importUser, CancellationToken ct)
     {
         var incomingImp = new List<M_8_3_VSS_IN_OUT_YARD_Imp>();
-        var incomingExp = new List<M_8_3_VSS_IN_OUT_YARD_Exp>();
+        var incomingExp = new List<M_8_3_5_Cang_VICT>();
         var matchedSheets = new List<string>();
         var importedAt = DateTime.UtcNow;
         foreach (DataTable table in ds.Tables)
@@ -770,7 +770,7 @@ public class ExcelImportCrudService(AppDbContext context)
                 }
                 else
                 {
-                    incomingExp.Add(new M_8_3_VSS_IN_OUT_YARD_Exp
+                    incomingExp.Add(new M_8_3_5_Cang_VICT
                     {
                         Id = Guid.NewGuid(),
                         METHOD = ReadString(row, map, "METHOD"),
@@ -821,7 +821,7 @@ public class ExcelImportCrudService(AppDbContext context)
             (await context.YardMovement_VSS_26040808_Imp.ToListAsync(ct)).Select(BuildVssImpSignature),
             StringComparer.OrdinalIgnoreCase);
         var existingExpSignatures = new HashSet<string>(
-            (await context.YardMovement_VSS_26040808_Exp.ToListAsync(ct)).Select(BuildVssExpSignature),
+            (await context.Cang_VICT.ToListAsync(ct)).Select(BuildVssExpSignature),
             StringComparer.OrdinalIgnoreCase);
         var inserted = 0;
 
@@ -852,7 +852,7 @@ public class ExcelImportCrudService(AppDbContext context)
             inc.DateImport = importedAt;
             inc.UserImport = importUser;
             inc.CreatedAt = importedAt;
-            await context.YardMovement_VSS_26040808_Exp.AddAsync(inc, ct);
+            await context.Cang_VICT.AddAsync(inc, ct);
             existingExpSignatures.Add(signature);
             inserted++;
         }
@@ -908,8 +908,8 @@ public class ExcelImportCrudService(AppDbContext context)
 
     private async Task<ExcelImportCrudResult> ImportAmsAsync(DataSet ds, string? importUser, string? amsLineFilter, CancellationToken ct)
     {
-        var incomingImp = new List<M_8_3_IN_OUT_YARD_1>();
-        var incomingExp = new List<M_YardMovement_AMS_26040816_Current_In_Yard2>();
+        var incomingImp = new List<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>();
+        var incomingExp = new List<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>();
         var matchedSheets = new List<string>();
         var importedAt = DateTime.UtcNow;
 
@@ -943,7 +943,7 @@ public class ExcelImportCrudService(AppDbContext context)
 
                 if (IsAmsImpSheet(normalizedSheet))
                 {
-                    incomingImp.Add(new M_8_3_IN_OUT_YARD_1
+                    incomingImp.Add(new M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard
                     {
                         Id = Guid.NewGuid(),
                         METHOD = ReadString(row, map, "METHOD"),
@@ -980,7 +980,7 @@ public class ExcelImportCrudService(AppDbContext context)
                 }
                 else
                 {
-                    incomingExp.Add(new M_YardMovement_AMS_26040816_Current_In_Yard2
+                    incomingExp.Add(new M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard
                     {
                         Id = Guid.NewGuid(),
                         AGENT = ReadString(row, map, "AGENT"),
@@ -1027,10 +1027,10 @@ public class ExcelImportCrudService(AppDbContext context)
             return new ExcelImportCrudResult(0, "Không tìm thấy sheet AMS hợp lệ (nhận: IN-OUT_YARD_1, Current_In_Yard2, IN-OUT_YARD__Imp, IN-OUT_YARD__Exp).");
 
         var existingImpSignatures = new HashSet<string>(
-            (await context.YardMovement_AMS_26040816_Imp.ToListAsync(ct)).Select(BuildAmsImpSignature),
+            (await context.Import_Yard_Movement_CatLai_In_Out_Yard.ToListAsync(ct)).Select(BuildAmsImpSignature),
             StringComparer.OrdinalIgnoreCase);
         var existingExpSignatures = new HashSet<string>(
-            (await context.YardMovement_AMS_26040816_Current_In_Yard2.ToListAsync(ct)).Select(BuildAmsExpSignature),
+            (await context.Import_Yard_Movement_CatLai_Current_In_Yard.ToListAsync(ct)).Select(BuildAmsExpSignature),
             StringComparer.OrdinalIgnoreCase);
         var inserted = 0;
 
@@ -1040,7 +1040,7 @@ public class ExcelImportCrudService(AppDbContext context)
             var signature = BuildAmsImpSignature(inc);
             if (existingImpSignatures.Contains(signature))
                 continue;
-            await context.YardMovement_AMS_26040816_Imp.AddAsync(inc, ct);
+            await context.Import_Yard_Movement_CatLai_In_Out_Yard.AddAsync(inc, ct);
             existingImpSignatures.Add(signature);
             inserted++;
         }
@@ -1051,7 +1051,7 @@ public class ExcelImportCrudService(AppDbContext context)
             var signature = BuildAmsExpSignature(inc);
             if (existingExpSignatures.Contains(signature))
                 continue;
-            await context.YardMovement_AMS_26040816_Current_In_Yard2.AddAsync(inc, ct);
+            await context.Import_Yard_Movement_CatLai_Current_In_Yard.AddAsync(inc, ct);
             existingExpSignatures.Add(signature);
             inserted++;
         }
@@ -1179,7 +1179,7 @@ public class ExcelImportCrudService(AppDbContext context)
             x.EXIT_VOY_NO, x.EXIT_VES_NAME, x.ENTRY_TRUCK_ID, x.EXIT_TRUCK_ID, x.SOSEAL, x.STORAGEDAY);
     }
 
-    private static string BuildVssExpSignature(M_8_3_VSS_IN_OUT_YARD_Exp x)
+    private static string BuildVssExpSignature(M_8_3_5_Cang_VICT x)
     {
         return BuildVssSignatureCore(
             x.METHOD, x.OPERATION_METHOD, x.EXEC_TS, x.LINE, x.AGENT, x.KHACHHANG, x.ITEM_KEY, x.SOCONT, x.KICHCO,
@@ -1232,13 +1232,13 @@ public class ExcelImportCrudService(AppDbContext context)
             storageDay?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
     }
 
-    private static string BuildAmsImpSignature(M_8_3_IN_OUT_YARD_1 x)
+    private static string BuildAmsImpSignature(M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard x)
         => BuildAmsSignatureCore(
             x.METHOD, x.EXEC_TS, x.LINE, x.ITEM_KEY, x.SOCONT, x.KICHCO, x.TRANGTHAI, x.TRONGLUONG, x.TRONGLUONG_VGM,
             x.BL_NO, x.BOOK_NO, x.RELEASE_NO, x.HUONG, x.HUONG1, x.CANGCT, x.CANGDEN, x.GIAO, x.NHAN, x.DGS_CLASS,
             x.GHICHU, x.ENTRY_VOY_NO, x.ENTRY_VES_NAME, x.EXIT_VOY_NO, x.EXIT_VES_NAME, x.ENTRY_TRUCK_ID, x.EXIT_TRUCK_ID, x.SOSEAL);
 
-    private static string BuildAmsExpSignature(M_YardMovement_AMS_26040816_Current_In_Yard2 x)
+    private static string BuildAmsExpSignature(M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard x)
         => string.Join("|",
             NormalizeKey(x.AGENT),
             NormalizeKey(x.LINE),

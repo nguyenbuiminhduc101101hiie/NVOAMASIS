@@ -97,6 +97,11 @@
         </MudGrid>
     </MudPaper>
 
+    <ImportedFileDeleteCard Batches="_importedFiles"
+                            Busy="_busy"
+                            OnRefresh="LoadImportedFilesAsync"
+                            OnDeleteSelected="DeleteSelectedImportedFilesAsync" />
+
     <MudGrid Spacing="2" Class="mb-3">
         <MudItem xs="12" sm="6" md="2">
             <MudPaper Class="kpi-card pa-3" Elevation="0">
@@ -306,7 +311,7 @@
 
 @code {
     private const string PermissionMenuName = "Inventory";
-    private const string TableName = "M_8_3_8_YARD_ALPINE_INVENTORY";
+    private const string TableName = "8_3_8_Phuong_Dong_Depot";
 
     private bool _busy;
     private bool _canAdd;
@@ -315,6 +320,11 @@
     private string _importDepot = "PHUONG DONG DEPOT";
     private List<Terminal_> _terminals = new();
     private ImportPreview? _preview;
+    private List<ImportedFileBatch> _importedFiles = new();
+    private static readonly ImportedFileSource[] ImportedFileSources =
+    {
+        new(TableName, "SOURCE_FILE", "DATE_IMPORT", "USER_IMPORT")
+    };
     private int _activeTab;
     private int _previewLimit = 100;
     private string _search = string.Empty;
@@ -338,6 +348,52 @@
             .Where(x => !string.IsNullOrEmpty(x.TermiNalName))
             .OrderBy(x => x.TermiNalName)
             .ToListAsync();
+        _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+    }
+
+    private async Task LoadImportedFilesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+    }
+
+    private async Task DeleteSelectedImportedFilesAsync(IReadOnlyList<ImportedFileBatch> batches)
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (batches.Count == 0)
+            return;
+
+        var label = string.Join(", ", batches.Select(x => x.DisplayLabel));
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa theo file",
+            $"Xóa dữ liệu của file đã chọn?\n{label}\nThao tác không hoàn tác.",
+            yesText: "Xóa file đã chọn",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var deleted = await ImportedFileBatchHelper.DeleteAsync(db.Database, ImportedFileSources, batches);
+            _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng theo file đã chọn.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private Guid? ResolveSelectedDepotId()
@@ -387,8 +443,9 @@
             _busy = true;
             await using var db = await DbFactory.CreateDbContextAsync();
             var deleted = await db.Database.ExecuteSqlRawAsync(
-                $"IF OBJECT_ID(N'dbo.{TableName}', N'U') IS NOT NULL DELETE FROM dbo.[{TableName}];");
+                $"IF OBJECT_ID(N'dbo.[{TableName}]', N'U') IS NOT NULL DELETE FROM dbo.[{TableName}];");
             Snackbar.Add($"Đã xóa {deleted:N0} dòng từ {TableName}.", MudBlazor.Severity.Success);
+            await LoadImportedFilesAsync();
         }
         catch (Exception ex)
         {
@@ -487,6 +544,7 @@
 
             Snackbar.Add(string.Format(Localizer["StockImport_AlpineCompleted"], inserted, TableName), MudBlazor.Severity.Success);
             ClearPreview();
+            await LoadImportedFilesAsync();
         }
         catch (Exception ex)
         {
@@ -637,7 +695,7 @@
         // App login thường không có quyền này → phải check tồn tại bằng SELECT riêng.
         await using (var check = conn.CreateCommand())
         {
-            check.CommandText = $"SELECT CASE WHEN OBJECT_ID(N'dbo.{TableName}', N'U') IS NULL THEN 0 ELSE 1 END;";
+            check.CommandText = $"SELECT CASE WHEN OBJECT_ID(N'dbo.[{TableName}]', N'U') IS NULL THEN 0 ELSE 1 END;";
             var exists = Convert.ToInt32(await check.ExecuteScalarAsync());
             if (exists == 1)
             {
@@ -653,7 +711,7 @@
         catch (SqlException ex) when (ex.Number == 262)
         {
             throw new InvalidOperationException(
-                $"Bảng dbo.{TableName} chưa tồn tại và tài khoản SQL không có quyền CREATE TABLE. Hãy chạy script tạo bảng bằng tài khoản DBA rồi import lại.");
+                $"Bảng dbo.[{TableName}] chưa tồn tại và tài khoản SQL không có quyền CREATE TABLE. Hãy chạy Scripts/Create_8_3_8_Phuong_Dong_Depot.sql bằng tài khoản DBA rồi import lại.");
         }
 
         await EnsureDepotIdColumnAsync(db);
@@ -662,9 +720,9 @@
     private static async Task EnsureDepotIdColumnAsync(AppDbContext db)
     {
         await db.Database.ExecuteSqlRawAsync(@"
-IF COL_LENGTH(N'dbo.M_8_3_8_YARD_ALPINE_INVENTORY', N'DepotId') IS NULL
+IF COL_LENGTH(N'dbo.[8_3_8_Phuong_Dong_Depot]', N'DepotId') IS NULL
 BEGIN
-    ALTER TABLE [dbo].[M_8_3_8_YARD_ALPINE_INVENTORY] ADD DepotId UNIQUEIDENTIFIER NULL;
+    ALTER TABLE [dbo].[8_3_8_Phuong_Dong_Depot] ADD DepotId UNIQUEIDENTIFIER NULL;
 END");
     }
 
@@ -1142,11 +1200,11 @@ END");
     }
 
     private const string CreateTableSql = @"
-IF OBJECT_ID(N'dbo.M_8_3_8_YARD_ALPINE_INVENTORY', N'U') IS NULL
+IF OBJECT_ID(N'dbo.[8_3_8_Phuong_Dong_Depot]', N'U') IS NULL
 BEGIN
-    CREATE TABLE dbo.M_8_3_8_YARD_ALPINE_INVENTORY
+    CREATE TABLE dbo.[8_3_8_Phuong_Dong_Depot]
     (
-        ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_M_8_3_8_YARD_ALPINE_INVENTORY PRIMARY KEY,
+        ID UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_8_3_8_Phuong_Dong_Depot PRIMARY KEY,
         DEPOT NVARCHAR(150) NULL,
         DepotId UNIQUEIDENTIFIER NULL,
         SOURCE_FILE NVARCHAR(260) NULL,
@@ -1210,17 +1268,17 @@ BEGIN
         CREATED_AT DATETIME2 NULL
     );
 
-    CREATE UNIQUE INDEX UX_M_8_3_8_YARD_ALPINE_INVENTORY_SIGNATURE
-        ON dbo.M_8_3_8_YARD_ALPINE_INVENTORY(ROW_SIGNATURE);
+    CREATE UNIQUE INDEX UX_8_3_8_Phuong_Dong_Depot_SIGNATURE
+        ON dbo.[8_3_8_Phuong_Dong_Depot](ROW_SIGNATURE);
 
-    CREATE INDEX IX_M_8_3_8_YARD_ALPINE_INVENTORY_CONTAINER
-        ON dbo.M_8_3_8_YARD_ALPINE_INVENTORY(CONTAINER, DATE_IN, DATE_OUT);
+    CREATE INDEX IX_8_3_8_Phuong_Dong_Depot_CONTAINER
+        ON dbo.[8_3_8_Phuong_Dong_Depot](CONTAINER, DATE_IN, DATE_OUT);
 END;";
 
     private const string InsertSql = @"
-IF NOT EXISTS (SELECT 1 FROM dbo.M_8_3_8_YARD_ALPINE_INVENTORY WITH (UPDLOCK, HOLDLOCK) WHERE ROW_SIGNATURE = @ROW_SIGNATURE)
+IF NOT EXISTS (SELECT 1 FROM dbo.[8_3_8_Phuong_Dong_Depot] WITH (UPDLOCK, HOLDLOCK) WHERE ROW_SIGNATURE = @ROW_SIGNATURE)
 BEGIN
-    INSERT INTO dbo.M_8_3_8_YARD_ALPINE_INVENTORY
+    INSERT INTO dbo.[8_3_8_Phuong_Dong_Depot]
     (
         ID, DEPOT, DepotId, SOURCE_FILE, SHEET_NAME, EXCEL_ROW, REPORT_FROM, REPORT_TO, REPORT_DATE,
         SEQ, EIR, CONTAINER, CONTAINER_TYPE, ISO_SZTP, ISO_TYPE, OPT, OPR, FE, MOVE,
