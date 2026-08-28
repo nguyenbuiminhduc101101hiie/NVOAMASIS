@@ -17,20 +17,22 @@ public sealed class ContainerDepotLookupResult
 public class ContainerDepotLookupService
 {
     // Mapping cột số cont theo từng bảng:
-    // - YardMovement_AMS_26040816_Current_In_Yard2 -> ITEM_NO
-    // - YardMovement_AMS_26040816_Imp            -> SOCONT
-    // - YardMovement_VSS_26040808_Exp            -> SOCONT
-    // - M_8_3_7_YARD_SP_ITC                      -> ContrNo
-    // - M_8_3_6_YARD_APS_GATEIN/GATEOUT/STOCK    -> CONTAINER
+    // - 8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard -> ITEM_NO
+    // - 8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard    -> SOCONT
+    // - 8_3_5_Cang_VICT                          -> SOCONT
+    // - 8_3_7_Yard_Spltc_Import                   -> ContrNo
+    // - 8_3_6_Macstar_Thu_Duc_GATEIN/GATEOUT/STOCK -> CONTAINER
+    // - 8_3_8_Phuong_Dong_Depot                   -> CONTAINER
     //
-    // Không tra: M_8_3_6_YARD_APS_GENERAL, M_8_3_6_YARD_APS_GENERAL_STATUS (không có cột số cont).
+    // Không tra: 8_3_6_Macstar_Thu_Duc_GENERAL, 8_3_6_Macstar_Thu_Duc_GENERAL_STATUS (không có cột số cont).
     //
     // Cột ngày sự kiện APS khác nhau theo bảng (GATEOUT có DATE_OUT; GATEIN/STOCK không có).
     private static readonly (string TableName, string ContainerColumn, string EventDateExpr)[] ApsContainerTables =
     {
-        ("M_8_3_6_YARD_APS_GATEIN", "CONTAINER", "COALESCE(DATE_IN, DATE_IMPORT, CREATED_AT)"),
-        ("M_8_3_6_YARD_APS_GATEOUT", "CONTAINER", "COALESCE(DATE_OUT, DATE_IN, DATE_IMPORT, CREATED_AT)"),
-        ("M_8_3_6_YARD_APS_STOCK", "CONTAINER", "COALESCE(DATE_IN, DATE_IMPORT, CREATED_AT)")
+        ("8_3_6_Macstar_Thu_Duc_GATEIN", "CONTAINER", "COALESCE(DATE_IN, DATE_IMPORT, CREATED_AT)"),
+        ("8_3_6_Macstar_Thu_Duc_GATEOUT", "CONTAINER", "COALESCE(DATE_OUT, DATE_IN, DATE_IMPORT, CREATED_AT)"),
+        ("8_3_6_Macstar_Thu_Duc_STOCK", "CONTAINER", "COALESCE(DATE_IN, DATE_IMPORT, CREATED_AT)"),
+        ("8_3_8_Phuong_Dong_Depot", "CONTAINER", "COALESCE(DATE_OUT, DATE_IN, DATE_IMPORT, CREATED_AT)")
     };
 
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
@@ -104,7 +106,7 @@ public class ContainerDepotLookupService
 
     private static async Task<ContainerDepotLookupResult?> QueryAmsCurrentAsync(AppDbContext db, string containerNo, CancellationToken cancellationToken)
     {
-        var row = await db.YardMovement_AMS_26040816_Current_In_Yard2.AsNoTracking()
+        var row = await db.Import_Yard_Movement_CatLai_Current_In_Yard.AsNoTracking()
             .Where(x => x.ITEM_NO == containerNo && !string.IsNullOrWhiteSpace(x.DEPOT))
             .OrderByDescending(x => x.DateImport)
             .ThenByDescending(x => x.CreatedAt)
@@ -116,14 +118,14 @@ public class ContainerDepotLookupService
             : new ContainerDepotLookupResult
             {
                 Depot = row.DEPOT!.Trim(),
-                SourceTable = "YardMovement_AMS_26040816_Current_In_Yard2",
+                SourceTable = "8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard",
                 EventDate = row.ARR_TS ?? row.DateImport
             };
     }
 
     private static async Task<ContainerDepotLookupResult?> QueryAmsImpAsync(AppDbContext db, string containerNo, CancellationToken cancellationToken)
     {
-        var row = await db.YardMovement_AMS_26040816_Imp.AsNoTracking()
+        var row = await db.Import_Yard_Movement_CatLai_In_Out_Yard.AsNoTracking()
             .Where(x => x.SOCONT == containerNo && !string.IsNullOrWhiteSpace(x.DEPOT))
             .OrderByDescending(x => x.DateImport)
             .ThenByDescending(x => x.CreatedAt)
@@ -135,14 +137,14 @@ public class ContainerDepotLookupService
             : new ContainerDepotLookupResult
             {
                 Depot = row.DEPOT!.Trim(),
-                SourceTable = "YardMovement_AMS_26040816_Imp",
+                SourceTable = "8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard",
                 EventDate = row.EXEC_TS ?? row.DateImport
             };
     }
 
     private static async Task<ContainerDepotLookupResult?> QueryVssExpAsync(AppDbContext db, string containerNo, CancellationToken cancellationToken)
     {
-        var row = await db.YardMovement_VSS_26040808_Exp.AsNoTracking()
+        var row = await db.Cang_VICT.AsNoTracking()
             .Where(x => x.SOCONT == containerNo && !string.IsNullOrWhiteSpace(x.DEPOT))
             .OrderByDescending(x => x.DateImport)
             .ThenByDescending(x => x.CreatedAt)
@@ -154,14 +156,14 @@ public class ContainerDepotLookupService
             : new ContainerDepotLookupResult
             {
                 Depot = row.DEPOT!.Trim(),
-                SourceTable = "YardMovement_VSS_26040808_Exp",
+                SourceTable = "8_3_5_Cang_VICT",
                 EventDate = row.EXEC_TS ?? row.DateImport
             };
     }
 
     private static async Task<ContainerDepotLookupResult?> QuerySpItcAsync(AppDbContext db, string containerNo, CancellationToken cancellationToken)
     {
-        var row = await db.M_8_3_7_YARD_SP_ITC.AsNoTracking()
+        var row = await db.Yard_Spltc_Import.AsNoTracking()
             .Where(x => x.ContrNo == containerNo && !string.IsNullOrWhiteSpace(x.Depot))
             .OrderByDescending(x => x.DateOut)
             .ThenByDescending(x => x.DateIn)
@@ -173,7 +175,7 @@ public class ContainerDepotLookupService
             : new ContainerDepotLookupResult
             {
                 Depot = row.Depot!.Trim(),
-                SourceTable = "M_8_3_7_YARD_SP_ITC",
+                SourceTable = "8_3_7_Yard_Spltc_Import",
                 EventDate = row.DateOut ?? row.DateIn ?? row.CreatedAt
             };
     }
@@ -182,7 +184,7 @@ public class ContainerDepotLookupService
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
-IF OBJECT_ID(N'dbo.{tableName}', N'U') IS NOT NULL
+IF OBJECT_ID(N'dbo.[{tableName}]', N'U') IS NOT NULL
 BEGIN
     SELECT TOP (1)
         LTRIM(RTRIM(DEPOT)) AS Depot,

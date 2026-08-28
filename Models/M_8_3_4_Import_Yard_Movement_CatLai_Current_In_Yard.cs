@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace NVOAMASIS.Models;
 
-public class M_YardMovement_AMS_26040816_Current_In_Yard2 : IExcelImportEntity
+public class M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard : IExcelImportEntity
 {
     [Key]
     public Guid Id { get; set; }
@@ -40,6 +40,7 @@ public class M_YardMovement_AMS_26040816_Current_In_Yard2 : IExcelImportEntity
     public string? DAM { get; set; }
     public string? GHICHU { get; set; }
     public string? SOSEAL { get; set; }
+    public string? SourceFile { get; set; }
     public DateTime DateImport { get; set; }
     public string? UserImport { get; set; }
     public DateTime CreatedAt { get; set; }

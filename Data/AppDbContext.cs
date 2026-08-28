@@ -123,7 +123,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_Info_Company_other> Information_Comapny_Other { get; set; }
 
         public DbSet<M_CuocCont> CuocCont { get; set; }
-        public DbSet<M_8_3_7_YARD_SP_ITC> M_8_3_7_YARD_SP_ITC { get; set; } = default!;
+        public DbSet<M_8_3_7_Yard_Spltc_Import> Yard_Spltc_Import { get; set; } = default!;
         public DbSet<DebitCreditTemplate> DebitCreditTemplate { get; set; }
 
         public DbSet<WordDocument> WordDocuments { get; set; }
@@ -146,9 +146,9 @@ namespace NVOAMASIS.Data
         public DbSet<M_8_3_Unstuffed> AG_8_3_Unstuffed { get; set; }
         public DbSet<M_8_3_Stuffed> AG_8_3_Stuffed { get; set; }
         public DbSet<M_8_3_VSS_IN_OUT_YARD_Imp> YardMovement_VSS_26040808_Imp { get; set; }
-        public DbSet<M_8_3_VSS_IN_OUT_YARD_Exp> YardMovement_VSS_26040808_Exp { get; set; }
-        public DbSet<M_8_3_IN_OUT_YARD_1> YardMovement_AMS_26040816_Imp { get; set; }
-        public DbSet<M_YardMovement_AMS_26040816_Current_In_Yard2> YardMovement_AMS_26040816_Current_In_Yard2 { get; set; }
+        public DbSet<M_8_3_5_Cang_VICT> Cang_VICT { get; set; }
+        public DbSet<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard> Import_Yard_Movement_CatLai_In_Out_Yard { get; set; }
+        public DbSet<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard> Import_Yard_Movement_CatLai_Current_In_Yard { get; set; }
 
         public DbSet<M_ChargeType> ChargeType { get; set; }
         public DbSet<M_TariffHeader> TariffHeader { get; set; }
@@ -253,15 +253,15 @@ namespace NVOAMASIS.Data
             modelBuilder.Entity<M_8_3_VSS_IN_OUT_YARD_Imp>().ToTable("YardMovement_VSS_26040808_Imp");
             modelBuilder.Entity<M_8_3_VSS_IN_OUT_YARD_Imp>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_8_3_VSS_IN_OUT_YARD_Imp>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
-            modelBuilder.Entity<M_8_3_VSS_IN_OUT_YARD_Exp>().ToTable("YardMovement_VSS_26040808_Exp");
-            modelBuilder.Entity<M_8_3_VSS_IN_OUT_YARD_Exp>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-            modelBuilder.Entity<M_8_3_VSS_IN_OUT_YARD_Exp>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
-            modelBuilder.Entity<M_8_3_IN_OUT_YARD_1>().ToTable("YardMovement_AMS_26040816_Imp");
-            modelBuilder.Entity<M_8_3_IN_OUT_YARD_1>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-            modelBuilder.Entity<M_8_3_IN_OUT_YARD_1>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
-            modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().ToTable("YardMovement_AMS_26040816_Current_In_Yard2");
-            modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
-            modelBuilder.Entity<M_YardMovement_AMS_26040816_Current_In_Yard2>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_8_3_5_Cang_VICT>().ToTable("8_3_5_Cang_VICT");
+            modelBuilder.Entity<M_8_3_5_Cang_VICT>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_8_3_5_Cang_VICT>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>().ToTable("8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard");
+            modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>().ToTable("8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard");
+            modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_ShipmentChargeContext>().ToTable("ShipmentChargeContext");
             modelBuilder.Entity<M_ShipmentChargeContext>()
                 .Property(x => x.Amount)

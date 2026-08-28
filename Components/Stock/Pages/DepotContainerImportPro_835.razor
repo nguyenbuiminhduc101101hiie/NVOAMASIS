@@ -100,6 +100,11 @@
         </MudGrid>
     </MudPaper>
 
+    <ImportedFileDeleteCard Batches="_importedFiles"
+                            Busy="_busy"
+                            OnRefresh="LoadImportedFilesAsync"
+                            OnDeleteSelected="DeleteSelectedImportedFilesAsync" />
+
     <MudGrid Spacing="2" Class="mb-3">
 
         <MudItem xs="12" sm="6" md="3">
@@ -403,6 +408,12 @@
 
     private ImportPreview? _preview;
     private byte[]? _fileBytes;
+    private List<ImportedFileBatch> _importedFiles = new();
+
+    private static readonly ImportedFileSource[] ImportedFileSources =
+    {
+        new("8_3_5_Cang_VICT", "SourceFile", "DateImport", "UserImport")
+    };
 
     private int _activeSheetTab;
     private int _previewLimit = 100;
@@ -457,6 +468,55 @@
             .Where(x => !string.IsNullOrEmpty(x.TermiNalName))
             .OrderBy(x => x.TermiNalName)
             .ToListAsync();
+        await EnsureSourceFileColumnsAsync(db);
+        _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+    }
+
+    private async Task LoadImportedFilesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await EnsureSourceFileColumnsAsync(db);
+        _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+    }
+
+    private async Task DeleteSelectedImportedFilesAsync(IReadOnlyList<ImportedFileBatch> batches)
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (batches.Count == 0)
+            return;
+
+        var label = string.Join(", ", batches.Select(x => x.DisplayLabel));
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa theo file",
+            $"Xóa dữ liệu của file đã chọn?\n{label}\nThao tác không hoàn tác.",
+            yesText: "Xóa file đã chọn",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await EnsureSourceFileColumnsAsync(db);
+            var deleted = await ImportedFileBatchHelper.DeleteAsync(db.Database, ImportedFileSources, batches);
+            _importedFiles = await ImportedFileBatchHelper.LoadAsync(db.Database, ImportedFileSources);
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng theo file đã chọn.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 
     private async Task DeleteAllDataAsync()
@@ -469,7 +529,7 @@
 
         var confirm = await DialogService.ShowMessageBox(
             "Xác nhận xóa toàn bộ",
-            "Xóa toàn bộ dữ liệu đã lưu của 8.3.5 (YardMovement_VSS_26040808_Exp)? Thao tác không hoàn tác.",
+            "Xóa toàn bộ dữ liệu đã lưu của 8.3.5 (8_3_5_Cang_VICT)? Thao tác không hoàn tác.",
             yesText: "Xóa toàn bộ",
             cancelText: "Hủy");
 
@@ -480,8 +540,9 @@
         {
             _busy = true;
             await using var db = await DbFactory.CreateDbContextAsync();
-            var deleted = await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>().ExecuteDeleteAsync();
-            Snackbar.Add($"Đã xóa {deleted:N0} dòng từ YardMovement_VSS_26040808_Exp.", MudBlazor.Severity.Success);
+            var deleted = await db.Set<M_8_3_5_Cang_VICT>().ExecuteDeleteAsync();
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng từ 8_3_5_Cang_VICT.", MudBlazor.Severity.Success);
+            await LoadImportedFilesAsync();
         }
         catch (Exception ex)
         {
@@ -601,14 +662,14 @@
             var now = DateTime.Now;
             var depotName = _importDepot.Trim();
             var depotId = ResolveSelectedDepotId();
-            var rows = new List<M_8_3_VSS_IN_OUT_YARD_Exp>();
+            var rows = new List<M_8_3_5_Cang_VICT>();
             var importSignatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var sheet in _preview.Sheets)
             {
                 foreach (var row in sheet.Rows.Where(CanImportRow))
                 {
-                    var entity = MapVSSInOutYard(row, now, _usr, depotName, depotId);
+                    var entity = MapVSSInOutYard(row, now, _usr, depotName, depotId, _preview.FileName);
 
                     if (string.IsNullOrWhiteSpace(entity.SOCONT) && string.IsNullOrWhiteSpace(entity.ITEM_KEY))
                         continue;
@@ -634,13 +695,14 @@
             await using var db = await DbFactory.CreateDbContextAsync();
             await EnsureDepotColumnsAsync(db);
 
-            await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>().AddRangeAsync(rows);
+            await db.Set<M_8_3_5_Cang_VICT>().AddRangeAsync(rows);
             await db.SaveChangesAsync();
 
             Snackbar.Add(string.Format(Localizer["StockImport_VssCompleted"],
                 rows.Count, ExistingTotal, BatchDuplicateTotal, InvalidTotal), MudBlazor.Severity.Success);
 
             ClearPreview();
+            await LoadImportedFilesAsync();
         }
         catch (Exception ex)
         {
@@ -715,7 +777,7 @@
 
         // Không dùng LINQ Contains → EF Core 8 sinh OPENJSON(...) WITH (...),
         // lỗi trên SQL Server compatibility cũ: "Incorrect syntax near the keyword 'WITH'".
-        var existing = new List<M_8_3_VSS_IN_OUT_YARD_Exp>();
+        var existing = new List<M_8_3_5_Cang_VICT>();
         existing.AddRange(await LoadExistingByColumnAsync(db, "SOCONT", soconts));
         existing.AddRange(await LoadExistingByColumnAsync(db, "ITEM_KEY", itemKeys));
         existing.AddRange(await LoadExistingByColumnAsync(db, "BOOK_NO", bookNos));
@@ -936,9 +998,9 @@
         return result.Count > 0 ? result : sheet.Headers;
     }
 
-    private static M_8_3_VSS_IN_OUT_YARD_Exp MapVSSInOutYard(ExcelPreviewRow row, DateTime now, string user, string depot, Guid? depotId = null)
+    private static M_8_3_5_Cang_VICT MapVSSInOutYard(ExcelPreviewRow row, DateTime now, string user, string depot, Guid? depotId = null, string? sourceFile = null)
     {
-        return new M_8_3_VSS_IN_OUT_YARD_Exp
+        return new M_8_3_5_Cang_VICT
         {
             Id = Guid.NewGuid(),
 
@@ -991,6 +1053,7 @@
 
             DEPOT = string.IsNullOrWhiteSpace(S(row, "DEPOT")) ? depot.Trim() : S(row, "DEPOT"),
             DepotId = depotId,
+            SourceFile = string.IsNullOrWhiteSpace(sourceFile) ? null : sourceFile.Trim(),
 
             DateImport = now,
             UserImport = user,
@@ -998,7 +1061,7 @@
         };
     }
 
-    private static string BusinessSignature(M_8_3_VSS_IN_OUT_YARD_Exp x)
+    private static string BusinessSignature(M_8_3_5_Cang_VICT x)
     {
         return string.Join("␟", new[]
         {
@@ -1105,17 +1168,21 @@
     private static async Task EnsureDepotColumnsAsync(AppDbContext db)
     {
         await db.Database.ExecuteSqlRawAsync(@"
-IF COL_LENGTH(N'dbo.YardMovement_VSS_26040808_Exp', N'DEPOT') IS NULL
+IF COL_LENGTH(N'dbo.[8_3_5_Cang_VICT]', N'DEPOT') IS NULL
 BEGIN
-    ALTER TABLE [dbo].[YardMovement_VSS_26040808_Exp] ADD DEPOT NVARCHAR(100) NULL;
+    ALTER TABLE [dbo].[8_3_5_Cang_VICT] ADD DEPOT NVARCHAR(100) NULL;
 END");
 
         await db.Database.ExecuteSqlRawAsync(@"
-IF COL_LENGTH(N'dbo.YardMovement_VSS_26040808_Exp', N'DepotId') IS NULL
+IF COL_LENGTH(N'dbo.[8_3_5_Cang_VICT]', N'DepotId') IS NULL
 BEGIN
-    ALTER TABLE [dbo].[YardMovement_VSS_26040808_Exp] ADD DepotId UNIQUEIDENTIFIER NULL;
+    ALTER TABLE [dbo].[8_3_5_Cang_VICT] ADD DepotId UNIQUEIDENTIFIER NULL;
 END");
+        await EnsureSourceFileColumnsAsync(db);
     }
+
+    private static Task EnsureSourceFileColumnsAsync(AppDbContext db)
+        => ImportedFileBatchHelper.EnsureNvarcharColumnAsync(db.Database, "8_3_5_Cang_VICT", "SourceFile");
 
     private static bool IsSupportedExcelFile(string fileName)
     {
@@ -1129,10 +1196,10 @@ END");
             yield return values.Skip(i).Take(size).ToList();
     }
 
-    private static async Task<List<M_8_3_VSS_IN_OUT_YARD_Exp>> LoadExistingByColumnAsync(
+    private static async Task<List<M_8_3_5_Cang_VICT>> LoadExistingByColumnAsync(
         AppDbContext db, string columnName, List<string> values)
     {
-        var result = new List<M_8_3_VSS_IN_OUT_YARD_Exp>();
+        var result = new List<M_8_3_5_Cang_VICT>();
         if (values.Count == 0)
             return result;
 
@@ -1151,8 +1218,8 @@ END");
                 prm.Add(new SqlParameter(pname, chunk[j]));
             }
 
-            var sql = "SELECT * FROM [YardMovement_VSS_26040808_Exp] WHERE [" + columnName + "] IN (" + string.Join(",", names) + ")";
-            result.AddRange(await db.Set<M_8_3_VSS_IN_OUT_YARD_Exp>()
+            var sql = "SELECT * FROM [8_3_5_Cang_VICT] WHERE [" + columnName + "] IN (" + string.Join(",", names) + ")";
+            result.AddRange(await db.Set<M_8_3_5_Cang_VICT>()
                 .FromSqlRaw(sql, prm.Cast<object>().ToArray())
                 .AsNoTracking()
                 .ToListAsync());
