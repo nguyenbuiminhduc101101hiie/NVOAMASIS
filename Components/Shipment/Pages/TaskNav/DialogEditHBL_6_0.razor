@@ -377,11 +377,15 @@
                         </MudItem>
 
                         <MudItem xs="12" md="3">
-                            <MudAutocomplete @bind-Value="Item.CustomerID"
+                            <MudAutocomplete T="Guid"
+                                             @bind-Value="Item.CustomerID"
                                              Label="@Localizer["Main Customer"]"
                                              Required="true"
                                              SearchFunc="SearchCustomer"
                                              ToStringFunc="CusidtoCusCode"
+                                             MaxItems="100"
+                                             Clearable="true"
+                                             ResetValueOnEmptyText="false"
                                              Margin="Margin.Dense" />
                         </MudItem>
 
@@ -860,11 +864,16 @@
             if (!string.IsNullOrWhiteSpace(bk.congviecthuchien4))
                 Item.remarks = bk.congviecthuchien4;
 
-            if (bk.Customer_ID.HasValue && bk.Customer_ID != Guid.Empty
-                && Customers.Any(x => x.Customer_ID == bk.Customer_ID.Value))
+            var customerId = bk.MaincusBk_Id_ ?? bk.Customer_ID;
+            if ((!customerId.HasValue || customerId.Value == Guid.Empty)
+                && Guid.TryParse(bk.MaincusBk_Id, out var parsedCustomerId)
+                && parsedCustomerId != Guid.Empty)
             {
-                Item.CustomerID = bk.Customer_ID.Value;
+                customerId = parsedCustomerId;
             }
+
+            if (customerId.HasValue && customerId.Value != Guid.Empty)
+                Item.CustomerID = customerId.Value;
 
             var sale = FirstNonEmpty(bk.SaleCode, bk.SaleName);
             if (!string.IsNullOrWhiteSpace(sale)
@@ -959,8 +968,13 @@
     string CusidtoCusCode(Guid cusid)
     {
         if (cusid == Guid.Empty) return string.Empty;
-        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
-        return rs == null ? string.Empty : rs.COMPANY ?? string.Empty;
+        var rs = Customers?.FirstOrDefault(x => x.Customer_ID == cusid);
+        if (rs == null) return string.Empty;
+        var shortName = rs.shortname?.Trim();
+        var company = rs.COMPANY?.Trim();
+        if (!string.IsNullOrWhiteSpace(shortName) && !string.IsNullOrWhiteSpace(company))
+            return $"{shortName}___ {company}";
+        return company ?? shortName ?? rs.Customer_Code ?? string.Empty;
     }
 
     string AgentidtoName(Guid id)
@@ -974,12 +988,20 @@
     private async Task<IEnumerable<Guid>> SearchCustomer(string text)
     {
         await Task.Delay(1);
-        if (string.IsNullOrWhiteSpace(text))
-            return Customers.Select(x => x.Customer_ID);
+        if (Customers == null) return Array.Empty<Guid>();
 
-        return Customers
-            .Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase))
-            .Select(x => x.Customer_ID);
+        IEnumerable<M_Customer> query = Customers;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            query = Customers.Where(x =>
+                ((x.COMPANY ?? string.Empty) + "_" + (x.shortname ?? string.Empty) + "_" + (x.Customer_Code ?? string.Empty))
+                    .Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var ids = query.Select(x => x.Customer_ID).Distinct().ToList();
+        if (Item.CustomerID != Guid.Empty && !ids.Contains(Item.CustomerID))
+            ids.Insert(0, Item.CustomerID);
+        return ids;
     }
 
     private async Task<IEnumerable<Guid>> SearchAgent(string text)
