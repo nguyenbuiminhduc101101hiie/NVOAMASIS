@@ -35,9 +35,9 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
 
             //var rs = await _context.Customer.Where(x => x.SaleName != "NOMI").OrderByDescending(x => x.Customer_Code).AsNoTracking().ToListAsync();
             var rs = await _context.Customer
-                .Where(x =>
-                    (x.MainCode.Contains("Vendor")) ||
-                    (!x.MainCode.Contains("Vendor") && x.SaleName != "NOMI"))
+                //.Where(x =>
+                //    (x.MainCode.Contains("Vendor")) ||
+                //    (!x.MainCode.Contains("Vendor") && x.SaleName != "NOMI"))
                 .OrderByDescending(x => x.Customer_Code)
                 .AsNoTracking()
                 .ToListAsync();
@@ -95,10 +95,10 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
         {
             _context.ChangeTracker.Clear();
             var rs = await _context.Customer
-                .Where(x =>
-                    string.IsNullOrEmpty(x.MainCode) ||
-                    !x.MainCode.Contains("Customer") ||
-                    x.SaleName != "NOMI")
+                //.Where(x =>
+                //    string.IsNullOrEmpty(x.MainCode) ||
+                //    !x.MainCode.Contains("Customer") ||
+                //    x.SaleName != "NOMI")
                 .OrderByDescending(x => x.Customer_Code)
                 .AsNoTracking()
                 .ToListAsync();
