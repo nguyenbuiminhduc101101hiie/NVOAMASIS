@@ -285,6 +285,7 @@
     private List<HblBookingCheckRow> FilteredRows { get; set; } = new();
     private List<PortModel> _ports = new();
     private List<M_Customer> _customers = new();
+    private Dictionary<Guid, M_Customer> _customerById = new();
 
     private int MismatchCount => _allRows.Count(x => x.HasMismatch);
 
@@ -304,7 +305,11 @@
             StateHasChanged();
 
             _ports = await supsv.GetListPort() ?? new List<PortModel>();
-            _customers = await csv.GetList() ?? new List<M_Customer>();
+            _customers = await csv.GetList_booking() ?? new List<M_Customer>();
+            _customerById = _customers
+                .Where(x => x.Customer_ID != Guid.Empty)
+                .GroupBy(x => x.Customer_ID)
+                .ToDictionary(g => g.Key, g => g.First());
             var hbls = (await shipsv.GetListHBLALL() ?? new List<M_HBL>())
                 .Where(x => !string.IsNullOrWhiteSpace(x.bkno))
                 .OrderByDescending(x => x.datereport)
@@ -418,8 +423,9 @@
         row.HblCarrier = hbl.Carrier?.Trim() ?? "";
         row.BkRemarks = bk?.congviecthuchien4?.Trim() ?? "";
         row.HblRemarks = hbl.remarks?.Trim() ?? "";
-        row.BkCustomer = CustomerName(bk?.Customer_ID);
-        row.HblCustomer = CustomerName(hbl.CustomerID);
+        var bkCustomerId = ResolveBookingCustomerId(bk);
+        row.BkCustomer = FormatCustomer(bkCustomerId);
+        row.HblCustomer = FormatCustomer(hbl.CustomerID);
         row.BkSale = FirstNonEmpty(bk?.SaleCode, bk?.SaleName) ?? "";
         row.HblSale = hbl.SaleName?.Trim() ?? "";
         row.BkOps = bk?.OPSCode?.Trim() ?? "";
@@ -444,8 +450,8 @@
         row.EtaMismatch = IsTextMismatch(row.BkEta, row.HblEta);
         row.CarrierMismatch = IsTextMismatch(row.BkCarrier, row.HblCarrier);
         row.RemarksMismatch = IsTextMismatch(row.BkRemarks, row.HblRemarks);
-        row.CustomerMismatch = bk.Customer_ID.HasValue && bk.Customer_ID != Guid.Empty
-            && bk.Customer_ID.Value != hbl.CustomerID;
+        row.CustomerMismatch = bkCustomerId.HasValue && bkCustomerId.Value != Guid.Empty
+            && bkCustomerId.Value != hbl.CustomerID;
         row.SaleMismatch = IsTextMismatch(row.BkSale, row.HblSale);
         row.OpsMismatch = IsTextMismatch(row.BkOps, row.HblOps);
 
@@ -516,12 +522,32 @@
     private static string FormatDate(DateTime? value)
         => value.HasValue ? value.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "";
 
-    private string CustomerName(Guid? id)
+    private static Guid? ResolveBookingCustomerId(Booking? bk)
+    {
+        if (bk == null)
+            return null;
+        if (bk.MaincusBk_Id_.HasValue && bk.MaincusBk_Id_.Value != Guid.Empty)
+            return bk.MaincusBk_Id_.Value;
+        if (Guid.TryParse(bk.MaincusBk_Id, out var parsed) && parsed != Guid.Empty)
+            return parsed;
+        if (bk.Customer_ID.HasValue && bk.Customer_ID != Guid.Empty)
+            return bk.Customer_ID;
+        return null;
+    }
+
+    private string FormatCustomer(Guid? id)
     {
         if (id == null || id == Guid.Empty)
             return "";
-        var cus = _customers.FirstOrDefault(x => x.Customer_ID == id.Value);
-        return cus?.COMPANY?.Trim() ?? cus?.shortname?.Trim() ?? id.Value.ToString();
+
+        if (!_customerById.TryGetValue(id.Value, out var cus) || cus == null)
+            return "";
+
+        var taxCode = cus.TaxCode?.Trim();
+        var company = FirstNonEmpty(cus.COMPANY, cus.EnglishName, cus.shortname, cus.Customer_Code);
+        if (!string.IsNullOrWhiteSpace(taxCode) && !string.IsNullOrWhiteSpace(company))
+            return $"{taxCode} - {company}";
+        return company ?? taxCode ?? "";
     }
 
     private static string? FirstNonEmpty(params string?[] values)
