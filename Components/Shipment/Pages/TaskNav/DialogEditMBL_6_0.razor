@@ -139,11 +139,15 @@
                         </MudItem>
 
                             <MudItem xs="12" md="4">
-                                <MudAutocomplete @bind-Value="Item.CustomerID"
+                                <MudAutocomplete T="Guid"
+                                                 @bind-Value="Item.CustomerID"
                                                  Label="@Localizer["Main Customer"]"
                                                  Required="true"
                                                  SearchFunc="SearchCustomer"
                                                  ToStringFunc="CusidtoCusCode"
+                                                 MaxItems="100"
+                                                 Clearable="true"
+                                                 ResetValueOnEmptyText="false"
                                                  Margin="Margin.Dense" />
                             </MudItem>
                         </MudGrid>
@@ -446,7 +450,12 @@
     {
         if (cusid == Guid.Empty) return string.Empty;
         var rs = Customers?.FirstOrDefault(x => x.Customer_ID == cusid);
-        return rs == null ? string.Empty : rs.COMPANY ?? string.Empty;
+        if (rs == null) return string.Empty;
+        var shortName = rs.shortname?.Trim();
+        var company = rs.COMPANY?.Trim();
+        if (!string.IsNullOrWhiteSpace(shortName) && !string.IsNullOrWhiteSpace(company))
+            return $"{shortName}___ {company}";
+        return company ?? shortName ?? rs.Customer_Code ?? string.Empty;
     }
 
     private async Task<IEnumerable<Guid>> SearchCustomer(string text)
@@ -454,13 +463,18 @@
         await Task.Delay(1);
         if (Customers == null) return Array.Empty<Guid>();
 
-        if (string.IsNullOrWhiteSpace(text))
-            return Customers.Select(x => x.Customer_ID);
+        IEnumerable<M_Customer> query = Customers;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            query = Customers.Where(x =>
+                ((x.COMPANY ?? string.Empty) + "_" + (x.shortname ?? string.Empty) + "_" + (x.Customer_Code ?? string.Empty))
+                    .Contains(text, StringComparison.OrdinalIgnoreCase));
+        }
 
-        return Customers
-            .Where(x => ((x.COMPANY ?? string.Empty) + "_" + (x.shortname ?? string.Empty))
-                .Contains(text, StringComparison.OrdinalIgnoreCase))
-            .Select(x => x.Customer_ID);
+        var ids = query.Select(x => x.Customer_ID).Distinct().ToList();
+        if (Item.CustomerID != Guid.Empty && !ids.Contains(Item.CustomerID))
+            ids.Insert(0, Item.CustomerID);
+        return ids;
     }
 
     private async Task<IEnumerable<string>> SearchShipper(string text)

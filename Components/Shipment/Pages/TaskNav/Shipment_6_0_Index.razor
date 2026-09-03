@@ -11,6 +11,7 @@
 @inject IStringLocalizer<SharedResource> Localizer
 @attribute [Authorize]
 @inject HistoryLogService HistoryLogService
+@inject BookingService bksv
 @using System.Text.Json;
 
 <PageTitle>@Localizer["Shipment"]</PageTitle>
@@ -351,11 +352,19 @@
             <PropertyColumn Property="x => DebitCreditCompletedStatus(x.JobID)" Title="@Localizer["Debit/Credit Done"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => joinmbl(x.JobID)" Title="@Localizer["MBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => joinhbl(x.JobID)" Title="@Localizer["HBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
-            <PropertyColumn Property="x => joinbooking(x.JobID)" Title="@Localizer["Booking No"]" CellStyleFunc="_cellStyleFunc">
+            <PropertyColumn Property="x => joinbooking(x.JobID)" Title="@Localizer["Booking No"]" Required="false" CellStyleFunc="_cellStyleFunc">
                 <EditTemplate>
-                    <MudTextField @bind-Value="context.Item.BookingNo"
-                                  Label="@Localizer["Booking No"]"
-                                  Immediate="true" />
+                    <MudAutocomplete T="string"
+                                     @bind-Value="context.Item.BookingNo"
+                                     Label="@Localizer["Booking No"]"
+                                     SearchFunc="SearchFuncJobBookingNo"
+                                     Immediate="true"
+                                     CoerceText="true"
+                                     CoerceValue="true"
+                                     ResetValueOnEmptyText="true"
+                                     Clearable="true"
+                                     Required="false"
+                                     MaxItems="200" />
                 </EditTemplate>
             </PropertyColumn>
             
@@ -1082,6 +1091,13 @@
             trangthais = tts.Where(x => x.Tieude.ToLower() == "job").OrderBy(x=>x.Noidung).Select(x=>x.Noidung).ToList();
             usr = asv.GetAuth().Result.User.Identity!.Name!;
             SaleNames = await supsv.GetListSale();
+            BookingNoList = (await bksv.GetListSBooking() ?? new List<Models.Booking>())
+                .Select(x => x.BookingNo)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(x => x)
+                .ToList();
             if (!string.IsNullOrEmpty(userdetail.Department)
                 && userdetail.Department.ToUpper().Contains("SALES")
                 && !userdetail.Department.Equals("SALES MANAGER", StringComparison.OrdinalIgnoreCase))
@@ -1753,6 +1769,36 @@
     {
         var cleanValue = value?.Trim();
         return string.IsNullOrWhiteSpace(cleanValue) ? null : cleanValue;
+    }
+
+    private List<string> BookingNoList { get; set; } = new();
+
+    private async Task<IEnumerable<string>> SearchFuncJobBookingNo(string value)
+    {
+        await Task.Delay(1);
+
+        var rs = BookingNoList
+            .Concat(Listdata?.Select(x => x.BookingNo) ?? Enumerable.Empty<string?>())
+            .Concat(ListMBLs?.Select(x => x.Bkno) ?? Enumerable.Empty<string?>())
+            .Concat(ListHBLs?.Select(x => x.bkno) ?? Enumerable.Empty<string?>())
+            .Select(NormalizeDisplayText)
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (string.IsNullOrWhiteSpace(value))
+            return rs;
+
+        var keyword = value.Trim();
+        var filtered = rs
+            .Where(x => x.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (!filtered.Any(x => x.Equals(keyword, StringComparison.OrdinalIgnoreCase)))
+            filtered.Insert(0, keyword);
+
+        return filtered;
     }
 
     private async Task<IEnumerable<Guid>> SearchCustomer(string text)
