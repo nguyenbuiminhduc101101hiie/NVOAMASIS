@@ -1,4 +1,5 @@
-﻿@using MudBlazor
+﻿@using System.Text.Json
+@using MudBlazor
 @using Microsoft.EntityFrameworkCore
 @using NVOAMASIS.Data
 @using NVOAMASIS.Models
@@ -8,6 +9,7 @@
 @inject AccountService asv
 
 @inject ShipmentService shipsv
+@inject HistoryLogService HistoryLogService
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
@@ -32,7 +34,7 @@
                            Size="Size.Small"
                            StartIcon="@Icons.Material.Filled.Edit"
                            OnClick="EditSelected"
-                           Disabled="_loading || _selected is null || IsExported(_selected)">
+                           Disabled="_loading || _selected is null || (IsExported(_selected) && !_hasEditPermission)">
                     Edit
                 </MudButton>
                 <MudButton Variant="Variant.Filled"
@@ -48,7 +50,7 @@
                            Size="Size.Small"
                            StartIcon="@Icons.Material.Filled.Download"
                            OnClick="ExportSelected"
-                           Disabled="_loading || _selected is null || IsExported(_selected)">
+                           Disabled="_loading || _selected is null || (IsExported(_selected) && !_hasEditPermission)">
                     Export
                 </MudButton>
                 <MudTextField @bind-Value="_search"
@@ -124,6 +126,7 @@
 
 @code {
     private bool _loading;
+    private bool _hasEditPermission;
     private string? _search;
     private List<M_LenhCapContRong> _items = new();
     private M_LenhCapContRong? _selected;
@@ -152,6 +155,7 @@
             }
             _loading = true;
             _selected = null;
+            _hasEditPermission = await ssv.CheckPermission(usr, "Edit", "LenhCapContRong");
             StateHasChanged();
 
             await using var db = await DbFactory.CreateDbContextAsync();
@@ -238,11 +242,10 @@
             CallSnackBar(Localizer["SelectOneRowToEdit"], MudBlazor.Severity.Warning);
             return;
         }
-        if (IsExported(_selected))
-        {
-            CallSnackBar(Localizer["LCCR_RowAlreadyExportedNoEdit"], MudBlazor.Severity.Info);
-            return;
-        }
+
+        _hasEditPermission = true;
+        var wasExported = IsExported(_selected);
+        var oldData = CloneItem(_selected);
 
         var dlg = DialogService.Show<LenhCapContRong_EditDialog>(
             "Edit - Lệnh Cấp Cont Rỗng",
@@ -253,10 +256,10 @@
         if (result.Canceled || result.Data is not M_LenhCapContRong data)
             return;
 
-        await SaveAsync(data);
+        await SaveAsync(data, oldData, wasExported);
     }
 
-    private async Task SaveAsync(M_LenhCapContRong data)
+    private async Task SaveAsync(M_LenhCapContRong data, M_LenhCapContRong? oldData = null, bool wasExported = false)
     {
         try
         {
@@ -340,7 +343,8 @@
                 return;
             }
 
-            if (data.id == Guid.Empty)
+            var isNew = data.id == Guid.Empty;
+            if (isNew)
             {
                 data.id = Guid.NewGuid();
                 db.LenhCapContRong.Add(data);
@@ -351,6 +355,20 @@
             }
 
             await db.SaveChangesAsync();
+
+            if (isNew)
+            {
+                await HistoryLogService.LogAsync(usr, "ADD Lenh Cap Cont Rong", "LenhCapContRong", data.id, data.OrderNo, data);
+            }
+            else
+            {
+                var action = wasExported
+                    ? "Update Lenh Cap Cont Rong (After Export)"
+                    : "Update Lenh Cap Cont Rong";
+                await HistoryLogService.LogAsync(usr, action, "LenhCapContRong", data.id, data.OrderNo,
+                    new { OldData = oldData, NewData = data, WasExported = wasExported });
+            }
+
             CallSnackBar(Localizer["SaveSuccess"], MudBlazor.Severity.Success);
             await LoadDataAsync();
         }
@@ -473,10 +491,16 @@
             CallSnackBar(Localizer["SelectOneRowToExport"], MudBlazor.Severity.Warning);
             return;
         }
-        if (IsExported(_selected))
+
+        var isReExport = IsExported(_selected);
+        if (isReExport)
         {
-            CallSnackBar(Localizer["LCCR_AlreadyExported"], MudBlazor.Severity.Info);
-            return;
+            if (!await ssv.CheckPermission(usr, "Edit", "LenhCapContRong"))
+            {
+                CallSnackBar(Localizer["LCCR_AlreadyExported"], MudBlazor.Severity.Info);
+                return;
+            }
+            _hasEditPermission = true;
         }
 
         if (_selected.bookingid == Guid.Empty)
@@ -484,6 +508,12 @@
             CallSnackBar(Localizer["LCCR_InvalidBookingIdExport"], MudBlazor.Severity.Warning);
             return;
         }
+
+        var previousExport = new
+        {
+            ExportDate = _selected.ExportDate,
+            UserExport = _selected.UserExport
+        };
 
         var rs = await shipsv.ExportLenhCapContRong(_selected.id,_selected.bookingid);
         CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
@@ -508,6 +538,21 @@
             // Cập nhật ngay trên UI (Items đang là reference của _selected)
             _selected.ExportDate = entity.ExportDate;
             _selected.UserExport = entity.UserExport;
+
+            await HistoryLogService.LogAsync(
+                usr,
+                isReExport ? "Re-Export Lenh Cap Cont Rong" : "Export Lenh Cap Cont Rong",
+                "LenhCapContRong",
+                _selected.id,
+                _selected.OrderNo,
+                new
+                {
+                    PreviousExport = previousExport,
+                    NewExportDate = entity.ExportDate,
+                    NewUserExport = entity.UserExport,
+                    BookingId = _selected.bookingid
+                });
+
             StateHasChanged();
         }
         catch (Exception ex)
@@ -540,6 +585,11 @@
 
     private static bool IsExported(M_LenhCapContRong? item)
         => item != null && (item.ExportDate.HasValue || !string.IsNullOrWhiteSpace(item.UserExport));
+
+    private static M_LenhCapContRong? CloneItem(M_LenhCapContRong? item)
+        => item is null
+            ? null
+            : JsonSerializer.Deserialize<M_LenhCapContRong>(JsonSerializer.Serialize(item));
 
     private string RowClassFunc(M_LenhCapContRong row, int rowNumber)
     {
