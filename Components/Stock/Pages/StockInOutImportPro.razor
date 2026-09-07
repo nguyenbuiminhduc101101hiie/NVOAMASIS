@@ -846,7 +846,10 @@ END");
                 continue;
 
             if (IsFooterRow(previewRow))
-                continue;
+            {
+                sheet.Warnings.Add($"Stopped at Total / SizeType footer on Excel row {row}. Remaining summary rows are not imported.");
+                break;
+            }
 
             sheet.Rows.Add(previewRow);
         }
@@ -1151,7 +1154,7 @@ END");
 
         return sheet.Target switch
         {
-            ImportTarget.GateIn or ImportTarget.GateOut or ImportTarget.Stock => !string.IsNullOrWhiteSpace(S(row, "Container")),
+            ImportTarget.GateIn or ImportTarget.GateOut or ImportTarget.Stock => LooksLikeContainerNo(S(row, "Container")),
             ImportTarget.General => !string.IsNullOrWhiteSpace(S(row, "SECTION")),
             ImportTarget.GeneralStatus => !string.IsNullOrWhiteSpace(S(row, "OPR")) || !string.IsNullOrWhiteSpace(S(row, "CONT")) || !string.IsNullOrWhiteSpace(S(row, "TEUS")),
             _ => false
@@ -1163,10 +1166,58 @@ END");
         var seq = S(row, "Seq", "SEQ");
         var container = S(row, "Container");
         var type = S(row, "Type");
+        var eir = S(row, "EIR");
+
+        if (IsTotalOrSizeTypeLabel(seq) || IsTotalOrSizeTypeLabel(eir) || IsTotalOrSizeTypeLabel(container) || IsTotalOrSizeTypeLabel(type))
+            return true;
+
+        // Stock summary puts size types (20'DC, 40'RH, ...) into the Container column after the last real row.
+        if (LooksLikeSizeType(container) && !LooksLikeContainerNo(container))
+            return true;
+
         return string.IsNullOrWhiteSpace(container)
-               && (seq.Contains("Total", StringComparison.OrdinalIgnoreCase)
-                   || type.Contains("Size type", StringComparison.OrdinalIgnoreCase)
-                   || row.Values.Values.Any(v => v.Equals("Total", StringComparison.OrdinalIgnoreCase)));
+               && row.Values.Values.Any(v => IsTotalOrSizeTypeLabel(v));
+    }
+
+    private static bool IsTotalOrSizeTypeLabel(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var text = value.Trim();
+        return text.Equals("Total", StringComparison.OrdinalIgnoreCase)
+               || text.Equals("SizeType", StringComparison.OrdinalIgnoreCase)
+               || text.Equals("Size Type", StringComparison.OrdinalIgnoreCase)
+               || text.Contains("Size type", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeSizeType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var compact = value.Replace("'", string.Empty).Replace(" ", string.Empty).Trim();
+        if (compact.Length is < 4 or > 5)
+            return false;
+
+        return char.IsDigit(compact[0])
+               && char.IsDigit(compact[1])
+               && compact.Skip(2).All(char.IsLetter);
+    }
+
+    private static bool LooksLikeContainerNo(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || LooksLikeSizeType(value) || IsTotalOrSizeTypeLabel(value))
+            return false;
+
+        var compact = new string(value.Where(char.IsLetterOrDigit).ToArray());
+        if (compact.Length is < 7 or > 15)
+            return false;
+
+        var letters = compact.TakeWhile(char.IsLetter).Count();
+        return letters is >= 3 and <= 4
+               && compact.Skip(letters).All(char.IsDigit)
+               && compact.Length - letters >= 6;
     }
 
     private static bool IsSectionName(string text)
