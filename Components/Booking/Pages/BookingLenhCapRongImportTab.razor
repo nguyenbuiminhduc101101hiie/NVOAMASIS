@@ -1,0 +1,370 @@
+@using System.IO
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IStringLocalizer<SharedResource> Localizer
+
+<div class="booking-section">
+    <div class="booking-section-title">Import Lệnh Cấp Rỗng</div>
+    <MudStack Spacing="2">
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">
+            Chọn file Excel, Word, PDF để lưu kèm Booking. Tối đa 25MB/file.
+        </MudText>
+
+        @if (!CanUpload)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mt-1">
+                Lưu Booking trước, sau đó mở lại Edit để import file Lệnh Cấp Rỗng.
+            </MudAlert>
+        }
+
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="flex-wrap">
+            <MudTooltip Text="Upload Excel / Word / PDF (max 25MB/file)">
+                <MudButton HtmlTag="label"
+                           Variant="Variant.Filled"
+                           Color="Color.Tertiary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.CloudUpload"
+                           Disabled="@(!CanUpload || _busy)">
+                    Import file
+                    <InputFile OnChange="OnUploadAsync"
+                               style="display:none"
+                               accept="@AcceptExtensions"
+                               multiple />
+                </MudButton>
+            </MudTooltip>
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                           Color="Color.Success"
+                           Size="Size.Small"
+                           Variant="Variant.Filled"
+                           Disabled="@(!CanUpload || _busy)"
+                           OnClick="LoadListAsync"
+                           title="@Localizer["Reload"]" />
+        </MudStack>
+    </MudStack>
+
+    @if (_busy && _items.Count == 0)
+    {
+        <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-2" />
+    }
+    else if (_items.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="mt-3 mud-text-secondary">
+            @(CanUpload ? "Chưa có file import." : "Chưa thể import vì Booking chưa được lưu.")
+        </MudText>
+    }
+    else
+    {
+        <MudDataGrid T="M_Booking_LenhCapRong_AttachmentListItem"
+                     Items="_items"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     Loading="_busy"
+                     Class="mt-3">
+            <Columns>
+                <TemplateColumn Title="" Filterable="false" Sortable="false">
+                    <CellTemplate>
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@Icons.Material.Filled.Download"
+                                       Color="Color.Success"
+                                       Title="Download"
+                                       OnClick="@(() => OpenAsync(context.Item))" />
+                        <MudIconButton Size="Size.Small"
+                                       Icon="@Icons.Material.Outlined.Delete"
+                                       Color="Color.Error"
+                                       Title="Delete"
+                                       Disabled="@(!CanUpload)"
+                                       OnClick="@(() => DeleteAsync(context.Item))" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.FileName" Title="File" />
+                <PropertyColumn Property="x => x.ContentType" Title="Type" />
+                <TemplateColumn Title="Size" Filterable="false">
+                    <CellTemplate>@FormatFileSize(context.Item.FileSize)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.UserUpload" Title="User" />
+                <PropertyColumn Property="x => x.UploadedUtc" Title="Uploaded (UTC)" Format="yyyy-MM-dd HH:mm" />
+            </Columns>
+        </MudDataGrid>
+    }
+</div>
+
+@code {
+    private const long MaxFileBytes = 25L * 1024 * 1024;
+    private const string AcceptExtensions = ".xls,.xlsx,.xlsm,.doc,.docx,.pdf,.png,.jpg,.jpeg";
+
+    private static readonly HashSet<string> AllowedExt = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".xls", ".xlsx", ".xlsm",
+        ".doc", ".docx",
+        ".pdf",
+        ".png", ".jpg", ".jpeg"
+    };
+
+    [Parameter] public Models.Booking? BookingDetail { get; set; }
+    [Parameter] public bool CanSave { get; set; }
+
+    private List<M_Booking_LenhCapRong_AttachmentListItem> _items = new();
+    private bool _busy;
+    private string _usr = "";
+    private Guid _loadedBookingId = Guid.Empty;
+
+    private bool CanUpload =>
+        CanSave
+        && BookingDetail is { ContainerOutBoundNotifyId: var id }
+        && id != Guid.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _usr = auth.User.Identity?.Name ?? "";
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var id = CanUpload ? BookingDetail!.ContainerOutBoundNotifyId : Guid.Empty;
+        if (id == _loadedBookingId)
+            return;
+        _loadedBookingId = id;
+        await LoadListAsync();
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!CanUpload)
+        {
+            _items = new();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var bookingId = BookingDetail!.ContainerOutBoundNotifyId;
+            _items = await db.Booking_LenhCapRong_Attachment.AsNoTracking()
+                .Where(x => x.BookingId == bookingId)
+                .OrderByDescending(x => x.UploadedUtc)
+                .Select(x => new M_Booking_LenhCapRong_AttachmentListItem
+                {
+                    AttachmentId = x.AttachmentId,
+                    BookingId = x.BookingId,
+                    FileName = x.FileName,
+                    ContentType = x.ContentType,
+                    UserUpload = x.UserUpload,
+                    Note = x.Note,
+                    UploadedUtc = x.UploadedUtc,
+                    FileSize = x.FileSize
+                })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Load attachments failed: {ex.Message}", MudBlazor.Severity.Error);
+            _items = new();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnUploadAsync(InputFileChangeEventArgs e)
+    {
+        if (!CanUpload || e.FileCount == 0)
+            return;
+
+        var buffers = new List<(string SafeName, string ContentType, byte[] Bytes)>();
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(20))
+            {
+                var safeName = SanitizeFileName(file.Name);
+                var ext = Path.GetExtension(safeName);
+                if (!AllowedExt.Contains(ext))
+                {
+                    CallSnackBar($"File type not allowed: {safeName}", MudBlazor.Severity.Warning);
+                    continue;
+                }
+
+                if (file.Size > MaxFileBytes)
+                {
+                    CallSnackBar($"File too large (max 25MB): {safeName}", MudBlazor.Severity.Warning);
+                    continue;
+                }
+
+                await using var stream = file.OpenReadStream(maxAllowedSize: MaxFileBytes);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                var ct = string.IsNullOrWhiteSpace(file.ContentType) ? GuessContentType(ext) : file.ContentType;
+                buffers.Add((safeName, ct!, ms.ToArray()));
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Upload failed: {ex.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        if (buffers.Count == 0)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var bookingId = BookingDetail!.ContainerOutBoundNotifyId;
+            var exists = await db.CONTAINEROUTBOUNDNOTIFY_sale.AnyAsync(x => x.ContainerOutBoundNotifyId == bookingId);
+            if (!exists)
+            {
+                CallSnackBar("Booking not found. Please save Booking first.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var usedNames = await db.Booking_LenhCapRong_Attachment
+                .Where(a => a.BookingId == bookingId)
+                .Select(a => a.FileName)
+                .ToListAsync();
+
+            foreach (var (safeName, contentType, bytes) in buffers)
+            {
+                var uniqueName = NextUniqueFileName(usedNames, safeName);
+                db.Booking_LenhCapRong_Attachment.Add(new M_Booking_LenhCapRong_Attachment
+                {
+                    AttachmentId = Guid.NewGuid(),
+                    BookingId = bookingId,
+                    FileName = uniqueName,
+                    Content = bytes,
+                    ContentType = contentType,
+                    FileSize = bytes.LongLength,
+                    UserUpload = _usr,
+                    Note = null,
+                    UploadedUtc = DateTime.UtcNow
+                });
+            }
+
+            await db.SaveChangesAsync();
+            CallSnackBar(buffers.Count == 1 ? "File imported." : $"{buffers.Count} files imported.", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Upload failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OpenAsync(M_Booking_LenhCapRong_AttachmentListItem item)
+    {
+        if (item.AttachmentId == Guid.Empty)
+            return;
+
+        var url = Navigation.ToAbsoluteUri($"api/booking-lenh-cap-rong-attachment/{item.AttachmentId}").ToString();
+        await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+
+    private async Task DeleteAsync(M_Booking_LenhCapRong_AttachmentListItem item)
+    {
+        if (item.AttachmentId == Guid.Empty || !CanUpload)
+            return;
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["ChargeType_Warning"],
+            $"Xóa \"{item.FileName}\"?",
+            yesText: Localizer["delete"].Value,
+            cancelText: Localizer["cancel"].Value);
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var row = await db.Booking_LenhCapRong_Attachment
+                .FirstOrDefaultAsync(x => x.AttachmentId == item.AttachmentId && x.BookingId == BookingDetail!.ContainerOutBoundNotifyId);
+            if (row is null)
+            {
+                CallSnackBar("Attachment not found.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.Booking_LenhCapRong_Attachment.Remove(row);
+            await db.SaveChangesAsync();
+            CallSnackBar("Deleted.", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Delete failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private static string NextUniqueFileName(List<string> usedNames, string fileName)
+    {
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var ext = Path.GetExtension(fileName);
+        var candidate = Path.GetFileName(fileName);
+        var n = 0;
+        while (usedNames.Exists(x => string.Equals(x, candidate, StringComparison.OrdinalIgnoreCase)))
+        {
+            n++;
+            candidate = $"{name}_{n}{ext}";
+        }
+        usedNames.Add(candidate);
+        return candidate;
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var f = Path.GetFileName(name);
+        foreach (var c in Path.GetInvalidFileNameChars())
+            f = f.Replace(c, '_');
+        return string.IsNullOrWhiteSpace(f) || f is "." or ".." ? "file.dat" : f;
+    }
+
+    private static string GuessContentType(string ext) => ext.ToLowerInvariant() switch
+    {
+        ".xls" => "application/vnd.ms-excel",
+        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsm" => "application/vnd.ms-excel.sheet.macroEnabled.12",
+        ".doc" => "application/msword",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pdf" => "application/pdf",
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        _ => "application/octet-stream"
+    };
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes <= 0)
+            return "0 B";
+        if (bytes < 1024)
+            return $"{bytes} B";
+        if (bytes < 1024 * 1024)
+            return $"{bytes / 1024.0:0.#} KB";
+        return $"{bytes / (1024.0 * 1024.0):0.#} MB";
+    }
+}

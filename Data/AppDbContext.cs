@@ -159,6 +159,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_SI> SI { get; set; }
         public DbSet<M_SI_Attachment> SI_Attachment { get; set; }
         public DbSet<M_HBL_Attachment> HBL_Attachment { get; set; }
+        public DbSet<M_Booking_LenhCapRong_Attachment> Booking_LenhCapRong_Attachment { get; set; }
 
         public DbSet<M_TransactionTypes> TransactionTypes { get; set; }
         public DbSet<M_TransactionTypeMappings> TransactionTypeMappings { get; set; }
@@ -285,6 +286,15 @@ namespace NVOAMASIS.Data
                 .OnDelete(DeleteBehavior.Cascade);
             modelBuilder.Entity<M_HBL_Attachment>()
                 .HasIndex(x => x.hblID);
+
+            modelBuilder.Entity<M_Booking_LenhCapRong_Attachment>().ToTable("Booking_LenhCapRong_Attachment");
+            modelBuilder.Entity<M_Booking_LenhCapRong_Attachment>()
+                .HasOne<Booking>()
+                .WithMany()
+                .HasForeignKey(x => x.BookingId)
+                .OnDelete(DeleteBehavior.Cascade);
+            modelBuilder.Entity<M_Booking_LenhCapRong_Attachment>()
+                .HasIndex(x => x.BookingId);
 
             modelBuilder.Entity<M_TransactionTypeMappings>()
                 .HasOne<M_TransactionTypes>()
