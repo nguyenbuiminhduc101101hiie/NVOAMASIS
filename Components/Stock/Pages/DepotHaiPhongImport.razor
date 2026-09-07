@@ -1,0 +1,675 @@
+@page "/stock/depot-hai-phong-import/{ReportCode?}"
+@attribute [Authorize]
+
+@using System.Data
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Services
+
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject DepotHaiPhongImportService ImportService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@PageTitle</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="hph-import-page pa-3">
+    <MudPaper Class="hero-card pa-4 mb-3" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" lg="7">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+                    <div class="hero-icon">
+                        <MudIcon Icon="@Icons.Material.Filled.Warehouse" Size="Size.Large" />
+                    </div>
+                    <div>
+                        <MudText Typo="Typo.h5" Class="page-title">@PageTitle</MudText>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">
+                            Import Excel (.xls / .xlsx), kiểm tra dữ liệu, lưu vào <b>dbo.@(_report.TableName)</b>. Xóa theo từng file đã import.
+                        </MudText>
+                    </div>
+                </MudStack>
+            </MudItem>
+            <MudItem xs="12" lg="5">
+                <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="flex-wrap action-bar">
+                    <MudAutocomplete T="string"
+                                     @bind-Value="_importDepot"
+                                     Label="@Localizer["StockImport_DepotName"]"
+                                     Placeholder="@Localizer["StockImport_SelectDepotBeforePreview"]"
+                                     Variant="Variant.Outlined"
+                                     Margin="Margin.Dense"
+                                     Style="min-width:210px;background:#fff;border-radius:12px;"
+                                     Disabled="@(_busy || _preview is not null)"
+                                     Adornment="Adornment.Start"
+                                     AdornmentIcon="@Icons.Material.Filled.Warehouse"
+                                     SearchFunc="SearchTerminal"
+                                     CoerceText
+                                     ResetValueOnEmptyText
+                                     Clearable
+                                     MaxItems="30" />
+
+                    <MudButton HtmlTag="label"
+                               Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.FolderOpen"
+                               Disabled="@_busy">
+                        @Localizer["StockImport_ChooseExcel"]
+                        <InputFile OnChange="PreviewExcelAsync" accept=".xls,.xlsx,.XLS,.XLSX" style="display:none" />
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.CloudUpload"
+                               OnClick="ConfirmImportAsync"
+                               Disabled="@(_busy || _preview is null || !_preview.HasImportableRows)">
+                        @Localizer["StockImport_ImportDb"]
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Secondary"
+                               StartIcon="@Icons.Material.Filled.RestartAlt"
+                               OnClick="ClearPreview"
+                               Disabled="@_busy">
+                        @Localizer["StockImport_Reset"]
+                    </MudButton>
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Error"
+                               StartIcon="@Icons.Material.Filled.DeleteForever"
+                               OnClick="DeleteAllDataAsync"
+                               Disabled="@_busy">
+                        Xóa toàn bộ data
+                    </MudButton>
+                </MudStack>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <ImportedFileDeleteCard Batches="_importedFiles"
+                            Busy="_busy"
+                            OnRefresh="LoadImportedFilesAsync"
+                            OnDeleteSelected="DeleteSelectedImportedFilesAsync" />
+
+    <MudGrid Spacing="2" Class="mb-3">
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">File preview</MudText>
+                <MudText Typo="Typo.subtitle2" Class="fw-bold ellipsis">@(_preview?.FileName ?? "Chưa chọn")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">Dòng preview</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@((_preview?.TotalRows ?? 0).ToString("N0"))</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">Dòng mới</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold text-ok">@((_preview?.ImportableRows ?? 0).ToString("N0"))</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">Đã tồn tại</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold text-info">@((_preview?.ExistingRows ?? 0).ToString("N0"))</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">Đã lưu DB</MudText>
+                <MudText Typo="Typo.h6" Class="fw-bold">@_savedCount.ToString("N0")</MudText>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="kpi-card pa-3" Elevation="0">
+                <MudText Typo="Typo.caption">Table</MudText>
+                <MudText Typo="Typo.subtitle2" Class="fw-bold ellipsis">@_report.TableName</MudText>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @if (_busy)
+    {
+        <MudPaper Class="process-card pa-4 mb-3" Elevation="0">
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+            <MudText Typo="Typo.body2" Class="mt-2">Đang xử lý Excel / database...</MudText>
+        </MudPaper>
+    }
+
+    @if (_preview is not null)
+    {
+        <MudPaper Class="control-card pa-3 mb-3" Elevation="0">
+            <MudGrid Spacing="2" AlignItems="Center">
+                <MudItem xs="12" md="5">
+                    <MudTextField T="string"
+                                  @bind-Value="_search"
+                                  Label="Search preview"
+                                  Placeholder="Container, booking, vessel, remark..."
+                                  Immediate="true"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" />
+                </MudItem>
+                <MudItem xs="6" md="2">
+                    <MudSelect T="int" @bind-Value="_previewLimit" Label="Rows" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelectItem T="int" Value="50">50</MudSelectItem>
+                        <MudSelectItem T="int" Value="100">100</MudSelectItem>
+                        <MudSelectItem T="int" Value="200">200</MudSelectItem>
+                        <MudSelectItem T="int" Value="500">500</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="6" md="2">
+                    <MudCheckBox T="bool" @bind-Value="_onlyProblem" Label="Chỉ dòng lỗi/trùng" Color="Color.Warning" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudButton FullWidth="true"
+                               Variant="Variant.Filled"
+                               Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.DoneAll"
+                               OnClick="ConfirmImportAsync"
+                               Disabled="@(_busy || !_preview.HasImportableRows)">
+                        Import @_preview.ImportableRows.ToString("N0") dòng mới
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+
+        <MudTabs @bind-ActivePanelIndex="_activeTab" Class="preview-tabs">
+            @foreach (var sheet in _preview.Sheets)
+            {
+                <MudTabPanel Text="@($"{sheet.SheetName} ({sheet.Rows.Count:N0})")">
+                    <MudPaper Class="preview-card pa-3" Elevation="0">
+                        <div class="preview-table-wrap">
+                            <MudTable T="DepotHaiPhongPreviewRow"
+                                      Items="FilteredRows(sheet).Take(_previewLimit).ToList()"
+                                      Dense="true"
+                                      Hover="true"
+                                      Bordered="true"
+                                      Striped="true"
+                                      Class="preview-table">
+                                <HeaderContent>
+                                    <MudTh>#</MudTh>
+                                    <MudTh>Status</MudTh>
+                                    <MudTh>Container</MudTh>
+                                    @if (!string.IsNullOrWhiteSpace(sheet.Rows.FirstOrDefault()?.SectionName))
+                                    {
+                                        <MudTh>Section</MudTh>
+                                    }
+                                    @foreach (var h in VisibleHeaders(sheet))
+                                    {
+                                        <MudTh>@h</MudTh>
+                                    }
+                                </HeaderContent>
+                                <RowTemplate Context="row">
+                                    <MudTd>@row.ExcelRow</MudTd>
+                                    <MudTd>
+                                        @if (row.CanImport)
+                                        {
+                                            <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Outlined">New</MudChip>
+                                        }
+                                        else if (row.IsExisting)
+                                        {
+                                            <MudChip T="string" Color="Color.Info" Size="Size.Small">Existing</MudChip>
+                                        }
+                                        else if (row.IsBatchDuplicate)
+                                        {
+                                            <MudChip T="string" Color="Color.Warning" Size="Size.Small">Duplicate</MudChip>
+                                        }
+                                        else
+                                        {
+                                            <MudTooltip Text="@row.StatusMessage">
+                                                <MudChip T="string" Color="Color.Error" Size="Size.Small">Invalid</MudChip>
+                                            </MudTooltip>
+                                        }
+                                    </MudTd>
+                                    <MudTd Class="fw-bold">@row.ContainerNo</MudTd>
+                                    @if (!string.IsNullOrWhiteSpace(sheet.Rows.FirstOrDefault()?.SectionName))
+                                    {
+                                        <MudTd>@row.SectionName</MudTd>
+                                    }
+                                    @foreach (var h in VisibleHeaders(sheet))
+                                    {
+                                        <MudTd>@(row.Values.TryGetValue(h, out var v) ? v : string.Empty)</MudTd>
+                                    }
+                                </RowTemplate>
+                            </MudTable>
+                        </div>
+                    </MudPaper>
+                </MudTabPanel>
+            }
+        </MudTabs>
+    }
+    else
+    {
+        <MudPaper Class="empty-card pa-4 mb-3" Elevation="0">
+            <MudStack AlignItems="AlignItems.Center" Spacing="1">
+                <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" Color="Color.Primary" />
+                <MudText Typo="Typo.h6" Class="fw-bold">Chọn file Excel để preview rồi import</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Align="Align.Center">
+                    Hỗ trợ .xlsx và .xls (kể cả Spreadsheet XML). Dòng không có số container sẽ bỏ qua. Xóa dữ liệu theo từng file đã import ở bảng trên.
+                </MudText>
+            </MudStack>
+        </MudPaper>
+
+        <MudPaper Class="preview-card pa-3" Elevation="0">
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                <div>
+                    <MudText Typo="Typo.subtitle1" Class="fw-bold">Dữ liệu đã lưu (kiểm tra)</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">Hiển thị @_savedRows.Count / @_savedCount dòng mới nhất</MudText>
+                </div>
+                <MudTextField T="string"
+                              @bind-Value="_savedSearch"
+                              Placeholder="Search container / file / depot"
+                              Immediate="true"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search"
+                              Style="min-width:260px;" />
+            </MudStack>
+
+            @if (_savedRows.Count == 0)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Info" Variant="Variant.Outlined" Dense="true">
+                    Chưa có dữ liệu. Import file Excel để xem tại đây.
+                </MudAlert>
+            }
+            else
+            {
+                <div class="preview-table-wrap">
+                    <MudTable T="DepotHaiPhongSavedRow"
+                              Items="FilteredSaved().Take(200).ToList()"
+                              Dense="true"
+                              Hover="true"
+                              Bordered="true"
+                              Striped="true"
+                              Class="preview-table">
+                        <HeaderContent>
+                            @foreach (var h in SavedHeaders())
+                            {
+                                <MudTh>@h</MudTh>
+                            }
+                        </HeaderContent>
+                        <RowTemplate Context="row">
+                            @foreach (var h in SavedHeaders())
+                            {
+                                <MudTd>@(row.Values.TryGetValue(h, out var v) ? v : string.Empty)</MudTd>
+                            }
+                        </RowTemplate>
+                    </MudTable>
+                </div>
+            }
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public string? ReportCode { get; set; }
+
+    private const string PermissionMenuName = "Inventory";
+
+    private DepotHaiPhongReport _report = DepotHaiPhongCatalog.All[0];
+    private bool _busy;
+    private bool _canAdd;
+    private bool _canDelete;
+    private string _usr = string.Empty;
+    private string _importDepot = string.Empty;
+    private List<Terminal_> _terminals = new();
+    private DepotHaiPhongPreview? _preview;
+    private List<ImportedFileBatch> _importedFiles = new();
+    private List<DepotHaiPhongSavedRow> _savedRows = new();
+    private int _savedCount;
+    private int _activeTab;
+    private int _previewLimit = 100;
+    private string _search = string.Empty;
+    private string _savedSearch = string.Empty;
+    private bool _onlyProblem;
+
+    private string PageTitle => $"{_report.MenuNo} {_report.Title}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var next = DepotHaiPhongCatalog.Get(ReportCode);
+        if (next.Code == _report.Code)
+            return;
+
+        _report = next;
+        _importDepot = _report.DefaultDepot;
+        ClearPreview();
+        await ReloadSavedAsync();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _report = DepotHaiPhongCatalog.Get(ReportCode);
+        _importDepot = _report.DefaultDepot;
+
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        _canAdd = await ssv.CheckPermission(_usr, "Add", PermissionMenuName);
+        _canDelete = await ssv.CheckPermission(_usr, "Delete", PermissionMenuName);
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _terminals = await db.Terminal
+            .Where(x => !string.IsNullOrEmpty(x.TermiNalName))
+            .OrderBy(x => x.TermiNalName)
+            .ToListAsync();
+
+        await ReloadSavedAsync();
+    }
+
+    private async Task ReloadSavedAsync()
+    {
+        _importedFiles = await ImportService.LoadImportedFilesAsync(_report);
+        _savedRows = await ImportService.LoadSavedAsync(_report);
+        _savedCount = await ImportService.CountSavedAsync(_report);
+    }
+
+    private Task LoadImportedFilesAsync() => ReloadSavedAsync();
+
+    private Guid? ResolveSelectedDepotId()
+    {
+        var name = _importDepot?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+
+        return _terminals
+            .FirstOrDefault(x => string.Equals(x.TermiNalName, name, StringComparison.OrdinalIgnoreCase))
+            ?.TerminalID;
+    }
+
+    private Task<IEnumerable<string?>> SearchTerminal(string? text)
+    {
+        var query = _terminals.Where(x => !string.IsNullOrEmpty(x.TermiNalName));
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            query = query.Where(x =>
+                x.TermiNalName!.Contains(text, StringComparison.OrdinalIgnoreCase)
+                || (x.Code?.Contains(text, StringComparison.OrdinalIgnoreCase) == true));
+        }
+        return Task.FromResult<IEnumerable<string?>>(query.Select(x => x.TermiNalName).Distinct());
+    }
+
+    private async Task PreviewExcelAsync(InputFileChangeEventArgs e)
+    {
+        if (!_canAdd)
+        {
+            Snackbar.Add(Localizer["StockImport_NoPermissionInventory"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (e.FileCount == 0)
+            return;
+
+        var file = e.File;
+        var ext = Path.GetExtension(file.Name);
+        if (!ext.Equals(".xls", StringComparison.OrdinalIgnoreCase)
+            && !ext.Equals(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            Snackbar.Add(Localizer["StockImport_XlsXlsxOnly"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            _preview = null;
+            await using var input = file.OpenReadStream(80 * 1024 * 1024);
+            await using var ms = new MemoryStream();
+            await input.CopyToAsync(ms);
+
+            var preview = ImportService.ReadPreview(ms.ToArray(), file.Name, _report);
+            if (preview.Sheets.Count == 0 || preview.TotalRows == 0)
+                throw new InvalidOperationException("Không tìm thấy dòng container trong file. Kiểm tra đúng mẫu Excel của menu này.");
+
+            ImportService.ComputeSignatures(preview, _report, _importDepot?.Trim() ?? _report.DefaultDepot);
+            await ImportService.EnsureTableExistsAsync(_report);
+            await ImportService.MarkDuplicatesAsync(preview, _report);
+            _preview = preview;
+            _activeTab = 0;
+            Snackbar.Add($"Preview {preview.TotalRows:N0} dòng · mới {preview.ImportableRows:N0} · đã có {preview.ExistingRows:N0}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ConfirmImportAsync()
+    {
+        if (!_canAdd)
+        {
+            Snackbar.Add(Localizer["StockImport_NoPermissionInventory"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_preview is null || !_preview.HasImportableRows)
+        {
+            Snackbar.Add(Localizer["StockImport_NoNewRows"], MudBlazor.Severity.Info);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_importDepot))
+        {
+            Snackbar.Add(Localizer["StockImport_SelectDepotImport"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            ImportService.ComputeSignatures(_preview, _report, _importDepot.Trim());
+            var inserted = await ImportService.InsertAsync(_preview, _report, _importDepot.Trim(), ResolveSelectedDepotId(), _usr);
+            Snackbar.Add($"Đã import {inserted:N0} dòng vào {_report.TableName}.", MudBlazor.Severity.Success);
+            ClearPreview();
+            await ReloadSavedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void ClearPreview()
+    {
+        _preview = null;
+        _activeTab = 0;
+        _search = string.Empty;
+        _onlyProblem = false;
+    }
+
+    private async Task DeleteSelectedImportedFilesAsync(IReadOnlyList<ImportedFileBatch> batches)
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (batches.Count == 0)
+            return;
+
+        var label = string.Join(", ", batches.Select(x => x.DisplayLabel));
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa theo file",
+            $"Xóa dữ liệu của file đã chọn?\n{label}\nThao tác không hoàn tác.",
+            yesText: "Xóa file đã chọn",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            var deleted = await ImportService.DeleteSelectedFilesAsync(_report, batches);
+            await ReloadSavedAsync();
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng theo file đã chọn.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAllDataAsync()
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["You have not access to Delete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận xóa toàn bộ",
+            $"Xóa toàn bộ dữ liệu đã lưu của {_report.MenuNo} ({_report.TableName})? Thao tác không hoàn tác.",
+            yesText: "Xóa toàn bộ",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            var deleted = await ImportService.DeleteAllAsync(_report);
+            await ReloadSavedAsync();
+            Snackbar.Add($"Đã xóa {deleted:N0} dòng từ {_report.TableName}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(RootMessage(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private IEnumerable<DepotHaiPhongPreviewRow> FilteredRows(DepotHaiPhongSheetPreview sheet)
+    {
+        var rows = sheet.Rows.AsEnumerable();
+        if (_onlyProblem)
+            rows = rows.Where(x => !x.CanImport);
+        if (!string.IsNullOrWhiteSpace(_search))
+        {
+            var q = _search.Trim();
+            rows = rows.Where(x =>
+                (x.ContainerNo?.Contains(q, StringComparison.OrdinalIgnoreCase) == true)
+                || x.Values.Values.Any(v => v.Contains(q, StringComparison.OrdinalIgnoreCase)));
+        }
+        return rows;
+    }
+
+    private List<string> VisibleHeaders(DepotHaiPhongSheetPreview sheet)
+    {
+        var preferred = new[]
+        {
+            "TYPE", "SIZE", "SZTP", "KICHCO", "ISO", "FE", "STATUS", "TRANGTHAI",
+            "MOVE", "DATEIN", "INDATE", "DATEOUT", "OUTDATE", "LOCATION", "VITRI",
+            "BOOKING", "BOOKNO", "BLNO", "VESSEL", "REMARK", "GHICHU", "RMK"
+        };
+
+        var result = new List<string>();
+        foreach (var key in preferred)
+        {
+            var match = sheet.Headers.FirstOrDefault(h =>
+                DepotHaiPhongCatalog.NormalizeKey(h).Contains(key, StringComparison.OrdinalIgnoreCase));
+            if (match is not null && !result.Contains(match, StringComparer.OrdinalIgnoreCase))
+                result.Add(match);
+        }
+
+        if (result.Count >= 6)
+            return result;
+
+        return sheet.Headers
+            .Where(h => !string.IsNullOrWhiteSpace(h)
+                        && DepotHaiPhongCatalog.NormalizeKey(h) is not "CONTAINERNO" and not "CONTAINER" and not "SOCONT")
+            .Take(12)
+            .ToList();
+    }
+
+    private IEnumerable<DepotHaiPhongSavedRow> FilteredSaved()
+    {
+        if (string.IsNullOrWhiteSpace(_savedSearch))
+            return _savedRows;
+
+        var q = _savedSearch.Trim();
+        return _savedRows.Where(x => x.Values.Values.Any(v => v.Contains(q, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private List<string> SavedHeaders()
+    {
+        var first = _savedRows.FirstOrDefault();
+        if (first is null)
+            return new List<string>();
+
+        var preferred = new[]
+        {
+            "SOURCE_FILE", "DATE_IMPORT", "USER_IMPORT", "SHEET_NAME", "SECTION_NAME",
+            "Depot", "ContainerNo", "EXCEL_ROW"
+        };
+
+        var keys = first.Values.Keys.ToList();
+        var result = preferred.Where(p => keys.Any(k => k.Equals(p, StringComparison.OrdinalIgnoreCase))).ToList();
+        foreach (var k in keys)
+        {
+            if (result.Count >= 14)
+                break;
+            if (!result.Contains(k, StringComparer.OrdinalIgnoreCase))
+                result.Add(k);
+        }
+        return result;
+    }
+
+    private static string RootMessage(Exception ex)
+    {
+        var cur = ex;
+        while (cur.InnerException is not null)
+            cur = cur.InnerException;
+        return cur.Message;
+    }
+}
+
+<style>
+    .hph-import-page { background: #f8fafc; min-height: 100%; }
+    .hero-card {
+        border: 1px solid #dbeafe; border-radius: 22px;
+        background: linear-gradient(135deg, #eff6ff 0%, #ffffff 55%, #ecfeff 100%);
+        box-shadow: 0 14px 34px rgba(15, 23, 42, .06);
+    }
+    .hero-icon {
+        width: 58px; height: 58px; border-radius: 18px; display: flex;
+        align-items: center; justify-content: center; color: #075985; background: #e0f2fe;
+    }
+    .page-title { font-weight: 900; color: #0f3b70; }
+    .kpi-card, .control-card, .preview-card, .empty-card, .process-card {
+        border: 1px solid #e5e7eb; border-radius: 18px; background: #fff;
+        box-shadow: 0 8px 22px rgba(15,23,42,.05);
+    }
+    .kpi-card { min-height: 90px; }
+    .fw-bold { font-weight: 800; }
+    .ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .text-ok { color: #047857; }
+    .text-info { color: #0369a1; }
+    .preview-table-wrap { overflow: auto; max-height: 65vh; }
+</style>
