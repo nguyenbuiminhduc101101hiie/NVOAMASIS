@@ -5310,19 +5310,42 @@ namespace NVOAMASIS.Services
             }
         }
 
-        public async Task<BoolandMessReponse> ExportLenhCapContRong(Guid id,Guid id_bk)
+        public async Task<BoolandMessReponse> ExportLenhCapContRong(Guid id, Guid id_bk, Guid? layoutFormId = null)
         {
             try
             {
-                //Create empty report object
                 var report = new StiReport();
-                //Load report template
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "LenhCapContRong.mrt");
+                byte[] templateBytes;
+                if (layoutFormId is Guid formId && formId != Guid.Empty)
+                {
+                    var form = await billSeaLayoutFormService.GetFormAsync(formId);
+                    if (form is null || !form.IsActive)
+                        return new BoolandMessReponse(false, "Không tìm thấy form Lệnh Cấp Cont Rỗng.");
+
+                    if (BillLayoutFormKindHelper.ParseFormKind(form.FormKind) != BillLayoutFormKind.LenhCapContRong)
+                        return new BoolandMessReponse(false, "Form đã chọn không phải loại Lệnh Cấp Cont Rỗng.");
+
+                    templateBytes = await billSeaLayoutFormService.GetFormBytesAsync(formId);
+                }
+                else
+                {
+                    templateBytes = await billSeaLayoutFormService.GetDefaultTemplateBytesAsync(
+                        BillLayoutFormKindHelper.GetDefaultTemplateFile(BillLayoutFormKind.LenhCapContRong));
+                }
+
+                byte[]? reportLogo;
+                if (layoutFormId is Guid layoutForm && layoutForm != Guid.Empty)
+                    reportLogo = await billSeaLayoutFormService.GetEffectiveFormLogoAsync(layoutForm);
+                else
+                    reportLogo = await GetCompanyLogoAsync();
+
                 var connectionString = ResolveReportConnectionString();
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
-                report.Load(rpt);
+                report.Load(new MemoryStream(templateBytes));
                 ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, reportLogo, showLogo: true);
+                ApplyLogoToImageComponent(report, "Image1", reportLogo);
                 report.Dictionary.Variables["ID"].Value = id_bk.ToString();
                 report.Dictionary.Variables["ID_Lenh"].Value = id.ToString();
                 try

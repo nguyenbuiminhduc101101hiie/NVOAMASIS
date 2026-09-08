@@ -11,6 +11,7 @@ namespace NVOAMASIS.Models
         Booking,
         Quotation,
         Bbgn,
-        LenhDieuXe
+        LenhDieuXe,
+        LenhCapContRong
     }
 }
