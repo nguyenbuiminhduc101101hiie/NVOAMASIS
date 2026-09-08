@@ -3,6 +3,7 @@
 
 @using System.Data
 @using System.Data.Common
+@using System.Globalization
 @using System.Text
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Localization
@@ -12,6 +13,7 @@
 
 @using NVOAMASIS.Models
 @using NVOAMASIS.Resources
+@using NVOAMASIS.Services
 
 @attribute [Authorize]
 
@@ -21,15 +23,15 @@
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
 
-<PageTitle>@Localizer["Ci_PageTitle"]</PageTitle>
+<PageTitle>@(IsHaiPhongScope ? LocalizedOr("CiHp_PageTitle", "8.3.9.11 Container Inventory Hai Phong") : Localizer["Ci_PageTitle"])</PageTitle>
 
 <div class="container-inventory-page">
     <MudPaper Class="ci-header pa-4 mb-3" Elevation="0">
         <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="flex-wrap" Spacing="2">
             <div>
-                <MudText Typo="Typo.h5" Class="ci-title">@Localizer["Ci_Title"]</MudText>
+                <MudText Typo="Typo.h5" Class="ci-title">@(IsHaiPhongScope ? LocalizedOr("CiHp_Title", "8.3.9.11 Container Inventory Hai Phong") : Localizer["Ci_Title"])</MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    @Localizer["Ci_Subtitle"]
+                    @(IsHaiPhongScope ? LocalizedOr("CiHp_Subtitle", "Statistics from the 10 Hai Phong depot import tables (8.3.9.1–10).") : Localizer["Ci_Subtitle"])
                 </MudText>
                 @if (!string.IsNullOrWhiteSpace(_sourceInfo))
                 {
@@ -38,41 +40,60 @@
             </div>
 
             <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="flex-wrap">
-                <MudButton Variant="Variant.Filled"
-                           Color="Color.Success"
-                           Size="Size.Small"
-                           StartIcon="@Icons.Material.Filled.UploadFile"
-                           OnClick="OpenImport834Async"
-                           Disabled="_busy">
-                    @Localizer["Ci_Import834"]
-                </MudButton>
+                @if (IsHaiPhongScope)
+                {
+                    <MudMenu Label="@LocalizedOr("CiHp_ImportMenu", "Import 8.3.9")"
+                             Variant="Variant.Filled"
+                             Color="Color.Success"
+                             Size="Size.Small"
+                             Icon="@Icons.Material.Filled.UploadFile"
+                             Disabled="_busy"
+                             Dense="true">
+                        @foreach (var report in DepotHaiPhongCatalog.All)
+                        {
+                            var current = report;
+                            <MudMenuItem OnClick="@(() => OpenHaiPhongImportAsync(current))">@current.MenuNo @current.Title</MudMenuItem>
+                        }
+                    </MudMenu>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.UploadFile"
+                               OnClick="OpenImport834Async"
+                               Disabled="_busy">
+                        @Localizer["Ci_Import834"]
+                    </MudButton>
 
-                <MudButton Variant="Variant.Filled"
-                           Color="Color.Info"
-                           Size="Size.Small"
-                           StartIcon="@Icons.Material.Filled.UploadFile"
-                           OnClick="OpenImport835Async"
-                           Disabled="_busy">
-                    @Localizer["Ci_Import835"]
-                </MudButton>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Info"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.UploadFile"
+                               OnClick="OpenImport835Async"
+                               Disabled="_busy">
+                        @Localizer["Ci_Import835"]
+                    </MudButton>
 
-                <MudButton Variant="Variant.Filled"
-                           Color="Color.Warning"
-                           Size="Size.Small"
-                           StartIcon="@Icons.Material.Filled.UploadFile"
-                           OnClick="OpenImport836Async"
-                           Disabled="_busy">
-                    @Localizer["Ci_Import836"]
-                </MudButton>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Warning"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.UploadFile"
+                               OnClick="OpenImport836Async"
+                               Disabled="_busy">
+                        @Localizer["Ci_Import836"]
+                    </MudButton>
 
-                <MudButton Variant="Variant.Filled"
-                           Color="Color.Secondary"
-                           Size="Size.Small"
-                           StartIcon="@Icons.Material.Filled.UploadFile"
-                           OnClick="OpenImport837Async"
-                           Disabled="_busy">
-                    @Localizer["Ci_Import837"]
-                </MudButton>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Secondary"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.UploadFile"
+                               OnClick="OpenImport837Async"
+                               Disabled="_busy">
+                        @Localizer["Ci_Import837"]
+                    </MudButton>
+                }
 
                 <MudButton Variant="Variant.Filled"
                            Color="Color.Primary"
@@ -739,6 +760,15 @@
 
 @code {
     [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+    [Parameter] public string InventoryScope { get; set; } = "Default";
+
+    private bool IsHaiPhongScope => string.Equals(InventoryScope, "HaiPhong", StringComparison.OrdinalIgnoreCase);
+
+    private string LocalizedOr(string key, string fallback)
+    {
+        var value = Localizer[key];
+        return string.Equals(value.Value, key, StringComparison.Ordinal) ? fallback : value.Value;
+    }
 
     private const string StatusInDepot = "In Depot";
     private const string StatusWaitingPort = "Waiting Port Arrival";
@@ -764,6 +794,10 @@
         // 8.3.8 Phương Đông Depot inventory table.
         "8_3_8_Phuong_Dong_Depot"
     };
+
+    private IReadOnlyList<string> ActiveSourceTables => IsHaiPhongScope
+        ? DepotHaiPhongCatalog.All.Select(x => x.TableName).ToList()
+        : PreferredSourceTables;
 
     private static readonly string[] SourceColumns =
     {
@@ -923,6 +957,27 @@
         builder.CloseComponent();
     };
 
+    private async Task OpenHaiPhongImportAsync(DepotHaiPhongReport report)
+    {
+        var key = $"DepotHaiPhong_{report.Code}";
+        var title = $"{report.MenuNo} {report.Title}";
+
+        if (OnTabRequest.HasDelegate)
+        {
+            await OnTabRequest.InvokeAsync((key, title, RenderHaiPhongImport(report.Code)));
+            return;
+        }
+
+        Navigation.NavigateTo($"/stock/depot-hai-phong-import/{report.Code}");
+    }
+
+    private RenderFragment RenderHaiPhongImport(string code) => builder =>
+    {
+        builder.OpenComponent<Components.Stock.Pages.DepotHaiPhongImport>(0);
+        builder.AddAttribute(1, nameof(Components.Stock.Pages.DepotHaiPhongImport.ReportCode), code);
+        builder.CloseComponent();
+    };
+
     private async Task LoadAsync()
     {
         try
@@ -944,7 +999,9 @@
             if (sources.Count == 0)
             {
                 _records.Clear();
-                _errorMessage = "No compatible inventory/import tables were found. Required shape: Current table has ITEM_NO + ISO + DateImport, In/Out table has SOCONT + KICHCO + DateImport, or APS Yard table has CONTAINER + ISO_SZTP/ISO_TYPE + DATE_IMPORT/DATE_IN.";
+                _errorMessage = IsHaiPhongScope
+                    ? "Không tìm thấy bảng 8.3.9 Depot Hai Phong. Hãy chạy Scripts/Create_8_3_9_Depot_Hai_Phong.sql rồi import 8.3.9.1–10."
+                    : "No compatible inventory/import tables were found. Required shape: Current table has ITEM_NO + ISO + DateImport, In/Out table has SOCONT + KICHCO + DateImport, or APS Yard table has CONTAINER + ISO_SZTP/ISO_TYPE + DATE_IMPORT/DATE_IN.";
                 return;
             }
 
@@ -953,7 +1010,12 @@
             foreach (var source in sources)
             {
                 var dbColumns = await LoadColumnNamesAsync(conn, source.SchemaName, source.TableName);
-                var selectedColumns = SourceColumns.Where(x => dbColumns.Contains(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                var selectedColumns = IsHaiPhongScope
+                    ? dbColumns
+                        .Where(x => !string.Equals(x, "ExtraJson", StringComparison.OrdinalIgnoreCase)
+                                    && !string.Equals(x, "ROW_SIGNATURE", StringComparison.OrdinalIgnoreCase))
+                        .ToList()
+                    : SourceColumns.Where(x => dbColumns.Contains(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
                 if (selectedColumns.Count == 0)
                     continue;
@@ -1039,7 +1101,7 @@
     {
         var result = new List<TableSource>();
 
-        foreach (var tableName in PreferredSourceTables)
+        foreach (var tableName in ActiveSourceTables)
         {
             var source = await FindSpecificSourceTableAsync(conn, tableName);
 
@@ -1047,12 +1109,17 @@
                 result.Add(source);
         }
 
+        if (IsHaiPhongScope)
+            return result;
+
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
 SELECT s.name AS SchemaName, t.name AS TableName
 FROM sys.tables t
 INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
 WHERE
+t.name NOT LIKE N'8_3_9_%'
+AND
 (
        (EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ITEM_NO')
     AND EXISTS (SELECT 1 FROM sys.columns c WHERE c.object_id = t.object_id AND c.name = N'ISO')
@@ -1154,6 +1221,9 @@ ORDER BY s.name, t.name;";
     {
         var columns = await LoadColumnNamesAsync(conn, schemaName, tableName);
 
+        if (IsHaiPhongScope && tableName.StartsWith("8_3_9_", StringComparison.OrdinalIgnoreCase))
+            return new TableSource(schemaName, tableName, ResolveHaiPhongSourceType(tableName));
+
         if (columns.Contains("ITEM_NO") && columns.Contains("ISO") && columns.Contains("DateImport"))
             return new TableSource(schemaName, tableName, "CurrentInYard");
 
@@ -1214,7 +1284,9 @@ WHERE s.name = @SchemaName AND t.name = @TableName;";
         var result = new List<ContainerRecord>();
         var selectList = string.Join(", ", selectedColumns.Select(QuoteName));
 
-        var orderColumns = new[] { "DateImport", "DATE_IMPORT", "CreatedAt", "CREATED_AT", "EXEC_TS", "ARR_TS", "DEP_TS", "DATE_OUT", "DATE_IN" }
+        var orderColumns = (IsHaiPhongScope
+                ? new[] { "DATE_IMPORT", "CREATED_AT" }
+                : new[] { "DateImport", "DATE_IMPORT", "CreatedAt", "CREATED_AT", "EXEC_TS", "ARR_TS", "DEP_TS", "DATE_OUT", "DATE_IN" })
             .Where(c => selectedColumns.Contains(c, StringComparer.OrdinalIgnoreCase))
             .Select(QuoteName)
             .ToList();
@@ -1242,29 +1314,57 @@ ORDER BY {orderBy};";
         while (await reader.ReadAsync())
         {
             var isApsYard = source.SourceType.StartsWith("ApsYard", StringComparison.OrdinalIgnoreCase);
-            var isInOut = source.SourceType == "InOutYard" || isApsYard;
+            var isHaiPhong = source.SourceType.StartsWith("HaiPhong", StringComparison.OrdinalIgnoreCase);
+            var isHaiPhongStock = source.SourceType == "HaiPhongStock";
+            var isInOut = source.SourceType == "InOutYard" || isApsYard || isHaiPhong;
 
             var method = FirstNonEmpty(
                 GetString(reader, ordinals, "METHOD"),
                 GetString(reader, ordinals, "OPERATION_METHOD"),
                 GetString(reader, ordinals, "MOVE"),
-                source.SourceType);
+                GetString(reader, ordinals, "Move"),
+                GetString(reader, ordinals, "Move_Type"),
+                GetString(reader, ordinals, "Vao_Ra"),
+                GetString(reader, ordinals, "PHUONGAN"),
+                GetString(reader, ordinals, "Mode"),
+                isHaiPhongStock ? "IN" : source.SourceType);
 
             var execTs = FirstNonEmptyDate(
                 GetDateTime(reader, ordinals, "EXEC_TS"),
                 GetDateTime(reader, ordinals, "DATE_OUT"),
-                GetDateTime(reader, ordinals, "DATE_IN"));
+                GetDateTime(reader, ordinals, "DATE_IN"),
+                GetDateTime(reader, ordinals, "NGAYTHUCHIEN"),
+                GetDateTime(reader, ordinals, "Move_Date"));
 
             var looksOut = source.SourceType == "ApsYardGateOut" || LooksLikeOutMovement(method);
-            var looksIn = source.SourceType == "ApsYardGateIn" || source.SourceType == "ApsYardStock" || LooksLikeInMovement(method);
+            var looksIn = source.SourceType == "ApsYardGateIn"
+                || source.SourceType == "ApsYardStock"
+                || isHaiPhongStock
+                || LooksLikeInMovement(method);
 
             var arrTs = FirstNonEmptyDate(
                 GetDateTime(reader, ordinals, "ARR_TS"),
-                GetDateTime(reader, ordinals, "DATE_IN"));
+                GetDateTime(reader, ordinals, "DATE_IN"),
+                GetDateTime(reader, ordinals, "DateIn"),
+                GetDateTime(reader, ordinals, "Date_In"),
+                GetDateTime(reader, ordinals, "Date_in"),
+                GetDateTime(reader, ordinals, "In_Date"),
+                GetDateTime(reader, ordinals, "GATE_IN"),
+                GetDateTime(reader, ordinals, "NGAYNHAPBAI"),
+                GetDateTime(reader, ordinals, "Terminal_In_Date"),
+                GetDateTime(reader, ordinals, "Container_vao_bai"),
+                GetDateTime(reader, ordinals, "IN_DATE"));
 
             var depTs = FirstNonEmptyDate(
                 GetDateTime(reader, ordinals, "DEP_TS"),
-                GetDateTime(reader, ordinals, "DATE_OUT"));
+                GetDateTime(reader, ordinals, "DATE_OUT"),
+                GetDateTime(reader, ordinals, "DateOut"),
+                GetDateTime(reader, ordinals, "Date_out"),
+                GetDateTime(reader, ordinals, "Out_Date"),
+                GetDateTime(reader, ordinals, "GATE_OUT"),
+                GetDateTime(reader, ordinals, "NGAYROIBAI"),
+                GetDateTime(reader, ordinals, "Container_ra_bai"),
+                GetDateTime(reader, ordinals, "OUT_DATE"));
 
             if (isInOut && arrTs is null && looksIn)
                 arrTs = execTs;
@@ -1275,10 +1375,15 @@ ORDER BY {orderBy};";
             var note = FirstNonEmpty(
                 GetString(reader, ordinals, "GHICHU"),
                 GetString(reader, ordinals, "REMARK"),
+                GetString(reader, ordinals, "Remark"),
+                GetString(reader, ordinals, "Remarks"),
+                GetString(reader, ordinals, "REMARKS"),
+                GetString(reader, ordinals, "Ghi_chu"),
                 GetString(reader, ordinals, "NOTE"),
                 GetString(reader, ordinals, "NOTE1"),
                 GetString(reader, ordinals, "NOTE2"),
-                GetString(reader, ordinals, "NOTE3"));
+                GetString(reader, ordinals, "NOTE3"),
+                GetString(reader, ordinals, "RMK"));
 
             var row = new ContainerRecord
             {
@@ -1294,16 +1399,26 @@ ORDER BY {orderBy};";
                 AGENT = FirstNonEmpty(
                     GetString(reader, ordinals, "AGENT"),
                     GetString(reader, ordinals, "OPR"),
-                    GetString(reader, ordinals, "OPT")),
+                    GetString(reader, ordinals, "Opr"),
+                    GetString(reader, ordinals, "Opt"),
+                    GetString(reader, ordinals, "OPT"),
+                    GetString(reader, ordinals, "Hang_khai_thac"),
+                    GetString(reader, ordinals, "Hang_KT"),
+                    GetString(reader, ordinals, "Partner_Code")),
 
                 LINE = FirstNonEmpty(
                     GetString(reader, ordinals, "LINE"),
+                    GetString(reader, ordinals, "Line"),
                     GetString(reader, ordinals, "OPR"),
-                    GetString(reader, ordinals, "OPT")),
+                    GetString(reader, ordinals, "Opr"),
+                    GetString(reader, ordinals, "OPT"),
+                    GetString(reader, ordinals, "Hang_khai_thac"),
+                    GetString(reader, ordinals, "Hang_KT")),
 
                 DEPOT = FirstNonEmpty(
                     GetString(reader, ordinals, "DEPOT"),
-                    GetString(reader, ordinals, "Depot")),
+                    GetString(reader, ordinals, "Depot"),
+                    GetString(reader, ordinals, "DEPOT_NAME")),
                 DepotId = FirstNonEmptyGuid(
                     GetGuid(reader, ordinals, "DepotId"),
                     GetGuid(reader, ordinals, "DepotID")),
@@ -1311,52 +1426,93 @@ ORDER BY {orderBy};";
                 REPORT_TO = GetDateTime(reader, ordinals, "REPORT_TO"),
                 REPORT_DATE = GetDateTime(reader, ordinals, "REPORT_DATE"),
                 INS_DATE = GetDateTime(reader, ordinals, "INS_DATE"),
-                TIME_IN = GetString(reader, ordinals, "TIME_IN"),
+                TIME_IN = FirstNonEmpty(
+                    GetString(reader, ordinals, "TIME_IN"),
+                    GetString(reader, ordinals, "Time"),
+                    GetString(reader, ordinals, "TIME")),
                 CLEAN_METHOD = FirstNonEmpty(
                     GetString(reader, ordinals, "CLEAN_METHOD"),
-                    GetString(reader, ordinals, "CLEAN")),
-                CLEAN_STATUS = GetString(reader, ordinals, "CLEAN_STATUS"),
+                    GetString(reader, ordinals, "CLEAN"),
+                    GetString(reader, ordinals, "Clean"),
+                    GetString(reader, ordinals, "Phuong_an_ve_sinh")),
+                CLEAN_STATUS = FirstNonEmpty(
+                    GetString(reader, ordinals, "CLEAN_STATUS"),
+                    GetString(reader, ordinals, "Clean_Status")),
                 PTI_DATE = GetDateTime(reader, ordinals, "PTI_DATE"),
                 PTI_SETTING = GetString(reader, ordinals, "PTI_SETTING"),
-                PTI_STATUS = GetString(reader, ordinals, "PTI_STATUS"),
+                PTI_STATUS = FirstNonEmpty(
+                    GetString(reader, ordinals, "PTI_STATUS"),
+                    GetString(reader, ordinals, "PTI_OK")),
                 ESTIMATED_DATE = GetDateTime(reader, ordinals, "ESTIMATED_DATE"),
                 APPROVAL_DATE = GetDateTime(reader, ordinals, "APPROVAL_DATE"),
                 REJECT_DATE = GetDateTime(reader, ordinals, "REJECT_DATE"),
                 REPAIRED_DATE = GetDateTime(reader, ordinals, "REPAIRED_DATE"),
                 REGISTERED_DATE = GetDateTime(reader, ordinals, "REGISTERED_DATE"),
-                SHIPPER = GetString(reader, ordinals, "SHIPPER"),
+                SHIPPER = FirstNonEmpty(
+                    GetString(reader, ordinals, "SHIPPER"),
+                    GetString(reader, ordinals, "Shipper"),
+                    GetString(reader, ordinals, "Chu_hang"),
+                    GetString(reader, ordinals, "Consignee_Name"),
+                    GetString(reader, ordinals, "Consignee")),
 
                 ITEM_KEY = GetString(reader, ordinals, "ITEM_KEY"),
 
                 ITEM_NO = FirstNonEmpty(
+                    GetString(reader, ordinals, "ContainerNo"),
                     GetString(reader, ordinals, "ITEM_NO"),
                     GetString(reader, ordinals, "SOCONT"),
                     GetString(reader, ordinals, "CONTAINER"),
-                    GetString(reader, ordinals, "ContrNo")),
+                    GetString(reader, ordinals, "Container"),
+                    GetString(reader, ordinals, "ContrNo"),
+                    GetString(reader, ordinals, "Container_No"),
+                    GetString(reader, ordinals, "CONTAINER_NO"),
+                    GetString(reader, ordinals, "So_Container")),
 
                 ISO = FirstNonEmpty(
                     GetString(reader, ordinals, "ISO"),
                     GetString(reader, ordinals, "KICHCO"),
                     GetString(reader, ordinals, "ISO_SZTP"),
                     GetString(reader, ordinals, "ISO_TYPE"),
+                    GetString(reader, ordinals, "ISO_Type"),
                     GetString(reader, ordinals, "CONTAINER_TYPE"),
                     GetString(reader, ordinals, "ContainerType"),
-                    GetString(reader, ordinals, "Size")),
+                    GetString(reader, ordinals, "Size"),
+                    GetString(reader, ordinals, "SIZE"),
+                    GetString(reader, ordinals, "SzTp"),
+                    GetString(reader, ordinals, "SZTP"),
+                    GetString(reader, ordinals, "Kich_co_ISO"),
+                    GetString(reader, ordinals, "Kich_co"),
+                    GetString(reader, ordinals, "Kich_co_noi_bo"),
+                    GetString(reader, ordinals, "Type"),
+                    GetString(reader, ordinals, "TYPE"),
+                    GetString(reader, ordinals, "Cont_Type"),
+                    GetString(reader, ordinals, "Cntr_Type")),
 
-                YOM = GetString(reader, ordinals, "YOM"),
+                YOM = FirstNonEmpty(
+                    GetString(reader, ordinals, "YOM"),
+                    GetString(reader, ordinals, "Nam_san_xuat"),
+                    GetString(reader, ordinals, "MFY")),
 
                 FEL = FirstNonEmpty(
+                    GetString(reader, ordinals, "FE"),
+                    GetString(reader, ordinals, "F_E"),
                     GetString(reader, ordinals, "FEL"),
                     GetString(reader, ordinals, "TRANGTHAI"),
-                    GetString(reader, ordinals, "FE"),
-                    GetString(reader, ordinals, "STATUS"),
-                    GetString(reader, ordinals, "Status")),
+                    GetString(reader, ordinals, "Trang_thai")),
 
-                TEMP = GetDecimal(reader, ordinals, "TEMP"),
+                TEMP = FirstNonEmptyDecimal(
+                    GetDecimal(reader, ordinals, "TEMP"),
+                    GetDecimal(reader, ordinals, "Temp_C"),
+                    GetDecimal(reader, ordinals, "Nhiet_do"),
+                    GetDecimal(reader, ordinals, "NHIETDO")),
 
                 WEIGHT = FirstNonEmptyDecimal(
                     GetDecimal(reader, ordinals, "WEIGHT"),
+                    GetDecimal(reader, ordinals, "Weight"),
+                    GetDecimal(reader, ordinals, "WGT"),
                     GetDecimal(reader, ordinals, "TRONGLUONG"),
+                    GetDecimal(reader, ordinals, "Trong_Luong"),
+                    GetDecimal(reader, ordinals, "Trong_luong"),
                     GetDecimal(reader, ordinals, "TARE_WEIGHT"),
                     GetDecimal(reader, ordinals, "GW")),
 
@@ -1368,24 +1524,40 @@ ORDER BY {orderBy};";
                 BOOK_NO = FirstNonEmpty(
                     GetString(reader, ordinals, "BOOK_NO"),
                     GetString(reader, ordinals, "BOOKING"),
-                    GetString(reader, ordinals, "Booking")),
+                    GetString(reader, ordinals, "Booking"),
+                    GetString(reader, ordinals, "Booking_No"),
+                    GetString(reader, ordinals, "So_Booking"),
+                    GetString(reader, ordinals, "BK_No"),
+                    GetString(reader, ordinals, "BOOK_NO_AT")),
 
                 BILL_OF_LADING = FirstNonEmpty(
                     GetString(reader, ordinals, "BILL_OF_LADING"),
                     GetString(reader, ordinals, "BL_NO"),
-                    GetString(reader, ordinals, "BKBLNo")),
+                    GetString(reader, ordinals, "BL_No"),
+                    GetString(reader, ordinals, "BKBLNo"),
+                    GetString(reader, ordinals, "So_Van_Don"),
+                    GetString(reader, ordinals, "B_L_No"),
+                    GetString(reader, ordinals, "So_BILL"),
+                    GetString(reader, ordinals, "BL_BK"),
+                    GetString(reader, ordinals, "Bill_of_lading")),
 
                 LOCATION = FirstNonEmpty(
                     GetString(reader, ordinals, "LOCATION"),
                     GetString(reader, ordinals, "POSITION"),
+                    GetString(reader, ordinals, "Position"),
                     GetString(reader, ordinals, "Location"),
-                    GetString(reader, ordinals, "DEPOT"),
-                    GetString(reader, ordinals, "Depot")),
+                    GetString(reader, ordinals, "Vi_tri_tren_bai"),
+                    GetString(reader, ordinals, "Vi_tri_bai"),
+                    GetString(reader, ordinals, "VITRI"),
+                    GetString(reader, ordinals, "Place")),
 
                 CATEGORY = FirstNonEmpty(
                     GetString(reader, ordinals, "CATEGORY"),
                     GetString(reader, ordinals, "MOVE"),
                     GetString(reader, ordinals, "Movement"),
+                    GetString(reader, ordinals, "Move_Type"),
+                    GetString(reader, ordinals, "Vao_Ra"),
+                    GetString(reader, ordinals, "PHUONGAN"),
                     GetString(reader, ordinals, "STATUS"),
                     GetString(reader, ordinals, "Status"),
                     method),
@@ -1398,12 +1570,20 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "ARR_CAR"),
                     GetString(reader, ordinals, "ENTRY_TRUCK_ID"),
                     GetString(reader, ordinals, "TRUCK"),
-                    GetString(reader, ordinals, "TRUCK_NO")),
+                    GetString(reader, ordinals, "TRUCK_NO"),
+                    GetString(reader, ordinals, "Truck_No_In"),
+                    GetString(reader, ordinals, "Truck_In"),
+                    GetString(reader, ordinals, "Xe_vao_cong"),
+                    GetString(reader, ordinals, "XEVAO")),
 
                 ARR_VES_NAME = FirstNonEmpty(
                     GetString(reader, ordinals, "ARR_VES_NAME"),
                     GetString(reader, ordinals, "ENTRY_VES_NAME"),
-                    GetString(reader, ordinals, "VESSEL")),
+                    GetString(reader, ordinals, "VESSEL"),
+                    GetString(reader, ordinals, "Vessel_Name"),
+                    GetString(reader, ordinals, "Ten_tau"),
+                    GetString(reader, ordinals, "VESS"),
+                    GetString(reader, ordinals, "TAUNHAP")),
 
                 ARR_TS = FirstNonEmptyDate(arrTs, GetDateTime(reader, ordinals, "DateIn"), GetDateTime(reader, ordinals, "DateInStuff"), GetDateTime(reader, ordinals, "StuffingDate")),
 
@@ -1415,12 +1595,18 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "DEP_CAR"),
                     GetString(reader, ordinals, "EXIT_TRUCK_ID"),
                     GetString(reader, ordinals, "TRUCK_NO"),
-                    GetString(reader, ordinals, "TRUCK")),
+                    GetString(reader, ordinals, "TRUCK"),
+                    GetString(reader, ordinals, "Truck_No_Out"),
+                    GetString(reader, ordinals, "Truck_Out"),
+                    GetString(reader, ordinals, "Xe_ra_cong"),
+                    GetString(reader, ordinals, "XERA")),
 
                 DEP_VES_NAME = FirstNonEmpty(
                     GetString(reader, ordinals, "DEP_VES_NAME"),
                     GetString(reader, ordinals, "EXIT_VES_NAME"),
-                    GetString(reader, ordinals, "VESSEL")),
+                    GetString(reader, ordinals, "VESSEL"),
+                    GetString(reader, ordinals, "TAUXUAT"),
+                    GetString(reader, ordinals, "VSL")),
 
                 DEP_TS = FirstNonEmptyDate(depTs, GetDateTime(reader, ordinals, "DateOut"), GetDateTime(reader, ordinals, "UnStuffingDate")),
 
@@ -1428,13 +1614,17 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "DISCH_PORT"),
                     GetString(reader, ordinals, "CANGCT"),
                     GetString(reader, ordinals, "POL"),
-                    GetString(reader, ordinals, "PortCD")),
+                    GetString(reader, ordinals, "PortCD"),
+                    GetString(reader, ordinals, "Cang_xep")),
 
                 FINAL_DISCH_PORT = FirstNonEmpty(
                     GetString(reader, ordinals, "FINAL_DISCH_PORT"),
                     GetString(reader, ordinals, "CANGDEN"),
                     GetString(reader, ordinals, "POD"),
-                    GetString(reader, ordinals, "FPOD")),
+                    GetString(reader, ordinals, "FPOD"),
+                    GetString(reader, ordinals, "Cang_do"),
+                    GetString(reader, ordinals, "Cang_dich"),
+                    GetString(reader, ordinals, "CANGDICH")),
 
                 PLACE_OF_RECEIPT = FirstNonEmpty(
                     GetString(reader, ordinals, "PLACE_OF_RECEIPT"),
@@ -1448,11 +1638,25 @@ ORDER BY {orderBy};";
 
                 CUSTOM_CLEARANCE = FirstNonEmpty(
                     GetString(reader, ordinals, "CUSTOM_CLEARANCE"),
-                    GetString(reader, ordinals, "CustomsClear")),
+                    GetString(reader, ordinals, "CustomsClear"),
+                    GetString(reader, ordinals, "Thanh_Ly_Hai_Quan"),
+                    GetString(reader, ordinals, "TLHQ")),
                 CC_TS = GetDateTime(reader, ordinals, "CC_TS"),
-                DGS_CLASS = GetString(reader, ordinals, "DGS_CLASS"),
-                UN_NO = GetString(reader, ordinals, "UN_NO"),
-                DAM = GetString(reader, ordinals, "DAM"),
+                DGS_CLASS = FirstNonEmpty(
+                    GetString(reader, ordinals, "DGS_CLASS"),
+                    GetString(reader, ordinals, "CLASS"),
+                    GetString(reader, ordinals, "IMDG")),
+                UN_NO = FirstNonEmpty(
+                    GetString(reader, ordinals, "UN_NO"),
+                    GetString(reader, ordinals, "UNNO"),
+                    GetString(reader, ordinals, "UNNo")),
+                DAM = FirstNonEmpty(
+                    GetString(reader, ordinals, "DAM"),
+                    GetString(reader, ordinals, "Damage_Condition"),
+                    GetString(reader, ordinals, "Tinh_trang_vo"),
+                    GetString(reader, ordinals, "Tinh_trang_Container"),
+                    GetString(reader, ordinals, "Remark_AV_DM"),
+                    GetString(reader, ordinals, "Damage_Check")),
                 GHICHU = note,
 
                 SOSEAL = FirstNonEmpty(
@@ -1460,12 +1664,21 @@ ORDER BY {orderBy};";
                     GetString(reader, ordinals, "SEAL_NO"),
                     GetString(reader, ordinals, "SEAL_NO1"),
                     GetString(reader, ordinals, "SEAL_NO2"),
-                    GetString(reader, ordinals, "Seal")),
+                    GetString(reader, ordinals, "Seal"),
+                    GetString(reader, ordinals, "Export_Seal"),
+                    GetString(reader, ordinals, "Carrier_Seal"),
+                    GetString(reader, ordinals, "So_niem_chi"),
+                    GetString(reader, ordinals, "SEAL")),
 
                 STORAGEDAY = FirstNonEmptyInt(
                     GetInt(reader, ordinals, "STORAGEDAY"),
                     GetInt(reader, ordinals, "DAYS"),
-                    GetInt(reader, ordinals, "Days")),
+                    GetInt(reader, ordinals, "Days"),
+                    GetInt(reader, ordinals, "Stack_Days"),
+                    GetInt(reader, ordinals, "So_ngay_luu_bai"),
+                    GetInt(reader, ordinals, "Imp_Days"),
+                    GetInt(reader, ordinals, "IMP_DAYS"),
+                    GetInt(reader, ordinals, "STAY_DAYS")),
 
                 DateImport = FirstNonEmptyDate(
                     GetDateTime(reader, ordinals, "DateImport"),
@@ -1480,6 +1693,17 @@ ORDER BY {orderBy};";
                     GetDateTime(reader, ordinals, "CreatedAt"),
                     GetDateTime(reader, ordinals, "CREATED_AT"))
             };
+
+            if (isHaiPhong && string.IsNullOrWhiteSpace(row.DEPOT))
+            {
+                var report = DepotHaiPhongCatalog.All.FirstOrDefault(r =>
+                    string.Equals(r.TableName, source.TableName, StringComparison.OrdinalIgnoreCase));
+                if (report is not null)
+                    row.DEPOT = report.DefaultDepot;
+            }
+
+            if (isHaiPhong && string.IsNullOrWhiteSpace(row.ITEM_NO))
+                continue;
 
             row.SizeType = DetectSizeType(row.ISO);
             result.Add(row);
@@ -2071,6 +2295,18 @@ ORDER BY {orderBy};";
         var arrValid = IsValidDate(x.ARR_TS);
         var depValid = IsValidDate(x.DEP_TS);
 
+        if (x.SourceType.StartsWith("HaiPhong", StringComparison.OrdinalIgnoreCase))
+        {
+            if (x.SourceType == "HaiPhongMovement" && (LooksLikeOutMovement(movement) || (depValid && (!arrValid || x.DEP_TS!.Value >= x.ARR_TS!.Value))))
+            {
+                var time = FormatDateTime(FirstNonEmptyDate(x.DEP_TS, x.EventTs));
+                return (StatusInTransit, $"Hai Phong 8.3.9 movement; GateOut/OUT detected. Event time: {time}.");
+            }
+
+            var inTime = FormatDateTime(FirstNonEmptyDate(x.ARR_TS, x.EventTs));
+            return (StatusInDepot, $"Hai Phong 8.3.9 source; stock/in-yard row is treated as in depot. Event time: {inTime}.");
+        }
+
         if (x.SourceType.StartsWith("ApsYard", StringComparison.OrdinalIgnoreCase))
         {
             if (x.SourceType == "ApsYardGateOut" || LooksLikeOutMovement(movement) || depValid)
@@ -2165,6 +2401,22 @@ ORDER BY {orderBy};";
             return true;
 
         return false;
+    }
+
+    private static string ResolveHaiPhongSourceType(string tableName)
+    {
+        if (tableName.Contains("Movement", StringComparison.OrdinalIgnoreCase))
+            return "HaiPhongMovement";
+
+        if (tableName.Contains("Report", StringComparison.OrdinalIgnoreCase)
+            && !tableName.Contains("Stock", StringComparison.OrdinalIgnoreCase))
+            return "HaiPhongMovement";
+
+        if (tableName.Contains("TCHP", StringComparison.OrdinalIgnoreCase)
+            || tableName.Contains("HICT", StringComparison.OrdinalIgnoreCase))
+            return "HaiPhongMovement";
+
+        return "HaiPhongStock";
     }
 
     private static bool LooksLikeInMovement(string? text)
@@ -2421,7 +2673,38 @@ ORDER BY {orderBy};";
         if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
             return null;
 
-        return Convert.ToDecimal(reader.GetValue(i));
+        var v = reader.GetValue(i);
+        try
+        {
+            if (v is decimal d)
+                return d;
+            if (v is double db)
+                return Convert.ToDecimal(db);
+            if (v is float f)
+                return Convert.ToDecimal(f);
+            if (v is int n)
+                return n;
+            if (v is long l)
+                return l;
+
+            var s = Convert.ToString(v, CultureInfo.InvariantCulture);
+            if (string.IsNullOrWhiteSpace(s))
+                return null;
+
+            s = s.Replace(" ", string.Empty);
+            if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.CurrentCulture, out var parsed))
+                return parsed;
+            if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed))
+                return parsed;
+            if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.GetCultureInfo("vi-VN"), out parsed))
+                return parsed;
+        }
+        catch
+        {
+            return null;
+        }
+
+        return null;
     }
 
     private static int? GetInt(DbDataReader reader, Dictionary<string, int> ordinals, string name)
@@ -2429,7 +2712,31 @@ ORDER BY {orderBy};";
         if (!ordinals.TryGetValue(name, out var i) || reader.IsDBNull(i))
             return null;
 
-        return Convert.ToInt32(reader.GetValue(i));
+        var v = reader.GetValue(i);
+        try
+        {
+            if (v is int n)
+                return n;
+            if (v is long l)
+                return checked((int)l);
+
+            var s = Convert.ToString(v, CultureInfo.InvariantCulture);
+            if (string.IsNullOrWhiteSpace(s))
+                return null;
+
+            if (int.TryParse(s, NumberStyles.Integer, CultureInfo.CurrentCulture, out var parsed))
+                return parsed;
+            if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed))
+                return parsed;
+            if (decimal.TryParse(s, NumberStyles.Any, CultureInfo.CurrentCulture, out var dec))
+                return (int)dec;
+        }
+        catch
+        {
+            return null;
+        }
+
+        return null;
     }
 
     private static DateTime? GetDateTime(DbDataReader reader, Dictionary<string, int> ordinals, string name)
@@ -2442,7 +2749,27 @@ ORDER BY {orderBy};";
         if (v is DateTime dt)
             return IsValidDate(dt) ? dt : null;
 
-        return DateTime.TryParse(Convert.ToString(v), out var parsed) && IsValidDate(parsed) ? parsed : null;
+        var s = Convert.ToString(v)?.Trim();
+        if (string.IsNullOrWhiteSpace(s))
+            return null;
+
+        var formats = new[]
+        {
+            "dd/MM/yyyy", "d/M/yyyy", "dd/MM/yyyy HH:mm", "dd/MM/yyyy HH:mm:ss",
+            "dd-MM-yyyy", "yyyy-MM-dd", "yyyy-MM-dd HH:mm:ss",
+            "MM/dd/yyyy", "M/d/yyyy", "dd.MM.yyyy"
+        };
+
+        if (DateTime.TryParseExact(s, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var exact) && IsValidDate(exact))
+            return exact;
+        if (DateTime.TryParse(s, CultureInfo.GetCultureInfo("vi-VN"), DateTimeStyles.None, out var vi) && IsValidDate(vi))
+            return vi;
+        if (DateTime.TryParse(s, CultureInfo.CurrentCulture, DateTimeStyles.None, out var parsed) && IsValidDate(parsed))
+            return parsed;
+        if (DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed) && IsValidDate(parsed))
+            return parsed;
+
+        return null;
     }
 
     private static bool IsValidDate(DateTime? value) => value.HasValue && IsValidDate(value.Value);
