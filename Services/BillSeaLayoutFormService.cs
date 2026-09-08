@@ -19,6 +19,7 @@ namespace NVOAMASIS.Services
         public const string Booking = "BookingRequestNVOCC.mrt";
         public const string Quotation = "Quotation.mrt";
         public const string Bbgn = "BienBanGiaoNhan.mrt";
+        public const string LenhCapContRong = "LenhCapContRong.mrt";
     }
 
     public static class BillLayoutFormKindHelper
@@ -34,6 +35,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.Booking => BillSeaReportTemplateNames.Booking,
             BillLayoutFormKind.Quotation => BillSeaReportTemplateNames.Quotation,
             BillLayoutFormKind.Bbgn => BillSeaReportTemplateNames.Bbgn,
+            BillLayoutFormKind.LenhCapContRong => BillSeaReportTemplateNames.LenhCapContRong,
             _ => BillSeaReportTemplateNames.Main
         };
 
@@ -57,6 +59,10 @@ namespace NVOAMASIS.Services
                 return BillLayoutFormKind.Quotation;
             if (string.Equals(value, nameof(BillLayoutFormKind.Bbgn), StringComparison.OrdinalIgnoreCase))
                 return BillLayoutFormKind.Bbgn;
+            if (string.Equals(value, nameof(BillLayoutFormKind.LenhCapContRong), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "CapRong", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "LCCR", StringComparison.OrdinalIgnoreCase))
+                return BillLayoutFormKind.LenhCapContRong;
             return BillLayoutFormKind.Sea;
         }
 
@@ -71,6 +77,8 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.Booking => nameof(BillLayoutFormKind.Booking),
             BillLayoutFormKind.Quotation => nameof(BillLayoutFormKind.Quotation),
             BillLayoutFormKind.Bbgn => nameof(BillLayoutFormKind.Bbgn),
+            // NVARCHAR(10) trên nhiều tenant DB — không dùng nameof (16 ký tự).
+            BillLayoutFormKind.LenhCapContRong => "CapRong",
             _ => nameof(BillLayoutFormKind.Sea)
         };
 
@@ -85,6 +93,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.Booking => "Booking",
             BillLayoutFormKind.Quotation => "Quotation",
             BillLayoutFormKind.Bbgn => "BBGN",
+            BillLayoutFormKind.LenhCapContRong => "Cấp Cont Rỗng",
             _ => "Sea"
         };
 
@@ -99,6 +108,7 @@ namespace NVOAMASIS.Services
             BillLayoutFormKind.Booking => "Booking",
             BillLayoutFormKind.Quotation => "Quotation",
             BillLayoutFormKind.Bbgn => "BBGN",
+            BillLayoutFormKind.LenhCapContRong => "Lệnh Cấp Cont Rỗng",
             _ => "Bill Sea"
         };
 
@@ -115,7 +125,7 @@ namespace NVOAMASIS.Services
 
         public static bool UsesImage1AsLogo(BillLayoutFormKind kind) =>
             kind is BillLayoutFormKind.AnAir or BillLayoutFormKind.Quotation or BillLayoutFormKind.Booking or
-            BillLayoutFormKind.Bbgn or BillLayoutFormKind.LenhDieuXe;
+            BillLayoutFormKind.Bbgn or BillLayoutFormKind.LenhDieuXe or BillLayoutFormKind.LenhCapContRong;
     }
 
     public sealed class BillSeaLayoutFormSummary
@@ -432,8 +442,17 @@ namespace NVOAMASIS.Services
             var kindValue = BillLayoutFormKindHelper.ToStorageValue(formKind);
             var templateFile = BillLayoutFormKindHelper.GetDefaultTemplateFile(formKind);
             // Form lưu trong DB nên chuẩn hoá XML để editor (XDocument) mở được ngay.
-            var defaultBytes = EnsureXmlMrt(
-                await GetDefaultTemplateBytesAsync(templateFile, cancellationToken));
+            byte[] defaultBytes;
+            try
+            {
+                defaultBytes = EnsureXmlMrt(
+                    await GetDefaultTemplateBytesAsync(templateFile, cancellationToken));
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Không đọc được template {templateFile}: {ex.InnerException?.Message ?? ex.Message}", ex);
+            }
 
             return await WithDbAsync(async (context, ct) =>
             {
@@ -457,7 +476,15 @@ namespace NVOAMASIS.Services
                 };
 
                 context.BillSeaLayoutForms.Add(form);
-                await context.SaveChangesAsync(ct);
+                try
+                {
+                    await context.SaveChangesAsync(ct);
+                }
+                catch (DbUpdateException ex)
+                {
+                    throw new InvalidOperationException(
+                        $"Không lưu được form (FormKind='{kindValue}'): {ex.InnerException?.Message ?? ex.Message}", ex);
+                }
                 return form;
             }, cancellationToken);
         }

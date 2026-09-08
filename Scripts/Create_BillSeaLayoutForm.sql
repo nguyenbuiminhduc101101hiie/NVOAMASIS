@@ -7,7 +7,7 @@ BEGIN
         MrtContent          VARBINARY(MAX)   NOT NULL,
         AttachMrtContent    VARBINARY(MAX)   NULL,
         Logo                VARBINARY(MAX)   NULL,
-        FormKind            NVARCHAR(10)     NOT NULL CONSTRAINT DF_BillSeaLayoutForm_FormKind DEFAULT (N'Sea'),
+        FormKind            NVARCHAR(50)     NOT NULL CONSTRAINT DF_BillSeaLayoutForm_FormKind DEFAULT (N'Sea'),
         FormBillAir         VARBINARY(MAX)   NULL,
         SourceTemplate      NVARCHAR(260)    NOT NULL CONSTRAINT DF_BillSeaLayoutForm_SourceTemplate DEFAULT (N'BillSea_NVOCC.mrt'),
         CreatedAt           DATETIME2        NOT NULL CONSTRAINT DF_BillSeaLayoutForm_CreatedAt DEFAULT (SYSUTCDATETIME()),

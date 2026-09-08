@@ -191,8 +191,11 @@ namespace NVOAMASIS.Data
         {
             base.OnModelCreating(modelBuilder);
 
-            modelBuilder.Entity<M_BillSeaLayoutForm>()
-                .ToTable("BillSeaLayoutForm");
+            modelBuilder.Entity<M_BillSeaLayoutForm>(entity =>
+            {
+                entity.ToTable("BillSeaLayoutForm");
+                entity.Property(e => e.FormKind).HasMaxLength(50);
+            });
 
             // Create unique index on ResourceKey + Culture
             modelBuilder.Entity<LocalizationResource>()
