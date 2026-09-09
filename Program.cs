@@ -247,6 +247,7 @@ builder.Services.AddHttpClient(nameof(FcmPushService));
 builder.Services.AddScoped<FcmPushService>();
 builder.Services.AddScoped<Danhmuctaikhoan_services>();
 builder.Services.AddScoped<TaxServices>();
+builder.Services.AddScoped<EInvoiceService>();
 builder.Services.Configure<BkavInvoiceSettings>(builder.Configuration.GetSection("BkavInvoice"));
 builder.Services.AddHttpClient<BkavInvoiceService>();
 builder.Services.AddScoped<ExportCostPriceServices>();

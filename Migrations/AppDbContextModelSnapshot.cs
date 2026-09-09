@@ -3804,9 +3804,110 @@ namespace NVOAMASIS.Migrations
                     b.Property<int?>("hanmovecus")
                         .HasColumnType("int");
 
+                    b.Property<string>("Email_E_invoice")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Password_E_invoice")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TenantID")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TaxNumber_E_Invoice")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Serial_E_Invoice")
+                        .HasColumnType("nvarchar(max)");
+
                     b.HasKey("CompanyID");
 
                     b.ToTable("CompanyInfomation");
+                });
+
+            modelBuilder.Entity("NVOAMASIS.Models.M_EInvoiceExportLog", b =>
+                {
+                    b.Property<Guid>("EInvoiceExportLogId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Continued")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid?>("CustomerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CustomerName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("EInvoiceGuid")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ExportType")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid?>("HblId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("HblCode")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("InvoiceId")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsPublished")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<int>("LineCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("LookupCode")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PdfFileContent")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PdfFileName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("PublishedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("PublishedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SoHoaDonNoiBo")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ViewUrl")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("XmlFileContent")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("XmlFileName")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("EInvoiceExportLogId");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("HblId");
+
+                    b.HasIndex("InvoiceId");
+
+                    b.ToTable("EInvoiceExportLog");
                 });
 
             modelBuilder.Entity("NVOAMASIS.Models.M_CongNoHoaDonDauRa", b =>

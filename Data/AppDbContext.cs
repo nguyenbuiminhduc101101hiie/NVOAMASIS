@@ -119,6 +119,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_Currency> Currency { get; set; }
         public DbSet<M_Test_getapi> Test_getapi { get; set; }
         public DbSet<M_CompanyInfo> CompanyInfomation { get; set; }
+        public DbSet<M_EInvoiceExportLog> EInvoiceExportLog { get; set; }
         public DbSet<M_BillSeaLayoutForm> BillSeaLayoutForms { get; set; }
         public DbSet<M_Info_Company_other> Information_Comapny_Other { get; set; }
 
@@ -581,6 +582,18 @@ namespace NVOAMASIS.Data
                     .WithMany()
                     .HasForeignKey(x => x.FixedAssetId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<M_EInvoiceExportLog>(entity =>
+            {
+                entity.ToTable("EInvoiceExportLog");
+                entity.HasKey(x => x.EInvoiceExportLogId);
+                entity.HasIndex(x => x.CreatedAt);
+                entity.HasIndex(x => x.HblId);
+                entity.HasIndex(x => x.InvoiceId);
+                entity.Property(x => x.Continued).HasDefaultValue(true);
+                entity.Property(x => x.IsPublished).HasDefaultValue(false);
+                entity.Property(x => x.LineCount).HasDefaultValue(0);
             });
 
             modelBuilder.ConfigureB09();
