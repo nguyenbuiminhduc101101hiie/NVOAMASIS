@@ -34,6 +34,11 @@ namespace NVOAMASIS.Models
         public string? SmtpServer { get; set; }
         public int? SmtpPort { get; set; }
         public string? ListEmail_nhanTB_Approve_Thu_Chi { get; set; }
-   
+
+        public string? Email_E_invoice { get; set; }
+        public string? Password_E_invoice { get; set; }
+        public string? TenantID { get; set; }
+        public string? TaxNumber_E_Invoice { get; set; }
+        public string? Serial_E_Invoice { get; set; }
     }
 }

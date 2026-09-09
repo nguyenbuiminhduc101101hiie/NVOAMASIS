@@ -95,20 +95,13 @@ namespace NVOAMASIS.Services
 
         public async Task<M_CompanyInfo> GetSingleCompany_info()
         {
-            try
-            {
-                _context.ChangeTracker.Clear();
-                var rs = await _context.CompanyInfomation.FirstOrDefaultAsync();
-                if (rs == null)
-                    return new M_CompanyInfo();
-
-                rs.PasswordEmail_GuiTB = DecryptCompanyMailPassword(rs.PasswordEmail_GuiTB);
-                return rs;
-            }
-            catch
-            {
+            _context.ChangeTracker.Clear();
+            var rs = await _context.CompanyInfomation.FirstOrDefaultAsync();
+            if (rs == null)
                 return new M_CompanyInfo();
-            }
+
+            rs.PasswordEmail_GuiTB = DecryptCompanyMailPassword(rs.PasswordEmail_GuiTB);
+            return rs;
         }
 
         public async Task<BoolandMessReponse> SaveCompany_info(M_CompanyInfo c)
