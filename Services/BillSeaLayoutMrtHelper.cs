@@ -233,7 +233,7 @@ namespace NVOAMASIS.Services
                         if (rectElement is not null)
                             rectElement.Value = BuildRelativeClientRectangle(element);
 
-                        if (element.Kind == BillSeaElementKind.StaticText)
+                        if (element.Kind is BillSeaElementKind.StaticText or BillSeaElementKind.DataText)
                         {
                             var textElement = node.Element("Text");
                             if (textElement is not null)
