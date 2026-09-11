@@ -473,16 +473,18 @@ else
 {
     <MudPaper Class="pa-4 mx-4 mb-4" Outlined="true">
         <MudStack Spacing="3">
-            @if (_selectedNames.Count == 1 && _selectedElement?.Kind == BillSeaElementKind.StaticText)
+            @if (_selectedNames.Count == 1 && _selectedElement is { Kind: BillSeaElementKind.StaticText or BillSeaElementKind.DataText })
             {
                 <MudTextField Value="_selectedElement.Text"
                               ValueChanged="@((string value) => OnSelectedTextChanged(value))"
-                              Label="Nội dung label đang chọn"
+                              Label="@(_selectedElement.Kind == BillSeaElementKind.DataText
+                                  ? "Nội dung / biểu thức trường đang chọn"
+                                  : "Nội dung label đang chọn")"
                               Variant="Variant.Outlined"
                               Immediate="true"
                               Lines="6"
                               Style="white-space:pre-wrap;"
-                              HelperText="Enter để xuống dòng. Xuống dòng sẽ hiện trên bill (WordWrap)." />
+                              HelperText="Gộp nhiều trường: {Table.Col1} {Table.Col2} (có thể thêm chữ cố định, dấu phân cách). Enter để xuống dòng." />
             }
             else if (GetSelectedTextElements().Count > 1)
             {
@@ -538,7 +540,12 @@ else
                            Label="Chỉ hiện cột chưa có trên bill"
                            Color="Color.Primary" />
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    Cuộn ngang để xem thêm cột. Click <b>+</b> để đặt cột lên bill; <b>🎯</b> highlight phần tử đang dùng; <b>🚫</b> ẩn (xóa) phần tử có Text khớp đúng cột.
+                    Cuộn ngang để xem thêm cột. Click <b>+</b> để đặt cột mới lên bill;
+                    @if (CanAppendFieldToSelectedText())
+                    {
+                        <span> <b>⤵</b> chèn/gộp cột vào text đang chọn;</span>
+                    }
+                    <span> <b>🎯</b> highlight phần tử đang dùng; <b>🚫</b> ẩn (xóa) phần tử có Text khớp đúng cột.</span>
                 </MudText>
             </MudStack>
             <MudExpansionPanels MultiExpansion="true" Dense="true">
@@ -596,6 +603,17 @@ else
                                                                    OnClick="() => BeginAddDataField(source.Name, column.Name)"
                                                                    Disabled="_loading || CurrentPage is null" />
                                                 </MudTooltip>
+                                                @if (CanAppendFieldToSelectedText())
+                                                {
+                                                    <MudTooltip Text="Chèn / gộp cột này vào nội dung text đang chọn">
+                                                        <MudIconButton Icon="@Icons.Material.Filled.SubdirectoryArrowLeft"
+                                                                       Color="Color.Secondary"
+                                                                       Variant="Variant.Filled"
+                                                                       Size="Size.Small"
+                                                                       OnClick="() => AppendFieldToSelectedText(source.Name, column.Name)"
+                                                                       Disabled="_loading" />
+                                                    </MudTooltip>
+                                                }
                                                 @if (usage > 0)
                                                 {
                                                     <MudTooltip Text="Chọn các phần tử đang dùng cột này trên canvas">
@@ -1682,6 +1700,41 @@ else
         _placementPreviewVisible = false;
     }
 
+    bool CanAppendFieldToSelectedText() =>
+        _selectedNames.Count == 1
+        && _selectedElement is { Kind: BillSeaElementKind.StaticText or BillSeaElementKind.DataText };
+
+    void AppendFieldToSelectedText(string tableName, string columnName)
+    {
+        if (!CanAppendFieldToSelectedText() || _selectedElement is null)
+            return;
+
+        CancelPlacement();
+        EnsurePropertyEditUndo();
+
+        var expression = BuildFieldExpression(tableName, columnName);
+        var current = _selectedElement.Text ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(current)
+            || string.Equals(current.Trim(), "Label mới", StringComparison.OrdinalIgnoreCase))
+        {
+            _selectedElement.Text = expression;
+        }
+        else if (ContainsFieldToken(current, tableName + "." + columnName)
+                 && string.Equals(current.Trim(), expression, StringComparison.Ordinal))
+        {
+            // Already exactly this single field — keep as-is.
+            ShowMessage($"Text đang chọn đã là {expression}.", MudBlazor.Severity.Info);
+            return;
+        }
+        else
+        {
+            _selectedElement.Text = current.TrimEnd() + " " + expression;
+        }
+
+        _selectedElement.Kind = BillSeaElementKind.DataText;
+        ShowMessage($"Đã chèn {expression} vào text đang chọn.", MudBlazor.Severity.Success);
+    }
+
     void HighlightFieldUsage(string tableName, string columnName)
     {
         if (CurrentPage is null)
@@ -2098,8 +2151,14 @@ else
         if (_selectedElement is null)
             return;
 
+        if (_selectedElement.Kind is not (BillSeaElementKind.StaticText or BillSeaElementKind.DataText))
+            return;
+
         EnsurePropertyEditUndo();
-        _selectedElement.Text = value;
+        _selectedElement.Text = value ?? string.Empty;
+        _selectedElement.Kind = (_selectedElement.Text.Contains('{'))
+            ? BillSeaElementKind.DataText
+            : BillSeaElementKind.StaticText;
     }
 
     int GetElementZIndex(BillSeaDesignElement item)
