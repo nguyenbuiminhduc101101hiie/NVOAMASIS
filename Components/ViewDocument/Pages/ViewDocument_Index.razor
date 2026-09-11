@@ -1,5 +1,8 @@
 @inject IStringLocalizer<SharedResource> Localizer
 @inject ISnackbar Snackbar
+@inject CustomerService csv
+@inject AccountService asv
+@inject SharedServices ssv
 
 <div class="view-doc-page">
     <MudPaper Class="pa-4 view-doc-shell" Elevation="0">
@@ -9,7 +12,7 @@
                 <MudText Typo="Typo.h6" Class="view-doc-title">@Localizer["ViewDocument"]</MudText>
             </MudStack>
             <MudText Typo="Typo.body2" Class="view-doc-subtitle">
-                Nhập một (hoặc nhiều) thông tin: Job No, MBL, HBL, Booking, Container — sau đó chọn giao diện muốn mở.
+                Nhập một (hoặc nhiều) thông tin: Job No, MBL, HBL, Booking, Container, Customer — sau đó chọn giao diện muốn mở.
             </MudText>
         </MudStack>
 
@@ -60,16 +63,32 @@
                               Clearable="true" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4">
+                <MudAutocomplete T="Guid?"
+                                 @bind-Value="_customerId"
+                                 Label="@Localizer["Customer"]"
+                                 Variant="Variant.Outlined"
+                                 Margin="Margin.Dense"
+                                 Adornment="Adornment.Start"
+                                 AdornmentIcon="@Icons.Material.Filled.Person"
+                                 SearchFunc="SearchCustomer"
+                                 ToStringFunc="CustomerLabel"
+                                 ResetValueOnEmptyText="true"
+                                 Clearable="true"
+                                 MaxItems="50" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
                 <MudSelect T="string"
                            @bind-Value="_targetView"
                            Label="Mở trên giao diện"
                            Variant="Variant.Outlined"
                            Margin="Margin.Dense"
                            AdornmentIcon="@Icons.Material.Filled.OpenInNew"
-                           Adornment="Adornment.Start">
-                    <MudSelectItem Value="@("2.1")">2.1 @Localizer["Shipment"]</MudSelectItem>
-                    <MudSelectItem Value="@("5.0")">5.0 @Localizer["Shipment"]</MudSelectItem>
-                    <MudSelectItem Value="@("6.0")">6.0 @Localizer["Shipment"]</MudSelectItem>
+                           Adornment="Adornment.Start"
+                           Disabled="@(!_availableViews.Any())">
+                    @foreach (var view in _availableViews)
+                    {
+                        <MudSelectItem Value="@view.Key">@view.Label</MudSelectItem>
+                    }
                 </MudSelect>
             </MudItem>
         </MudGrid>
@@ -79,7 +98,8 @@
                        Variant="Variant.Filled"
                        Color="Color.Primary"
                        StartIcon="@Icons.Material.Filled.Search"
-                       Class="view-doc-btn">
+                       Class="view-doc-btn"
+                       Disabled="@(!_availableViews.Any())">
                 Mở lô hàng
             </MudButton>
             <MudButton OnClick="ClearAll"
@@ -137,14 +157,67 @@
     private string? _hbl;
     private string? _bk;
     private string? _container;
+    private Guid? _customerId;
     private string _targetView = "2.1";
+    private string? _usr;
+    private List<M_Customer> _customers = new();
+    private List<ViewOption> _availableViews = new();
+
+    private sealed record ViewOption(string Key, string Label, string Permission, Type ComponentType, string ViewPrefix);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _usr = (await asv.GetAuth()).User.Identity?.Name;
+            var userdetail = asv.GetUserDetail();
+            _customers = await csv.GetList(userdetail) ?? new List<M_Customer>();
+            await LoadAvailableViews();
+        }
+        catch
+        {
+            _customers = new List<M_Customer>();
+            Snackbar.Add("Không tải được danh sách customer.", MudBlazor.Severity.Warning);
+        }
+    }
+
+    private async Task LoadAvailableViews()
+    {
+        var candidates = new List<ViewOption>
+        {
+            new("2.1", $"2.1 {Localizer["Shipment"]}", "Shipment", typeof(Components.Shipment.Pages.ShipmentIndex), "Shipment2.1_VD"),
+            new("5.0", $"5.0 {Localizer["Shipment"]}", "Shipment5", typeof(Components.Shipment.Pages.Payment.Shipment_5_0_Index), "Shipment5.0_VD"),
+            new("6.0", $"6.0 {Localizer["Shipment"]}", "Shipment6", typeof(Components.Shipment.Pages.TaskNav.Shipment_6_0_Index), "Shipment6.0_VD"),
+        };
+
+        _availableViews.Clear();
+        if (string.IsNullOrWhiteSpace(_usr))
+            return;
+
+        foreach (var item in candidates)
+        {
+            if (await ssv.CheckPermission(_usr, "View", item.Permission))
+                _availableViews.Add(item);
+        }
+
+        if (_availableViews.Any())
+        {
+            if (!_availableViews.Any(x => x.Key == _targetView))
+                _targetView = _availableViews[0].Key;
+        }
+        else
+        {
+            Snackbar.Add("Bạn không có quyền View Shipment (2.1 / 5.0 / 6.0).", MudBlazor.Severity.Warning);
+        }
+    }
 
     private bool HasAnyInput()
         => !string.IsNullOrWhiteSpace(_jobNo)
         || !string.IsNullOrWhiteSpace(_mbl)
         || !string.IsNullOrWhiteSpace(_hbl)
         || !string.IsNullOrWhiteSpace(_bk)
-        || !string.IsNullOrWhiteSpace(_container);
+        || !string.IsNullOrWhiteSpace(_container)
+        || (_customerId.HasValue && _customerId.Value != Guid.Empty);
 
     private string ActiveFiltersText()
     {
@@ -154,14 +227,40 @@
         if (!string.IsNullOrWhiteSpace(_hbl)) parts.Add($"HBL: {_hbl}");
         if (!string.IsNullOrWhiteSpace(_bk)) parts.Add($"BK: {_bk}");
         if (!string.IsNullOrWhiteSpace(_container)) parts.Add($"Cont: {_container}");
+        if (_customerId.HasValue && _customerId.Value != Guid.Empty)
+            parts.Add($"Cus: {CustomerLabel(_customerId)}");
         return string.Join(" • ", parts);
+    }
+
+    private async Task<IEnumerable<Guid?>> SearchCustomer(string value)
+    {
+        await Task.CompletedTask;
+        IEnumerable<M_Customer> query = _customers;
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            query = _customers.Where(x =>
+                (!string.IsNullOrEmpty(x.Customer_Code) && x.Customer_Code.Contains(value, StringComparison.OrdinalIgnoreCase))
+                || (!string.IsNullOrEmpty(x.COMPANY) && x.COMPANY.Contains(value, StringComparison.OrdinalIgnoreCase))
+                || (!string.IsNullOrEmpty(x.shortname) && x.shortname.Contains(value, StringComparison.OrdinalIgnoreCase))
+                || (!string.IsNullOrEmpty(x.TaxCode) && x.TaxCode.Contains(value, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return query.Select(x => (Guid?)x.Customer_ID).Take(50);
+    }
+
+    private string CustomerLabel(Guid? id)
+    {
+        if (!id.HasValue || id.Value == Guid.Empty) return string.Empty;
+        var customer = _customers.FirstOrDefault(x => x.Customer_ID == id.Value);
+        if (customer == null) return string.Empty;
+        return $"{customer.Customer_Code} - {customer.COMPANY}";
     }
 
     private async Task OpenShipment()
     {
         if (!HasAnyInput())
         {
-            Snackbar.Add("Vui lòng nhập ít nhất một thông tin: Job/MBL/HBL/BK/Container.", MudBlazor.Severity.Warning);
+            Snackbar.Add("Vui lòng nhập ít nhất một thông tin: Job/MBL/HBL/BK/Container/Customer.", MudBlazor.Severity.Warning);
             return;
         }
 
@@ -171,26 +270,17 @@
             return;
         }
 
-        Type componentType;
-        string viewLabel;
-        string viewPrefix;
-        switch (_targetView)
+        var selected = _availableViews.FirstOrDefault(x => x.Key == _targetView);
+        if (selected == null)
         {
-            case "5.0":
-                componentType = typeof(Components.Shipment.Pages.Payment.Shipment_5_0_Index);
-                viewPrefix = "Shipment5.0_VD";
-                viewLabel = $"5.0 {Localizer["Shipment"]}";
-                break;
-            case "6.0":
-                componentType = typeof(Components.Shipment.Pages.TaskNav.Shipment_6_0_Index);
-                viewPrefix = "Shipment6.0_VD";
-                viewLabel = $"6.0 {Localizer["Shipment"]}";
-                break;
-            default:
-                componentType = typeof(Components.Shipment.Pages.ShipmentIndex);
-                viewPrefix = "Shipment2.1_VD";
-                viewLabel = $"2.1 {Localizer["Shipment"]}";
-                break;
+            Snackbar.Add("Bạn không có quyền mở giao diện Shipment đã chọn.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_usr) || !await ssv.CheckPermission(_usr, "View", selected.Permission))
+        {
+            Snackbar.Add($"{Localizer["NoPermission_View"]} ({selected.Label})", MudBlazor.Severity.Warning);
+            return;
         }
 
         var jobNo = _jobNo?.Trim();
@@ -198,6 +288,11 @@
         var hbl = _hbl?.Trim();
         var bk = _bk?.Trim();
         var container = _container?.Trim();
+        Guid? customerId = _customerId.HasValue && _customerId.Value != Guid.Empty ? _customerId.Value : null;
+        var customerName = customerId.HasValue ? CustomerLabel(customerId) : null;
+        var componentType = selected.ComponentType;
+        var viewPrefix = selected.ViewPrefix;
+        var viewLabel = selected.Label;
 
         RenderFragment content = builder =>
         {
@@ -207,6 +302,8 @@
             builder.AddAttribute(3, "InitialHBL", hbl);
             builder.AddAttribute(4, "InitialBK", bk);
             builder.AddAttribute(5, "InitialContainer", container);
+            builder.AddAttribute(6, "InitialCustomerId", customerId);
+            builder.AddAttribute(7, "InitialCustomerName", customerName);
             builder.CloseComponent();
         };
 
@@ -217,5 +314,6 @@
     private void ClearAll()
     {
         _jobNo = _mbl = _hbl = _bk = _container = null;
+        _customerId = null;
     }
 }
