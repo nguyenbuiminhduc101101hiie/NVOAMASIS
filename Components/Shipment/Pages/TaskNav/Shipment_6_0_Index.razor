@@ -928,8 +928,8 @@
         if (HasViewDocFilter && !_viewDocAutoLoaded)
         {
             _viewDocAutoLoaded = true;
-            await Refresh();
-            await ApplyViewDocFilterToGrid();
+            if (await Refresh())
+                await ApplyViewDocFilterToGrid();
         }
         else if (!string.IsNullOrWhiteSpace(NewJobBookingNo) && !_newJobFromBookingHandled)
         {
@@ -1037,6 +1037,8 @@
     [Parameter] public string? InitialHBL { get; set; }
     [Parameter] public string? InitialBK { get; set; }
     [Parameter] public string? InitialContainer { get; set; }
+    [Parameter] public Guid? InitialCustomerId { get; set; }
+    [Parameter] public string? InitialCustomerName { get; set; }
 
     // Số booking được đưa qua từ 6.1 Booking Request để tạo Job mới.
     [Parameter] public string? NewJobBookingNo { get; set; }
@@ -1052,7 +1054,8 @@
         || !string.IsNullOrWhiteSpace(InitialMBL)
         || !string.IsNullOrWhiteSpace(InitialHBL)
         || !string.IsNullOrWhiteSpace(InitialBK)
-        || !string.IsNullOrWhiteSpace(InitialContainer);
+        || !string.IsNullOrWhiteSpace(InitialContainer)
+        || (InitialCustomerId.HasValue && InitialCustomerId.Value != Guid.Empty);
 
     private string ViewDocFilterText()
     {
@@ -1062,15 +1065,25 @@
         if (!string.IsNullOrWhiteSpace(InitialHBL)) parts.Add($"HBL: {InitialHBL}");
         if (!string.IsNullOrWhiteSpace(InitialBK)) parts.Add($"BK: {InitialBK}");
         if (!string.IsNullOrWhiteSpace(InitialContainer)) parts.Add($"Container: {InitialContainer}");
+        if (InitialCustomerId.HasValue && InitialCustomerId.Value != Guid.Empty)
+        {
+            var cusLabel = !string.IsNullOrWhiteSpace(InitialCustomerName)
+                ? InitialCustomerName
+                : CusidtoCusCode(InitialCustomerId.Value);
+            parts.Add($"Cus: {cusLabel}");
+        }
         return string.Join(" • ", parts);
     }
 
     private async Task ClearViewDocFilter()
     {
         InitialJobNo = InitialMBL = InitialHBL = InitialBK = InitialContainer = null;
+        InitialCustomerId = null;
+        InitialCustomerName = null;
         SearchJobNo = SearchMBL = SearchBK = null;
         SearchHBL = null;
         SearchContNo = null;
+        SearchCusID = Guid.Empty;
         chkSearchAd = false;
         isExpand = false;
         if (mudTable != null)
@@ -1113,6 +1126,7 @@
                 SearchHBL = InitialHBL?.Trim();
                 SearchBK = InitialBK?.Trim();
                 SearchContNo = InitialContainer?.Trim();
+                SearchCusID = InitialCustomerId ?? Guid.Empty;
                 chkSearchAd = true;
                 isExpand = true;
             }
@@ -1135,7 +1149,7 @@
     List<M_HoaDonDauRa> ListHoaDonDRa = new List<M_HoaDonDauRa>();
     List<M_HoaDonDauVao> ListHoaDonDVao = new List<M_HoaDonDauVao>();
     M_Job jobdetail;
-    async Task Refresh()
+    async Task<bool> Refresh()
     {
         try
         {
@@ -1156,7 +1170,7 @@
             if (!await ssv.CheckPermission(usr, "View", "Shipment6"))
             {
                 CallSnackBar(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
-                return;
+                return false;
             }
               Listdata = await shipsv.GetListJob_by_roles_Dept();
             // SALES MANAGER xem hết; sale thường chỉ lấy job của mình
@@ -1178,6 +1192,7 @@
                 Listdata = Listdata.Where(job => jobIdsWithSale.Contains(job.JobID)).ToList();
 
             }
+            return true;
         }
         finally
         {
@@ -1672,7 +1687,8 @@
         bool needCheckChildren = !string.IsNullOrWhiteSpace(SearchMBL)
             || !string.IsNullOrWhiteSpace(SearchHBL)
             || !string.IsNullOrWhiteSpace(SearchBK)
-            || !string.IsNullOrWhiteSpace(SearchContNo);
+            || !string.IsNullOrWhiteSpace(SearchContNo)
+            || SearchCusID != Guid.Empty;
 
         if (!needCheckChildren) return true;
 
@@ -1711,6 +1727,12 @@
             if (!(ListConts?.Any(c => c.hblid.HasValue && hblIds.Contains(c.hblid.Value)
                 && !string.IsNullOrWhiteSpace(c.CONTAINER_NO)
                 && c.CONTAINER_NO.Contains(SearchContNo, StringComparison.OrdinalIgnoreCase)) ?? false))
+                return false;
+        }
+
+        if (SearchCusID != Guid.Empty)
+        {
+            if (!hbls.Any(h => h.CustomerID == SearchCusID))
                 return false;
         }
 
