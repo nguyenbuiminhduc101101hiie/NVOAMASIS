@@ -82,9 +82,14 @@
                                 </CellTemplate>
                             </TemplateColumn>
                             <PropertyColumn Property="x => x.InternalInvoiceNo" Title="@Localizer["BkavNew.Col.InternalNo"]" />
+                            <PropertyColumn Property="x => x.HblNo" Title="@Localizer["BkavNew.Col.HblNo"]" />
                             <PropertyColumn Property="x => x.CustomerName" Title="@Localizer["Customer"]" />
+                            <PropertyColumn Property="x => x.ItemNames" Title="@Localizer["BkavNew.Col.Items"]" />
                             <PropertyColumn Property="x => x.InvoiceDate" Title="@Localizer["BkavNew.Col.Date"]" Format="dd/MM/yyyy" />
                             <PropertyColumn Property="x => x.LineCount" Title="@Localizer["BkavNew.Col.Lines"]" />
+                            <PropertyColumn Property="x => x.TotalBeforeTax" Title="@Localizer["BkavNew.Col.Amount"]" Format="N0" />
+                            <PropertyColumn Property="x => x.TotalAfterTax" Title="@Localizer["BkavNew.Col.AmountVat"]" Format="N0" />
+                            <PropertyColumn Property="x => x.Currency" Title="@Localizer["BkavNew.Col.Currency"]" />
                             <PropertyColumn Property="x => x.ElectronicInvoiceNo" Title="@Localizer["BkavNew.Col.EInvoice"]" />
                             <PropertyColumn Property="x => x.BkavPartnerInvoiceID" Title="PartnerInvoiceID" />
                             <PropertyColumn Property="x => x.BkavInvoiceGUID" Title="InvoiceGUID" />
@@ -105,6 +110,9 @@
             @* ===== Bước 1 ===== *@
             <MudPaper Class="pa-3 mb-3" Outlined="true">
                 <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@Localizer["BkavNew.Step1"]</b></MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-2">
+                    @Localizer["BkavNew.Step1.Hint"]
+                </MudText>
                 <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
                     <MudTextField @bind-Value="_internalInvoiceNo"
                                   Label="@Localizer["BkavNew.Col.InternalNo"]"
@@ -161,13 +169,21 @@
                                   Margin="Margin.Dense"
                                   Variant="Variant.Outlined"
                                   Style="min-width:100px" />
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Warning"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Save"
+                               OnClick="@CreateDraft"
+                               Disabled="@(_busy || !IsBkavConfigured || !HasSelectedGroup)">
+                        @Localizer["BkavNew.CreateDraft"]
+                    </MudButton>
                     <MudButton Variant="Variant.Filled"
                                Color="Color.Error"
                                Size="Size.Small"
-                               StartIcon="@Icons.Material.Filled.Send"
-                               OnClick="@IssueInvoice"
+                               StartIcon="@Icons.Material.Filled.Verified"
+                               OnClick="@PublishInvoice"
                                Disabled="@(_busy || !IsBkavConfigured || !HasSelectedGroup)">
-                        @Localizer["BkavNew.CreateSend"]
+                        @Localizer["BkavNew.Publish"]
                     </MudButton>
                 </MudStack>
             </MudPaper>
@@ -319,10 +335,11 @@
             {
                 <MudTextField @bind-Value="_lastObjectText"
                               Label="@Localizer["BkavInvoice.Result"]"
-                              Lines="6"
+                              Lines="18"
                               ReadOnly="true"
                               Variant="Variant.Outlined"
-                              Margin="Margin.Dense" />
+                              Margin="Margin.Dense"
+                              Class="bkav-result-payload" />
             }
         </MudContainer>
     </MudPaper>
@@ -375,7 +392,9 @@
             ? _groups
             : _groups.Where(x =>
                 Contains(x.InternalInvoiceNo, _filter) ||
+                Contains(x.HblNo, _filter) ||
                 Contains(x.CustomerName, _filter) ||
+                Contains(x.ItemNames, _filter) ||
                 Contains(x.BkavInvoiceGUID, _filter) ||
                 Contains(x.BkavPartnerInvoiceID?.ToString(), _filter) ||
                 Contains(x.ElectronicInvoiceNo, _filter));
@@ -451,8 +470,11 @@
         _invoiceNoText = group.BkavInvoiceNo?.ToString(CultureInfo.InvariantCulture) ?? _invoiceNoText;
     }
 
-    private Task IssueInvoice()
-        => RunAction(x => bkavsv.IssueInvoiceGroupAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Issue");
+    private Task CreateDraft()
+        => RunAction(x => bkavsv.CreateDraftInvoiceGroupAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Draft");
+
+    private Task PublishInvoice()
+        => RunAction(x => bkavsv.PublishInvoiceGroupAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Publish");
 
     private Task GetInfo()
         => RunAction(x => bkavsv.GetInvoiceDataAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "GetInfo");
@@ -558,6 +580,8 @@
             var result = await action(current);
             if (!string.IsNullOrWhiteSpace(result.ObjectText))
                 _lastObjectText = result.ObjectText;
+            else if (!string.IsNullOrWhiteSpace(result.Message))
+                _lastObjectText = result.Message;
 
             if (result.Group != null)
                 ApplyGroupFields(result.Group);
@@ -600,7 +624,9 @@
             InvoiceNo = invoiceNo,
             OriginalInvoiceIdentify = _originalIdentify,
             PayMethodID = _payMethodId,
-            TaxCode = _taxCode
+            TaxCode = _taxCode,
+            // Giữ status hiện tại khi Update/Replace; CreateDraft/Publish sẽ ghi đè trong service
+            InvoiceStatusID = _selected?.BkavStatusID ?? BkavInvoiceStatusIds.Issued
         };
     }
 

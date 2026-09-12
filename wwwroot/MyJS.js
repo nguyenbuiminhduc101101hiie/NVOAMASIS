@@ -172,6 +172,47 @@ window.JNLLoadShipmentColorSettings = () => {
     }
 };
 
+// BKAV invoice credentials: browser-only PartnerGuid/PartnerToken (localStorage).
+window.nvoccBkavInvoiceCredentialsStorageKey = "nvocc.bkavInvoiceCredentials";
+
+window.nvoccGetBkavInvoiceCredentials = () => {
+    try {
+        const raw = localStorage.getItem(window.nvoccBkavInvoiceCredentialsStorageKey);
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        if (!data || typeof data !== "object") return null;
+        return {
+            partnerGuid: data.partnerGuid || "",
+            partnerToken: data.partnerToken || "",
+            savedAt: data.savedAt || null
+        };
+    } catch (e) {
+        return null;
+    }
+};
+
+window.nvoccSetBkavInvoiceCredentials = (partnerGuid, partnerToken) => {
+    const data = {
+        partnerGuid: (partnerGuid || "").trim(),
+        partnerToken: (partnerToken || "").trim(),
+        savedAt: new Date().toISOString()
+    };
+    try {
+        localStorage.setItem(window.nvoccBkavInvoiceCredentialsStorageKey, JSON.stringify(data));
+    } catch (e) {
+        // ignore localStorage errors
+    }
+    return data;
+};
+
+window.nvoccClearBkavInvoiceCredentials = () => {
+    try {
+        localStorage.removeItem(window.nvoccBkavInvoiceCredentialsStorageKey);
+    } catch (e) {
+        // ignore localStorage errors
+    }
+};
+
 // View Document: scroll tới row được highlight bằng class "shipment-selected-row" hoặc "vd-row-target"
 // Hỗ trợ MudDataGrid có Virtualize="true": scroll container tới đúng vị trí.
 window.JNLScrollToShipmentRow = function (jobId) {

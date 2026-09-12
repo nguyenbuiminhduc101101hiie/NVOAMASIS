@@ -6576,6 +6576,9 @@ namespace NVOAMASIS.Migrations
                     b.Property<double?>("thue")
                         .HasColumnType("float");
 
+                    b.Property<bool?>("thuho")
+                        .HasColumnType("bit");
+
                     b.Property<string>("tiente")
                         .HasColumnType("nvarchar(max)");
 
@@ -7021,8 +7024,20 @@ namespace NVOAMASIS.Migrations
                     b.Property<string>("Carr")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("ContainerType")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<double?>("DEM")
+                        .HasColumnType("float");
+
+                    b.Property<double?>("DET")
+                        .HasColumnType("float");
+
                     b.Property<string>("Dateupdate")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<double?>("Deposit")
+                        .HasColumnType("float");
 
                     b.Property<double?>("EBS20dc")
                         .HasColumnType("float");
@@ -7037,6 +7052,12 @@ namespace NVOAMASIS.Migrations
                         .HasColumnType("float");
 
                     b.Property<double?>("ENS")
+                        .HasColumnType("float");
+
+                    b.Property<int?>("FreeTimeDemDet")
+                        .HasColumnType("int");
+
+                    b.Property<double?>("FumigationFee")
                         .HasColumnType("float");
 
                     b.Property<double?>("ISPS")
@@ -7066,7 +7087,16 @@ namespace NVOAMASIS.Migrations
                     b.Property<string>("Remarks")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<double?>("RepairFee")
+                        .HasColumnType("float");
+
                     b.Property<double?>("Seal")
+                        .HasColumnType("float");
+
+                    b.Property<double?>("SocHandlingFee")
+                        .HasColumnType("float");
+
+                    b.Property<double?>("SurveyFee")
                         .HasColumnType("float");
 
                     b.Property<double?>("Telex")
