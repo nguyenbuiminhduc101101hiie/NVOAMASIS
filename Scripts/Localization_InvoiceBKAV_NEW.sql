@@ -1,0 +1,170 @@
+SET XACT_ABORT ON;
+GO
+
+IF OBJECT_ID(N'dbo.LocalizationResources', N'U') IS NULL
+BEGIN
+    THROW 50001, 'Table dbo.LocalizationResources does not exist.', 1;
+END;
+GO
+
+DECLARE @Resources TABLE
+(
+    ResourceKey nvarchar(500) NOT NULL,
+    Culture nvarchar(10) NOT NULL,
+    Value nvarchar(max) NOT NULL,
+    PRIMARY KEY (ResourceKey, Culture)
+);
+
+INSERT INTO @Resources (ResourceKey, Culture, Value)
+VALUES
+(N'BkavNew.Menu', N'en-US', N'BKAV NEW'),
+(N'BkavNew.Menu', N'vi-VN', N'BKAV NEW'),
+(N'BkavNew.Menu', N'zh-CN', N'BKAV NEW'),
+(N'BkavNew.Title', N'en-US', N'BKAV NEW — Demo flow 0→6'),
+(N'BkavNew.Title', N'vi-VN', N'BKAV NEW — Quy trình demo 0→6'),
+(N'BkavNew.Title', N'zh-CN', N'BKAV NEW — Demo flow 0→6'),
+(N'BkavNew.Subtitle', N'en-US', N'Step-by-step BKAV e-invoice flow (same as DemoWSeHoaDon_Bkav)'),
+(N'BkavNew.Subtitle', N'vi-VN', N'Quy trình HĐĐT BKAV từng bước (giống DemoWSeHoaDon_Bkav)'),
+(N'BkavNew.Subtitle', N'zh-CN', N'Step-by-step BKAV e-invoice flow'),
+(N'BkavNew.Note', N'en-US', N'Data source: HoaDonDauRa groups. API via BkavInvoiceService.'),
+(N'BkavNew.Note', N'vi-VN', N'Nguồn dữ liệu: nhóm HoaDonDauRa. API qua BkavInvoiceService.'),
+(N'BkavNew.Note', N'zh-CN', N'Data source: HoaDonDauRa groups.'),
+
+(N'BkavNew.Step0', N'en-US', N'Step 0: Load invoices'),
+(N'BkavNew.Step0', N'vi-VN', N'Bước 0: Lấy danh sách hóa đơn'),
+(N'BkavNew.Step0', N'zh-CN', N'Step 0: Load invoices'),
+(N'BkavNew.Step1', N'en-US', N'Step 1: Create & send invoice'),
+(N'BkavNew.Step1', N'vi-VN', N'Bước 1: Tạo và gửi hóa đơn'),
+(N'BkavNew.Step1', N'zh-CN', N'Step 1: Create & send invoice'),
+(N'BkavNew.Step2', N'en-US', N'Step 2: Get info / status / history'),
+(N'BkavNew.Step2', N'vi-VN', N'Bước 2: Lấy thông tin / trạng thái / lịch sử'),
+(N'BkavNew.Step2', N'zh-CN', N'Step 2: Get info / status / history'),
+(N'BkavNew.Step3', N'en-US', N'Step 3: Update / Replace / Adjust'),
+(N'BkavNew.Step3', N'vi-VN', N'Bước 3: Cập nhật / Thay thế / Điều chỉnh'),
+(N'BkavNew.Step3', N'zh-CN', N'Step 3: Update / Replace / Adjust'),
+(N'BkavNew.Step4', N'en-US', N'Step 4: Cancel invoice'),
+(N'BkavNew.Step4', N'vi-VN', N'Bước 4: Hủy hóa đơn'),
+(N'BkavNew.Step4', N'zh-CN', N'Step 4: Cancel invoice'),
+(N'BkavNew.Step5', N'en-US', N'Step 5: Delete unissued invoice'),
+(N'BkavNew.Step5', N'vi-VN', N'Bước 5: Xóa hóa đơn chưa phát hành'),
+(N'BkavNew.Step5', N'zh-CN', N'Step 5: Delete unissued invoice'),
+(N'BkavNew.Step6', N'en-US', N'Step 6: PDF / XML / Link'),
+(N'BkavNew.Step6', N'vi-VN', N'Bước 6: PDF / XML / Link'),
+(N'BkavNew.Step6', N'zh-CN', N'Step 6: PDF / XML / Link'),
+(N'BkavNew.Extra', N'en-US', N'Extra: Tax lookup / Demo account'),
+(N'BkavNew.Extra', N'vi-VN', N'Khác: Tra cứu MST / Tạo tài khoản demo'),
+(N'BkavNew.Extra', N'zh-CN', N'Extra: Tax lookup / Demo account'),
+
+(N'BkavNew.Select', N'en-US', N'Select'),
+(N'BkavNew.Select', N'vi-VN', N'Chọn'),
+(N'BkavNew.Select', N'zh-CN', N'Select'),
+(N'BkavNew.LoadInvoices', N'en-US', N'Load invoices'),
+(N'BkavNew.LoadInvoices', N'vi-VN', N'Lấy hóa đơn'),
+(N'BkavNew.LoadInvoices', N'zh-CN', N'Load invoices'),
+(N'BkavNew.Filter', N'en-US', N'Filter invoice / customer / GUID'),
+(N'BkavNew.Filter', N'vi-VN', N'Lọc số HĐ / khách / GUID'),
+(N'BkavNew.Filter', N'zh-CN', N'Filter'),
+(N'BkavNew.Selected', N'en-US', N'Selected'),
+(N'BkavNew.Selected', N'vi-VN', N'Đã chọn'),
+(N'BkavNew.Selected', N'zh-CN', N'Selected'),
+(N'BkavNew.SelectedDetail', N'en-US', N'Selected {0} — {1}'),
+(N'BkavNew.SelectedDetail', N'vi-VN', N'Đã chọn {0} — {1}'),
+(N'BkavNew.SelectedDetail', N'zh-CN', N'Selected {0} — {1}'),
+(N'BkavNew.Loaded', N'en-US', N'Loaded {0} invoice group(s).'),
+(N'BkavNew.Loaded', N'vi-VN', N'Đã tải {0} nhóm hóa đơn.'),
+(N'BkavNew.Loaded', N'zh-CN', N'Loaded {0} invoice group(s).'),
+(N'BkavNew.SelectRequired', N'en-US', N'Select an invoice group in Step 0 first.'),
+(N'BkavNew.SelectRequired', N'vi-VN', N'Hãy chọn một hóa đơn ở Bước 0 trước.'),
+(N'BkavNew.SelectRequired', N'zh-CN', N'Select an invoice group in Step 0 first.'),
+
+(N'BkavNew.Col.InternalNo', N'en-US', N'Internal No'),
+(N'BkavNew.Col.InternalNo', N'vi-VN', N'Số nội bộ'),
+(N'BkavNew.Col.InternalNo', N'zh-CN', N'Internal No'),
+(N'BkavNew.Col.Date', N'en-US', N'Date'),
+(N'BkavNew.Col.Date', N'vi-VN', N'Ngày'),
+(N'BkavNew.Col.Date', N'zh-CN', N'Date'),
+(N'BkavNew.Col.Lines', N'en-US', N'Lines'),
+(N'BkavNew.Col.Lines', N'vi-VN', N'Số dòng'),
+(N'BkavNew.Col.Lines', N'zh-CN', N'Lines'),
+(N'BkavNew.Col.EInvoice', N'en-US', N'E-Invoice No'),
+(N'BkavNew.Col.EInvoice', N'vi-VN', N'Số HĐĐT'),
+(N'BkavNew.Col.EInvoice', N'zh-CN', N'E-Invoice No'),
+
+(N'BkavNew.Cmd.100', N'en-US', N'eHD assigns Form/Serial; InvoiceNo = 0'),
+(N'BkavNew.Cmd.100', N'vi-VN', N'eHD tự cấp Form/Serial; InvoiceNo = 0'),
+(N'BkavNew.Cmd.100', N'zh-CN', N'eHD assigns Form/Serial; InvoiceNo = 0'),
+(N'BkavNew.Cmd.101', N'en-US', N'eHD assigns Form/Serial/No (blank invoice)'),
+(N'BkavNew.Cmd.101', N'vi-VN', N'eHD tự cấp Form/Serial và số (HĐ trống)'),
+(N'BkavNew.Cmd.101', N'zh-CN', N'eHD assigns Form/Serial/No'),
+(N'BkavNew.Cmd.110', N'en-US', N'Client Form/Serial; InvoiceNo = 0'),
+(N'BkavNew.Cmd.110', N'vi-VN', N'Client cấp Form/Serial; InvoiceNo = 0'),
+(N'BkavNew.Cmd.110', N'zh-CN', N'Client Form/Serial; InvoiceNo = 0'),
+(N'BkavNew.Cmd.111', N'en-US', N'Client Form/Serial/No'),
+(N'BkavNew.Cmd.111', N'vi-VN', N'Client cấp Form/Serial/No'),
+(N'BkavNew.Cmd.111', N'zh-CN', N'Client Form/Serial/No'),
+
+(N'BkavNew.CreateSend', N'en-US', N'Create & send to BKAV'),
+(N'BkavNew.CreateSend', N'vi-VN', N'Tạo và gửi tới Webservice'),
+(N'BkavNew.CreateSend', N'zh-CN', N'Create & send to BKAV'),
+(N'BkavNew.GetInfo', N'en-US', N'Get info'),
+(N'BkavNew.GetInfo', N'vi-VN', N'Lấy thông tin'),
+(N'BkavNew.GetInfo', N'zh-CN', N'Get info'),
+(N'BkavNew.GetStatus', N'en-US', N'Get status'),
+(N'BkavNew.GetStatus', N'vi-VN', N'Lấy trạng thái'),
+(N'BkavNew.GetStatus', N'zh-CN', N'Get status'),
+(N'BkavNew.GetHistory', N'en-US', N'History'),
+(N'BkavNew.GetHistory', N'vi-VN', N'Xem lịch sử'),
+(N'BkavNew.GetHistory', N'zh-CN', N'History'),
+(N'BkavNew.UpdateByGuid', N'en-US', N'Update by InvoiceGUID'),
+(N'BkavNew.UpdateByGuid', N'vi-VN', N'Cập nhật theo InvoiceGUID'),
+(N'BkavNew.UpdateByGuid', N'zh-CN', N'Update by InvoiceGUID'),
+(N'BkavNew.UpdateByPartner', N'en-US', N'Update by PartnerInvoiceID'),
+(N'BkavNew.UpdateByPartner', N'vi-VN', N'Cập nhật theo PartnerInvoiceID'),
+(N'BkavNew.UpdateByPartner', N'zh-CN', N'Update by PartnerInvoiceID'),
+(N'BkavNew.Replace', N'en-US', N'Replace'),
+(N'BkavNew.Replace', N'vi-VN', N'Thay thế'),
+(N'BkavNew.Replace', N'zh-CN', N'Replace'),
+(N'BkavNew.Adjust', N'en-US', N'Adjust'),
+(N'BkavNew.Adjust', N'vi-VN', N'Điều chỉnh'),
+(N'BkavNew.Adjust', N'zh-CN', N'Adjust'),
+(N'BkavNew.CancelByGuid', N'en-US', N'Cancel by InvoiceGUID'),
+(N'BkavNew.CancelByGuid', N'vi-VN', N'Hủy theo InvoiceGUID'),
+(N'BkavNew.CancelByGuid', N'zh-CN', N'Cancel by InvoiceGUID'),
+(N'BkavNew.CancelByPartner', N'en-US', N'Cancel by PartnerInvoiceID'),
+(N'BkavNew.CancelByPartner', N'vi-VN', N'Hủy theo PartnerInvoiceID'),
+(N'BkavNew.CancelByPartner', N'zh-CN', N'Cancel by PartnerInvoiceID'),
+(N'BkavNew.DeleteByGuid', N'en-US', N'Delete by InvoiceGUID'),
+(N'BkavNew.DeleteByGuid', N'vi-VN', N'Xóa theo InvoiceGUID'),
+(N'BkavNew.DeleteByGuid', N'zh-CN', N'Delete by InvoiceGUID'),
+(N'BkavNew.DeleteByPartner', N'en-US', N'Delete by PartnerInvoiceID'),
+(N'BkavNew.DeleteByPartner', N'vi-VN', N'Xóa theo PartnerInvoiceID'),
+(N'BkavNew.DeleteByPartner', N'zh-CN', N'Delete by PartnerInvoiceID'),
+(N'BkavNew.GetPdf', N'en-US', N'Get PDF'),
+(N'BkavNew.GetPdf', N'vi-VN', N'Lấy file PDF'),
+(N'BkavNew.GetPdf', N'zh-CN', N'Get PDF'),
+(N'BkavNew.GetXml', N'en-US', N'Get XML'),
+(N'BkavNew.GetXml', N'vi-VN', N'Lấy file XML'),
+(N'BkavNew.GetXml', N'zh-CN', N'Get XML'),
+(N'BkavNew.GetLink', N'en-US', N'Get link'),
+(N'BkavNew.GetLink', N'vi-VN', N'Lấy link'),
+(N'BkavNew.GetLink', N'zh-CN', N'Get link'),
+(N'BkavNew.GetTax', N'en-US', N'Get tax unit info'),
+(N'BkavNew.GetTax', N'vi-VN', N'Lấy thông tin từ thuế'),
+(N'BkavNew.GetTax', N'zh-CN', N'Get tax unit info'),
+(N'BkavNew.DemoAccount', N'en-US', N'Account / Password'),
+(N'BkavNew.DemoAccount', N'vi-VN', N'Tài khoản / mật khẩu'),
+(N'BkavNew.DemoAccount', N'zh-CN', N'Account / Password'),
+(N'BkavNew.CreateAccount', N'en-US', N'Create demo account'),
+(N'BkavNew.CreateAccount', N'vi-VN', N'Tạo tài khoản Demo'),
+(N'BkavNew.CreateAccount', N'zh-CN', N'Create demo account');
+
+MERGE dbo.LocalizationResources AS target
+USING @Resources AS source
+    ON target.ResourceKey = source.ResourceKey
+   AND target.Culture = source.Culture
+WHEN MATCHED THEN
+    UPDATE SET Value = source.Value
+WHEN NOT MATCHED THEN
+    INSERT (ResourceKey, Culture, Value)
+    VALUES (source.ResourceKey, source.Culture, source.Value);
+GO

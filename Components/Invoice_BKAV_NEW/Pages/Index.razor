@@ -1,0 +1,708 @@
+@inject BkavInvoiceService bkavsv
+@inject IStringLocalizer<SharedResource> Localizer
+@inject IDialogService DialogService
+@inject IJSRuntime JSRuntime
+@inject ISnackbar Snackbar
+@attribute [Authorize]
+@using System.Globalization
+@using System.Text.Json.Serialization
+@using NVOAMASIS.Components.Invoice_BKAV.Pages
+
+<PageTitle>@Localizer["BkavNew.Title"]</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@Localizer["BkavNew.Title"]" Subtitle="@Localizer["BkavNew.Subtitle"]" />
+    <MudPaper Class="product-price-card" Elevation="0">
+        <MudContainer MaxWidth="MaxWidth.False" Class="pa-3">
+            @if (!IsBkavConfigured)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-3">
+                    @Localizer["BkavInvoice.ConfigMissing"]
+                </MudAlert>
+            }
+
+            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-3 flex-wrap">
+                <MudTooltip Text="@Localizer["BkavInvoice.Credential.Title"]">
+                    <MudIconButton OnClick="@OpenCredentialDialog"
+                                   Size="Size.Small"
+                                   Color="@(IsBkavConfigured ? Color.Success : Color.Warning)"
+                                   Variant="Variant.Filled"
+                                   Icon="@Icons.Material.Filled.Key"
+                                   Disabled="@_busy" />
+                </MudTooltip>
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">
+                    Mode=@(_useXmlLabel)
+                </MudChip>
+                <MudSpacer />
+                <MudText Typo="Typo.caption" Color="Color.Secondary">@Localizer["BkavNew.Note"]</MudText>
+            </MudStack>
+
+            @* ===== Bước 0 ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudStack Spacing="2">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudText Typo="Typo.subtitle1"><b>@Localizer["BkavNew.Step0"]</b></MudText>
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.CloudDownload"
+                                   OnClick="@LoadGroups"
+                                   Disabled="@_busy">
+                            @Localizer["BkavNew.LoadInvoices"]
+                        </MudButton>
+                        <MudTextField @bind-Value="_filter"
+                                      Placeholder="@Localizer["BkavNew.Filter"]"
+                                      Immediate="true"
+                                      Dense="true"
+                                      Margin="Margin.Dense"
+                                      Variant="Variant.Outlined"
+                                      Style="max-width:260px" />
+                    </MudStack>
+
+                    <MudDataGrid T="BkavInvoiceGroup"
+                                 Items="@FilteredGroups"
+                                 Dense="true"
+                                 Bordered="true"
+                                 Hover="true"
+                                 Loading="_loading"
+                                 Height="220px"
+                                 FixedHeader="true"
+                                 Virtualize="true"
+                                 RowClick="@OnGroupRowClick"
+                                 Class="bkav-new-grid">
+                        <Columns>
+                            <TemplateColumn Title="" Filterable="false" Sortable="false" Width="70px">
+                                <CellTemplate>
+                                    <MudButton Size="Size.Small"
+                                               Variant="Variant.Text"
+                                               Color="Color.Primary"
+                                               OnClick="@(() => SelectGroup(context.Item))">
+                                        @Localizer["BkavNew.Select"]
+                                    </MudButton>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <PropertyColumn Property="x => x.InternalInvoiceNo" Title="@Localizer["BkavNew.Col.InternalNo"]" />
+                            <PropertyColumn Property="x => x.CustomerName" Title="@Localizer["Customer"]" />
+                            <PropertyColumn Property="x => x.InvoiceDate" Title="@Localizer["BkavNew.Col.Date"]" Format="dd/MM/yyyy" />
+                            <PropertyColumn Property="x => x.LineCount" Title="@Localizer["BkavNew.Col.Lines"]" />
+                            <PropertyColumn Property="x => x.ElectronicInvoiceNo" Title="@Localizer["BkavNew.Col.EInvoice"]" />
+                            <PropertyColumn Property="x => x.BkavPartnerInvoiceID" Title="PartnerInvoiceID" />
+                            <PropertyColumn Property="x => x.BkavInvoiceGUID" Title="InvoiceGUID" />
+                            <PropertyColumn Property="x => x.BkavInvoiceNo" Title="InvoiceNo" />
+                            <PropertyColumn Property="x => x.BkavStatusID" Title="Status" />
+                        </Columns>
+                    </MudDataGrid>
+
+                    @if (_selected != null)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Info" Dense="true">
+                            @Localizer["BkavNew.Selected"]: <b>@_selected.InternalInvoiceNo</b> — @_selected.CustomerName
+                        </MudAlert>
+                    }
+                </MudStack>
+            </MudPaper>
+
+            @* ===== Bước 1 ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@Localizer["BkavNew.Step1"]</b></MudText>
+                <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                    <MudTextField @bind-Value="_internalInvoiceNo"
+                                  Label="@Localizer["BkavNew.Col.InternalNo"]"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:180px" />
+                    <MudSelect T="int"
+                               @bind-Value="_createCommandType"
+                               Label="@Localizer["BkavInvoice.Input.Command"]"
+                               Dense="true"
+                               Margin="Margin.Dense"
+                               Variant="Variant.Outlined"
+                               Style="min-width:420px">
+                        <MudSelectItem T="int" Value="@BkavInvoiceCommandTypes.CreateInvoiceWithFormSerialNo">
+                            111 — @Localizer["BkavNew.Cmd.111"]
+                        </MudSelectItem>
+                        <MudSelectItem T="int" Value="@BkavInvoiceCommandTypes.CreateInvoiceMT">
+                            100 — @Localizer["BkavNew.Cmd.100"]
+                        </MudSelectItem>
+                        <MudSelectItem T="int" Value="@BkavInvoiceCommandTypes.CreateInvoiceTR">
+                            101 — @Localizer["BkavNew.Cmd.101"]
+                        </MudSelectItem>
+                        <MudSelectItem T="int" Value="@BkavInvoiceCommandTypes.CreateInvoiceWithFormSerial">
+                            110 — @Localizer["BkavNew.Cmd.110"]
+                        </MudSelectItem>
+                    </MudSelect>
+                    <MudSelect T="int"
+                               @bind-Value="_payMethodId"
+                               Label="@Localizer["BkavInvoice.Input.Pay"]"
+                               Dense="true"
+                               Margin="Margin.Dense"
+                               Variant="Variant.Outlined"
+                               Style="min-width:140px">
+                        <MudSelectItem T="int" Value="1">@Localizer["BkavInvoice.Pay.Cash"]</MudSelectItem>
+                        <MudSelectItem T="int" Value="2">@Localizer["BkavInvoice.Pay.Transfer"]</MudSelectItem>
+                        <MudSelectItem T="int" Value="3">@Localizer["BkavInvoice.Pay.CashTransfer"]</MudSelectItem>
+                    </MudSelect>
+                    <MudTextField @bind-Value="_invoiceForm"
+                                  Label="@Localizer["BkavInvoice.Input.Form"]"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:120px" />
+                    <MudTextField @bind-Value="_invoiceSerial"
+                                  Label="@Localizer["BkavInvoice.Input.Serial"]"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:120px" />
+                    <MudTextField @bind-Value="_invoiceNoText"
+                                  Label="@Localizer["BkavInvoice.Input.No"]"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:100px" />
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Error"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Send"
+                               OnClick="@IssueInvoice"
+                               Disabled="@(_busy || !IsBkavConfigured || !HasSelectedGroup)">
+                        @Localizer["BkavNew.CreateSend"]
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+
+            @* ===== Bước 2 ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@Localizer["BkavNew.Step2"]</b></MudText>
+                <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                    <MudTextField @bind-Value="_invoiceGuid"
+                                  Label="InvoiceGUID"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:320px" />
+                    <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small" OnClick="@GetInfo" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.GetInfo"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small" OnClick="@GetStatus" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.GetStatus"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small" OnClick="@GetHistory" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.GetHistory"]
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+
+            @* ===== Bước 3 ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@Localizer["BkavNew.Step3"]</b></MudText>
+                <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                    <MudTextField @bind-Value="_partnerInvoiceId"
+                                  Label="PartnerInvoiceID"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:200px" />
+                    <MudTextField @bind-Value="_originalIdentify"
+                                  Label="@Localizer["BkavInvoice.Input.OriginalIdentify"]"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:280px" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="@UpdateByGuid" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.UpdateByGuid"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="@UpdateByPartner" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.UpdateByPartner"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" OnClick="@ReplaceInvoice" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.Replace"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" OnClick="@AdjustInvoice" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.Adjust"]
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+
+            @* ===== Bước 4 ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@Localizer["BkavNew.Step4"]</b></MudText>
+                <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                    <MudTextField @bind-Value="_cancelPartnerInvoiceId"
+                                  Label="PartnerInvoiceID / InvoiceGUID"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:280px" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" OnClick="@CancelByGuid" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.CancelByGuid"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" OnClick="@CancelByPartner" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.CancelByPartner"]
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+
+            @* ===== Bước 5 ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@Localizer["BkavNew.Step5"]</b></MudText>
+                <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                    <MudTextField @bind-Value="_deletePartnerInvoiceId"
+                                  Label="PartnerInvoiceID / InvoiceGUID"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:280px" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" OnClick="@DeleteByGuid" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.DeleteByGuid"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" OnClick="@DeleteByPartner" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.DeleteByPartner"]
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+
+            @* ===== Bước 6 ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@Localizer["BkavNew.Step6"]</b></MudText>
+                <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                    <MudTextField @bind-Value="_filePartnerInvoiceId"
+                                  Label="PartnerInvoiceID"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:200px" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" OnClick="@DownloadPdf" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.GetPdf"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" OnClick="@DownloadXml" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.GetXml"]
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" OnClick="@GetLink" Disabled="@BusyOrNoConfig">
+                        @Localizer["BkavNew.GetLink"]
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+
+            @* ===== Extra ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@Localizer["BkavNew.Extra"]</b></MudText>
+                <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                    <MudTextField @bind-Value="_taxCode"
+                                  Label="@Localizer["BkavInvoice.Input.TaxCode"]"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Style="min-width:200px" />
+                    <MudButton Variant="Variant.Outlined" Color="Color.Info" Size="Size.Small" OnClick="@GetTaxInfo" Disabled="@(_busy || !IsBkavConfigured)">
+                        @Localizer["BkavNew.GetTax"]
+                    </MudButton>
+                    <MudTextField @bind-Value="_demoAccount"
+                                  Label="@Localizer["BkavNew.DemoAccount"]"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  ReadOnly="true"
+                                  Style="min-width:220px" />
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" OnClick="@CreateDemoAccount" Disabled="@(_busy || !IsBkavConfigured)">
+                        @Localizer["BkavNew.CreateAccount"]
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+
+            <MudAlert Severity="@_msgSeverity" Dense="true" Class="mb-2" Style="@(_message.Length == 0 ? "display:none" : null)">
+                @_message
+            </MudAlert>
+
+            @if (!string.IsNullOrWhiteSpace(_lastObjectText))
+            {
+                <MudTextField @bind-Value="_lastObjectText"
+                              Label="@Localizer["BkavInvoice.Result"]"
+                              Lines="6"
+                              ReadOnly="true"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense" />
+            }
+        </MudContainer>
+    </MudPaper>
+</div>
+
+@code {
+    private List<BkavInvoiceGroup> _groups = [];
+    private BkavInvoiceGroup? _selected;
+    private Guid _selectedCustomerId;
+    private bool _loading;
+    private bool _busy;
+    private bool _credentialsLoaded;
+    private string _filter = string.Empty;
+    private string _message = string.Empty;
+    private MudBlazor.Severity _msgSeverity = MudBlazor.Severity.Info;
+    private string _lastObjectText = string.Empty;
+
+    private string _internalInvoiceNo = string.Empty;
+    private string _invoiceGuid = string.Empty;
+    private string _partnerInvoiceId = string.Empty;
+    private string _cancelPartnerInvoiceId = string.Empty;
+    private string _deletePartnerInvoiceId = string.Empty;
+    private string _filePartnerInvoiceId = string.Empty;
+    private string _originalIdentify = string.Empty;
+    private string _invoiceForm = string.Empty;
+    private string _invoiceSerial = string.Empty;
+    private string _invoiceNoText = string.Empty;
+    private string _taxCode = string.Empty;
+    private string _demoAccount = string.Empty;
+    private int _createCommandType;
+    private int _payMethodId = 3;
+
+    private string PartnerGuid = string.Empty;
+    private string PartnerToken = string.Empty;
+    private string CredentialSavedAt = string.Empty;
+
+    private bool HasSelectedGroup =>
+        _selectedCustomerId != Guid.Empty && !string.IsNullOrWhiteSpace(_internalInvoiceNo);
+
+    private bool IsBkavConfigured => _credentialsLoaded
+        ? bkavsv.IsConfiguredWith(GetRuntimeCredentials())
+        : bkavsv.IsConfigured;
+
+    private bool BusyOrNoConfig => _busy || !IsBkavConfigured || !HasSelectedGroup;
+
+    private string _useXmlLabel => "JSON/XML per BkavInvoice:Mode";
+
+    private IEnumerable<BkavInvoiceGroup> FilteredGroups =>
+        string.IsNullOrWhiteSpace(_filter)
+            ? _groups
+            : _groups.Where(x =>
+                Contains(x.InternalInvoiceNo, _filter) ||
+                Contains(x.CustomerName, _filter) ||
+                Contains(x.BkavInvoiceGUID, _filter) ||
+                Contains(x.BkavPartnerInvoiceID?.ToString(), _filter) ||
+                Contains(x.ElectronicInvoiceNo, _filter));
+
+    protected override void OnInitialized()
+    {
+        _createCommandType = bkavsv.DefaultCreateCommandType;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        await LoadBrowserCredentialsAsync();
+        _credentialsLoaded = true;
+        StateHasChanged();
+    }
+
+    private async Task LoadGroups()
+    {
+        try
+        {
+            _loading = true;
+            _groups = await bkavsv.GetInvoiceGroupsAsync();
+            SetMessage(Localizer["BkavNew.Loaded", _groups.Count].Value, MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            SetMessage(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OnGroupRowClick(DataGridRowClickEventArgs<BkavInvoiceGroup> args)
+        => SelectGroup(args.Item);
+
+    private void SelectGroup(BkavInvoiceGroup group)
+    {
+        _selected = group;
+        _selectedCustomerId = group.CustomerId;
+        _internalInvoiceNo = group.InternalInvoiceNo;
+        _invoiceGuid = group.BkavInvoiceGUID ?? string.Empty;
+        _partnerInvoiceId = group.BkavPartnerInvoiceID?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        _cancelPartnerInvoiceId = _partnerInvoiceId;
+        _deletePartnerInvoiceId = _partnerInvoiceId;
+        _filePartnerInvoiceId = _partnerInvoiceId;
+        _invoiceForm = group.BkavInvoiceForm ?? string.Empty;
+        _invoiceSerial = group.BkavInvoiceSerial ?? string.Empty;
+        _invoiceNoText = group.BkavInvoiceNo?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+        _taxCode = string.Empty;
+        SetMessage(Localizer["BkavNew.SelectedDetail", group.InternalInvoiceNo, group.CustomerName].Value, MudBlazor.Severity.Info);
+    }
+
+    private void ApplyGroupFields(BkavInvoiceGroup? group)
+    {
+        if (group == null)
+            return;
+
+        _selected = group;
+        _selectedCustomerId = group.CustomerId;
+        _internalInvoiceNo = group.InternalInvoiceNo;
+        _invoiceGuid = group.BkavInvoiceGUID ?? _invoiceGuid;
+        _partnerInvoiceId = group.BkavPartnerInvoiceID?.ToString(CultureInfo.InvariantCulture) ?? _partnerInvoiceId;
+        _cancelPartnerInvoiceId = string.IsNullOrWhiteSpace(_partnerInvoiceId) ? _cancelPartnerInvoiceId : _partnerInvoiceId;
+        _deletePartnerInvoiceId = string.IsNullOrWhiteSpace(_partnerInvoiceId) ? _deletePartnerInvoiceId : _partnerInvoiceId;
+        _filePartnerInvoiceId = string.IsNullOrWhiteSpace(_partnerInvoiceId) ? _filePartnerInvoiceId : _partnerInvoiceId;
+        _invoiceForm = group.BkavInvoiceForm ?? _invoiceForm;
+        _invoiceSerial = group.BkavInvoiceSerial ?? _invoiceSerial;
+        _invoiceNoText = group.BkavInvoiceNo?.ToString(CultureInfo.InvariantCulture) ?? _invoiceNoText;
+    }
+
+    private Task IssueInvoice()
+        => RunAction(x => bkavsv.IssueInvoiceGroupAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Issue");
+
+    private Task GetInfo()
+        => RunAction(x => bkavsv.GetInvoiceDataAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "GetInfo");
+
+    private Task GetStatus()
+        => RunAction(x => bkavsv.RefreshStatusAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "GetStatus");
+
+    private Task GetHistory()
+        => RunAction(x => bkavsv.GetHistoryAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "GetHistory");
+
+    private Task UpdateByGuid()
+        => RunAction(x => bkavsv.UpdateByInvoiceGuidAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Update204");
+
+    private Task UpdateByPartner()
+        => RunAction(x => bkavsv.UpdateByPartnerInvoiceIDAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Update200");
+
+    private Task ReplaceInvoice()
+        => RunAction(x => bkavsv.ReplaceInvoiceAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Replace120");
+
+    private Task AdjustInvoice()
+        => RunAction(x => bkavsv.AdjustInvoiceAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Adjust121");
+
+    private Task CancelByGuid()
+        => RunAction(x => bkavsv.CancelByInvoiceGuidAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "Cancel201");
+
+    private Task CancelByPartner()
+        => RunAction(x => bkavsv.CancelByPartnerInvoiceIDAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "Cancel202");
+
+    private Task DeleteByGuid()
+        => RunAction(x => bkavsv.DeleteByInvoiceGuidAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "Delete303");
+
+    private Task DeleteByPartner()
+        => RunAction(x => bkavsv.DeleteByPartnerInvoiceIDAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "Delete301");
+
+    private Task DownloadPdf()
+        => RunAction(x => bkavsv.DownloadPdfAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "PDF808");
+
+    private Task DownloadXml()
+        => RunAction(x => bkavsv.DownloadXmlAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "XML809");
+
+    private Task GetLink()
+        => RunAction(x => bkavsv.GetInvoiceLinkAsync(x.InternalInvoiceNo, x.CustomerId, GetRuntimeCredentials()), "Link804");
+
+    private async Task GetTaxInfo()
+    {
+        try
+        {
+            _busy = true;
+            var result = await bkavsv.GetUnitInfoByTaxCodeAsync(_taxCode, GetRuntimeCredentials());
+            if (!string.IsNullOrWhiteSpace(result.ObjectText))
+                _lastObjectText = result.ObjectText;
+            SetMessage(result.Message, result.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            SetMessage(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task CreateDemoAccount()
+    {
+        try
+        {
+            _busy = true;
+            var result = await bkavsv.CreateDemoAccountAsync(GetRuntimeCredentials());
+            if (!string.IsNullOrWhiteSpace(result.ObjectText))
+                _lastObjectText = result.ObjectText;
+            if (result.Success)
+                _demoAccount = result.Message;
+            SetMessage(result.Message, result.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            SetMessage(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RunAction(Func<BkavInvoiceGroup, Task<BkavInvoiceOperationResult>> action, string actionName)
+    {
+        if (!HasSelectedGroup)
+        {
+            SetMessage(Localizer["BkavNew.SelectRequired"].Value, MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var current = new BkavInvoiceGroup
+        {
+            InternalInvoiceNo = _internalInvoiceNo.Trim(),
+            CustomerId = _selectedCustomerId
+        };
+
+        try
+        {
+            _busy = true;
+            var result = await action(current);
+            if (!string.IsNullOrWhiteSpace(result.ObjectText))
+                _lastObjectText = result.ObjectText;
+
+            if (result.Group != null)
+                ApplyGroupFields(result.Group);
+
+            var detail = FirstNonEmpty(result.Message, result.Link, result.FilePath);
+            SetMessage($"{actionName}: {detail}", result.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+
+            // Refresh list quietly so grid shows latest BKAV fields
+            _groups = await bkavsv.GetInvoiceGroupsAsync();
+            if (result.Group != null)
+            {
+                var refreshed = _groups.FirstOrDefault(x =>
+                    x.CustomerId == result.Group.CustomerId &&
+                    string.Equals(x.InternalInvoiceNo, result.Group.InternalInvoiceNo, StringComparison.OrdinalIgnoreCase));
+                if (refreshed != null)
+                    ApplyGroupFields(refreshed);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetMessage($"{actionName}: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private BkavInvoiceActionInput BuildInput()
+    {
+        int? invoiceNo = null;
+        if (int.TryParse(_invoiceNoText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            invoiceNo = parsed;
+
+        return new BkavInvoiceActionInput
+        {
+            CommandType = _createCommandType,
+            InvoiceForm = _invoiceForm,
+            InvoiceSerial = _invoiceSerial,
+            InvoiceNo = invoiceNo,
+            OriginalInvoiceIdentify = _originalIdentify,
+            PayMethodID = _payMethodId,
+            TaxCode = _taxCode
+        };
+    }
+
+    private BkavInvoiceRuntimeCredentials? GetRuntimeCredentials()
+    {
+        if (string.IsNullOrWhiteSpace(PartnerGuid) && string.IsNullOrWhiteSpace(PartnerToken))
+            return null;
+
+        return new BkavInvoiceRuntimeCredentials
+        {
+            PartnerGuid = PartnerGuid,
+            PartnerToken = PartnerToken
+        };
+    }
+
+    private async Task OpenCredentialDialog()
+    {
+        var parameters = new DialogParameters
+        {
+            [nameof(InvoiceBkavCredentialDialog.PartnerGuid)] = PartnerGuid,
+            [nameof(InvoiceBkavCredentialDialog.PartnerToken)] = PartnerToken,
+            [nameof(InvoiceBkavCredentialDialog.SavedAt)] = CredentialSavedAt,
+            [nameof(InvoiceBkavCredentialDialog.HasServerCredentials)] = bkavsv.HasServerCredentials
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true };
+        var dialog = await DialogService.ShowAsync<InvoiceBkavCredentialDialog>(Localizer["BkavInvoice.Credential.Title"], parameters, options);
+        var result = await dialog.Result;
+
+        if (result.Canceled || result.Data is not InvoiceBkavCredentialDialog.Result credentialResult)
+            return;
+
+        if (credentialResult.Action == InvoiceBkavCredentialDialog.ResultAction.Clear)
+        {
+            await JSRuntime.InvokeVoidAsync("nvoccClearBkavInvoiceCredentials");
+            PartnerGuid = string.Empty;
+            PartnerToken = string.Empty;
+            CredentialSavedAt = string.Empty;
+            SetMessage(Localizer["BkavInvoice.Credential.Cleared"].Value, MudBlazor.Severity.Info);
+            return;
+        }
+
+        var saved = await JSRuntime.InvokeAsync<BkavBrowserCredentials?>("nvoccSetBkavInvoiceCredentials", credentialResult.PartnerGuid, credentialResult.PartnerToken);
+        PartnerGuid = credentialResult.PartnerGuid;
+        PartnerToken = credentialResult.PartnerToken;
+        CredentialSavedAt = FormatSavedAt(saved?.SavedAt);
+        SetMessage(Localizer["BkavInvoice.Credential.Saved"].Value, MudBlazor.Severity.Success);
+    }
+
+    private async Task LoadBrowserCredentialsAsync()
+    {
+        try
+        {
+            var credentials = await JSRuntime.InvokeAsync<BkavBrowserCredentials?>("nvoccGetBkavInvoiceCredentials");
+            if (credentials == null)
+                return;
+
+            PartnerGuid = credentials.PartnerGuid?.Trim() ?? string.Empty;
+            PartnerToken = credentials.PartnerToken?.Trim() ?? string.Empty;
+            CredentialSavedAt = FormatSavedAt(credentials.SavedAt);
+        }
+        catch
+        {
+            PartnerGuid = string.Empty;
+            PartnerToken = string.Empty;
+            CredentialSavedAt = string.Empty;
+        }
+    }
+
+    private void SetMessage(string message, MudBlazor.Severity severity)
+    {
+        _message = message;
+        _msgSeverity = severity;
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private static bool Contains(string? value, string filter)
+        => value?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true;
+
+    private static string FormatSavedAt(string? savedAt)
+    {
+        if (string.IsNullOrWhiteSpace(savedAt))
+            return string.Empty;
+
+        return DateTimeOffset.TryParse(savedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            ? parsed.LocalDateTime.ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.CurrentCulture)
+            : savedAt;
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+        => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? string.Empty;
+
+    private sealed class BkavBrowserCredentials
+    {
+        [JsonPropertyName("partnerGuid")]
+        public string? PartnerGuid { get; set; }
+
+        [JsonPropertyName("partnerToken")]
+        public string? PartnerToken { get; set; }
+
+        [JsonPropertyName("savedAt")]
+        public string? SavedAt { get; set; }
+    }
+}
