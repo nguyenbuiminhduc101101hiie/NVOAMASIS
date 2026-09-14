@@ -2,9 +2,11 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using System.Xml.Linq;
+using System.Text.Unicode;
 using System.Xml.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -19,11 +21,14 @@ public static class BkavInvoiceCommandTypes
     public const int CreateInvoiceTR = 101;
     public const int CreateInvoiceWithFormSerial = 110;
     public const int CreateInvoiceWithFormSerialNo = 111;
+    public const int CreateInvoiceWithFormSerialBkavNo = 112;
     public const int CreateInvoiceReplace = 120;
     public const int CreateInvoiceAdjust = 121;
     public const int UpdateInvoiceByPartnerInvoiceID = 200;
     public const int CancelInvoiceByInvoiceGUID = 201;
     public const int CancelInvoiceByPartnerInvoiceID = 202;
+    public const int UpdateInvoiceByInvoiceGUID = 204;
+    public const int SignInvoiceHsm = 205;
     public const int DeleteInvoiceByPartnerInvoiceID = 301;
     public const int DeleteInvoiceByInvoiceGUID = 303;
     public const int GetInvoiceDataWS = 800;
@@ -32,29 +37,94 @@ public static class BkavInvoiceCommandTypes
     public const int GetInvoiceLink = 804;
     public const int GetInvoiceDataFilePDF = 808;
     public const int GetInvoiceDataFileXML = 809;
+    public const int GetInvoicesByFormSerialRange = 810;
+    public const int GetInvoiceDisplayByMtc = 811;
+    public const int GetInvoiceConvertByMtc = 812;
+    public const int GetInvoiceXmlByMtc = 813;
+    public const int GetInvoiceTaxAuthorityStatus = 850;
     public const int CreateAccount = 902;
     public const int GetUnitInforByTaxCode = 904;
+    public const int ResendLookupEmail = 901;
+    public const int ResendLookupEmailTo = 911;
     public const int GetDLLContent = 1001;
-    public const int UpdateInvoiceByInvoiceGUID = 204;
+    public const int UpdateInvoiceByFormSerialNo = 203;
+    public const int SignInvoicesHsm = 206;
+    public const int AttachFileByPartnerInvoiceID = 502;
+    public const int AttachFileByInvoiceGUID = 503;
 
     public static readonly int[] SupportedCreateCommandTypes =
     [
         CreateInvoiceMT,
         CreateInvoiceTR,
         CreateInvoiceWithFormSerial,
-        CreateInvoiceWithFormSerialNo
+        CreateInvoiceWithFormSerialNo,
+        CreateInvoiceWithFormSerialBkavNo
+    ];
+
+    public static readonly int[] DraftCreateCommandTypes =
+    [
+        CreateInvoiceMT,
+        CreateInvoiceWithFormSerial
+    ];
+
+    public static readonly int[] IssueCreateCommandTypes =
+    [
+        CreateInvoiceTR,
+        CreateInvoiceWithFormSerialNo,
+        CreateInvoiceWithFormSerialBkavNo
     ];
 
     public static bool IsSupportedCreateCommandType(int commandType)
         => SupportedCreateCommandTypes.Contains(commandType);
+
+    public static bool IsDraftCreateCommandType(int commandType)
+        => DraftCreateCommandTypes.Contains(commandType);
+
+    public static bool IsIssueCreateCommandType(int commandType)
+        => IssueCreateCommandTypes.Contains(commandType);
+
+    public static bool RequiresClientFormSerial(int commandType)
+        => commandType is CreateInvoiceWithFormSerial
+            or CreateInvoiceWithFormSerialNo
+            or CreateInvoiceWithFormSerialBkavNo;
+
+    /// <summary>FAQ: 100/110 → Mới tạo (1); 101/111/112 → Trống chờ ký (11).</summary>
+    public static int ResolveStatusAfterCreate(int commandType)
+        => IsDraftCreateCommandType(commandType)
+            ? BkavInvoiceStatusIds.New
+            : BkavInvoiceStatusIds.WaitingSign;
+
+    public static int CoerceToDraftCommandType(int commandType) => commandType switch
+    {
+        CreateInvoiceTR => CreateInvoiceMT,
+        CreateInvoiceWithFormSerialNo or CreateInvoiceWithFormSerialBkavNo => CreateInvoiceWithFormSerial,
+        CreateInvoiceMT or CreateInvoiceWithFormSerial => commandType,
+        _ => CreateInvoiceMT
+    };
+
+    public static int CoerceToIssueCommandType(int commandType, BkavInvoiceActionInput input) => commandType switch
+    {
+        CreateInvoiceMT => CreateInvoiceTR,
+        CreateInvoiceWithFormSerial => input.InvoiceNo.GetValueOrDefault() > 0
+            ? CreateInvoiceWithFormSerialNo
+            : CreateInvoiceWithFormSerialBkavNo,
+        CreateInvoiceTR or CreateInvoiceWithFormSerialNo or CreateInvoiceWithFormSerialBkavNo => commandType,
+        _ => CreateInvoiceTR
+    };
 }
 
+/// <summary>InvoiceStatusID theo phụ lục FAQ BKAV.</summary>
 public static class BkavInvoiceStatusIds
 {
-    /// <summary>ChÆ°a phÃ¡t hÃ nh / nhÃ¡p trÃªn BKAV.</summary>
-    public const int Draft = 0;
-    /// <summary>ÄÃ£ phÃ¡t hÃ nh (kÃ½ & xuáº¥t).</summary>
-    public const int Issued = 1;
+    /// <summary>1 — Mới tạo (chưa có số hóa đơn).</summary>
+    public const int New = 1;
+    /// <summary>2 — Đã phát hành (đã ký).</summary>
+    public const int Issued = 2;
+    /// <summary>11 — Trống (đã cấp số, chờ ký).</summary>
+    public const int WaitingSign = 11;
+
+    /// <summary>Alias cũ: nháp = Mới tạo.</summary>
+    public const int Draft = New;
 }
 
 public class BkavInvoiceActionInput
@@ -64,10 +134,18 @@ public class BkavInvoiceActionInput
     public string? InvoiceSerial { get; set; }
     public int? InvoiceNo { get; set; }
     public string? OriginalInvoiceIdentify { get; set; }
+    public string? Reason { get; set; }
+    public bool? AdjustmentIsIncrease { get; set; }
+    public string? InvoiceGuid { get; set; }
+    public long? PartnerInvoiceID { get; set; }
+    public double? SumItemAmount { get; set; }
+    public double? SumDiscountAmount { get; set; }
+    public double? SumTaxAmount { get; set; }
+    public double? SumPaymentAmount { get; set; }
     public int PayMethodID { get; set; } = 3;
     public string? TaxCode { get; set; }
-    /// <summary>0 = nhÃ¡p, 1 = phÃ¡t hÃ nh. Máº·c Ä‘á»‹nh phÃ¡t hÃ nh Ä‘á»ƒ tÆ°Æ¡ng thÃ­ch luá»“ng cÅ©.</summary>
-    public int InvoiceStatusID { get; set; } = BkavInvoiceStatusIds.Issued;
+    /// <summary>Status local theo FAQ (1/11/2). Không gửi lên wire khi tạo HĐ.</summary>
+    public int InvoiceStatusID { get; set; } = BkavInvoiceStatusIds.WaitingSign;
 }
 
 public class BkavInvoiceRuntimeCredentials
@@ -131,11 +209,16 @@ public class BkavInvoiceService(
     private const long EncryptMode = 4;
     private const long EncryptModeV1 = 8;
 
+    // Encoder cho phép Unicode (tiếng Việt có dấu) được ghi ra dạng UTF-8 thật thay vì \uXXXX —
+    // JSON tương đương về mặt dữ liệu (mọi parser JSON đều decode ra cùng 1 chuỗi), chỉ khác cách viết,
+    // nên vẫn là đúng payload gửi lên BKAV, chỉ là dễ đọc hơn khi debug.
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = null,
         DictionaryKeyPolicy = null,
-        WriteIndented = false
+        WriteIndented = false,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All)
     };
 
     private readonly BkavInvoiceSettings settings = options.Value;
@@ -198,28 +281,109 @@ public class BkavInvoiceService(
 
     public Task<BkavInvoiceOperationResult> CreateDraftInvoiceGroupAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
     {
-        input.InvoiceStatusID = BkavInvoiceStatusIds.Draft;
+        // FAQ: nháp = CmdType 100/110 (Mới tạo, Số HĐ = 0). Không dùng InvoiceStatusID trên wire.
+        if (!BkavInvoiceCommandTypes.IsDraftCreateCommandType(input.CommandType))
+            return Task.FromResult(BkavInvoiceOperationResult.Fail("Tạo nháp chỉ hỗ trợ CmdType 100 hoặc 110."));
+        input.InvoiceStatusID = BkavInvoiceStatusIds.New;
         return IssueInvoiceGroupAsync(internalInvoiceNo, customerId, input, credentials, cancellationToken);
     }
 
     public async Task<BkavInvoiceOperationResult> PublishInvoiceGroupAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
     {
-        input.InvoiceStatusID = BkavInvoiceStatusIds.Issued;
-
         var state = await LoadGroupStateAsync(internalInvoiceNo, customerId, cancellationToken);
         if (!string.IsNullOrEmpty(state.Error))
             return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
 
-        var hasGuid = state.Lines.Any(x => !string.IsNullOrWhiteSpace(x.BkavInvoiceGUID));
-        if (!hasGuid)
-            return await IssueInvoiceGroupAsync(internalInvoiceNo, customerId, input, credentials, cancellationToken);
+        var hasGuid = !string.IsNullOrWhiteSpace(input.InvoiceGuid)
+            || state.Lines.Any(x => !string.IsNullOrWhiteSpace(x.BkavInvoiceGUID));
+        if (hasGuid)
+            return await SignInvoiceByHsmAsync(internalInvoiceNo, customerId, input.InvoiceGuid, credentials, cancellationToken);
 
-        // ÄÃ£ cÃ³ nhÃ¡p trÃªn BKAV â†’ cáº­p nháº­t InvoiceStatusID = 1 Ä‘á»ƒ phÃ¡t hÃ nh
-        return await UpdateByInvoiceGuidAsync(internalInvoiceNo, customerId, input, credentials, cancellationToken);
+        // Chưa có GUID: tạo HĐ chờ ký bằng 101/111/112 (FAQ). Không dùng Update 204 để "phát hành".
+        if (!BkavInvoiceCommandTypes.IsIssueCreateCommandType(input.CommandType))
+            return BkavInvoiceOperationResult.Fail("Tạo hóa đơn chờ ký chỉ hỗ trợ CmdType 101, 111 hoặc 112.", state.Group);
+        input.InvoiceStatusID = BkavInvoiceCommandTypes.ResolveStatusAfterCreate(input.CommandType);
+        return await IssueInvoiceGroupAsync(internalInvoiceNo, customerId, input, credentials, cancellationToken);
+    }
+
+    public async Task<BkavInvoiceOperationResult> SignInvoiceByHsmAsync(
+        string internalInvoiceNo,
+        Guid customerId,
+        string? invoiceGuidOverride = null,
+        BkavInvoiceRuntimeCredentials? credentials = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var settingsError = ValidateSettings(credentials);
+            if (!string.IsNullOrEmpty(settingsError))
+                return BkavInvoiceOperationResult.Fail(settingsError);
+
+            var state = await LoadGroupStateAsync(internalInvoiceNo, customerId, cancellationToken);
+            if (!string.IsNullOrEmpty(state.Error))
+                return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
+
+            var invoiceGuid = FirstNonEmpty(invoiceGuidOverride, GetInvoiceGuid(state.Lines));
+            if (string.IsNullOrWhiteSpace(invoiceGuid))
+                return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty. Cannot sign (CmdType 205).", state.Group);
+
+            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.SignInvoiceHsm, invoiceGuid, credentials, cancellationToken);
+            if (!result.Success)
+            {
+                await SetLastMessageAsync(state.Lines, result.Message, cancellationToken);
+                return BkavInvoiceOperationResult.Fail(
+                    "HSM sign (CmdType 205) failed: " + result.Message +
+                    " Signing requires HSM. Otherwise sign on eHoadon portal, or use Update 200/204 for content changes and Refresh Status 800/801.",
+                    state.Group,
+                    result.DebugText);
+            }
+
+            var invoiceResult = ParseFirstInvoiceResult(result.ObjectText);
+            if (invoiceResult != null && invoiceResult.Status != 0)
+            {
+                await SetLastMessageAsync(state.Lines, invoiceResult.MessLog, cancellationToken);
+                return BkavInvoiceOperationResult.Fail(
+                    FirstNonEmpty(invoiceResult.MessLog, "BKAV HSM sign returned error."),
+                    state.Group,
+                    result.DebugText);
+            }
+
+            if (invoiceResult != null)
+            {
+                await ApplyInvoiceResultAsync(
+                    state.Lines,
+                    invoiceResult,
+                    state.Lines.FirstOrDefault()?.BkavPartnerInvoiceID ?? 0,
+                    cancellationToken,
+                    BkavInvoiceStatusIds.Issued);
+            }
+            else
+            {
+                foreach (var line in state.Lines)
+                {
+                    line.BkavStatusID = BkavInvoiceStatusIds.Issued;
+                    line.BkavLastMessage = FirstNonEmpty(result.Message, "BKAV HSM sign success.");
+                    line.ngayphathanhhoadonDientu ??= DateTime.Now;
+                    line.dateupdate = DateTime.Now.ToString(CultureInfo.InvariantCulture);
+                }
+
+                await context.SaveChangesAsync(cancellationToken);
+            }
+
+            var reloadNo = FirstNonEmpty(state.Lines.FirstOrDefault()?.sohoadonNoibo, internalInvoiceNo);
+            return BkavInvoiceOperationResult.Ok(
+                "BKAV invoice signed via HSM (CmdType 205).",
+                await ReloadGroupAsync(reloadNo, customerId, cancellationToken),
+                objectText: result.DebugText);
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
     }
 
     public async Task<BkavInvoiceOperationResult> IssueInvoiceGroupAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
-{
+    {
         try
         {
             var settingsError = ValidateSettings(credentials);
@@ -238,10 +402,10 @@ public class BkavInvoiceService(
                 return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
 
             if (state.Lines.Any(x => !string.IsNullOrWhiteSpace(x.BkavInvoiceGUID) || !string.IsNullOrWhiteSpace(x.sohoadonDientu)))
-                return BkavInvoiceOperationResult.Fail("HoaDonDauRa group already has e-invoice data. Use publish for draft invoices.", state.Group);
+                return BkavInvoiceOperationResult.Fail("HoaDonDauRa group already has e-invoice data. Use Sign & issue (HSM 205) for draft invoices, or Update 200/204 for content.", state.Group);
 
             var invoiceData = BuildInvoiceData(state, input.CommandType, input);
-            var commandResult = await ExecuteCommandAsync(input.CommandType, SerializeInvoiceDataList([invoiceData]), credentials, cancellationToken);
+            var commandResult = await ExecuteCommandAsync(input.CommandType, new List<BkavInvoiceDataWS> { invoiceData }, credentials, cancellationToken);
             if (!commandResult.Success)
             {
                 await SetLastMessageAsync(state.Lines, commandResult.Message, cancellationToken);
@@ -258,10 +422,11 @@ public class BkavInvoiceService(
                 return BkavInvoiceOperationResult.Fail(FirstNonEmpty(invoiceResult.MessLog, "BKAV returned invoice error."), state.Group, commandResult.DebugText);
             }
 
-            await ApplyInvoiceResultAsync(state.Lines, invoiceResult, invoiceData.PartnerInvoiceID, cancellationToken, input.InvoiceStatusID);
-            var successMessage = input.InvoiceStatusID == BkavInvoiceStatusIds.Draft
-                ? "BKAV draft invoice created. Review PDF/link then publish."
-                : "BKAV invoice issued successfully.";
+            var statusId = BkavInvoiceCommandTypes.ResolveStatusAfterCreate(input.CommandType);
+            await ApplyInvoiceResultAsync(state.Lines, invoiceResult, invoiceData.PartnerInvoiceID, cancellationToken, statusId);
+            var successMessage = statusId == BkavInvoiceStatusIds.New
+                ? "BKAV draft created (CmdType 100/110 — Mới tạo). Preview PDF/Link then Sign & issue (HSM 205) or sign on eHoadon."
+                : "BKAV invoice created (CmdType 101/111/112 — chờ ký). Sign via HSM 205 or on eHoadon portal.";
             var reloadNo = FirstNonEmpty(state.Lines.FirstOrDefault()?.sohoadonNoibo, internalInvoiceNo);
             return BkavInvoiceOperationResult.Ok(successMessage, await ReloadGroupAsync(reloadNo, customerId, cancellationToken), objectText: commandResult.DebugText);
         }
@@ -277,25 +442,36 @@ public class BkavInvoiceService(
     public Task<BkavInvoiceOperationResult> UpdateByInvoiceGuidAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
         => SendInvoiceDataCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.UpdateInvoiceByInvoiceGUID, input, true, "BKAV invoice updated by InvoiceGUID.", credentials, cancellationToken);
 
+    public Task<BkavInvoiceOperationResult> UpdateByFormSerialNoAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => SendInvoiceDataCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.UpdateInvoiceByFormSerialNo, input, false, "BKAV invoice updated by Form/Serial/No (CmdType 203).", credentials, cancellationToken);
+
     public Task<BkavInvoiceOperationResult> ReplaceInvoiceAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
         => SendInvoiceDataCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.CreateInvoiceReplace, input, false, "BKAV replacement invoice created.", credentials, cancellationToken);
 
     public Task<BkavInvoiceOperationResult> AdjustInvoiceAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
         => SendInvoiceDataCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.CreateInvoiceAdjust, input, false, "BKAV adjustment invoice created.", credentials, cancellationToken);
 
-    public Task<BkavInvoiceOperationResult> CancelByInvoiceGuidAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
-        => SendLookupCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.CancelInvoiceByInvoiceGUID, true, "BKAV invoice cancelled by InvoiceGUID.", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> CancelByInvoiceGuidAsync(string internalInvoiceNo, Guid customerId, string? invoiceGuid, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => SendLookupCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.CancelInvoiceByInvoiceGUID, true, invoiceGuid, null, "BKAV invoice cancelled by InvoiceGUID.", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> CancelByInvoiceGuidAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => CancelByInvoiceGuidAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public Task<BkavInvoiceOperationResult> CancelByPartnerInvoiceIDAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
-        => SendLookupCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.CancelInvoiceByPartnerInvoiceID, false, "BKAV invoice cancelled by PartnerInvoiceID.", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> CancelByPartnerInvoiceIDAsync(string internalInvoiceNo, Guid customerId, long? partnerInvoiceId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => SendLookupCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.CancelInvoiceByPartnerInvoiceID, false, null, partnerInvoiceId, "BKAV invoice cancelled by PartnerInvoiceID.", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> CancelByPartnerInvoiceIDAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => CancelByPartnerInvoiceIDAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public Task<BkavInvoiceOperationResult> DeleteByInvoiceGuidAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
-        => SendLookupCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.DeleteInvoiceByInvoiceGUID, true, "BKAV invoice deleted by InvoiceGUID.", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> DeleteByInvoiceGuidAsync(string internalInvoiceNo, Guid customerId, string? invoiceGuid, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => SendLookupCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.DeleteInvoiceByInvoiceGUID, true, invoiceGuid, null, "BKAV invoice deleted by InvoiceGUID.", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> DeleteByInvoiceGuidAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => DeleteByInvoiceGuidAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public Task<BkavInvoiceOperationResult> DeleteByPartnerInvoiceIDAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
-        => SendLookupCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.DeleteInvoiceByPartnerInvoiceID, false, "BKAV invoice deleted by PartnerInvoiceID.", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> DeleteByPartnerInvoiceIDAsync(string internalInvoiceNo, Guid customerId, long? partnerInvoiceId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => SendLookupCommandAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.DeleteInvoiceByPartnerInvoiceID, false, null, partnerInvoiceId, "BKAV invoice deleted by PartnerInvoiceID.", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> DeleteByPartnerInvoiceIDAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => DeleteByPartnerInvoiceIDAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public async Task<BkavInvoiceOperationResult> GetInvoiceDataAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    public async Task<BkavInvoiceOperationResult> GetInvoiceDataAsync(string internalInvoiceNo, Guid customerId, string? invoiceGuidOverride, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -303,7 +479,7 @@ public class BkavInvoiceService(
             if (!string.IsNullOrEmpty(state.Error))
                 return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
 
-            var invoiceGuid = GetInvoiceGuid(state.Lines);
+            var invoiceGuid = FirstNonEmpty(invoiceGuidOverride, GetInvoiceGuid(state.Lines));
             if (string.IsNullOrWhiteSpace(invoiceGuid))
                 return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty.", state.Group);
 
@@ -344,8 +520,10 @@ public class BkavInvoiceService(
             return BkavInvoiceOperationResult.Fail(ex.Message);
         }
     }
+    public Task<BkavInvoiceOperationResult> GetInvoiceDataAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => GetInvoiceDataAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public async Task<BkavInvoiceOperationResult> RefreshStatusAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    public async Task<BkavInvoiceOperationResult> RefreshStatusAsync(string internalInvoiceNo, Guid customerId, string? invoiceGuidOverride, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -353,7 +531,7 @@ public class BkavInvoiceService(
             if (!string.IsNullOrEmpty(state.Error))
                 return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
 
-            var invoiceGuid = GetInvoiceGuid(state.Lines);
+            var invoiceGuid = FirstNonEmpty(invoiceGuidOverride, GetInvoiceGuid(state.Lines));
             if (string.IsNullOrWhiteSpace(invoiceGuid))
                 return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty.", state.Group);
 
@@ -375,8 +553,10 @@ public class BkavInvoiceService(
             return BkavInvoiceOperationResult.Fail(ex.Message);
         }
     }
+    public Task<BkavInvoiceOperationResult> RefreshStatusAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => RefreshStatusAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public async Task<BkavInvoiceOperationResult> GetHistoryAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    public async Task<BkavInvoiceOperationResult> GetHistoryAsync(string internalInvoiceNo, Guid customerId, string? invoiceGuidOverride, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -384,7 +564,7 @@ public class BkavInvoiceService(
             if (!string.IsNullOrEmpty(state.Error))
                 return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
 
-            var invoiceGuid = GetInvoiceGuid(state.Lines);
+            var invoiceGuid = FirstNonEmpty(invoiceGuidOverride, GetInvoiceGuid(state.Lines));
             if (string.IsNullOrWhiteSpace(invoiceGuid))
                 return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty.", state.Group);
 
@@ -400,8 +580,10 @@ public class BkavInvoiceService(
             return BkavInvoiceOperationResult.Fail(ex.Message);
         }
     }
+    public Task<BkavInvoiceOperationResult> GetHistoryAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => GetHistoryAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public async Task<BkavInvoiceOperationResult> GetInvoiceLinkAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    public async Task<BkavInvoiceOperationResult> GetInvoiceLinkAsync(string internalInvoiceNo, Guid customerId, long? partnerInvoiceIdOverride, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -409,7 +591,7 @@ public class BkavInvoiceService(
             if (!string.IsNullOrEmpty(state.Error))
                 return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
 
-            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.GetInvoiceLink, SerializeInvoiceDataList([BuildPartnerLookup(state)]), credentials, cancellationToken);
+            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.GetInvoiceLink, new List<BkavInvoiceDataWS> { BuildPartnerLookup(state, partnerInvoiceIdOverride) }, credentials, cancellationToken);
             if (!result.Success)
                 return BkavInvoiceOperationResult.Fail(result.Message, state.Group, result.DebugText);
 
@@ -435,12 +617,277 @@ public class BkavInvoiceService(
             return BkavInvoiceOperationResult.Fail(ex.Message);
         }
     }
+    public Task<BkavInvoiceOperationResult> GetInvoiceLinkAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => GetInvoiceLinkAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public Task<BkavInvoiceOperationResult> DownloadPdfAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
-        => DownloadInvoiceFileAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.GetInvoiceDataFilePDF, "PDF", "pdf", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> DownloadPdfAsync(string internalInvoiceNo, Guid customerId, long? partnerInvoiceId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => DownloadInvoiceFileAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.GetInvoiceDataFilePDF, "PDF", "pdf", partnerInvoiceId, credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> DownloadPdfAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => DownloadPdfAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
 
-    public Task<BkavInvoiceOperationResult> DownloadXmlAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
-        => DownloadInvoiceFileAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.GetInvoiceDataFileXML, "XML", "xml", credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> DownloadXmlAsync(string internalInvoiceNo, Guid customerId, long? partnerInvoiceId, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => DownloadInvoiceFileAsync(internalInvoiceNo, customerId, BkavInvoiceCommandTypes.GetInvoiceDataFileXML, "XML", "xml", partnerInvoiceId, credentials, cancellationToken);
+    public Task<BkavInvoiceOperationResult> DownloadXmlAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => DownloadXmlAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
+
+    /// <summary>CmdType 206 — ký nhiều Hóa đơn bằng HSM cùng lúc.</summary>
+    public async Task<BkavInvoiceOperationResult> SignMultipleByHsmAsync(IEnumerable<string> invoiceGuids, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var settingsError = ValidateSettings(credentials);
+            if (!string.IsNullOrEmpty(settingsError))
+                return BkavInvoiceOperationResult.Fail(settingsError);
+
+            var guids = invoiceGuids
+                .Select(x => x?.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x) && Guid.TryParse(x, out _))
+                .Select(x => new BkavInvoiceGuidOnly { InvoiceGUID = Guid.Parse(x!) })
+                .ToList();
+
+            if (guids.Count == 0)
+                return BkavInvoiceOperationResult.Fail("No valid InvoiceGUID provided.");
+
+            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.SignInvoicesHsm, guids, credentials, cancellationToken);
+            return result.Success
+                ? BkavInvoiceOperationResult.Ok($"BKAV signed {guids.Count} invoice(s) via HSM (CmdType 206).", objectText: result.DebugText)
+                : BkavInvoiceOperationResult.Fail(result.Message, objectText: result.DebugText);
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
+    }
+
+    /// <summary>CmdType 502 — đính kèm file (PDF/Excel) vào Hoá đơn theo PartnerInvoiceID.</summary>
+    public Task<BkavInvoiceOperationResult> AttachFileByPartnerInvoiceIdAsync(long partnerInvoiceId, string fileName, string fileExtension, string fileContentBase64, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => AttachFileAsync(BkavInvoiceCommandTypes.AttachFileByPartnerInvoiceID, null, partnerInvoiceId, fileName, fileExtension, fileContentBase64, credentials, cancellationToken);
+
+    /// <summary>CmdType 503 — đính kèm file (PDF/Excel) vào Hoá đơn theo InvoiceGUID.</summary>
+    public Task<BkavInvoiceOperationResult> AttachFileByInvoiceGuidAsync(string invoiceGuid, string fileName, string fileExtension, string fileContentBase64, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => AttachFileAsync(BkavInvoiceCommandTypes.AttachFileByInvoiceGUID, invoiceGuid, null, fileName, fileExtension, fileContentBase64, credentials, cancellationToken);
+
+    private async Task<BkavInvoiceOperationResult> AttachFileAsync(int commandType, string? invoiceGuid, long? partnerInvoiceId, string fileName, string fileExtension, string fileContentBase64, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var settingsError = ValidateSettings(credentials);
+            if (!string.IsNullOrEmpty(settingsError))
+                return BkavInvoiceOperationResult.Fail(settingsError);
+            if (string.IsNullOrWhiteSpace(fileContentBase64))
+                return BkavInvoiceOperationResult.Fail("File content is required.");
+
+            var invoiceWs = new BkavInvoiceWS();
+            if (commandType == BkavInvoiceCommandTypes.AttachFileByInvoiceGUID)
+            {
+                if (string.IsNullOrWhiteSpace(invoiceGuid) || !Guid.TryParse(invoiceGuid, out var parsedGuid))
+                    return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty or invalid.");
+                invoiceWs.InvoiceGUID = parsedGuid;
+            }
+            else if (partnerInvoiceId.GetValueOrDefault() <= 0)
+            {
+                return BkavInvoiceOperationResult.Fail("BKAV PartnerInvoiceID is empty.");
+            }
+
+            var payload = new BkavInvoiceDataWS
+            {
+                Invoice = invoiceWs,
+                ListInvoiceDetailsWS = [],
+                ListInvoiceAttachFileWS =
+                [
+                    new BkavInvoiceAttachFileWS
+                    {
+                        FileName = SanitizeFileName(fileName),
+                        FileExtension = fileExtension.TrimStart('.'),
+                        FileContent = fileContentBase64
+                    }
+                ],
+                PartnerInvoiceID = commandType == BkavInvoiceCommandTypes.AttachFileByPartnerInvoiceID ? partnerInvoiceId.GetValueOrDefault() : 0,
+                PartnerInvoiceStringID = string.Empty
+            };
+
+            var result = await ExecuteCommandAsync(commandType, new List<BkavInvoiceDataWS> { payload }, credentials, cancellationToken);
+            if (!result.Success)
+                return BkavInvoiceOperationResult.Fail(result.Message, objectText: result.DebugText);
+
+            var invoiceResult = ParseFirstInvoiceResult(result.ObjectText);
+            var message = invoiceResult == null ? "BKAV file attached." : FirstNonEmpty(invoiceResult.MessLog, "BKAV file attached.");
+            if (invoiceResult is { Status: not 0 })
+                return BkavInvoiceOperationResult.Fail(message, objectText: result.DebugText);
+
+            return BkavInvoiceOperationResult.Ok(message, objectText: result.DebugText);
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
+    }
+
+    /// <summary>CmdType 850 — trạng thái Hoá đơn tại Bkav và mã/tình trạng bên Cơ quan Thuế.</summary>
+    public async Task<BkavInvoiceOperationResult> GetTaxAuthorityStatusAsync(string internalInvoiceNo, Guid customerId, string? invoiceGuidOverride, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var state = await LoadGroupStateAsync(internalInvoiceNo, customerId, cancellationToken);
+            if (!string.IsNullOrEmpty(state.Error))
+                return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
+
+            var invoiceGuid = FirstNonEmpty(invoiceGuidOverride, GetInvoiceGuid(state.Lines));
+            if (string.IsNullOrWhiteSpace(invoiceGuid))
+                return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty.", state.Group);
+
+            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.GetInvoiceTaxAuthorityStatus, invoiceGuid, credentials, cancellationToken);
+            if (!result.Success)
+                return BkavInvoiceOperationResult.Fail(result.Message, state.Group, result.DebugText);
+
+            var taxStatus = ParseFirstTaxAuthorityStatus(result.ObjectText);
+            var message = taxStatus == null
+                ? "BKAV tax authority status received (CmdType 850)."
+                : $"BkavStatus={taxStatus.BkavStatus}, TaxStatus={taxStatus.TaxStatus}, TaxAuthorityCode={taxStatus.TaxAuthorityCode}{(string.IsNullOrWhiteSpace(taxStatus.ErrorContent) ? "" : $", Error={taxStatus.ErrorContent}")}";
+            await SetLastMessageAsync(state.Lines, message, cancellationToken);
+            return BkavInvoiceOperationResult.Ok(message, await ReloadGroupAsync(internalInvoiceNo, customerId, cancellationToken), objectText: result.DebugText);
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
+    }
+    public Task<BkavInvoiceOperationResult> GetTaxAuthorityStatusAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => GetTaxAuthorityStatusAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
+
+    /// <summary>CmdType 901 — gửi lại email/SMS tra cứu MTC cho người mua (theo cấu hình đã lưu trên Hoá đơn).</summary>
+    public async Task<BkavInvoiceOperationResult> ResendLookupEmailAsync(string internalInvoiceNo, Guid customerId, string? invoiceGuidOverride, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var state = await LoadGroupStateAsync(internalInvoiceNo, customerId, cancellationToken);
+            if (!string.IsNullOrEmpty(state.Error))
+                return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
+
+            var invoiceGuid = FirstNonEmpty(invoiceGuidOverride, GetInvoiceGuid(state.Lines));
+            if (string.IsNullOrWhiteSpace(invoiceGuid))
+                return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty.", state.Group);
+
+            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.ResendLookupEmail, invoiceGuid, credentials, cancellationToken);
+            return result.Success
+                ? BkavInvoiceOperationResult.Ok("BKAV lookup email/SMS resent (CmdType 901).", state.Group, objectText: result.DebugText)
+                : BkavInvoiceOperationResult.Fail(result.Message, state.Group, result.DebugText);
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
+    }
+    public Task<BkavInvoiceOperationResult> ResendLookupEmailAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken = default)
+        => ResendLookupEmailAsync(internalInvoiceNo, customerId, null, credentials, cancellationToken);
+
+    /// <summary>CmdType 911 — gửi email tra cứu Hoá đơn tới 1 địa chỉ email/SĐT chỉ định.</summary>
+    public async Task<BkavInvoiceOperationResult> ResendLookupEmailToAsync(string internalInvoiceNo, Guid customerId, string? invoiceGuidOverride, string receiverEmail, string receiverMobile, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var state = await LoadGroupStateAsync(internalInvoiceNo, customerId, cancellationToken);
+            if (!string.IsNullOrEmpty(state.Error))
+                return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
+
+            var invoiceGuid = FirstNonEmpty(invoiceGuidOverride, GetInvoiceGuid(state.Lines));
+            if (string.IsNullOrWhiteSpace(invoiceGuid) || !Guid.TryParse(invoiceGuid, out var parsedGuid))
+                return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty or invalid.", state.Group);
+            if (string.IsNullOrWhiteSpace(receiverEmail) && string.IsNullOrWhiteSpace(receiverMobile))
+                return BkavInvoiceOperationResult.Fail("Receiver email or mobile is required for BKAV command 911.", state.Group);
+
+            var payload = new BkavInvoiceDataWS
+            {
+                Invoice = new BkavInvoiceWS
+                {
+                    InvoiceGUID = parsedGuid,
+                    ReceiverEmail = Clean(receiverEmail),
+                    ReceiverMobile = Clean(receiverMobile)
+                }
+            };
+
+            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.ResendLookupEmailTo, new List<BkavInvoiceDataWS> { payload }, credentials, cancellationToken);
+            return result.Success
+                ? BkavInvoiceOperationResult.Ok("BKAV lookup email sent to specified receiver (CmdType 911).", state.Group, objectText: result.DebugText)
+                : BkavInvoiceOperationResult.Fail(result.Message, state.Group, result.DebugText);
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
+    }
+
+    /// <summary>CmdType 810 — tra cứu các Hoá đơn theo Mẫu số/Ký hiệu và dải Số Hoá đơn (max 100 số).</summary>
+    public async Task<BkavInvoiceOperationResult> GetInvoicesByRangeAsync(string invoiceForm, string invoiceSerial, int fromInvoiceNo, int toInvoiceNo, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var settingsError = ValidateSettings(credentials);
+            if (!string.IsNullOrEmpty(settingsError))
+                return BkavInvoiceOperationResult.Fail(settingsError);
+            if (string.IsNullOrWhiteSpace(invoiceForm) || string.IsNullOrWhiteSpace(invoiceSerial))
+                return BkavInvoiceOperationResult.Fail("InvoiceForm/InvoiceSerial are required for BKAV command 810.");
+            if (fromInvoiceNo <= 0 || toInvoiceNo < fromInvoiceNo)
+                return BkavInvoiceOperationResult.Fail("Invalid FromInvoiceNo/ToInvoiceNo range for BKAV command 810.");
+
+            var query = new BkavInvoiceRangeQuery
+            {
+                InvoiceForm = Clean(invoiceForm),
+                InvoiceSerial = Clean(invoiceSerial),
+                FromInvoiceNo = fromInvoiceNo,
+                ToInvoiceNo = toInvoiceNo
+            };
+
+            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.GetInvoicesByFormSerialRange, query, credentials, cancellationToken);
+            return result.Success
+                ? BkavInvoiceOperationResult.Ok("BKAV range lookup done (CmdType 810).", objectText: result.DebugText)
+                : BkavInvoiceOperationResult.Fail(result.Message, objectText: result.DebugText);
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
+    }
+
+    /// <summary>CmdType 811 — lấy bản thể hiện (PDF) theo Mã tra cứu (MTC).</summary>
+    public Task<BkavInvoiceOperationResult> DownloadDisplayByMtcAsync(string mtc, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => DownloadFileByMtcAsync(BkavInvoiceCommandTypes.GetInvoiceDisplayByMtc, mtc, "pdf", credentials, cancellationToken);
+
+    /// <summary>CmdType 812 — lấy bản chuyển đổi (PDF) theo Mã tra cứu (MTC).</summary>
+    public Task<BkavInvoiceOperationResult> DownloadConvertByMtcAsync(string mtc, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => DownloadFileByMtcAsync(BkavInvoiceCommandTypes.GetInvoiceConvertByMtc, mtc, "pdf", credentials, cancellationToken);
+
+    /// <summary>CmdType 813 — lấy file XML theo Mã tra cứu (MTC).</summary>
+    public Task<BkavInvoiceOperationResult> DownloadXmlByMtcAsync(string mtc, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
+        => DownloadFileByMtcAsync(BkavInvoiceCommandTypes.GetInvoiceXmlByMtc, mtc, "xml", credentials, cancellationToken);
+
+    private async Task<BkavInvoiceOperationResult> DownloadFileByMtcAsync(int commandType, string mtc, string extension, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var settingsError = ValidateSettings(credentials);
+            if (!string.IsNullOrEmpty(settingsError))
+                return BkavInvoiceOperationResult.Fail(settingsError);
+            if (string.IsNullOrWhiteSpace(mtc))
+                return BkavInvoiceOperationResult.Fail("MTC is required.");
+
+            var result = await ExecuteCommandAsync(commandType, mtc.Trim(), credentials, cancellationToken);
+            if (!result.Success)
+                return BkavInvoiceOperationResult.Fail(result.Message, objectText: result.DebugText);
+
+            var dataFile = DeserializeCommandObject<BkavInvoiceDataFileBase64>(result.ObjectText);
+            var base64 = extension.Equals("xml", StringComparison.OrdinalIgnoreCase) ? dataFile?.XML : dataFile?.PDF;
+            if (string.IsNullOrWhiteSpace(base64))
+                return BkavInvoiceOperationResult.Fail($"BKAV did not return {extension.ToUpperInvariant()} data.", objectText: result.DebugText);
+
+            var relativePath = await SaveOutputFileAsync(Convert.FromBase64String(base64), $"mtc_{SanitizeFileName(mtc)}_{DateTime.Now:yyyyMMddHHmmss}.{extension}", cancellationToken);
+            return BkavInvoiceOperationResult.Ok($"BKAV file downloaded by MTC (CmdType {commandType}).", filePath: relativePath, objectText: result.DebugText);
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
+    }
 
     public async Task<BkavInvoiceOperationResult> GetUnitInfoByTaxCodeAsync(string taxCode, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
     {
@@ -487,7 +934,7 @@ public class BkavInvoiceService(
                 DomainCheckInvoice = "tracuu.ehoadon.vn"
             };
 
-            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.CreateAccount, SerializeCommandObject(accountInfo), credentials, cancellationToken);
+            var result = await ExecuteCommandAsync(BkavInvoiceCommandTypes.CreateAccount, accountInfo, credentials, cancellationToken);
             if (!result.Success)
                 return BkavInvoiceOperationResult.Fail(result.Message, objectText: result.DebugText);
 
@@ -539,7 +986,17 @@ public class BkavInvoiceService(
             return 3;
         if (rounded == 8)
             return 9;
-        return 6;
+        if (rounded == -1)
+            return 4;
+        if (rounded == -2)
+            return 5;
+        if (rounded == -4)
+            return 6;
+        if (rounded == 3.5)
+            return 7;
+        if (rounded == 7)
+            return 8;
+        throw new ArgumentOutOfRangeException(nameof(taxPercent), taxPercent, "BKAV does not support this tax rate.");
     }
 
     public static long GenerateStablePartnerInvoiceId(string internalInvoiceNo, Guid customerId)
@@ -577,14 +1034,20 @@ public class BkavInvoiceService(
             var invoiceData = BuildInvoiceData(state, commandType, input);
             if (lookupByGuid)
             {
-                var invoiceGuid = GetInvoiceGuid(state.Lines);
+                var invoiceGuid = FirstNonEmpty(input.InvoiceGuid, GetInvoiceGuid(state.Lines));
                 if (string.IsNullOrWhiteSpace(invoiceGuid) || !Guid.TryParse(invoiceGuid, out var parsedGuid))
                     return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty or invalid.", state.Group);
 
                 invoiceData.Invoice.InvoiceGUID = parsedGuid;
             }
 
-            var result = await ExecuteCommandAsync(commandType, SerializeInvoiceDataList([invoiceData]), credentials, cancellationToken);
+            if (commandType == BkavInvoiceCommandTypes.UpdateInvoiceByFormSerialNo &&
+                (string.IsNullOrWhiteSpace(invoiceData.Invoice.InvoiceForm) ||
+                 string.IsNullOrWhiteSpace(invoiceData.Invoice.InvoiceSerial) ||
+                 invoiceData.Invoice.InvoiceNo <= 0))
+                return BkavInvoiceOperationResult.Fail("InvoiceForm/InvoiceSerial/InvoiceNo are required for BKAV command 203.", state.Group);
+
+            var result = await ExecuteCommandAsync(commandType, new List<BkavInvoiceDataWS> { invoiceData }, credentials, cancellationToken);
             if (!result.Success)
             {
                 await SetLastMessageAsync(state.Lines, result.Message, cancellationToken);
@@ -600,27 +1063,15 @@ public class BkavInvoiceService(
                     return BkavInvoiceOperationResult.Fail(FirstNonEmpty(invoiceResult.MessLog, "BKAV returned invoice error."), state.Group, result.DebugText);
                 }
 
-                await ApplyInvoiceResultAsync(state.Lines, invoiceResult, invoiceData.PartnerInvoiceID, cancellationToken, input.InvoiceStatusID);
+                await ApplyInvoiceResultAsync(state.Lines, invoiceResult, invoiceData.PartnerInvoiceID, cancellationToken, invoiceStatusId: null);
             }
             else
             {
                 await SetLastMessageAsync(state.Lines, successMessage, cancellationToken);
-                if (input.InvoiceStatusID == BkavInvoiceStatusIds.Issued || input.InvoiceStatusID == BkavInvoiceStatusIds.Draft)
-                {
-                    foreach (var line in state.Lines)
-                        line.BkavStatusID = input.InvoiceStatusID;
-                    await context.SaveChangesAsync(cancellationToken);
-                }
             }
 
-            var publishMessage = input.InvoiceStatusID == BkavInvoiceStatusIds.Issued &&
-                                 (commandType == BkavInvoiceCommandTypes.UpdateInvoiceByInvoiceGUID ||
-                                  commandType == BkavInvoiceCommandTypes.UpdateInvoiceByPartnerInvoiceID)
-                ? "BKAV invoice published (signed/issued)."
-                : successMessage;
-
             var reloadNo = FirstNonEmpty(state.Lines.FirstOrDefault()?.sohoadonNoibo, internalInvoiceNo);
-            return BkavInvoiceOperationResult.Ok(publishMessage, await ReloadGroupAsync(reloadNo, customerId, cancellationToken), objectText: result.DebugText);
+            return BkavInvoiceOperationResult.Ok(successMessage, await ReloadGroupAsync(reloadNo, customerId, cancellationToken), objectText: result.DebugText);
         }
         catch (Exception ex)
         {
@@ -633,6 +1084,8 @@ public class BkavInvoiceService(
         Guid customerId,
         int commandType,
         bool lookupByGuid,
+        string? invoiceGuidOverride,
+        long? partnerInvoiceIdOverride,
         string successMessage,
         BkavInvoiceRuntimeCredentials? credentials,
         CancellationToken cancellationToken)
@@ -650,7 +1103,7 @@ public class BkavInvoiceService(
             BkavInvoiceDataWS lookup;
             if (lookupByGuid)
             {
-                var invoiceGuid = GetInvoiceGuid(state.Lines);
+                var invoiceGuid = FirstNonEmpty(invoiceGuidOverride, GetInvoiceGuid(state.Lines));
                 if (string.IsNullOrWhiteSpace(invoiceGuid) || !Guid.TryParse(invoiceGuid, out var parsedGuid))
                     return BkavInvoiceOperationResult.Fail("BKAV InvoiceGUID is empty or invalid.", state.Group);
 
@@ -658,10 +1111,10 @@ public class BkavInvoiceService(
             }
             else
             {
-                lookup = BuildPartnerLookup(state);
+                lookup = BuildPartnerLookup(state, partnerInvoiceIdOverride);
             }
 
-            var result = await ExecuteCommandAsync(commandType, SerializeInvoiceDataList([lookup]), credentials, cancellationToken);
+            var result = await ExecuteCommandAsync(commandType, new List<BkavInvoiceDataWS> { lookup }, credentials, cancellationToken);
             if (!result.Success)
                 return BkavInvoiceOperationResult.Fail(result.Message, state.Group, result.DebugText);
 
@@ -685,6 +1138,7 @@ public class BkavInvoiceService(
         int commandType,
         string objectPropertyName,
         string extension,
+        long? partnerInvoiceIdOverride,
         BkavInvoiceRuntimeCredentials? credentials,
         CancellationToken cancellationToken)
     {
@@ -698,7 +1152,7 @@ public class BkavInvoiceService(
             if (!string.IsNullOrEmpty(state.Error))
                 return BkavInvoiceOperationResult.Fail(state.Error, state.Group);
 
-            var partnerInvoiceId = GetPartnerInvoiceId(state);
+            var partnerInvoiceId = partnerInvoiceIdOverride?.ToString(CultureInfo.InvariantCulture) ?? GetPartnerInvoiceId(state);
             if (string.IsNullOrWhiteSpace(partnerInvoiceId))
                 return BkavInvoiceOperationResult.Fail("BKAV PartnerInvoiceID is empty.", state.Group);
 
@@ -783,6 +1237,18 @@ public class BkavInvoiceService(
         if (exchangeRate <= 0)
             exchangeRate = 1;
 
+        var receiverEmail = NormalizeReceiverEmails(state.Customer.Email);
+        var receiverMobile = Clean(state.Customer.Tel);
+
+        var details = state.Lines
+            .Select(x => BuildInvoiceDetail(x, state.Charges, input.AdjustmentIsIncrease))
+            .ToList();
+        var calculatedItemAmount = details.Where(x => !x.IsDiscount).Sum(x => x.Amount);
+        var calculatedDiscountAmount = details.Sum(x => x.DiscountAmount)
+            + details.Where(x => x.IsDiscount).Sum(x => Math.Abs(x.Amount));
+        var calculatedTaxAmount = details.Sum(x => x.IsDiscount ? -Math.Abs(x.TaxAmount) : x.TaxAmount);
+        var calculatedPaymentAmount = calculatedItemAmount - calculatedDiscountAmount + calculatedTaxAmount;
+
         var invoiceWs = new BkavInvoiceWS
         {
             InvoiceTypeID = 1,
@@ -793,29 +1259,27 @@ public class BkavInvoiceService(
             BuyerAddress = FirstNonEmpty(state.Customer.addresstiengviet, state.Customer.Address),
             BuyerBankAccount = Clean(state.Customer.sotaikhoan),
             PayMethodID = input.PayMethodID <= 0 ? 3 : input.PayMethodID,
-            ReceiveTypeID = 3,
-            ReceiverEmail = Clean(state.Customer.Email),
-            ReceiverMobile = Clean(state.Customer.Tel),
+            ReceiveTypeID = ResolveReceiveTypeId(receiverEmail, receiverMobile),
+            ReceiverEmail = receiverEmail,
+            ReceiverMobile = receiverMobile,
             ReceiverAddress = FirstNonEmpty(state.Customer.addresstiengviet, state.Customer.Address),
             ReceiverName = FirstNonEmpty(state.Customer.ATTN, state.Customer.COMPANY, state.Customer.EnglishName),
             Note = BuildGroupNote(state.Lines),
-            UserDefine = "{}",
+            UserDefine = string.Empty,
             BillCode = state.InternalInvoiceNo,
             CurrencyID = currency,
             ExchangeRate = exchangeRate,
-            InvoiceStatusID = input.InvoiceStatusID == BkavInvoiceStatusIds.Draft
-                ? BkavInvoiceStatusIds.Draft
-                : BkavInvoiceStatusIds.Issued,
-            SignedDate = input.InvoiceStatusID == BkavInvoiceStatusIds.Draft ? default : DateTime.Now,
             InvoiceNo = 0,
             InvoiceForm = string.Empty,
             InvoiceSerial = string.Empty,
-            InvoiceCode = string.Empty,
             OriginalInvoiceIdentify = string.Empty,
-            TypeCreateInvoice = 0
+            SumItemAmount = input.SumItemAmount ?? calculatedItemAmount,
+            SumDiscountAmount = input.SumDiscountAmount ?? calculatedDiscountAmount,
+            SumTaxAmount = input.SumTaxAmount ?? calculatedTaxAmount,
+            SumPaymentAmount = input.SumPaymentAmount ?? calculatedPaymentAmount
         };
 
-        if (commandType is BkavInvoiceCommandTypes.CreateInvoiceWithFormSerial or BkavInvoiceCommandTypes.CreateInvoiceWithFormSerialNo)
+        if (BkavInvoiceCommandTypes.RequiresClientFormSerial(commandType))
         {
             invoiceWs.InvoiceForm = Clean(input.InvoiceForm);
             invoiceWs.InvoiceSerial = Clean(input.InvoiceSerial);
@@ -824,44 +1288,53 @@ public class BkavInvoiceService(
         if (commandType == BkavInvoiceCommandTypes.CreateInvoiceWithFormSerialNo)
             invoiceWs.InvoiceNo = input.InvoiceNo.GetValueOrDefault();
 
+        if (commandType == BkavInvoiceCommandTypes.UpdateInvoiceByFormSerialNo)
+        {
+            // FAQ CmdType 203: định danh HĐ cần cập nhật bằng Mẫu số_Ký hiệu_Số HĐ (không phải PartnerID/InvoiceGUID).
+            invoiceWs.InvoiceForm = FirstNonEmpty(input.InvoiceForm, first.BkavInvoiceForm);
+            invoiceWs.InvoiceSerial = FirstNonEmpty(input.InvoiceSerial, first.BkavInvoiceSerial);
+            invoiceWs.InvoiceNo = input.InvoiceNo.GetValueOrDefault(first.BkavInvoiceNo.GetValueOrDefault());
+        }
+
         if (commandType == BkavInvoiceCommandTypes.CreateInvoiceReplace)
         {
             invoiceWs.TypeCreateInvoice = 1;
             invoiceWs.OriginalInvoiceIdentify = Clean(input.OriginalInvoiceIdentify);
+            invoiceWs.Reason = Clean(input.Reason);
         }
 
         if (commandType == BkavInvoiceCommandTypes.CreateInvoiceAdjust)
         {
             invoiceWs.TypeCreateInvoice = 2;
             invoiceWs.OriginalInvoiceIdentify = Clean(input.OriginalInvoiceIdentify);
+            invoiceWs.Reason = Clean(input.Reason);
         }
 
-        var partnerInvoiceId = GetPartnerInvoiceId(state);
+        var partnerInvoiceId = input.PartnerInvoiceID?.ToString(CultureInfo.InvariantCulture) ?? GetPartnerInvoiceId(state);
         if (string.IsNullOrWhiteSpace(partnerInvoiceId))
             partnerInvoiceId = GenerateStablePartnerInvoiceId(state.InternalInvoiceNo, state.CustomerId).ToString(CultureInfo.InvariantCulture);
 
         return new BkavInvoiceDataWS
         {
             Invoice = invoiceWs,
-            ListInvoiceDetailsWS = state.Lines.Select(x => BuildInvoiceDetail(x, state.Charges)).ToList(),
+            ListInvoiceDetailsWS = details,
             ListInvoiceAttachFileWS = [],
             PartnerInvoiceID = long.Parse(partnerInvoiceId, CultureInfo.InvariantCulture),
             PartnerInvoiceStringID = string.Empty
         };
     }
 
-    private static BkavInvoiceDetailsWS BuildInvoiceDetail(M_HoaDonDauRa line, IReadOnlyDictionary<Guid, ChargeModel> charges)
+    private static BkavInvoiceDetailsWS BuildInvoiceDetail(M_HoaDonDauRa line, IReadOnlyDictionary<Guid, ChargeModel> charges, bool? adjustmentIsIncrease)
     {
         charges.TryGetValue(line.itemid, out var charge);
-        var quantity = line.soluong.GetValueOrDefault(1);
-        if (quantity <= 0)
-            quantity = 1;
+        var quantity = line.soluong ?? 1;
 
         var amount = line.thanhtien ?? quantity * line.dongia.GetValueOrDefault();
         var price = line.dongia ?? (quantity == 0 ? amount : amount / quantity);
+        var taxRate = line.thue.GetValueOrDefault();
         var taxAmount = line.thanhtiensauthue.HasValue && line.thanhtien.HasValue
-            ? Math.Max(0, line.thanhtiensauthue.Value - line.thanhtien.Value)
-            : Math.Round(amount * line.thue.GetValueOrDefault() / 100, 0);
+            ? line.thanhtiensauthue.Value - line.thanhtien.Value
+            : Math.Round(amount * taxRate / 100, 0);
 
         return new BkavInvoiceDetailsWS
         {
@@ -874,16 +1347,20 @@ public class BkavInvoiceService(
             Qty = quantity,
             Price = price,
             Amount = amount,
-            TaxRateID = MapTaxRateId(line.thue),
+            TaxRateID = MapTaxRateId(taxRate),
+            TaxRate = taxRate,
             TaxAmount = taxAmount,
+            DiscountRate = 0,
+            DiscountAmount = 0,
             IsDiscount = false,
-            UserDefineDetails = "{}"
+            UserDefineDetails = string.Empty,
+            IsIncrease = adjustmentIsIncrease
         };
     }
 
-    private BkavInvoiceDataWS BuildPartnerLookup(GroupState state)
+    private BkavInvoiceDataWS BuildPartnerLookup(GroupState state, long? partnerInvoiceIdOverride = null)
     {
-        var partnerInvoiceId = GetPartnerInvoiceId(state);
+        var partnerInvoiceId = partnerInvoiceIdOverride?.ToString(CultureInfo.InvariantCulture) ?? GetPartnerInvoiceId(state);
         if (string.IsNullOrWhiteSpace(partnerInvoiceId))
             partnerInvoiceId = GenerateStablePartnerInvoiceId(state.InternalInvoiceNo, state.CustomerId).ToString(CultureInfo.InvariantCulture);
 
@@ -906,7 +1383,17 @@ public class BkavInvoiceService(
         var invoiceGuid = result.InvoiceGUID == Guid.Empty ? GetInvoiceGuid(lines) : result.InvoiceGUID.ToString();
         var invoiceNo = result.InvoiceNo > 0 ? result.InvoiceNo : (int?)null;
         var electronicNo = invoiceNo.HasValue ? invoiceNo.Value.ToString(CultureInfo.InvariantCulture) : lines.FirstOrDefault()?.sohoadonDientu;
-        var isIssued = invoiceStatusId != BkavInvoiceStatusIds.Draft;
+        var isIssued = invoiceStatusId == BkavInvoiceStatusIds.Issued;
+        var hasAssignedNumber = invoiceNo.GetValueOrDefault() > 0
+            || invoiceStatusId == BkavInvoiceStatusIds.WaitingSign;
+
+        var extraInfo = string.Join(
+            " | ",
+            new[]
+            {
+                string.IsNullOrWhiteSpace(result.MTC) ? null : $"MTC={result.MTC}",
+                string.IsNullOrWhiteSpace(result.MaCuaCQT) ? null : $"MaCuaCQT={result.MaCuaCQT}"
+            }.Where(x => !string.IsNullOrWhiteSpace(x)));
 
         foreach (var line in lines)
         {
@@ -915,12 +1402,12 @@ public class BkavInvoiceService(
                 line.sohoadonDientu = FirstNonEmpty(electronicNo, line.sohoadonDientu);
                 line.ngayphathanhhoadonDientu ??= now;
             }
-            else if (invoiceNo.HasValue && invoiceNo.Value > 0)
+            else if (hasAssignedNumber)
             {
                 line.sohoadonDientu = FirstNonEmpty(electronicNo, line.sohoadonDientu);
             }
 
-            // Khi Ä‘Ã£ cÃ³ sá»‘ HÄÄT â†’ Ä‘á»“ng bá»™ sá»‘ hÃ³a Ä‘Æ¡n ná»™i bá»™ = sá»‘ HÄÄT
+            // Khi đã có số HĐĐT → đồng bộ số hóa đơn nội bộ = số HĐĐT
             if (!string.IsNullOrWhiteSpace(line.sohoadonDientu))
                 line.sohoadonNoibo = line.sohoadonDientu.Trim();
 
@@ -932,11 +1419,19 @@ public class BkavInvoiceService(
             line.BkavInvoiceSerial = FirstNonEmpty(result.InvoiceSerial, line.BkavInvoiceSerial);
             if (invoiceStatusId.HasValue)
                 line.BkavStatusID = invoiceStatusId;
-            line.BkavLastMessage = FirstNonEmpty(
+
+            var baseMessage = FirstNonEmpty(
                 result.MessLog,
-                invoiceStatusId == BkavInvoiceStatusIds.Draft
-                    ? "BKAV draft created."
-                    : "BKAV invoice command success.");
+                invoiceStatusId == BkavInvoiceStatusIds.New
+                    ? "BKAV draft created (Mới tạo)."
+                    : invoiceStatusId == BkavInvoiceStatusIds.WaitingSign
+                        ? "BKAV invoice created (chờ ký)."
+                        : invoiceStatusId == BkavInvoiceStatusIds.Issued
+                            ? "BKAV invoice issued."
+                            : "BKAV invoice command success.");
+            line.BkavLastMessage = string.IsNullOrWhiteSpace(extraInfo)
+                ? baseMessage
+                : $"{baseMessage} {extraInfo}";
             line.dateupdate = now.ToString(CultureInfo.InvariantCulture);
         }
 
@@ -983,12 +1478,12 @@ public class BkavInvoiceService(
 
     private static string ValidateInvoiceNumberCommand(int commandType, BkavInvoiceActionInput input)
     {
-        if (commandType is BkavInvoiceCommandTypes.CreateInvoiceWithFormSerial or BkavInvoiceCommandTypes.CreateInvoiceWithFormSerialNo)
+        if (BkavInvoiceCommandTypes.RequiresClientFormSerial(commandType))
         {
             if (string.IsNullOrWhiteSpace(input.InvoiceForm))
-                return "InvoiceForm is required for BKAV command 110/111.";
+                return "InvoiceForm is required for BKAV command 110/111/112.";
             if (string.IsNullOrWhiteSpace(input.InvoiceSerial))
-                return "InvoiceSerial is required for BKAV command 110/111.";
+                return "InvoiceSerial is required for BKAV command 110/111/112.";
         }
 
         if (commandType == BkavInvoiceCommandTypes.CreateInvoiceWithFormSerialNo && input.InvoiceNo.GetValueOrDefault() <= 0)
@@ -1004,23 +1499,21 @@ public class BkavInvoiceService(
             string.IsNullOrWhiteSpace(input.OriginalInvoiceIdentify))
             return "OriginalInvoiceIdentify is required for BKAV replace/adjust commands.";
 
+        if ((commandType == BkavInvoiceCommandTypes.CreateInvoiceReplace ||
+             commandType == BkavInvoiceCommandTypes.CreateInvoiceAdjust) &&
+            string.IsNullOrWhiteSpace(input.Reason))
+            return "Reason is required for BKAV replace/adjust commands.";
+
         return ValidateInvoiceNumberCommand(commandType, input);
     }
 
-    private async Task<BkavCommandResult> ExecuteCommandAsync(int commandType, string commandObject, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken)
+    private async Task<BkavCommandResult> ExecuteCommandAsync(int commandType, object commandObject, BkavInvoiceRuntimeCredentials? credentials, CancellationToken cancellationToken)
     {
         var effectiveCredentials = ResolveCredentials(credentials);
-        var commandData = new BkavCommandData
-        {
-            CommandType = commandType,
-            CommandObject = commandObject,
-            CmdType = IsXmlMode(settings.Mode) ? 1 : 0
-        };
-
-        var serializedCommand = SerializeCommandData(commandData);
-        var requestPreview = FormatRequestPreview(commandType, commandData.CmdType, commandObject, serializedCommand);
+        var serializedCommand = SerializeCommandData(commandType, commandObject);
+        var requestPreview = TryPrettyPrint(serializedCommand);
         var encodedCommand = EncodeTransportData(serializedCommand, effectiveCredentials);
-        var responseData = await CallExecuteCommandSoapAsync(encodedCommand, effectiveCredentials, cancellationToken);
+        var responseData = await CallExecCommandAsync(encodedCommand, effectiveCredentials, cancellationToken);
         var decodedResponse = DecodeTransportData(responseData, effectiveCredentials);
 
         var parsed = ParseCommandResult(decodedResponse);
@@ -1033,31 +1526,12 @@ public class BkavInvoiceService(
         };
     }
 
-    private static string FormatRequestPreview(int commandType, int cmdType, string commandObject, string serializedCommand)
-    {
-        var objectPretty = TryPrettyPrint(commandObject);
-        var commandPretty = TryPrettyPrint(serializedCommand);
-
-        return
-            $"""
-            CommandType={commandType}
-            CmdType={cmdType} (0=JSON, 1=XML)
-            Mode encrypt/zip applied after this plain payload.
-
-            --- CommandObject (invoice payload) ---
-            {objectPretty}
-
-            --- Full CommandData (plain, before zip/encrypt) ---
-            {commandPretty}
-            """;
-    }
-
     private static string CombineRequestResponse(string requestPreview, string? responseText)
     {
         var response = string.IsNullOrWhiteSpace(responseText) ? "(empty)" : responseText.Trim();
         return
             $"""
-            === REQUEST ===
+            === BODY JSON GỬI API ===
             {requestPreview.Trim()}
 
             === RESPONSE ===
@@ -1077,7 +1551,7 @@ public class BkavInvoiceService(
         try
         {
             using var document = JsonDocument.Parse(text);
-            return JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions { WriteIndented = true });
+            return JsonSerializer.Serialize(document.RootElement, PrettyPrintOptions);
         }
         catch
         {
@@ -1085,13 +1559,33 @@ public class BkavInvoiceService(
         }
     }
 
-    private string SerializeCommandData(BkavCommandData commandData)
-        => IsXmlMode(settings.Mode) ? SerializeXml(commandData, "CommandData") : JsonSerializer.Serialize(commandData, JsonOptions);
+    private static readonly JsonSerializerOptions PrettyPrintOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All)
+    };
 
-    private string SerializeInvoiceDataList(List<BkavInvoiceDataWS> list)
-        => IsXmlMode(settings.Mode)
-            ? SerializeXml(list, "ArrayOfInvoiceDataWS")
-            : JsonSerializer.Serialize(list, JsonOptions);
+    private string SerializeCommandData(int cmdType, object commandObject)
+    {
+        if (IsXmlMode(settings.Mode))
+        {
+            var xmlPayload = new BkavCommandDataXml
+            {
+                CmdType = cmdType,
+                CommandObject = commandObject is string text
+                    ? text
+                    : SerializeCommandObject(commandObject)
+            };
+            return SerializeXml(xmlPayload, "CommandData");
+        }
+
+        var jsonPayload = new BkavCommandData
+        {
+            CmdType = cmdType,
+            CommandObject = commandObject
+        };
+        return JsonSerializer.Serialize(jsonPayload, JsonOptions);
+    }
 
     private string SerializeCommandObject<T>(T value)
         => IsXmlMode(settings.Mode) ? SerializeXml(value, typeof(T).Name) : JsonSerializer.Serialize(value, JsonOptions);
@@ -1112,7 +1606,9 @@ public class BkavInvoiceService(
         if (HasMode(ZipMode))
             bytes = Gzip(bytes);
 
-        if (HasMode(EncryptModeV1))
+        // PartnerToken AES do BKAV cấp có dạng "base64-key:base64-iv". Ưu tiên
+        // định dạng token để tránh mã hóa nhầm bằng TripleDES khi cấu hình Mode cũ.
+        if (credentials.PartnerToken.Contains(':'))
             bytes = EncryptAes(bytes, credentials);
         else if (HasMode(EncryptMode))
             bytes = EncryptTripleDes(bytes, credentials);
@@ -1179,60 +1675,79 @@ public class BkavInvoiceService(
         var attempts = new List<(string Name, Func<byte[], byte[]> Decrypt)>();
         var tokenHasAesFormat = credentials.PartnerToken.Contains(':');
 
-        if (HasMode(EncryptModeV1))
-            attempts.Add(("AES(Mode)", bytes => DecryptAes(bytes, credentials)));
-        if (HasMode(EncryptMode))
-            attempts.Add(("TripleDES(Mode)", bytes => DecryptTripleDes(bytes, credentials)));
-
-        if (tokenHasAesFormat && !HasMode(EncryptModeV1))
-            attempts.Add(("AES(fallback)", bytes => DecryptAes(bytes, credentials)));
-        if (!tokenHasAesFormat && !attempts.Any(x => x.Name.StartsWith("TripleDES", StringComparison.Ordinal)))
-            attempts.Add(("TripleDES(fallback)", bytes => DecryptTripleDes(bytes, credentials)));
-        if (tokenHasAesFormat && !attempts.Any(x => x.Name.StartsWith("AES", StringComparison.Ordinal)))
-            attempts.Add(("AES(fallback)", bytes => DecryptAes(bytes, credentials)));
-
-        if (attempts.Count == 0)
+        if (tokenHasAesFormat)
         {
-            attempts.Add(("TripleDES(auto)", bytes => DecryptTripleDes(bytes, credentials)));
-            if (tokenHasAesFormat)
-                attempts.Add(("AES(auto)", bytes => DecryptAes(bytes, credentials)));
+            attempts.Add(("AES(token-format)", bytes => DecryptAes(bytes, credentials)));
+            // Không thử TripleDES với token key:iv: định dạng này không phải khóa TripleDES
+            // và chỉ tạo ra CryptographicException gây nhiễu khi debug.
+        }
+        else
+        {
+            attempts.Add(("TripleDES(token-format)", bytes => DecryptTripleDes(bytes, credentials)));
         }
 
         return attempts;
     }
 
-    private async Task<string> CallExecuteCommandSoapAsync(string encryptedCommandData, EffectiveBkavCredentials credentials, CancellationToken cancellationToken)
+    // Theo Postman collection chính thức của BKAV + mẫu XML trong FAQ: API thực chất là
+    // "ExecCommand" gọi bằng JSON POST thẳng tới "<ServiceUrl>/ExecCommand" (KHÔNG phải SOAP
+    // "ExecuteCommand" như bản cũ), body chỉ gồm { partnerGUID, CommandData } — CommandData vẫn là
+    // chuỗi Base64 của payload đã nén/mã hoá (không đổi bước EncodeTransportData/DecodeTransportData).
+    private async Task<string> CallExecCommandAsync(string encryptedCommandData, EffectiveBkavCredentials credentials, CancellationToken cancellationToken)
     {
-        var body =
-            $"""
-<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <ExecuteCommand xmlns="http://tempuri.org/">
-      <PartnerGUID>{XmlEscape(credentials.PartnerGuid)}</PartnerGUID>
-      <EncryptedCommandData>{XmlEscape(encryptedCommandData)}</EncryptedCommandData>
-    </ExecuteCommand>
-  </soap:Body>
-</soap:Envelope>
-""";
+        var requestBody = JsonSerializer.Serialize(
+            new BkavExecCommandRequest { PartnerGuid = credentials.PartnerGuid, CommandData = encryptedCommandData },
+            JsonOptions);
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, settings.ServiceUrl)
+        var requestUrl = settings.ServiceUrl.TrimEnd('/') + "/ExecCommand";
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl)
         {
-            Content = new StringContent(body, Encoding.UTF8, "text/xml")
+            Content = new StringContent(requestBody, Encoding.UTF8, "application/json")
         };
-        request.Headers.Add("SOAPAction", "\"http://tempuri.org/ExecuteCommand\"");
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"BKAV SOAP error {(int)response.StatusCode}: {responseText}");
+            throw new InvalidOperationException($"BKAV ExecCommand error {(int)response.StatusCode}: {responseText}");
 
-        var document = XDocument.Parse(responseText);
-        var result = document.Descendants().FirstOrDefault(x => x.Name.LocalName == "ExecuteCommandResult")?.Value;
-        if (string.IsNullOrWhiteSpace(result))
-            throw new InvalidOperationException("BKAV SOAP response does not contain ExecuteCommandResult.");
+        return UnwrapAspNetAjaxResponse(responseText);
+    }
 
-        return result;
+    // ASMX ScriptService thường bọc kết quả WebMethod trong {"d": ...} khi gọi trực tiếp bằng JSON POST.
+    private static string UnwrapAspNetAjaxResponse(string responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+            return responseText;
+
+        if (!responseText.TrimStart().StartsWith('{'))
+            return responseText;
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseText);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("d", out var dProperty))
+            {
+                return dProperty.ValueKind == JsonValueKind.String
+                    ? dProperty.GetString() ?? string.Empty
+                    : dProperty.GetRawText();
+            }
+        }
+        catch (JsonException)
+        {
+            // Không phải JSON hợp lệ (vd. HTML lỗi) -> trả nguyên văn để pipeline phía sau tự xử lý.
+        }
+
+        return responseText;
+    }
+
+    private sealed class BkavExecCommandRequest
+    {
+        [JsonPropertyName("partnerGUID")]
+        public string PartnerGuid { get; set; } = string.Empty;
+
+        [JsonPropertyName("CommandData")]
+        public string CommandData { get; set; } = string.Empty;
     }
 
     private BkavCommandResult ParseCommandResult(string resultText)
@@ -1309,6 +1824,35 @@ public class BkavInvoiceService(
 
             if (trimmed.StartsWith('{'))
                 return JsonSerializer.Deserialize<BkavInvoiceResult>(objectText, JsonOptions);
+
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private BkavTaxAuthorityStatus? ParseFirstTaxAuthorityStatus(string objectText)
+    {
+        if (string.IsNullOrWhiteSpace(objectText))
+            return null;
+
+        var trimmed = objectText.TrimStart();
+        try
+        {
+            if (trimmed.StartsWith('<'))
+                return DeserializeXml<BkavTaxAuthorityStatus>(objectText);
+
+            if (trimmed.StartsWith('['))
+                return JsonSerializer.Deserialize<List<BkavTaxAuthorityStatus>>(objectText, JsonOptions)?.FirstOrDefault();
+
+            if (trimmed.StartsWith('{'))
+                return JsonSerializer.Deserialize<BkavTaxAuthorityStatus>(objectText, JsonOptions);
 
             return null;
         }
@@ -1566,6 +2110,35 @@ public class BkavInvoiceService(
 
     private static string Clean(string? value) => value?.Trim() ?? string.Empty;
 
+    private static string NormalizeReceiverEmails(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+            return string.Empty;
+
+        var parts = email
+            .Split([';', ',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return string.Join(";", parts);
+    }
+
+    private static int ResolveReceiveTypeId(string email, string mobile)
+    {
+        var hasEmail = !string.IsNullOrWhiteSpace(email);
+        var hasMobile = !string.IsNullOrWhiteSpace(mobile);
+
+        if (hasEmail && hasMobile)
+            return 3;
+        if (hasEmail)
+            return 1;
+        if (hasMobile)
+            return 2;
+
+        return 1;
+    }
+
     private static string SanitizeFileName(string value)
     {
         foreach (var invalidChar in Path.GetInvalidFileNameChars())
@@ -1573,8 +2146,6 @@ public class BkavInvoiceService(
 
         return value.Replace('/', '_').Replace('\\', '_');
     }
-
-    private static string XmlEscape(string value) => System.Security.SecurityElement.Escape(value) ?? string.Empty;
 
     private sealed record GroupState(
         string InternalInvoiceNo,
@@ -1608,9 +2179,15 @@ public class BkavInvoiceService(
     [XmlRoot("CommandData")]
     public class BkavCommandData
     {
-        public int CommandType { get; set; }
-        public string CommandObject { get; set; } = string.Empty;
         public int CmdType { get; set; }
+        public object? CommandObject { get; set; }
+    }
+
+    [XmlRoot("CommandData")]
+    public class BkavCommandDataXml
+    {
+        public int CmdType { get; set; }
+        public string CommandObject { get; set; } = string.Empty;
     }
 
     [XmlRoot("Result")]
@@ -1630,6 +2207,8 @@ public class BkavInvoiceService(
         public string? InvoiceForm { get; set; }
         public string? InvoiceSerial { get; set; }
         public int InvoiceNo { get; set; }
+        public string? MTC { get; set; }
+        public string? MaCuaCQT { get; set; }
         public int Status { get; set; }
         public string? MessLog { get; set; }
     }
@@ -1672,15 +2251,20 @@ public class BkavInvoiceService(
         public string BillCode { get; set; } = string.Empty;
         public string CurrencyID { get; set; } = "VND";
         public double ExchangeRate { get; set; } = 1;
-        public Guid InvoiceGUID { get; set; }
-        public int InvoiceStatusID { get; set; }
+        public Guid? InvoiceGUID { get; set; }
+        public int? InvoiceStatusID { get; set; }
         public string InvoiceForm { get; set; } = string.Empty;
         public string InvoiceSerial { get; set; } = string.Empty;
         public int InvoiceNo { get; set; }
-        public string InvoiceCode { get; set; } = string.Empty;
-        public DateTime SignedDate { get; set; }
-        public int TypeCreateInvoice { get; set; }
+        public string? InvoiceCode { get; set; }
+        public DateTime? SignedDate { get; set; }
+        public int? TypeCreateInvoice { get; set; }
         public string OriginalInvoiceIdentify { get; set; } = string.Empty;
+        public string Reason { get; set; } = string.Empty;
+        public double SumItemAmount { get; set; }
+        public double SumDiscountAmount { get; set; }
+        public double SumTaxAmount { get; set; }
+        public double SumPaymentAmount { get; set; }
     }
 
     [XmlType("InvoiceDetailsWS")]
@@ -1693,7 +2277,10 @@ public class BkavInvoiceService(
         public double Price { get; set; }
         public double Amount { get; set; }
         public int TaxRateID { get; set; }
+        public double TaxRate { get; set; }
         public double TaxAmount { get; set; }
+        public double DiscountRate { get; set; }
+        public double DiscountAmount { get; set; }
         public bool IsDiscount { get; set; }
         public string UserDefineDetails { get; set; } = string.Empty;
         public bool? IsIncrease { get; set; }
@@ -1705,6 +2292,33 @@ public class BkavInvoiceService(
         public string FileName { get; set; } = string.Empty;
         public string FileExtension { get; set; } = string.Empty;
         public string FileContent { get; set; } = string.Empty;
+    }
+
+    /// <summary>CmdType 206 payload item — chỉ cần InvoiceGUID.</summary>
+    [XmlType("InvoiceGuidOnly")]
+    public class BkavInvoiceGuidOnly
+    {
+        public Guid InvoiceGUID { get; set; }
+    }
+
+    /// <summary>CmdType 810 payload — tra cứu theo Mẫu số/Ký hiệu/dải Số Hoá đơn.</summary>
+    [XmlType("InvoiceInput")]
+    public class BkavInvoiceRangeQuery
+    {
+        public string InvoiceForm { get; set; } = string.Empty;
+        public string InvoiceSerial { get; set; } = string.Empty;
+        public int FromInvoiceNo { get; set; }
+        public int ToInvoiceNo { get; set; }
+    }
+
+    /// <summary>CmdType 850 response item.</summary>
+    [XmlType("InvoiceCQT")]
+    public class BkavTaxAuthorityStatus
+    {
+        public int BkavStatus { get; set; }
+        public int TaxStatus { get; set; }
+        public string? TaxAuthorityCode { get; set; }
+        public string? ErrorContent { get; set; }
     }
 
     [XmlType("CreateAccountInfoFromPartner")]
