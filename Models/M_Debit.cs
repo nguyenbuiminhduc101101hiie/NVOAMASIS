@@ -43,5 +43,7 @@ namespace NVOAMASIS.Models
         public bool? Copied { get; set; } = false;
         public string? ghichu_debit { get; set; }
         public string? ContainerNo { get; set; }
+        public bool? dathanhtoan { get; set; } = false;
+        public Guid? PhieuthuID { get; set; }
     }
 }

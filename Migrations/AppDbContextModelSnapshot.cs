@@ -5630,6 +5630,9 @@ namespace NVOAMASIS.Migrations
                     b.Property<bool?>("daXuatHoadon")
                         .HasColumnType("bit");
 
+                    b.Property<bool?>("dathanhtoan")
+                        .HasColumnType("bit");
+
                     b.Property<string>("dateupdate")
                         .HasColumnType("nvarchar(max)");
 
@@ -5661,6 +5664,9 @@ namespace NVOAMASIS.Migrations
                         .HasColumnType("bit");
 
                     b.Property<Guid>("mblid")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("PhieuthuID")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("nhom")
@@ -5709,6 +5715,8 @@ namespace NVOAMASIS.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("debitId");
+
+                    b.HasIndex("PhieuthuID");
 
                     b.ToTable("Debit");
                 });

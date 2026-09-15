@@ -664,11 +664,21 @@
         ApplyInvoiceTotals(group);
     }
 
-    private Task CreateDraft()
-        => RunAction(x => bkavsv.CreateDraftInvoiceGroupAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Draft");
+    private async Task CreateDraft()
+    {
+        if (!await ConfirmFractionalTotalsAsync())
+            return;
 
-    private Task PublishInvoice()
-        => RunAction(x => bkavsv.PublishInvoiceGroupAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Publish");
+        await RunAction(x => bkavsv.CreateDraftInvoiceGroupAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Draft");
+    }
+
+    private async Task PublishInvoice()
+    {
+        if (!await ConfirmFractionalTotalsAsync())
+            return;
+
+        await RunAction(x => bkavsv.PublishInvoiceGroupAsync(x.InternalInvoiceNo, x.CustomerId, BuildInput(), GetRuntimeCredentials()), "Publish");
+    }
 
     private Task GetInfo()
         => RunAction(x => bkavsv.GetInvoiceDataAsync(x.InternalInvoiceNo, x.CustomerId, _invoiceGuid, GetRuntimeCredentials()), "GetInfo");
@@ -1063,6 +1073,40 @@
         _sumTaxAmount = group.TotalAfterTax - group.TotalBeforeTax;
         _sumPaymentAmount = group.TotalAfterTax;
     }
+
+    private async Task<bool> ConfirmFractionalTotalsAsync()
+    {
+        var fractionalValues = new[]
+        {
+            (Label: "Tổng tiền hàng trước thuế", Value: _sumItemAmount),
+            (Label: "Tổng chiết khấu", Value: _sumDiscountAmount),
+            (Label: "Tổng tiền thuế", Value: _sumTaxAmount),
+            (Label: "Tổng thanh toán", Value: _sumPaymentAmount)
+        }
+        .Where(x => x.Value.HasValue && HasFractionalPart(x.Value.Value))
+        .Select(x => $"• {x.Label}: {x.Value!.Value.ToString("N2", CultureInfo.CurrentCulture)}")
+        .ToList();
+
+        if (fractionalValues.Count == 0)
+            return true;
+
+        var message =
+            "Các tổng tiền sau đang có phần lẻ:\n\n" +
+            string.Join("\n", fractionalValues) +
+            "\n\nBạn có thể quay lại chỉnh thành số nguyên hoặc vẫn tiếp tục gửi BKAV.";
+
+        SetMessage("Cảnh báo: tổng tiền hóa đơn đang có phần lẻ.", MudBlazor.Severity.Warning);
+        var confirmed = await DialogService.ShowMessageBox(
+            "Cảnh báo số tiền lẻ",
+            message,
+            yesText: "Vẫn gửi",
+            cancelText: "Quay lại chỉnh");
+
+        return confirmed == true;
+    }
+
+    private static bool HasFractionalPart(double value)
+        => Math.Abs(value - Math.Round(value)) > 0.0000001d;
 
     private async Task DownloadResultFileAsync(BkavInvoiceOperationResult result)
     {
