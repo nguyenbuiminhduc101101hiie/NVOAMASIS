@@ -508,11 +508,16 @@
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.daXuatHoadon" Title="@Localizer["Invoice Printed"]">
                     <CellTemplate>
-                        <MudCheckBox @bind-Checked="context.Item.daXuatHoadon" ReadOnly />
+                        <MudCheckBox @bind-Checked="context.Item.daXuatHoadon"
+                                     @bind-Checked:after="@(async () => await OnInvoicePrintedChanged(context.Item))"
+                                     Disabled="@(context.Item.khoa == true || IsDebitCompletedLocked)" />
                     </CellTemplate>
                     <EditTemplate>
                         <MudStack Row>
-                            <MudCheckBox @bind-Checked="context.Item.daXuatHoadon" Label="@Localizer["Invoice Printed"]" />
+                            <MudCheckBox @bind-Checked="context.Item.daXuatHoadon"
+                                         @bind-Checked:after="@(async () => await OnInvoicePrintedChanged(context.Item))"
+                                         Label="@Localizer["Invoice Printed"]"
+                                         Disabled="@(context.Item.khoa == true || IsDebitCompletedLocked)" />
                             <MudTextField @bind-Value="context.Item.sohoadondaura" Label="@Localizer["Invoice No."]" ReadOnly />
                         </MudStack>
                     </EditTemplate>
@@ -1229,6 +1234,30 @@
         if (!rs.Flag)
             CallSnackBar(rs.Message, MudBlazor.Severity.Error);
     }
+
+    async Task OnInvoicePrintedChanged(M_Debit item)
+    {
+        var previousValue = !(item.daXuatHoadon ?? false);
+        if (!EnsureCanMutateDebit() || item.khoa == true || IsDebitCompletedLocked)
+        {
+            item.daXuatHoadon = previousValue;
+            return;
+        }
+
+        var oldData = JsonSerializer.Deserialize<M_Debit>(JsonSerializer.Serialize(item));
+        if (oldData != null)
+            oldData.daXuatHoadon = previousValue;
+
+        item.dateupdate = DateTime.Now.ToString();
+        item.userupdate = usr;
+        var rs = await shipsv.UpdateDebitMBL(item, oldData!);
+        if (!rs.Flag)
+        {
+            item.daXuatHoadon = previousValue;
+            CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+        }
+    }
+
     async Task TryStartEditing(M_Debit item)
     {
         if (!EnsureCanMutateDebit()) return;
