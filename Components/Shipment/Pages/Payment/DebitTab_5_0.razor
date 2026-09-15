@@ -11,6 +11,7 @@
 @inject GlobalServices gsv
 @inject IStringLocalizer<SharedResource> Localizer
 @inject HistoryLogService HistoryLogService
+@inject tigiaVCBservices Vcbsv
 @using System.Text.Json;
 
 <style>
@@ -527,6 +528,11 @@
                         ImmediateText DateFormat="MM/yyyy"  Disabled="!string.IsNullOrEmpty(context.Item.debitno)"/>
                     </EditTemplate>
                 </PropertyColumn>
+                <PropertyColumn Property="x => x.dathanhtoan" Title="Đã Thanh Toán" IsEditable="false" Required="false">
+                    <CellTemplate>
+                        <MudCheckBox @bind-Checked="context.Item.dathanhtoan" ReadOnly />
+                    </CellTemplate>
+                </PropertyColumn>
                 <PropertyColumn Property="x=>x.approve" Title="@Localizer["Approve"]" IsEditable="false" Required="false">
                     <CellTemplate>
                         <MudCheckBox @bind-Checked="context.Item.approve" @bind-Value="context.Item.approve" @bind-Value:after="@(()=>UpdatebyCheckboxClick(context.Item))" />
@@ -605,14 +611,30 @@
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.tigiadebit" Title="@Localizer["Exchange Rate Debit"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
                     <EditTemplate>
-                        <MudNumericField @bind-Value="context.Item.tigiadebit" Label="@Localizer["Exchange Rate Debit"]"
-                        Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" Required />
+                        <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
+                            <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                                       Style="min-width: 80px; height: 36px; padding: 5px 10px;"
+                                       OnClick="@(() => GetTigia(context.Item))">
+                                @Localizer["gettigia"]
+                            </MudButton>
+                            <MudNumericField @bind-Value="context.Item.tigiadebit" Label="@Localizer["Exchange Rate Debit"]"
+                                             Format="#,##0.##" Culture="@_en" T="double?" Class="text-right"
+                                             HideSpinButtons="true" Required />
+                        </MudStack>
                     </EditTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.tigiahoandondaura" Title="@Localizer["Exchange Rate Invoice"]" Format="#,##0.##" Required="false" CellStyle="text-align: right;">
                     <EditTemplate>
-                        <MudNumericField @bind-Value="context.Item.tigiahoandondaura" Label="@Localizer["Exchange Rate Invoice"]"
-                        Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" Required />
+                        <MudStack Row Spacing="1" AlignItems="AlignItems.Center">
+                            <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small"
+                                       Style="min-width: 80px; height: 36px; padding: 5px 10px;"
+                                       OnClick="@(() => GetTigia_invoice(context.Item))">
+                                @Localizer["gettigia"]
+                            </MudButton>
+                            <MudNumericField @bind-Value="context.Item.tigiahoandondaura" Label="@Localizer["Exchange Rate Invoice"]"
+                                             Format="#,##0.##" Culture="@_en" T="double?" Class="text-right"
+                                             HideSpinButtons="true" Required />
+                        </MudStack>
                     </EditTemplate>
                 </PropertyColumn>
 
@@ -646,16 +668,22 @@
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.daXuatHoadon" Title="@Localizer["Invoice Printed"]">
                     <CellTemplate>
-                        <MudCheckBox @bind-Checked="context.Item.daXuatHoadon" ReadOnly />
+                        <MudCheckBox @bind-Checked="context.Item.daXuatHoadon"
+                                     @bind-Checked:after="@(async () => await OnInvoicePrintedChanged(context.Item))"
+                                     Disabled="@(context.Item.khoa == true || IsDebitCompletedLocked)" />
                     </CellTemplate>
                     <EditTemplate>
                         <MudStack Row>
-                            <MudCheckBox @bind-Checked="context.Item.daXuatHoadon" Label="@Localizer["Invoice Printed"]" />
+                            <MudCheckBox @bind-Checked="context.Item.daXuatHoadon"
+                                         @bind-Checked:after="@(async () => await OnInvoicePrintedChanged(context.Item))"
+                                         Label="@Localizer["Invoice Printed"]"
+                                         Disabled="@(context.Item.khoa == true || IsDebitCompletedLocked)" />
                             <MudTextField @bind-Value="context.Item.sohoadondaura" Label="@Localizer["Invoice No."]" ReadOnly />
                         </MudStack>
                     </EditTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.sohoadondaura" Title="@Localizer["Invoice No."]" IsEditable="false" Required="false"><EditTemplate></EditTemplate></PropertyColumn>
+       
                 <PropertyColumn Property="x => x.khoa" Title="@Localizer["Locked"]">
                     <CellTemplate>
                         <MudCheckBox @bind-Checked="context.Item.khoa" @bind-Checked:after="@(async () => await OnLockChanged(context.Item))" Disabled="context.Item.khoa == true && !canUnlockDebit" />
@@ -1241,6 +1269,16 @@
 
 
     }
+    private async Task GetTigia(M_Debit item)
+    {
+        item.tigiadebit = await Vcbsv.Getexchange_cur(item.tiente);
+    }
+
+    private async Task GetTigia_invoice(M_Debit item)
+    {
+        item.tigiahoandondaura = await Vcbsv.Getexchange_cur(item.tiente);
+    }
+
     private async Task<IEnumerable<Guid>> SearchCustomer(string text)
     {
         try
@@ -1336,6 +1374,30 @@
         if (!rs.Flag)
             CallSnackBar(rs.Message, MudBlazor.Severity.Error);
     }
+
+    async Task OnInvoicePrintedChanged(M_Debit item)
+    {
+        var previousValue = !(item.daXuatHoadon ?? false);
+        if (!EnsureCanMutateDebit() || item.khoa == true || IsDebitCompletedLocked)
+        {
+            item.daXuatHoadon = previousValue;
+            return;
+        }
+
+        var oldData = JsonSerializer.Deserialize<M_Debit>(JsonSerializer.Serialize(item));
+        if (oldData != null)
+            oldData.daXuatHoadon = previousValue;
+
+        item.dateupdate = DateTime.Now.ToString();
+        item.userupdate = usr;
+        var rs = await shipsv.UpdateDebitMBL(item, oldData!);
+        if (!rs.Flag)
+        {
+            item.daXuatHoadon = previousValue;
+            CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+        }
+    }
+
     async Task TryStartEditing(M_Debit item)
     {
         if (!EnsureCanMutateDebit()) return;

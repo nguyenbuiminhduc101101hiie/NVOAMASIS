@@ -1,5 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace NVOAMASIS.Models
 {
     public class M_PhieuThu
@@ -54,5 +56,11 @@ namespace NVOAMASIS.Models
         public string? ApproveBy { get; set; }
         public Guid? ApproveByUserId { get; set; }
         public DateTime? ApproveDate { get; set; }
+
+        [NotMapped]
+        public List<Guid> SelectedDebitIds { get; set; } = new();
+
+        [NotMapped]
+        public bool DebitSelectionSpecified { get; set; }
     }
 }

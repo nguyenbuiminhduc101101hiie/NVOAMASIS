@@ -192,6 +192,9 @@ namespace NVOAMASIS.Data
         {
             base.OnModelCreating(modelBuilder);
 
+            modelBuilder.Entity<M_Debit>()
+                .HasIndex(x => x.PhieuthuID);
+
             modelBuilder.Entity<M_BillSeaLayoutForm>(entity =>
             {
                 entity.ToTable("BillSeaLayoutForm");

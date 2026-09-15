@@ -91,46 +91,112 @@ namespace NVOAMASIS.Services
 
         public async Task<List<string>> UpdateCreatePhieuThu(M_PhieuThu IV)
         {
+            await using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
                 _context.ChangeTracker.Clear();
-                if (IV.PhieuthuID == null || IV.PhieuthuID == Guid.Empty)
+                var isNew = IV.PhieuthuID == Guid.Empty;
+                if (isNew)
                 {
-                    _context.ChangeTracker.Clear();
+                    IV.PhieuthuID = Guid.NewGuid();
                     _context.Add(IV);
-                    await _context.SaveChangesAsync();
-                    return ["Create new Receipt Successfully", "1"];
                 }
                 else
                 {
-                    _context.ChangeTracker.Clear();
-
                     _context.Update(IV);
-                    await _context.SaveChangesAsync();
-                    return ["Update Receipt Successfully", "1"];
                 }
+
+                if (IV.DebitSelectionSpecified)
+                    await SynchronizeReceiptDebitsAsync(IV.PhieuthuID, IV.SelectedDebitIds);
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+                return [isNew ? "Create new Receipt Successfully" : "Update Receipt Successfully", "1"];
             }
-            catch
+            catch (Exception ex)
             {
-                return ["Save Receipt Fail", "0"];
+                await transaction.RollbackAsync();
+                return [$"Save Receipt Fail: {ex.Message}", "0"];
+            }
+        }
+
+        public async Task<List<M_Debit>> GetReceiptDebitsByJobAsync(Guid jobId, Guid? receiptId = null)
+        {
+            return await (
+                from debit in _context.Debit.AsNoTracking()
+                join hbl in _context.HBL.AsNoTracking() on debit.hblid equals hbl.hblID
+                where (hbl.Jobid == jobId || _context.MBL.Any(mbl => mbl.MblID == hbl.mblid && mbl.Jobid == jobId))
+                      && debit.continued == true
+                      && (debit.dathanhtoan != true || debit.PhieuthuID == receiptId)
+                orderby debit.debitno
+                select debit).ToListAsync();
+        }
+
+        public async Task<List<M_Debit>> GetReceiptDebitsAsync(Guid receiptId)
+        {
+            return await _context.Debit.AsNoTracking()
+                .Where(x => x.PhieuthuID == receiptId)
+                .ToListAsync();
+        }
+
+        private async Task SynchronizeReceiptDebitsAsync(Guid receiptId, IEnumerable<Guid> selectedDebitIds)
+        {
+            var selectedIds = selectedDebitIds.Distinct().ToHashSet();
+            var currentDebits = await _context.Debit
+                .Where(x => x.PhieuthuID == receiptId)
+                .ToListAsync();
+
+            foreach (var debit in currentDebits.Where(x => !selectedIds.Contains(x.debitId)))
+            {
+                debit.PhieuthuID = null;
+                debit.dathanhtoan = false;
+            }
+
+            if (selectedIds.Count == 0)
+                return;
+
+            var selectedDebits = await _context.Debit
+                .Where(x => selectedIds.Contains(x.debitId))
+                .ToListAsync();
+
+            if (selectedDebits.Count != selectedIds.Count)
+                throw new InvalidOperationException("Một hoặc nhiều phí Debit không còn tồn tại.");
+
+            if (selectedDebits.Any(x => x.dathanhtoan == true && x.PhieuthuID != receiptId))
+                throw new InvalidOperationException("Một hoặc nhiều phí Debit đã được thanh toán bởi phiếu thu khác.");
+
+            foreach (var debit in selectedDebits)
+            {
+                debit.PhieuthuID = receiptId;
+                debit.dathanhtoan = true;
             }
         }
     
 
         public async Task<BoolandMessReponse> DeletePhieuThu_Detail(M_PhieuThu c)
         {
+            await using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
                 _context.ChangeTracker.Clear();
                 if (c?.PhieuthuID == null || c?.PhieuthuID == Guid.Empty)
                     return new BoolandMessReponse(false, "Nothing to Delete");
 
-                _context?.Phieuthu.Remove(c!);
-                await _context?.SaveChangesAsync()!;
+                var debits = await _context.Debit.Where(x => x.PhieuthuID == c.PhieuthuID).ToListAsync();
+                foreach (var debit in debits)
+                {
+                    debit.PhieuthuID = null;
+                    debit.dathanhtoan = false;
+                }
+
+                _context.Phieuthu.Remove(c);
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
                 return new BoolandMessReponse(true, "Delete successful");
             }
             catch (Exception ex)
             {
+                await transaction.RollbackAsync();
                 return new BoolandMessReponse(false, "Cannot Delete Project with error code: " + ex.Message);
             }
         }

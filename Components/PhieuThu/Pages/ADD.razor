@@ -158,12 +158,37 @@
                                     <MudItem xs="4">
                                         <MudAutocomplete T="JobDisplay"
                                                          @bind-Value="selectedjob"
+                                                         @bind-Value:after="OnJobChanged"
                                                          Label="@Localizer["search_job"]"
                                                          SearchFunc="SearchDNTT"
                                                          ToStringFunc="@(x => x?.DisplayText ?? string.Empty)"
                                                          MaxItems="10"
                                                          Clearable
                                                          Class="custom-label" />
+                                    </MudItem>
+
+                                    <MudItem xs="12">
+                                        <MudText Typo="Typo.subtitle2" Class="section-title">Các phí Debit của HBL trong Job</MudText>
+                                        @if (selectedjob is null)
+                                        {
+                                            <MudAlert Severity="MudBlazor.Severity.Info" Dense="true">Chọn Job để tải danh sách phí Debit.</MudAlert>
+                                        }
+                                        else
+                                        {
+                                            <MudDataGrid T="M_Debit" Items="receiptDebits" Dense="true" Hover="true" MultiSelection="true"
+                                                         ReadOnly="true" SelectedItems="selectedDebits" SelectedItemsChanged="OnSelectedDebitsChanged">
+                                                <Columns>
+                                                    <SelectColumn T="M_Debit" />
+                                                    <PropertyColumn Property="x => x.debitno" Title="Debit No." />
+                                                    <TemplateColumn Title="HBL"><CellTemplate>@GetHblNo(context.Item.hblid)</CellTemplate></TemplateColumn>
+                                                    <PropertyColumn Property="x => x.ghichu_debit" Title="Tên/Ghi chú phí" />
+                                                    <PropertyColumn Property="x => x.thanhtien" Title="Thành tiền" Format="N2" />
+                                                    <PropertyColumn Property="x => x.tiente" Title="Tiền tệ" />
+                                                    <PropertyColumn Property="x => x.tigiadebit" Title="Tỷ giá" Format="N2" />
+                                                </Columns>
+                                            </MudDataGrid>
+                                            <MudText Typo="Typo.caption">Đã chọn @selectedDebits.Count / @receiptDebits.Count phí.</MudText>
+                                        }
                                     </MudItem>
 
                                     <MudItem xs="2">
@@ -433,6 +458,9 @@
     List<string> currs = new List<string>();
 
     List<M_HBL> HBLs = new List<M_HBL>();
+    List<M_Job> Jobs = new();
+    List<M_Debit> receiptDebits = new();
+    HashSet<M_Debit> selectedDebits = new();
     protected async override Task OnInitializedAsync()
     {
         if (Status == "add")
@@ -462,6 +490,10 @@
 
         ListUser = await asv.GetList_User_handle() ?? new List<string>();
         HBLs = await shipmentsv.GetListHBLALL();
+        Jobs = await shipmentsv.GetListJob();
+
+        if (Status == "edit" && _Phieuthu_Detail.PhieuthuID != Guid.Empty)
+            await LoadExistingDebitSelectionAsync();
 
     }
 
@@ -488,12 +520,19 @@
 
             if (form.IsValid)
             {
+                if (!ValidateSelectedDebitRates())
+                {
+                    CallSnackBar("Các phí đang chọn không cùng tiền tệ hoặc tỷ giá. Vui lòng chọn lại.", MudBlazor.Severity.Warning);
+                    return;
+                }
 
                 var UserName = asv.GetAuth().Result.User.Identity!.Name!;
                 _Phieuthu_Detail.DateUpdate = DateTime.Now.ToString("dd/MMM/yyyy");
                 _Phieuthu_Detail.UserUpdate = UserName;
 
                 _Phieuthu_Detail.Loaiphieu = "PT";
+                _Phieuthu_Detail.SelectedDebitIds = selectedDebits.Select(x => x.debitId).ToList();
+                _Phieuthu_Detail.DebitSelectionSpecified = true;
 
                 MudDialog!.Close(_Phieuthu_Detail);
 
@@ -637,27 +676,7 @@
 
     private async Task get_info_Dntt(M_PhieuThu item)
     {
-        var dntt_info = await shipmentsv.GetHBL_byHBLid(selectedjob.Id);
-        if (dntt_info != null)
-        {
-            item.Customer_Id = selectedjob.cus_id;
-            var debit_info = await shipmentsv.GetListDebitHBL_cus(dntt_info.hblID, selectedjob.cus_id);
-            double? total_amount = 0;
-            foreach (var item_debit in debit_info)
-            {
-                total_amount += item_debit.thanhtien;
-            }
-            var debit_frist = debit_info.FirstOrDefault(); // lấy 1 bản ghi đầu tiên
-            if (debit_info != null)
-            {
-
-                item.Sotien = total_amount;
-                item.Currency = debit_frist.tiente;
-                item.Tigia = debit_frist.tigiadebit;
-
-            }
-
-        }
+        await LoadDebitsForSelectedJobAsync();
     }
 
     private async Task<IEnumerable<string>> SearchCurr(string? text)
@@ -726,39 +745,10 @@
     // }
     private async Task<IEnumerable<JobDisplay>> SearchDNTT(string text)
     {
-        var results = new List<JobDisplay>();
-
-        foreach (var hbl in HBLs)
-        {
-            var mbl = await shipmentsv.GetMBL_byHBLid(hbl.mblid);
-            if (mbl == null) continue;
-
-            var job = await shipmentsv.GetJob_byid(mbl.Jobid);
-            if (job == null) continue;
-
-            var debit_info = await shipmentsv.GetListDebitHBL(hbl.hblID);
-            if (debit_info == null) continue;
-
-            var distinctCustomerIds = debit_info
-                .Where(x => x.customerid != null)
-                .Select(x => x.customerid)
-                .Distinct()
-                .ToList();
-
-            foreach (var cusid in distinctCustomerIds)
-            {
-                var customerName = GetCusName(cusid);
-                var display = $"{job.JobNo} - {customerName} - {hbl.hbl}";
-
-                results.Add(new JobDisplay
-                {
-                    Id = hbl.hblID,
-                    customer = customerName,
-                    DisplayText = display,
-                    cus_id = cusid
-                });
-            }
-        }
+        var results = Jobs
+            .Where(x => x.Continued != false)
+            .Select(x => new JobDisplay { Id = x.JobID, DisplayText = x.JobNo })
+            .ToList();
 
         // ✅ Lọc theo DisplayText sau khi đã build xong
         if (!string.IsNullOrWhiteSpace(text))
@@ -771,6 +761,78 @@
 
         return results;
     }
+
+    private async Task OnJobChanged() => await LoadDebitsForSelectedJobAsync();
+
+    private async Task LoadDebitsForSelectedJobAsync()
+    {
+        receiptDebits = new();
+        selectedDebits = new();
+        if (selectedjob is null || selectedjob.Id == Guid.Empty)
+            return;
+
+        receiptDebits = await Thuchisv.GetReceiptDebitsByJobAsync(
+            selectedjob.Id,
+            _Phieuthu_Detail.PhieuthuID == Guid.Empty ? null : _Phieuthu_Detail.PhieuthuID);
+
+        if (_Phieuthu_Detail.PhieuthuID != Guid.Empty)
+        {
+            var existingIds = (await Thuchisv.GetReceiptDebitsAsync(_Phieuthu_Detail.PhieuthuID))
+                .Select(x => x.debitId).ToHashSet();
+            selectedDebits = receiptDebits.Where(x => existingIds.Contains(x.debitId)).ToHashSet();
+        }
+        ApplySelectedDebitTotals();
+    }
+
+    private async Task LoadExistingDebitSelectionAsync()
+    {
+        var existing = await Thuchisv.GetReceiptDebitsAsync(_Phieuthu_Detail.PhieuthuID);
+        var first = existing.FirstOrDefault();
+        if (first is null)
+            return;
+
+        var hbl = HBLs.FirstOrDefault(x => x.hblID == first.hblid);
+        var jobId = hbl?.Jobid;
+        if ((!jobId.HasValue || jobId == Guid.Empty) && hbl is not null)
+            jobId = (await shipmentsv.GetMBL_byHBLid(hbl.mblid))?.Jobid;
+        if (!jobId.HasValue || jobId == Guid.Empty)
+            return;
+
+        var job = Jobs.FirstOrDefault(x => x.JobID == jobId.Value);
+        selectedjob = new JobDisplay { Id = jobId.Value, DisplayText = job?.JobNo ?? jobId.ToString() };
+        await LoadDebitsForSelectedJobAsync();
+    }
+
+    private void OnSelectedDebitsChanged(HashSet<M_Debit> items)
+    {
+        selectedDebits = items;
+        ApplySelectedDebitTotals();
+        if (!ValidateSelectedDebitRates())
+            CallSnackBar("Các phí đang chọn không cùng tiền tệ hoặc tỷ giá. Vui lòng chọn lại.", MudBlazor.Severity.Warning);
+    }
+
+    private void ApplySelectedDebitTotals()
+    {
+        _Phieuthu_Detail.Sotien = selectedDebits.Sum(x => x.thanhtien ?? 0);
+        var first = selectedDebits.FirstOrDefault();
+        if (first is null)
+            return;
+
+        _Phieuthu_Detail.Currency = first.tiente;
+        _Phieuthu_Detail.Tigia = first.tigiadebit;
+        var customerIds = selectedDebits.Select(x => x.customerid).Distinct().ToList();
+        if (customerIds.Count == 1)
+            _Phieuthu_Detail.Customer_Id = customerIds[0];
+    }
+
+    private bool ValidateSelectedDebitRates()
+    {
+        return selectedDebits.Count == 0
+            || (selectedDebits.Select(x => x.tiente ?? string.Empty).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1
+                && selectedDebits.Select(x => x.tigiadebit ?? 0).Distinct().Count() == 1);
+    }
+
+    private string GetHblNo(Guid hblId) => HBLs.FirstOrDefault(x => x.hblID == hblId)?.hbl ?? string.Empty;
 
     async Task<string> DnttidtosoDntt(Guid PTid)
     {
