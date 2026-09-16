@@ -151,6 +151,8 @@ namespace NVOAMASIS.Data
         public DbSet<M_8_3_4_Import_Yard_Movement_CatLai_In_Out_Yard> Import_Yard_Movement_CatLai_In_Out_Yard { get; set; }
         public DbSet<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard> Import_Yard_Movement_CatLai_Current_In_Yard { get; set; }
 
+        public DbSet<M_PricingRate> PricingRate { get; set; }
+
         public DbSet<M_ChargeType> ChargeType { get; set; }
         public DbSet<M_TariffHeader> TariffHeader { get; set; }
         public DbSet<M_TariffTier> TariffTier { get; set; }
@@ -270,6 +272,16 @@ namespace NVOAMASIS.Data
             modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>().ToTable("8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard");
             modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
             modelBuilder.Entity<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
+
+            modelBuilder.Entity<M_PricingRate>().ToTable("PricingRate");
+            modelBuilder.Entity<M_PricingRate>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_PricingRate>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_PricingRate>().HasIndex(x => x.TradeLane);
+            modelBuilder.Entity<M_PricingRate>().Property(x => x.SourceFileName).HasMaxLength(255);
+            modelBuilder.Entity<M_PricingRate>().HasIndex(x => x.SourceFileName);
+            // Carrier/Pol/Pod are NVARCHAR(MAX) (unbounded, to avoid truncation on messy
+            // source data) and cannot be used as regular index keys.
+
             modelBuilder.Entity<M_ShipmentChargeContext>().ToTable("ShipmentChargeContext");
             modelBuilder.Entity<M_ShipmentChargeContext>()
                 .Property(x => x.Amount)
