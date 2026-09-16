@@ -1,0 +1,459 @@
+@page "/PricingOceanFreightRate"
+@attribute [Authorize]
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.Extensions.Localization
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@using NVOAMASIS.Services
+@inject PricingRateService Service
+@inject AccountService asv
+@inject SharedServices ssv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["PricingOceanFreight_Title"]</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="pa-2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+        <MudText Typo="Typo.h5">4.7 @Localizer["PricingOceanFreight_Title"]</MudText>
+        <MudStack Row="true" Spacing="2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.PlaylistRemove"
+                       Disabled="_importing" OnClick="OpenDeleteByLaneAsync">
+                @Localizer["PricingOceanFreight_DeleteByLane"]
+            </MudButton>
+            <MudButton HtmlTag="label" Variant="Variant.Filled" Color="Color.Tertiary" StartIcon="@Icons.Material.Filled.UploadFile" Disabled="_importing || !_canAdd">
+                @Localizer["PricingOceanFreight_ImportExcel"]
+                <InputFile OnChange="OnFileSelectedAsync" accept=".xlsx,.xls" style="display:none" />
+            </MudButton>
+        </MudStack>
+    </MudStack>
+
+    @if (_importing)
+    {
+        <MudPaper Class="pa-3 mb-2" Elevation="0" Outlined="true">
+            <MudText Typo="Typo.body2" Class="mb-1">@_importStageLabel</MudText>
+            <MudProgressLinear Color="Color.Primary" Value="@_importPercent" />
+        </MudPaper>
+    }
+
+    <ImportedFileDeleteCard Batches="_importedFiles" Busy="_importing" OnRefresh="LoadImportedFilesAsync" OnDeleteSelected="DeleteSelectedImportedFilesAsync" />
+
+    <MudTabs @bind-ActivePanelIndex="_activeTab" @bind-ActivePanelIndex:after="RefreshCurrentTabAsync" ApplyEffectsToContainer="true">
+        @foreach (var lane in PricingRateLane.All)
+        {
+            <MudTabPanel Text="@Localizer[lane.TitleKey]">
+                @RenderToolbar()
+                <MudDataGrid T="M_PricingRate" Items="@_items" Dense="true" Striped="true" Hover="true" Bordered="true"
+                             Virtualize="true" FixedHeader="true" Height="65vh" RowClick="@(e => _selected = e.Item)"
+                             RowClassFunc="@SelectedRowClassFunc" QuickFilter="@QuickFilterFunc"
+                             Filterable="true" FilterMode="@DataGridFilterMode.ColumnFilterRow">
+                    <Columns>
+                        <PropertyColumn Property="x => x.Carrier" Title="@Localizer["PricingOceanFreight_Col_Carrier"]" />
+                        <PropertyColumn Property="x => x.Country" Title="@Localizer["PricingOceanFreight_Col_Country"]" />
+                        <PropertyColumn Property="x => x.Pol" Title="POL" />
+                        <PropertyColumn Property="x => x.Pod" Title="POD" />
+                        <TemplateColumn Title="EFF"><CellTemplate>@context.Item.EffDate?.ToString("dd/MM/yyyy")</CellTemplate></TemplateColumn>
+                        <TemplateColumn Title="VALID"><CellTemplate>@context.Item.ValidDate?.ToString("dd/MM/yyyy")</CellTemplate></TemplateColumn>
+                        <PropertyColumn Property="x => x.OfRateCom20" Title="O/F+COM 20" Format="#,##0.##" />
+                        <PropertyColumn Property="x => x.OfRateCom40" Title="O/F+COM 40" Format="#,##0.##" />
+                        <PropertyColumn Property="x => x.OfRateCom40Hc" Title="O/F+COM 40HC" Format="#,##0.##" />
+                        <PropertyColumn Property="x => x.TotalOf20" Title="TOTAL O/F 20" Format="#,##0.##" />
+                        <PropertyColumn Property="x => x.TotalOf40" Title="TOTAL O/F 40" Format="#,##0.##" />
+                        <PropertyColumn Property="x => x.TotalOf40Hc" Title="TOTAL O/F 40HC" Format="#,##0.##" />
+                        <PropertyColumn Property="x => x.FreeTimeAtPod" Title="@Localizer["PricingOceanFreight_Col_FreeTime"]" />
+                        <PropertyColumn Property="x => x.Remark" Title="@Localizer["PricingOceanFreight_Col_Remark"]" />
+                        <PropertyColumn Property="x => x.SourceFileName" Title="@Localizer["PricingOceanFreight_Col_FileName"]" />
+                    </Columns>
+                </MudDataGrid>
+            </MudTabPanel>
+        }
+    </MudTabs>
+</MudContainer>
+
+@code {
+    private const string PermissionMenuName = "PricingOceanFreightRate";
+    private int _activeTab;
+    private bool _loading;
+    private bool _importing;
+    private bool _canView;
+    private bool _canAdd;
+    private bool _canEdit;
+    private bool _canDelete;
+    private readonly JsonSerializerOptions _jsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    private List<M_PricingRate> _items = new();
+    private M_PricingRate? _selected;
+    private List<ImportedFileBatch> _importedFiles = new();
+    private string _searchText = string.Empty;
+    private string _searchField = "all";
+
+    private string _importStageLabel = string.Empty;
+    private double _importPercent;
+
+    private string CurrentLaneCode => PricingRateLane.All[_activeTab].Code;
+
+    private static readonly (string Key, string LabelKey, Func<M_PricingRate, string?> Selector)[] SearchFieldOptions =
+    {
+        ("all", "PricingOceanFreight_SearchField_All", r => null),
+        ("file", "PricingOceanFreight_Col_FileName", r => r.SourceFileName),
+        ("carrier", "PricingOceanFreight_Col_Carrier", r => r.Carrier),
+        ("country", "PricingOceanFreight_Col_Country", r => r.Country),
+        ("pol", "PricingOceanFreight_SearchField_Pol", r => r.Pol),
+        ("pod", "PricingOceanFreight_SearchField_Pod", r => r.Pod),
+        ("remark", "PricingOceanFreight_Col_Remark", r => r.Remark),
+        ("freetime", "PricingOceanFreight_Col_FreeTime", r => r.FreeTimeAtPod),
+        ("user", "PricingOceanFreight_SearchField_ImportedBy", r => r.UserImport),
+    };
+
+    private Func<M_PricingRate, bool> QuickFilterFunc => row =>
+    {
+        if (string.IsNullOrWhiteSpace(_searchText))
+            return true;
+
+        if (_searchField == "all")
+        {
+            return Contains(row.SourceFileName) || Contains(row.Carrier) || Contains(row.Country)
+                || Contains(row.Pol) || Contains(row.Pod) || Contains(row.Remark)
+                || Contains(row.FreeTimeAtPod) || Contains(row.ExtraNote) || Contains(row.UserImport);
+        }
+
+        var selector = SearchFieldOptions.FirstOrDefault(x => x.Key == _searchField).Selector;
+        return selector != null && Contains(selector(row));
+    };
+
+    private bool Contains(string? value) =>
+        !string.IsNullOrEmpty(value) && value.Contains(_searchText, StringComparison.OrdinalIgnoreCase);
+
+    private string SelectedRowClassFunc(M_PricingRate row, int rowNumber) =>
+        _selected != null && row.Id == _selected.Id ? "selected" : string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPermissionAsync();
+        if (!_canView)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoAccessView"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await RefreshCurrentTabAsync();
+        await LoadImportedFilesAsync();
+    }
+
+    private RenderFragment RenderToolbar() => @<MudPaper Class="pa-2 mb-2 d-flex flex-wrap align-center gap-2">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh" OnClick="RefreshCurrentTabAsync" Disabled="_loading">@Localizer["reload"]</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.Add" OnClick="AddCurrentAsync" Disabled="_loading || !_canAdd">@Localizer["new"]</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Info" StartIcon="@Icons.Material.Filled.Edit" OnClick="EditCurrentAsync" Disabled="_loading || !_canEdit">@Localizer["edit"]</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteCurrentAsync" Disabled="_loading || !_canDelete">@Localizer["delete"]</MudButton>
+        <MudSelect T="string" @bind-Value="_searchField" Variant="Variant.Outlined" Margin="Margin.Dense" Class="ml-md-auto" Style="min-width:170px;">
+            @foreach (var opt in SearchFieldOptions)
+            {
+                <MudSelectItem Value="@opt.Key">@Localizer[opt.LabelKey]</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField T="string" @bind-Value="_searchText" Immediate="true" DebounceInterval="200" Clearable="true"
+                      Placeholder="@Localizer["PricingOceanFreight_SearchPlaceholder"]" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:240px;" />
+    </MudPaper>;
+
+    private async Task RefreshCurrentTabAsync()
+    {
+        _loading = true;
+        _selected = null;
+        try
+        {
+            _items = await Service.GetByLaneAsync(CurrentLaneCode);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_LoadError", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadImportedFilesAsync()
+    {
+        _importedFiles = await Service.GetImportedFileBatchesAsync();
+    }
+
+    private async Task DeleteSelectedImportedFilesAsync(IReadOnlyList<ImportedFileBatch> batches)
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (batches.Count == 0)
+            return;
+
+        var label = string.Join(", ", batches.Select(x => x.DisplayLabel));
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["PricingOceanFreight_Warning"],
+            Localizer["PricingOceanFreight_DeleteManyConfirm", label],
+            yesText: Localizer["delete"].Value, cancelText: Localizer["cancel"].Value);
+        if (confirm != true)
+            return;
+
+        _importing = true;
+        try
+        {
+            var deleted = await Service.DeleteImportedFileBatchesAsync(batches);
+            Snackbar.Add(Localizer["PricingOceanFreight_DeletedRows", deleted], MudBlazor.Severity.Success);
+            await LoadImportedFilesAsync();
+            await RefreshCurrentTabAsync();
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private async Task OpenDeleteByLaneAsync()
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var fileNames = await Service.GetDistinctFileNamesAsync();
+        if (fileNames.Count == 0)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoImportedFiles"], MudBlazor.Severity.Info);
+            return;
+        }
+
+        var dialog = DialogService.Show<PricingRateDeleteByLane_Dialog>(
+            Localizer["PricingOceanFreight_DeleteByLane"],
+            new DialogParameters { ["FileNames"] = fileNames },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result.Canceled)
+            return;
+
+        Snackbar.Add(Localizer["PricingOceanFreight_Deleted"], MudBlazor.Severity.Success);
+        await LoadImportedFilesAsync();
+        await RefreshCurrentTabAsync();
+    }
+
+    private async Task OnFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        if (!_canAdd)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (e.FileCount == 0)
+            return;
+
+        var fileName = e.File.Name;
+
+        // Read the browser file into memory BEFORE touching any UI state. Blazor Server's
+        // InputFile JS interop tracks the selected file by a client-side id; if the
+        // component re-renders (e.g. from a StateHasChanged() call) before the stream is
+        // fully read, that id can be lost, throwing "Cannot read properties of null
+        // (reading '_blazorFilesById')". Reading first, with no state change in between,
+        // avoids that race.
+        byte[] fileBytes;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(50 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            fileBytes = ms.ToArray();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_ImportError", ex.Message], MudBlazor.Severity.Error);
+            return;
+        }
+
+        if (await Service.FileNameExistsAsync(fileName))
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_FileAlreadyImported", fileName], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _importing = true;
+        _importStageLabel = Localizer["PricingOceanFreight_StageReading"];
+        _importPercent = 0;
+        StateHasChanged();
+        try
+        {
+            using var ms = new MemoryStream(fileBytes);
+            var preview = await Service.ParseAsync(ms, fileName, ReportParseProgress);
+            if (!string.IsNullOrWhiteSpace(preview.ErrorMessage))
+            {
+                Snackbar.Add(Localizer["PricingOceanFreight_ImportError", preview.ErrorMessage], MudBlazor.Severity.Error);
+                return;
+            }
+            if (preview.Rows.Count == 0)
+            {
+                Snackbar.Add(Localizer["PricingOceanFreight_ImportEmptyFile"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            _importing = false;
+            StateHasChanged();
+
+            var previewDialog = DialogService.Show<PricingRateImportPreview_Dialog>(
+                Localizer["PricingOceanFreight_PreviewTitle"],
+                new DialogParameters { ["Rows"] = preview.Rows, ["FileName"] = fileName },
+                new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+            var previewResult = await previewDialog.Result;
+            if (previewResult.Canceled || previewResult.Data is not bool confirmed || !confirmed)
+                return;
+
+            _importing = true;
+            _importStageLabel = Localizer["PricingOceanFreight_StageSaving"];
+            _importPercent = 0;
+            StateHasChanged();
+
+            var authState = await asv.GetAuth();
+            var importUser = authState.User?.Identity?.Name;
+            var commitResult = await Service.CommitImportAsync(preview.Rows, fileName, importUser, ReportSaveProgress);
+            if (!string.IsNullOrWhiteSpace(commitResult.ErrorMessage))
+            {
+                Snackbar.Add(Localizer["PricingOceanFreight_ImportError", commitResult.ErrorMessage], MudBlazor.Severity.Error);
+                return;
+            }
+
+            Snackbar.Add(Localizer["PricingOceanFreight_ImportSuccess", commitResult.Imported], MudBlazor.Severity.Success);
+            await LoadImportedFilesAsync();
+            await RefreshCurrentTabAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_ImportError", ex.Message], MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private Task ReportParseProgress(PricingRateImportProgress p) => ReportProgress(Localizer["PricingOceanFreight_StageReading"], p);
+    private Task ReportSaveProgress(PricingRateImportProgress p) => ReportProgress(Localizer["PricingOceanFreight_StageSaving"], p);
+
+    private async Task ReportProgress(string stageLabel, PricingRateImportProgress p)
+    {
+        var laneLabel = PricingRateLane.All.FirstOrDefault(l => l.Code == p.Detail) is { } lane ? Localizer[lane.TitleKey] : p.Detail;
+        _importStageLabel = $"{stageLabel} ({p.Current}/{p.Total}: {laneLabel})";
+        _importPercent = p.Total == 0 ? 0 : 100.0 * p.Current / p.Total;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task AddCurrentAsync()
+    {
+        if (!_canAdd)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoAccessAdd"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        await OpenDialogAndSaveAsync(new M_PricingRate { Id = Guid.NewGuid(), TradeLane = CurrentLaneCode, SourceFileName = null, DateImport = now, CreatedAt = now });
+    }
+
+    private async Task EditCurrentAsync()
+    {
+        if (!_canEdit)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoAccessEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_selected == null)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_SelectOneRowToEdit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await OpenDialogAndSaveAsync(Clone(_selected));
+    }
+
+    private async Task DeleteCurrentAsync()
+    {
+        if (!_canDelete)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoAccessDelete"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (_selected == null)
+        {
+            Snackbar.Add(Localizer["PricingOceanFreight_NoRowSelected"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(Localizer["PricingOceanFreight_Warning"], Localizer["PricingOceanFreight_DeleteConfirm"], yesText: Localizer["delete"].Value, cancelText: Localizer["cancel"].Value);
+        if (confirm != true)
+            return;
+
+        var result = await Service.DeleteAsync(_selected.Id);
+        if (!result.Ok)
+        {
+            Snackbar.Add(result.Error ?? Localizer["PricingOceanFreight_DeleteFailed"].Value, MudBlazor.Severity.Error);
+            return;
+        }
+
+        Snackbar.Add(Localizer["PricingOceanFreight_Deleted"], MudBlazor.Severity.Success);
+        await RefreshCurrentTabAsync();
+    }
+
+    private async Task OpenDialogAndSaveAsync(M_PricingRate model)
+    {
+        var lockedLane = model.TradeLane;
+        var lockedFileName = model.SourceFileName;
+        var dialog = DialogService.Show<NVOAMASIS.Components.ExcelImport.Pages.ExcelImport_RowDialog>(
+            Localizer["PricingOceanFreight_EditDialogTitle"],
+            new DialogParameters
+            {
+                ["Model"] = model,
+                ["HiddenProperties"] = new[] { nameof(M_PricingRate.TradeLane), nameof(M_PricingRate.SourceFileName) }
+            },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_PricingRate data)
+            return;
+
+        data.TradeLane = lockedLane; // TradeLane/SourceFileName are fixed by context, not user-editable.
+        data.SourceFileName = lockedFileName;
+        var saveResult = await Service.UpsertAsync(data);
+        if (!saveResult.Ok)
+        {
+            Snackbar.Add(saveResult.Error ?? Localizer["PricingOceanFreight_SaveFailed"].Value, MudBlazor.Severity.Error);
+            return;
+        }
+
+        Snackbar.Add(Localizer["PricingOceanFreight_Saved"], MudBlazor.Severity.Success);
+        await RefreshCurrentTabAsync();
+    }
+
+    private T Clone<T>(T source)
+    {
+        var json = JsonSerializer.Serialize(source, _jsonOptions);
+        return JsonSerializer.Deserialize<T>(json, _jsonOptions)!;
+    }
+
+    private async Task LoadPermissionAsync()
+    {
+        var authState = await asv.GetAuth();
+        var username = authState.User?.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(username))
+            return;
+
+        _canView = await ssv.CheckPermission(username, "View", PermissionMenuName);
+        _canAdd = await ssv.CheckPermission(username, "Add", PermissionMenuName);
+        _canEdit = await ssv.CheckPermission(username, "Edit", PermissionMenuName);
+        _canDelete = await ssv.CheckPermission(username, "Delete", PermissionMenuName);
+    }
+}
