@@ -1,0 +1,540 @@
+@page "/form-booking"
+@using Microsoft.EntityFrameworkCore
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using OfficeOpenXml
+@using OfficeOpenXml.Style
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime js
+
+<PageTitle>Form Booking Information</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="Form Booking Information" Subtitle="Quản lý thông tin Form Booking">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="OpenNewDialog" Disabled="_busy || !_canAdd">
+                    Thêm
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditDialog"
+                           Disabled="_selected is null || _busy || !_canEdit">
+                    Sửa
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteSelectedAsync"
+                           Disabled="_selected is null || _busy || !_canDelete">
+                    Xóa
+                </MudButton>
+                <MudDivider Vertical="true" FlexItem="true" Class="mx-1" />
+                <MudButton Variant="Variant.Filled" Color="Color.Tertiary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Download" OnClick="ExportFormAsync"
+                           Disabled="_selected is null || _busy">
+                    Xuất Form
+                </MudButton>
+                <MudDivider Vertical="true" FlexItem="true" Class="mx-1" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadListAsync" Disabled="_busy">
+                    Tải lại
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <MudTextField @bind-Value="_searchText"
+                          Label="Tìm sale, line, POL/POD, shipper, booking..."
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true"
+                          Immediate="true"
+                          Style="max-width: 420px;" />
+        </MudStack>
+
+        <MudDataGrid T="M_FormBooking"
+                     Items="VisibleItems"
+                     Dense="true"
+                     Striped="true"
+                     Bordered="true"
+                     Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClassFunc"
+                     Height="calc(100vh - 180px)"
+                     FixedHeader="true"
+                     Loading="_busy"
+                     ColumnResizeMode="ResizeMode.Column">
+            <Columns>
+                <TemplateColumn Title="Booking No">
+                    <CellTemplate>@GetBookingNo(context.Item.BookingId)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.Ngay" Title="Ngày" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.Sale" Title="Sale" />
+                <PropertyColumn Property="x => x.Line" Title="Line" />
+                <TemplateColumn Title="Shipper">
+                    <CellTemplate>@GetCustomerName(context.Item.Shipper)</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.Volume" Title="Volume" />
+                <PropertyColumn Property="x => x.POL_POD" Title="POL/POD" />
+                <PropertyColumn Property="x => x.ETD" Title="ETD" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.FreeTime" Title="Free Time" />
+                <PropertyColumn Property="x => x.PP_CC" Title="PP/CC" />
+                <PropertyColumn Property="x => x.Buy_Rate" Title="Buy Rate" Format="N2" />
+                <PropertyColumn Property="x => x.Acc" Title="Acc" />
+                <PropertyColumn Property="x => x.Type_Bill" Title="Type Bill" />
+                <PropertyColumn Property="x => x.Remark" Title="Remark" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="M_FormBooking" PageSizeOptions="new int[] { 10, 25, 50, 100 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    private const string PermissionMenuName = "FormBooking";
+
+    private bool _busy;
+    private bool _canView;
+    private bool _canAdd;
+    private bool _canEdit;
+    private bool _canDelete;
+    private List<M_FormBooking> _items = new();
+    private M_FormBooking? _selected;
+    private string usr = string.Empty;
+    private string _searchText = string.Empty;
+    private Dictionary<Guid, string> _customerNames = new();
+    private Dictionary<Guid, string> _bookingNumbers = new();
+
+    private IEnumerable<M_FormBooking> VisibleItems
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_searchText))
+                return _items;
+
+            var t = _searchText.Trim();
+            return _items.Where(x =>
+                ContainsIc(x.Sale, t) ||
+                ContainsIc(x.Line, t) ||
+                ContainsIc(x.POL_POD, t) ||
+                ContainsIc(x.Volume, t) ||
+                ContainsIc(x.Acc, t) ||
+                ContainsIc(x.Type_Bill, t) ||
+                ContainsIc(x.Remark, t) ||
+                ContainsIc(x.Description, t) ||
+                ContainsIc(GetCustomerName(x.Shipper), t) ||
+                ContainsIc(GetBookingNo(x.BookingId), t));
+        }
+    }
+
+    private static bool ContainsIc(string? s, string needle) =>
+        !string.IsNullOrEmpty(s) && s.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+    private string GetCustomerName(Guid? id) =>
+        id.HasValue && _customerNames.TryGetValue(id.Value, out var name) ? name : string.Empty;
+
+    private string GetBookingNo(Guid? id) =>
+        id.HasValue && _bookingNumbers.TryGetValue(id.Value, out var no) ? no : string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        usr = auth.User.Identity?.Name ?? string.Empty;
+
+        _canView = await ssv.CheckPermission(usr, "View", PermissionMenuName);
+        _canAdd = await ssv.CheckPermission(usr, "Add", PermissionMenuName);
+        _canEdit = await ssv.CheckPermission(usr, "Edit", PermissionMenuName);
+        _canDelete = await ssv.CheckPermission(usr, "Delete", PermissionMenuName);
+
+        await LoadListAsync();
+    }
+
+    private void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private async Task LoadListAsync()
+    {
+        if (!_canView)
+        {
+            CallSnackBar("Bạn không có quyền xem chức năng này", MudBlazor.Severity.Warning);
+            _items = new List<M_FormBooking>();
+            _selected = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _items = await db.FormBooking
+                .AsNoTracking()
+                .OrderByDescending(x => x.Ngay)
+                .ToListAsync();
+
+            var shipperIds = _items.Where(x => x.Shipper.HasValue).Select(x => x.Shipper!.Value).ToHashSet();
+            if (shipperIds.Count > 0)
+            {
+                var customers = await db.Customer.AsNoTracking()
+                    .Select(x => new { x.Customer_ID, x.COMPANY, x.BIZName, x.EnglishName, x.MaDT })
+                    .ToListAsync();
+                _customerNames = customers
+                    .Where(x => shipperIds.Contains(x.Customer_ID))
+                    .ToDictionary(x => x.Customer_ID, x => x.COMPANY ?? x.BIZName ?? x.EnglishName ?? x.MaDT ?? string.Empty);
+            }
+            else
+            {
+                _customerNames = new Dictionary<Guid, string>();
+            }
+
+            var bookingIds = _items.Where(x => x.BookingId.HasValue).Select(x => x.BookingId!.Value).ToHashSet();
+            if (bookingIds.Count > 0)
+            {
+                var bookings = await db.CONTAINEROUTBOUNDNOTIFY_sale.AsNoTracking()
+                    .Select(x => new { x.ContainerOutBoundNotifyId, x.BookingNo })
+                    .ToListAsync();
+                _bookingNumbers = bookings
+                    .Where(x => bookingIds.Contains(x.ContainerOutBoundNotifyId))
+                    .ToDictionary(x => x.ContainerOutBoundNotifyId, x => x.BookingNo ?? string.Empty);
+            }
+            else
+            {
+                _bookingNumbers = new Dictionary<Guid, string>();
+            }
+
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Tải dữ liệu thất bại: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnRowClick(DataGridRowClickEventArgs<M_FormBooking> args) =>
+        _selected = CloneRow(args.Item);
+
+    private static M_FormBooking CloneRow(M_FormBooking row) => new()
+    {
+        id = row.id,
+        Ngay = row.Ngay,
+        Sale = row.Sale,
+        Line = row.Line,
+        Shipper = row.Shipper,
+        Volume = row.Volume,
+        POL_POD = row.POL_POD,
+        ETD = row.ETD,
+        FreeTime = row.FreeTime,
+        PP_CC = row.PP_CC,
+        Description = row.Description,
+        Buy_Rate = row.Buy_Rate,
+        Remark = row.Remark,
+        Acc = row.Acc,
+        Type_Bill = row.Type_Bill,
+        BookingId = row.BookingId
+    };
+
+    private string RowClassFunc(M_FormBooking row, int _) =>
+        _selected != null && _selected.id == row.id ? "quanlycont-selected-row" : string.Empty;
+
+    private async Task OpenNewDialog()
+    {
+        if (!_canAdd)
+        {
+            CallSnackBar("Bạn không có quyền thêm mới", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<FormBooking_EditDialog>(
+            "Thêm Form Booking",
+            new DialogParameters
+            {
+                ["Model"] = new M_FormBooking { id = Guid.Empty },
+                ["IsEdit"] = false
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not FormBooking_EditDialog.FormBookingDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task OpenEditDialog()
+    {
+        if (_selected is null)
+            return;
+
+        if (!_canEdit)
+        {
+            CallSnackBar("Bạn không có quyền sửa", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dlg = DialogService.Show<FormBooking_EditDialog>(
+            "Sửa Form Booking",
+            new DialogParameters
+            {
+                ["Model"] = _selected,
+                ["IsEdit"] = true
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not FormBooking_EditDialog.FormBookingDialogResult data)
+            return;
+
+        await SaveAsync(data);
+    }
+
+    private async Task SaveAsync(FormBooking_EditDialog.FormBookingDialogResult data)
+    {
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (!data.IsEdit)
+            {
+                db.FormBooking.Add(new M_FormBooking
+                {
+                    id = Guid.NewGuid(),
+                    Ngay = data.Ngay,
+                    Sale = data.Sale,
+                    Line = data.Line,
+                    Shipper = data.Shipper,
+                    Volume = data.Volume,
+                    POL_POD = data.POL_POD,
+                    ETD = data.ETD,
+                    FreeTime = data.FreeTime,
+                    PP_CC = data.PP_CC,
+                    Description = data.Description,
+                    Buy_Rate = data.Buy_Rate,
+                    Remark = data.Remark,
+                    Acc = data.Acc,
+                    Type_Bill = data.Type_Bill,
+                    BookingId = data.BookingId
+                });
+            }
+            else
+            {
+                var entity = await db.FormBooking.FirstOrDefaultAsync(x => x.id == data.Id);
+                if (entity is null)
+                {
+                    CallSnackBar("Không tìm thấy bản ghi", MudBlazor.Severity.Warning);
+                    return;
+                }
+
+                entity.Ngay = data.Ngay;
+                entity.Sale = data.Sale;
+                entity.Line = data.Line;
+                entity.Shipper = data.Shipper;
+                entity.Volume = data.Volume;
+                entity.POL_POD = data.POL_POD;
+                entity.ETD = data.ETD;
+                entity.FreeTime = data.FreeTime;
+                entity.PP_CC = data.PP_CC;
+                entity.Description = data.Description;
+                entity.Buy_Rate = data.Buy_Rate;
+                entity.Remark = data.Remark;
+                entity.Acc = data.Acc;
+                entity.Type_Bill = data.Type_Bill;
+                entity.BookingId = data.BookingId;
+            }
+
+            await db.SaveChangesAsync();
+            _selected = null;
+            await LoadListAsync();
+            CallSnackBar("Lưu thành công", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Lưu thất bại: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ExportFormAsync()
+    {
+        if (_selected is null)
+            return;
+
+        try
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage();
+            var ws = package.Workbook.Worksheets.Add("Form Booking");
+
+            ws.Column(1).Width = 12;
+            ws.Column(2).Width = 16;
+            ws.Column(3).Width = 12;
+            ws.Column(4).Width = 16;
+            ws.Column(5).Width = 10;
+            ws.Column(6).Width = 12;
+            ws.Column(7).Width = 8;
+            ws.Column(8).Width = 30;
+
+            ws.Cells["A1:H1"].Merge = true;
+            ws.Cells["A1"].Value = "FORM BOOKING INFORMATION";
+            ws.Cells["A1"].Style.Font.Bold = true;
+            ws.Cells["A1"].Style.Font.Italic = true;
+            ws.Cells["A1"].Style.Font.UnderLine = true;
+            ws.Cells["A1"].Style.Font.Size = 14;
+            ws.Cells["A1"].Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+
+            ws.Cells["A2:H2"].Merge = true;
+            SetLabelValueRichText(ws.Cells["A2"], "Ngày : ", _selected.Ngay?.ToString("dd/MM/yyyy") ?? string.Empty);
+            ws.Cells["A2"].Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+
+            ws.Cells["A3:H3"].Merge = true;
+            SetLabelValueRichText(ws.Cells["A3"], "Sale : ", _selected.Sale ?? string.Empty);
+            ws.Cells["A3"].Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+
+            string[] headers = { "LINE", "SHIPPER", "VOLUME", "POL/POD", "ETD", "FREE TIME", "PP/CC", "THÔNG TIN/ YÊU CẦU KHÁC\n( TÊN HÀNG,HS CODE/G.W..)" };
+            for (var i = 0; i < headers.Length; i++)
+            {
+                var cell = ws.Cells[4, i + 1];
+                cell.Value = headers[i];
+                cell.Style.Font.Bold = true;
+                cell.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
+                cell.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
+                cell.Style.WrapText = true;
+            }
+
+            ws.Cells[5, 1].Value = _selected.Line;
+            ws.Cells[5, 2].Value = GetCustomerName(_selected.Shipper);
+            ws.Cells[5, 3].Value = _selected.Volume;
+            ws.Cells[5, 4].Value = _selected.POL_POD;
+            ws.Cells[5, 5].Value = _selected.ETD?.ToString("dd-MMM") ?? string.Empty;
+            ws.Cells[5, 6].Value = _selected.FreeTime;
+            ws.Cells[5, 7].Value = _selected.PP_CC;
+            ws.Cells[5, 8].Value = _selected.Description;
+            ws.Cells["A5:H5"].Style.WrapText = true;
+            ws.Cells["A5:H5"].Style.VerticalAlignment = ExcelVerticalAlignment.Center;
+
+            ws.Cells["A6:B6"].Merge = true;
+            ws.Cells["A6"].Value = $"BUY RATE: {_selected.Buy_Rate:0.####}";
+            ws.Cells["C6:F6"].Merge = true;
+            ws.Cells["G6"].Value = "REMARK";
+            ws.Cells["G6"].Style.Font.Bold = true;
+            ws.Cells["H6"].Value = _selected.Remark;
+            ws.Cells["H6"].Style.WrapText = true;
+
+            ws.Cells["A7"].Value = "ACC";
+            ws.Cells["B7:F7"].Merge = true;
+            ws.Cells["B7"].Value = _selected.Acc;
+            ws.Cells["G7:H7"].Merge = true;
+            ws.Cells["G7"].Value = _selected.Type_Bill;
+            ws.Cells["G7"].Style.WrapText = true;
+
+            for (var r = 4; r <= 7; r++)
+            {
+                for (var c = 1; c <= 8; c++)
+                {
+                    var cell = ws.Cells[r, c];
+                    cell.Style.Border.Top.Style = ExcelBorderStyle.Thin;
+                    cell.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
+                    cell.Style.Border.Left.Style = ExcelBorderStyle.Thin;
+                    cell.Style.Border.Right.Style = ExcelBorderStyle.Thin;
+                }
+            }
+
+            ws.Row(4).Height = 34;
+            ws.Row(5).Height = 60;
+            ws.Row(6).Height = 20;
+            ws.Row(7).Height = 20;
+
+            var bytes = package.GetAsByteArray();
+            var fileName = $"FormBooking_{_selected.Sale}_{DateTime.Now:yyyyMMddHHmmss}.xlsx";
+            await js.InvokeVoidAsync("saveAsFile", fileName, Convert.ToBase64String(bytes));
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Xuất form thất bại: {ex.Message}", MudBlazor.Severity.Error);
+        }
+    }
+
+    private static void SetLabelValueRichText(ExcelRange cell, string label, string value)
+    {
+        cell.RichText.Clear();
+        var labelRun = cell.RichText.Add(label);
+        labelRun.Bold = true;
+        labelRun.UnderLine = true;
+        cell.RichText.Add(value);
+    }
+
+    private async Task DeleteSelectedAsync()
+    {
+        if (_selected is null)
+            return;
+
+        if (!_canDelete)
+        {
+            CallSnackBar("Bạn không có quyền xóa", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận",
+            $"Xóa Form Booking ngày {_selected.Ngay:dd/MM/yyyy} - {_selected.Sale}?",
+            yesText: "Xóa",
+            cancelText: "Hủy");
+
+        if (confirm != true)
+            return;
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.FormBooking.FirstOrDefaultAsync(x => x.id == _selected.id);
+            if (entity is null)
+            {
+                CallSnackBar("Không tìm thấy bản ghi", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            db.FormBooking.Remove(entity);
+            await db.SaveChangesAsync();
+            _selected = null;
+            CallSnackBar("Xóa thành công", MudBlazor.Severity.Success);
+            await LoadListAsync();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar($"Xóa thất bại: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
+
+<style>
+    .quanlycont-selected-row {
+        background-color: #2196f3 !important;
+        color: white;
+    }
+</style>

@@ -28,6 +28,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_PIC> PIC { get; set; }
         public DbSet<M_Agency> Agency { get; set; }
         public DbSet<M_Booking> Booking { get; set; }
+        public DbSet<M_FormBooking> FormBooking { get; set; }
         public DbSet<CustomerReport> CUSTOMERREPORT { get; set; }
         public DbSet<M_Buyer> Buyer { get; set; }
         public DbSet<M_DebitCreditCustomer> DebitCreditCustomer { get; set; }
@@ -597,6 +598,12 @@ namespace NVOAMASIS.Data
                     .WithMany()
                     .HasForeignKey(x => x.FixedAssetId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<M_FormBooking>(entity =>
+            {
+                entity.ToTable("FormBooking");
+                entity.Property(x => x.id).HasDefaultValueSql("NEWID()");
             });
 
             modelBuilder.Entity<M_EInvoiceExportLog>(entity =>
