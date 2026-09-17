@@ -153,6 +153,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_8_3_4_Import_Yard_Movement_CatLai_Current_In_Yard> Import_Yard_Movement_CatLai_Current_In_Yard { get; set; }
 
         public DbSet<M_PricingRate> PricingRate { get; set; }
+        public DbSet<M_AirFreightRate> AirFreightRate { get; set; }
 
         public DbSet<M_ChargeType> ChargeType { get; set; }
         public DbSet<M_TariffHeader> TariffHeader { get; set; }
@@ -282,6 +283,16 @@ namespace NVOAMASIS.Data
             modelBuilder.Entity<M_PricingRate>().HasIndex(x => x.SourceFileName);
             // Carrier/Pol/Pod are NVARCHAR(MAX) (unbounded, to avoid truncation on messy
             // source data) and cannot be used as regular index keys.
+
+            modelBuilder.Entity<M_AirFreightRate>().ToTable("AirFreightRate");
+            modelBuilder.Entity<M_AirFreightRate>().Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_AirFreightRate>().Property(x => x.DateImport).HasDefaultValueSql("SYSUTCDATETIME()");
+            modelBuilder.Entity<M_AirFreightRate>().Property(x => x.SourceFileName).HasMaxLength(255);
+            modelBuilder.Entity<M_AirFreightRate>().HasIndex(x => x.SourceFileName);
+            modelBuilder.Entity<M_AirFreightRate>().Property(x => x.Airlines).HasMaxLength(255);
+            modelBuilder.Entity<M_AirFreightRate>().Property(x => x.Destination).HasMaxLength(255);
+            modelBuilder.Entity<M_AirFreightRate>().HasIndex(x => x.Airlines);
+            modelBuilder.Entity<M_AirFreightRate>().HasIndex(x => x.Destination);
 
             modelBuilder.Entity<M_ShipmentChargeContext>().ToTable("ShipmentChargeContext");
             modelBuilder.Entity<M_ShipmentChargeContext>()

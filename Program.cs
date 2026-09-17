@@ -224,6 +224,7 @@ builder.Services.AddScoped<InvoicePdfImportService>();
 builder.Services.AddScoped<StockService>();
 builder.Services.AddScoped<ExcelImportCrudService>();
 builder.Services.AddScoped<PricingRateService>();
+builder.Services.AddScoped<AirFreightRateService>();
 builder.Services.AddScoped<DepotHaiPhongImportService>();
 builder.Services.AddScoped<DeliveryOrderQrService>();
 builder.Services.AddScoped<ArrivalNoticeQrService>();
