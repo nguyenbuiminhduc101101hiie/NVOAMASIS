@@ -55,5 +55,9 @@ namespace NVOAMASIS.Models
         public string? Billing { get; set; }
         public string? Owner { get; set; }
         public string? Location { get; set; }
+        public string? EstNo { get; set; }
+        public string? Grade { get; set; }
+        public string? DamageDetail { get; set; }
+        public string? Remark { get; set; }
     }
 }
