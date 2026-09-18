@@ -34,6 +34,7 @@ namespace NVOAMASIS.Models
         public string? sodntt { get; set; }
         public string? ghichu_credit { get; set; }
         public string? ContainerNo { get; set; }
+        public bool? dathanhtoan { get; set; } = false;
         public DateTime? Date_Of_EST { get; set; }
         public string? Size { get; set; }
         public DateTime? Date_In_Yard { get; set; }

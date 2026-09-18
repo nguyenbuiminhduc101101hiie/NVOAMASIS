@@ -1,0 +1,350 @@
+@using System.Globalization
+@attribute [Authorize]
+@inject CustomerService csv
+@inject SupportServices supsv
+@inject AccountService asv
+@inject SharedServices ssv
+@inject ShipmentService shipsv
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<SharedResource> Localizer
+
+<style>
+    .details-debit-credit-grid ::deep .mud-table-toolbar,
+    .details-debit-credit-grid ::deep thead th {
+        font-size: 12px;
+    }
+
+    .details-debit-credit-summary {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px 24px;
+        padding: 10px 14px 12px;
+        border-top: 1px solid #e5e7eb;
+        background: linear-gradient(180deg, #fafbfc 0%, #f4f7f9 100%);
+        font-size: 13px;
+        color: #37474f;
+    }
+
+    .details-debit-credit-summary strong {
+        color: #118AB2;
+        font-weight: 700;
+    }
+</style>
+
+<PageTitle>7.10 Details Debit/Credit</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="7.10 Details Debit/Credit" Subtitle="Tra cứu chi tiết Debit / Credit theo HBL, MBL, Ref, khách hàng chính và trạng thái thanh toán" />
+
+    <MudPaper Class="product-price-card pa-3 mb-3" Elevation="0">
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="flex-wrap">
+            <MudAutocomplete T="string" @bind-Value="_hblSearch" Label="HBL" Variant="Variant.Outlined"
+                              Dense="true" Margin="Margin.Dense" Clearable ResetValueOnEmptyText
+                              SearchFunc="SearchHbl" Style="min-width: 200px;" />
+            <MudAutocomplete T="string" @bind-Value="_mblSearch" Label="MBL" Variant="Variant.Outlined"
+                              Dense="true" Margin="Margin.Dense" Clearable ResetValueOnEmptyText
+                              SearchFunc="SearchMbl" Style="min-width: 200px;" />
+            <MudAutocomplete T="string" @bind-Value="_refSearch" Label="Ref (Job No.)" Variant="Variant.Outlined"
+                              Dense="true" Margin="Margin.Dense" Clearable ResetValueOnEmptyText
+                              SearchFunc="SearchJobNo" Style="min-width: 200px;" />
+            <MudAutocomplete T="Guid?" @bind-Value="_customerId" Label="Main Customer" Variant="Variant.Outlined"
+                              Dense="true" Margin="Margin.Dense" Clearable ResetValueOnEmptyText
+                              SearchFunc="SearchCustomer" ToStringFunc="CusidToCusCode" Style="min-width: 260px;" />
+            <MudSelect T="string" @bind-Value="_payFilter" Label="Pay" Variant="Variant.Outlined"
+                       Dense="true" Margin="Margin.Dense" Style="min-width: 160px;">
+                <MudSelectItem Value="@("All")">Tất cả</MudSelectItem>
+                <MudSelectItem Value="@("Paid")">Đã thanh toán</MudSelectItem>
+                <MudSelectItem Value="@("Unpaid")">Chưa thanh toán</MudSelectItem>
+            </MudSelect>
+
+            <MudButton Disabled="_loading" OnClick="Search" Color="Color.Primary" Variant="Variant.Filled"
+                       Size="Size.Small" StartIcon="@Icons.Material.Filled.Search">
+                @if (_loading)
+                {
+                    <MudProgressCircular Indeterminate Size="Size.Small" Class="ms-n1" />
+                    <MudText Class="ms-2">Đang tải...</MudText>
+                }
+                else
+                {
+                    <MudText>Tìm kiếm</MudText>
+                }
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+
+    <MudTabs SliderColor="Color.Primary" Class="mb-3">
+        <MudTabPanel Text="Debit">
+            <MudPaper Class="product-price-card" Elevation="0">
+                <MudDataGrid T="M_Debit" Items="@DebitRows" @ref="debitGrid" Filterable="true"
+                             Class="details-debit-credit-grid" Bordered="true" Dense="true"
+                             FilterMode="@DataGridFilterMode.Simple" FixedHeader="true" HeaderClass="no-wrap"
+                             ReadOnly="true" Loading="_loading" ColumnResizeMode="ResizeMode.Column" ShowColumnOptions="false">
+                    <Columns>
+                        <PropertyColumn Property="x => GetHbl(x.hblid)" Title="HBL" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => GetMbl(x.hblid)" Title="MBL" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => GetRef(x.hblid)" Title="Ref" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => GetCusName(x.customerid)" Title="@Localizer["Customer"]" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => GetItemName(x.itemid)" Title="@Localizer["Item"]" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => x.debitno" Title="@Localizer["Debit No."]" />
+                        <PropertyColumn Property="x => x.type" Title="@Localizer["Type"]" />
+                        <PropertyColumn Property="x => x.dongia" Title="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" />
+                        <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" />
+                        <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["Total Price"]" Format="#,##0.##" Culture="@_en" />
+                        <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" />
+                        <PropertyColumn Property="x => x.thue" Title="@Localizer["VAT"]" Format="#,##0.##" Culture="@_en" />
+                        <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" Culture="@_en" />
+                        <TemplateColumn Title="Đã thanh toán">
+                            <CellTemplate>@((context.Item.dathanhtoan ?? false) ? "Có" : "Không")</CellTemplate>
+                        </TemplateColumn>
+                        <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" />
+                        <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" />
+                    </Columns>
+                </MudDataGrid>
+                @if (DebitRows.Count > 0)
+                {
+                    <div class="details-debit-credit-summary">
+                        <span>Total Inc. VAT (USD): <strong>@(DebitRows.Sum(x => x.thanhtiensauthue / (x.tiente == "VND" ? x.tigiadebit : 1))!.Value.ToString("#,##0.##", _en))</strong></span>
+                        <span>Total Inc. VAT (VND): <strong>@(DebitRows.Sum(x => x.thanhtiensauthue * (x.tiente == "USD" ? x.tigiadebit : 1))!.Value.ToString("#,##0.##", _en))</strong></span>
+                    </div>
+                }
+            </MudPaper>
+        </MudTabPanel>
+        <MudTabPanel Text="Credit">
+            <MudPaper Class="product-price-card" Elevation="0">
+                <MudDataGrid T="M_Credit" Items="@CreditRows" @ref="creditGrid" Filterable="true"
+                             Class="details-debit-credit-grid" Bordered="true" Dense="true"
+                             FilterMode="@DataGridFilterMode.Simple" FixedHeader="true" HeaderClass="no-wrap"
+                             ReadOnly="true" Loading="_loading" ColumnResizeMode="ResizeMode.Column" ShowColumnOptions="false">
+                    <Columns>
+                        <PropertyColumn Property="x => GetHbl(x.hblid)" Title="HBL" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => GetMbl(x.hblid)" Title="MBL" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => GetRef(x.hblid)" Title="Ref" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => GetCusName(x.customerid)" Title="@Localizer["Customer"]" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => GetItemName(x.itemid)" Title="@Localizer["Item"]" CellClass="no-wrap-cell" />
+                        <PropertyColumn Property="x => x.type" Title="@Localizer["Type"]" />
+                        <PropertyColumn Property="x => x.dongia" Title="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" />
+                        <PropertyColumn Property="x => x.soluong" Title="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" />
+                        <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["Total Price"]" Format="#,##0.##" Culture="@_en" />
+                        <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" />
+                        <PropertyColumn Property="x => x.thue" Title="@Localizer["VAT"]" Format="#,##0.##" Culture="@_en" />
+                        <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" Culture="@_en" />
+                        <TemplateColumn Title="Đã thanh toán">
+                            <CellTemplate>@((context.Item.dathanhtoan ?? false) ? "Có" : "Không")</CellTemplate>
+                        </TemplateColumn>
+                        <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" />
+                        <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" />
+                    </Columns>
+                </MudDataGrid>
+                @if (CreditRows.Count > 0)
+                {
+                    <div class="details-debit-credit-summary">
+                        <span>Total Inc. VAT (USD): <strong>@(CreditRows.Sum(x => x.thanhtiensauthue / (x.tiente == "VND" ? x.tigiacredit : 1))!.Value.ToString("#,##0.##", _en))</strong></span>
+                        <span>Total Inc. VAT (VND): <strong>@(CreditRows.Sum(x => x.thanhtiensauthue * (x.tiente == "USD" ? x.tigiacredit : 1))!.Value.ToString("#,##0.##", _en))</strong></span>
+                    </div>
+                }
+            </MudPaper>
+        </MudTabPanel>
+    </MudTabs>
+</div>
+
+@code {
+    MudDataGrid<M_Debit> debitGrid;
+    MudDataGrid<M_Credit> creditGrid;
+
+    public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    bool _loading;
+    string? usr;
+
+    List<M_HBL> ListHBL = new();
+    List<M_MBL> ListMBL = new();
+    List<M_Job> ListJob = new();
+    List<M_Customer> Customers = new();
+    List<ChargeModel> Charges = new();
+    List<M_Debit> AllDebit = new();
+    List<M_Credit> AllCredit = new();
+
+    List<M_Debit> DebitRows = new();
+    List<M_Credit> CreditRows = new();
+
+    string? _hblSearch;
+    string? _mblSearch;
+    string? _refSearch;
+    Guid? _customerId;
+    string _payFilter = "All";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _loading = true;
+            usr = asv.GetAuth().Result.User.Identity!.Name!;
+
+            Customers = await csv.GetList();
+            Charges = await supsv.GetListCharge();
+            ListHBL = await shipsv.GetListHBLALL();
+            ListMBL = await shipsv.GetListMBLALL();
+            ListJob = await shipsv.GetListJob();
+            AllDebit = await shipsv.GetListDebitALL();
+            AllCredit = await shipsv.GetListCreditALL();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(string.Format(Localizer["Error_Message"], ex.Message), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task Search()
+    {
+        try
+        {
+            _loading = true;
+            DebitRows.Clear();
+            CreditRows.Clear();
+            StateHasChanged();
+
+            if (!await ssv.CheckPermission(usr!, "View", "DetailsDebitCreditReport7_10"))
+            {
+                CallSnackBar(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_hblSearch) && string.IsNullOrWhiteSpace(_mblSearch)
+                && string.IsNullOrWhiteSpace(_refSearch) && (_customerId == null || _customerId == Guid.Empty))
+            {
+                CallSnackBar("Vui lòng nhập ít nhất 1 điều kiện tìm kiếm (HBL, MBL, Ref hoặc Main Customer).", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            IEnumerable<M_HBL> q = ListHBL;
+
+            if (!string.IsNullOrWhiteSpace(_hblSearch))
+                q = q.Where(x => !string.IsNullOrWhiteSpace(x.hbl) && x.hbl.Contains(_hblSearch, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(_mblSearch))
+            {
+                var mblIds = ListMBL.Where(m => !string.IsNullOrWhiteSpace(m.Mbl) && m.Mbl.Contains(_mblSearch, StringComparison.OrdinalIgnoreCase))
+                                    .Select(m => m.MblID)
+                                    .ToHashSet();
+                q = q.Where(x => mblIds.Contains(x.mblid));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_refSearch))
+            {
+                var jobIds = ListJob.Where(j => !string.IsNullOrWhiteSpace(j.JobNo) && j.JobNo.Contains(_refSearch, StringComparison.OrdinalIgnoreCase))
+                                    .Select(j => j.JobID)
+                                    .ToHashSet();
+                var mblIdsByJob = ListMBL.Where(m => m.Jobid.HasValue && jobIds.Contains(m.Jobid.Value))
+                                         .Select(m => m.MblID)
+                                         .ToHashSet();
+                q = q.Where(x => mblIdsByJob.Contains(x.mblid));
+            }
+
+            if (_customerId.HasValue && _customerId.Value != Guid.Empty)
+                q = q.Where(x => x.CustomerID == _customerId.Value);
+
+            var hblIds = q.Select(x => x.hblID).ToHashSet();
+
+            DebitRows = AllDebit.Where(x => hblIds.Contains(x.hblid)).ToList();
+            CreditRows = AllCredit.Where(x => hblIds.Contains(x.hblid)).ToList();
+
+            if (_payFilter != "All")
+            {
+                bool wantPaid = _payFilter == "Paid";
+                DebitRows = DebitRows.Where(x => (x.dathanhtoan ?? false) == wantPaid).ToList();
+                CreditRows = CreditRows.Where(x => (x.dathanhtoan ?? false) == wantPaid).ToList();
+            }
+
+            if (DebitRows.Count == 0 && CreditRows.Count == 0)
+                CallSnackBar(Localizer["NoData"], MudBlazor.Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(string.Format(Localizer["Error_Message"], ex.Message), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    string? GetHbl(Guid hblid) => ListHBL.FirstOrDefault(x => x.hblID == hblid)?.hbl;
+
+    string? GetMbl(Guid hblid)
+    {
+        var hbl = ListHBL.FirstOrDefault(x => x.hblID == hblid);
+        if (hbl == null) return null;
+        return ListMBL.FirstOrDefault(m => m.MblID == hbl.mblid)?.Mbl;
+    }
+
+    string? GetRef(Guid hblid)
+    {
+        var hbl = ListHBL.FirstOrDefault(x => x.hblID == hblid);
+        if (hbl == null) return null;
+        var mbl = ListMBL.FirstOrDefault(m => m.MblID == hbl.mblid);
+        if (mbl == null || !mbl.Jobid.HasValue) return null;
+        return ListJob.FirstOrDefault(j => j.JobID == mbl.Jobid.Value)?.JobNo;
+    }
+
+    string GetCusName(Guid cusid)
+    {
+        if (cusid == Guid.Empty) return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : $"{rs.shortname} - {rs.COMPANY}";
+    }
+
+    string CusidToCusCode(Guid? cusid)
+    {
+        if (cusid == null || cusid.Value == Guid.Empty) return string.Empty;
+        return GetCusName(cusid.Value);
+    }
+
+    string GetItemName(Guid itemid)
+    {
+        if (itemid == Guid.Empty) return string.Empty;
+        var rs = Charges.FirstOrDefault(x => x.CHARGE_ID == itemid);
+        return rs == null ? string.Empty : $"{rs.CHARGE_CODE} - {rs.CHARGE}";
+    }
+
+    Task<IEnumerable<string?>> SearchHbl(string? text)
+    {
+        var items = ListHBL.Where(x => !string.IsNullOrWhiteSpace(x.hbl)).Select(x => x.hbl!).Distinct();
+        if (string.IsNullOrWhiteSpace(text)) return Task.FromResult<IEnumerable<string?>>(items);
+        return Task.FromResult<IEnumerable<string?>>(items.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    Task<IEnumerable<string?>> SearchMbl(string? text)
+    {
+        var items = ListMBL.Where(x => !string.IsNullOrWhiteSpace(x.Mbl)).Select(x => x.Mbl!).Distinct();
+        if (string.IsNullOrWhiteSpace(text)) return Task.FromResult<IEnumerable<string?>>(items);
+        return Task.FromResult<IEnumerable<string?>>(items.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    Task<IEnumerable<string?>> SearchJobNo(string? text)
+    {
+        var items = ListJob.Where(x => !string.IsNullOrWhiteSpace(x.JobNo)).Select(x => x.JobNo!).Distinct();
+        if (string.IsNullOrWhiteSpace(text)) return Task.FromResult<IEnumerable<string?>>(items);
+        return Task.FromResult<IEnumerable<string?>>(items.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    Task<IEnumerable<Guid?>> SearchCustomer(string? text)
+    {
+        IEnumerable<M_Customer> items = Customers;
+        if (!string.IsNullOrWhiteSpace(text))
+            items = items.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult<IEnumerable<Guid?>>(items.Select(x => (Guid?)x.Customer_ID));
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}
