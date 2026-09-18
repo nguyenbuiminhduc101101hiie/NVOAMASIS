@@ -1,11 +1,14 @@
+@using System.Data
 @using System.Globalization
 @using System.Text.Json
+@using System.Text.RegularExpressions
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @using NVOAMASIS.Data
 @using NVOAMASIS.Models
 @using OfficeOpenXml
+@using ExcelDataReader
 @inject AccountService asv
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
@@ -82,7 +85,18 @@
                                            Class="btn-compact" />
                         </MudTooltip>
                     }
-                    <MudTooltip Text="Import EOR-ASR Excel">
+                    <MudSelect T="string" @bind-Value="_importFileType"
+                               Label="Loại file"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Dense="true"
+                               Style="min-width: 210px;">
+                        @foreach (var opt in EorImportDefinitions.FileTypeOptions)
+                        {
+                            <MudSelectItem T="string" Value="@opt.Key">@opt.Label</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTooltip Text="@($"Import {CurrentImportTypeLabel} Excel")">
                         <MudButton HtmlTag="label"
                                    Variant="Variant.Filled"
                                    Color="Color.Warning"
@@ -140,6 +154,10 @@
         <PropertyColumn Property="x => x.Billing" Title="Billing" Required="false" />
         <PropertyColumn Property="x => x.Owner" Title="Owner" Required="false" />
         <PropertyColumn Property="x => x.Location" Title="Location" Required="false" />
+        <PropertyColumn Property="x => x.EstNo" Title="Est No" Required="false" />
+        <PropertyColumn Property="x => x.Grade" Title="Grade" Required="false" />
+        <PropertyColumn Property="x => x.DamageDetail" Title="Damage Detail" Required="false" />
+        <PropertyColumn Property="x => x.Remark" Title="Remark" Required="false" />
         <PropertyColumn Property="x => x.ghichu_credit" Title="@Localizer["Notes"]" Required="false" />
         <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" IsEditable="false" Required="false" />
         <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false" />
@@ -175,6 +193,11 @@
     private bool _loading;
     private bool _importing;
     private bool _initialized;
+    private string _importFileType = "EOR_ASR";
+
+    private string CurrentImportTypeLabel =>
+        EorImportDefinitions.FileTypeOptions.FirstOrDefault(x => x.Key == _importFileType).Label ?? _importFileType;
+
     private string usr = string.Empty;
     private Guid _loadedContextKey = Guid.Empty;
     private readonly SemaphoreSlim _loadGate = new(1, 1);
@@ -546,10 +569,17 @@
         var file = e.File;
         if (file is null)
             return;
-        await ImportExcelAsync(file);
+
+        if (!EorImportDefinitions.Maps.TryGetValue(_importFileType, out var map))
+        {
+            CallSnackBar("Loại file chưa được hỗ trợ.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await ImportGenericEorAsync(file, map);
     }
 
-    private async Task ImportExcelAsync(IBrowserFile file)
+    private async Task ImportGenericEorAsync(IBrowserFile file, EorColumnMap map)
     {
         if (!_canEditContext)
             return;
@@ -560,10 +590,17 @@
             return;
         }
 
-        if (!file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)
-            && !file.Name.EndsWith(".xls", StringComparison.OrdinalIgnoreCase))
+        var isXlsx = file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase);
+        var isXls = !isXlsx && file.Name.EndsWith(".xls", StringComparison.OrdinalIgnoreCase);
+        if (!isXlsx && !isXls)
         {
             CallSnackBar("Chỉ nhận file Excel .xlsx hoặc .xls.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (isXls && !map.RequiresXls)
+        {
+            CallSnackBar("Loại file này chỉ hỗ trợ .xlsx. Vui lòng lưu lại file dưới dạng .xlsx trước khi import.", MudBlazor.Severity.Warning);
             return;
         }
 
@@ -584,37 +621,42 @@
             return;
         }
 
-        // C8 = số container dòng data đầu — bắt buộc có trước khi import
-        try
-        {
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-            using (var previewPackage = new ExcelPackage(memoryStream))
-            {
-                var previewWs = previewPackage.Workbook.Worksheets.FirstOrDefault();
-                if (previewWs?.Dimension == null)
-                {
-                    CallSnackBar("File Excel không có dữ liệu.", MudBlazor.Severity.Warning);
-                    return;
-                }
-
-                var contC8 = TrimOrNull(ReadCellText(previewWs, 8, 3));
-                if (string.IsNullOrWhiteSpace(contC8))
-                {
-                    CallSnackBar("Ô C8 không có số container — không thể import.", MudBlazor.Severity.Warning);
-                    return;
-                }
-            }
-            memoryStream.Position = 0;
-        }
-        catch (Exception ex)
-        {
-            CallSnackBar("Không đọc được file Excel: " + ex.Message, MudBlazor.Severity.Error);
-            return;
-        }
-
         try
         {
             _importing = true;
+
+            EorParseResult parseResult;
+            try
+            {
+                parseResult = EorExcelParser.Parse(memoryStream, map);
+            }
+            catch (InvalidOperationException ex)
+            {
+                CallSnackBar(ex.Message, MudBlazor.Severity.Warning);
+                return;
+            }
+
+            if (parseResult.Rows.Count == 0)
+            {
+                CallSnackBar("Không có dòng dữ liệu hợp lệ nào để import.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var previewDialog = await DialogService.ShowAsync<EorImportPreviewDialog>(
+                "Xem trước dữ liệu import",
+                new DialogParameters
+                {
+                    ["Rows"] = parseResult.Rows,
+                    ["SkippedRowCount"] = parseResult.SkippedRowCount,
+                    ["FileTypeLabel"] = CurrentImportTypeLabel
+                },
+                new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+            var previewResult = await previewDialog.Result;
+            if (previewResult is null || previewResult.Canceled)
+            {
+                CallSnackBar("Đã hủy import.", MudBlazor.Severity.Info);
+                return;
+            }
 
             var customerDialog = await DialogService.ShowAsync<CreDitTab_QuanLy_ImportCustomerDialog>(
                 "Chọn Customer",
@@ -643,117 +685,60 @@
                 CallSnackBar($"Không tìm thấy HBL trùng HBL_No: {QuanLyCont!.HBL_No}. Import vẫn tiếp tục với hblid trống.", MudBlazor.Severity.Warning);
             }
 
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-            using var package = new ExcelPackage(memoryStream);
-            var ws = package.Workbook.Worksheets.FirstOrDefault();
-            if (ws?.Dimension == null)
-            {
-                CallSnackBar("File Excel không có dữ liệu.", MudBlazor.Severity.Warning);
-                return;
-            }
-
-            var currency = ParseCurrencyFromCell(ws.Cells[6, 9].Value); // I6
-            var laborRate = ReadCellDouble(ws, 6, 20); // T6
-            if (string.IsNullOrWhiteSpace(currency))
-                currency = "USD";
-
-            DateTime? carryDateOfEst = null;
-            string? carryContainerNo = null;
-            string? carrySize = null;
-            DateTime? carryDateInYard = null;
-            string? carryManufacturingDate = null;
-            string? carryBilling = null;
-            string? carryOwner = null;
-            string? carryLocation = null;
-
             var successCount = 0;
-            var skipCount = 0;
-            const int dataStartRow = 8;
-
-            for (var row = dataStartRow; row <= ws.Dimension.End.Row; row++)
+            foreach (var row in parseResult.Rows)
             {
-                // Dòng total: không có IT/COM/COMPONENTS (cột G/H/I)
-                if (IsEorTotalRow(ws, row))
-                {
-                    skipCount++;
-                    continue;
-                }
-
-                // Carry-forward B-F, U-W
-                var dateOfEst = ReadCellDate(ws, row, 2) ?? carryDateOfEst;
-                var containerNo = TrimOrNull(ReadCellText(ws, row, 3)) ?? carryContainerNo;
-                var size = TrimOrNull(ReadCellText(ws, row, 4)) ?? carrySize;
-                var dateInYard = ReadCellDate(ws, row, 5) ?? carryDateInYard;
-                var manufacturingDate = FormatManufacturingDate(ws.Cells[row, 6].Value) ?? carryManufacturingDate;
-                var billing = TrimOrNull(ReadCellText(ws, row, 21)) ?? carryBilling;
-                var owner = TrimOrNull(ReadCellText(ws, row, 22)) ?? carryOwner;
-                var location = TrimOrNull(ReadCellText(ws, row, 23)) ?? carryLocation;
-
-                carryDateOfEst = dateOfEst;
-                carryContainerNo = containerNo;
-                carrySize = size;
-                carryDateInYard = dateInYard;
-                carryManufacturingDate = manufacturingDate;
-                carryBilling = billing;
-                carryOwner = owner;
-                carryLocation = location;
-
                 var baseCredit = new M_Credit
                 {
                     customerid = customerId,
                     hblid = hblId,
-                    tiente = currency,
-                    Labor_Rate = laborRate,
-                    Date_Of_EST = dateOfEst,
-                    ContainerNo = containerNo ?? (IsContContext ? TrimOrNull(QuanLyCont?.Container) : null),
-                    Size = size,
-                    Date_In_Yard = dateInYard,
-                    Manufacturing_Date = manufacturingDate,
-                    IT = TrimOrNull(ReadCellText(ws, row, 7)),
-                    Com_Code = TrimOrNull(ReadCellText(ws, row, 8)),
-                    COMPONENTS_DETAILS = TrimOrNull(ReadCellText(ws, row, 9)),
-                    LOC = TrimOrNull(ReadCellText(ws, row, 10)),
-                    DM_Code = TrimOrNull(ReadCellText(ws, row, 11)),
-                    RP_Code = TrimOrNull(ReadCellText(ws, row, 12)),
-                    LHT = ReadCellDouble(ws, row, 13),
-                    WDT = ReadCellDouble(ws, row, 14),
+                    tiente = row.Currency,
+                    Date_Of_EST = row.DateOfEst,
+                    Date_In_Yard = row.DateInYard,
+                    Manufacturing_Date = row.ManufacturingDate,
+                    ContainerNo = row.ContainerNo ?? (IsContContext ? TrimOrNull(QuanLyCont?.Container) : null),
+                    Size = row.Size,
+                    IT = row.IT,
+                    Com_Code = row.ComCode,
+                    COMPONENTS_DETAILS = row.ComponentDetails,
+                    LOC = row.Loc,
+                    DM_Code = row.DamCode,
+                    RP_Code = row.RepCode,
+                    LHT = row.Lht,
+                    WDT = row.Wdt,
+                    R = row.R,
                     soluong = 1,
-                    R = ReadCellDouble(ws, row, 16),
-                    Hours = ReadCellDouble(ws, row, 17),
-                    Labor_Cost = ReadCellDouble(ws, row, 18),
-                    Material_Cost = ReadCellDouble(ws, row, 19),
-                    Billing = billing,
-                    Owner = owner,
-                    Location = location
+                    Hours = row.Hours,
+                    Labor_Cost = row.LaborCost,
+                    Material_Cost = row.MaterialCost,
+                    Labor_Rate = row.LaborRate,
+                    Billing = row.Billing,
+                    Owner = row.Owner,
+                    Location = row.Location,
+                    EstNo = row.EstNo,
+                    Grade = row.Grade,
+                    DamageDetail = row.DamageDetail,
+                    Remark = row.Remark
                 };
 
-                var laborCost = baseCredit.Labor_Cost;
-                var materialCost = baseCredit.Material_Cost;
-
-                if ((!laborCost.HasValue || laborCost == 0) && (!materialCost.HasValue || materialCost == 0))
-                {
-                    skipCount++;
-                    continue;
-                }
-
-                if (laborCost.HasValue && laborCost != 0)
+                if (row.LaborCost.HasValue && row.LaborCost != 0)
                 {
                     var laborFee = CloneCreditBase(baseCredit);
                     laborFee.itemid = laborCharge.CHARGE_ID;
-                    laborFee.dongia = laborCost;
+                    laborFee.dongia = row.LaborCost;
                     laborFee.soluong = 1;
-                    laborFee.thanhtien = laborCost;
+                    laborFee.thanhtien = row.LaborCost;
                     if (await SaveImportedCreditAsync(laborFee))
                         successCount++;
                 }
 
-                if (materialCost.HasValue && materialCost != 0)
+                if (row.MaterialCost.HasValue && row.MaterialCost != 0)
                 {
                     var materialFee = CloneCreditBase(baseCredit);
                     materialFee.itemid = materialCharge.CHARGE_ID;
-                    materialFee.dongia = materialCost;
+                    materialFee.dongia = row.MaterialCost;
                     materialFee.soluong = 1;
-                    materialFee.thanhtien = materialCost;
+                    materialFee.thanhtien = row.MaterialCost;
                     if (await SaveImportedCreditAsync(materialFee))
                         successCount++;
                 }
@@ -762,7 +747,7 @@
             await Refresh();
             CallSnackBar(
                 successCount > 0
-                    ? $"Import EOR-ASR thành công {successCount} phí credit.{(skipCount > 0 ? $" Bỏ qua {skipCount} dòng." : string.Empty)}"
+                    ? $"Import {CurrentImportTypeLabel} thành công {successCount} phí credit.{(parseResult.SkippedRowCount > 0 ? $" Bỏ qua {parseResult.SkippedRowCount} dòng." : string.Empty)}"
                     : "Không import được phí credit nào.",
                 successCount > 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
         }
@@ -808,80 +793,4 @@
 
     private static M_Credit CloneCreditBase(M_Credit source) =>
         JsonSerializer.Deserialize<M_Credit>(JsonSerializer.Serialize(source))!;
-
-    /// <summary>Dòng total: không có IT / COM CODE / COMPONENTS (G/H/I).</summary>
-    private static bool IsEorTotalRow(ExcelWorksheet ws, int row)
-    {
-        var it = ReadCellText(ws, row, 7);
-        var com = ReadCellText(ws, row, 8);
-        var components = ReadCellText(ws, row, 9);
-        return string.IsNullOrWhiteSpace(it)
-            && string.IsNullOrWhiteSpace(com)
-            && string.IsNullOrWhiteSpace(components);
-    }
-
-    private static string? ParseCurrencyFromCell(object? value)
-    {
-        var text = Convert.ToString(value)?.Trim();
-        if (string.IsNullOrWhiteSpace(text))
-            return null;
-
-        var idx = text.LastIndexOf(':');
-        if (idx >= 0 && idx < text.Length - 1)
-            return text[(idx + 1)..].Trim();
-
-        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length > 0 ? parts[^1].Trim() : text;
-    }
-
-    private static string? FormatManufacturingDate(object? value)
-    {
-        if (value is DateTime dt)
-            return dt.ToString("MM/yyyy", CultureInfo.InvariantCulture);
-
-        var text = Convert.ToString(value)?.Trim();
-        if (string.IsNullOrWhiteSpace(text))
-            return null;
-
-        if (DateTime.TryParseExact(text, new[] { "MM/yyyy", "M/yyyy", "MM-yyyy", "M-yyyy" },
-                CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
-            return parsed.ToString("MM/yyyy", CultureInfo.InvariantCulture);
-
-        return text;
-    }
-
-    private static string? ReadCellText(ExcelWorksheet ws, int row, int col) =>
-        Convert.ToString(ws.Cells[row, col].Value)?.Trim();
-
-    private static double? ReadCellDouble(ExcelWorksheet ws, int row, int col)
-    {
-        var value = ws.Cells[row, col].Value;
-        if (value == null) return null;
-        if (value is double d) return d;
-        if (value is decimal m) return (double)m;
-        if (value is int i) return i;
-        if (value is long l) return l;
-        var text = Convert.ToString(value)?.Trim();
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        return double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)
-            || double.TryParse(text, NumberStyles.Any, CultureInfo.GetCultureInfo("en-US"), out parsed)
-            ? parsed
-            : null;
-    }
-
-    private static DateTime? ReadCellDate(ExcelWorksheet ws, int row, int col)
-    {
-        var value = ws.Cells[row, col].Value;
-        if (value is DateTime dt) return dt.Date;
-        var text = Convert.ToString(value)?.Trim();
-        if (string.IsNullOrWhiteSpace(text)) return null;
-        if (DateTime.TryParseExact(text, new[] { "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd", "MM/dd/yyyy" },
-                CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
-            return parsed.Date;
-        if (double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var oa) && oa > 0)
-            return DateTime.FromOADate(oa).Date;
-        return DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out parsed)
-            ? parsed.Date
-            : null;
-    }
 }

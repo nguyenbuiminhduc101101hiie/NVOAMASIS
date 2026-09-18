@@ -1,8 +1,11 @@
 ﻿@page "/quan-ly-cont"
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @using NVOAMASIS.Data
 @using NVOAMASIS.Models
+@using NVOAMASIS.Services
 @using NVOAMASIS.Components.Shipment.Pages
 @attribute [Authorize]
 @inject SharedServices ssv
@@ -10,6 +13,7 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
+@inject ShipmentService shipsv
 @inject IStringLocalizer<SharedResource> Localizer
 
 <PageTitle>@Localizer["QuanLyCont_Title"]</PageTitle>
@@ -54,6 +58,30 @@
                            StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadListAsync" Disabled="_busy">
                     Tải lại
                 </MudButton>
+                <MudDivider Vertical="true" FlexItem="true" Class="mx-1" />
+                <MudSelect T="string" @bind-Value="_importFileType"
+                           Label="Loại file"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Dense="true"
+                           Style="min-width: 210px;">
+                    @foreach (var opt in EorImportDefinitions.FileTypeOptions)
+                    {
+                        <MudSelectItem T="string" Value="@opt.Key">@opt.Label</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudTooltip Text="@($"Import {CurrentImportTypeLabel} — tạo container + phí Credit từ file")">
+                    <MudButton HtmlTag="label"
+                               Variant="Variant.Filled"
+                               Color="Color.Warning"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Upload"
+                               Disabled="@(_busy || _importing)"
+                               Class="btn-compact"
+                               Style="min-width: 36px; height: 30px; padding: 0 6px;">
+                        <InputFile OnChange="OnImportInputChanged" accept=".xlsx,.xls" style="display:none" />
+                    </MudButton>
+                </MudTooltip>
             </MudStack>
         </Toolbar>
     </PpScreenHeader>
@@ -117,10 +145,17 @@
     private const string PermissionMenuName = "QuanLyCont";
 
     private bool _busy;
+    private bool _importing;
     private List<QuanLy_Cont> _items = new();
     private QuanLy_Cont? _selected;
     private string usr = string.Empty;
     private string _searchText = string.Empty;
+    private string _importFileType = "EOR_ASR";
+    private List<M_Customer> _importCustomers = new();
+    private List<ChargeModel> _importCharges = new();
+
+    private string CurrentImportTypeLabel =>
+        EorImportDefinitions.FileTypeOptions.FirstOrDefault(x => x.Key == _importFileType).Label ?? _importFileType;
 
     private IEnumerable<QuanLy_Cont> VisibleItems
     {
@@ -152,6 +187,17 @@
         var auth = await asv.GetAuth();
         usr = auth.User.Identity?.Name ?? string.Empty;
         await LoadListAsync();
+        await LoadImportLookupsAsync();
+    }
+
+    private async Task LoadImportLookupsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _importCharges = await db.Charge.AsNoTracking()
+            .Where(x => x.CHARGE_CODE == null || !EF.Functions.Like(x.CHARGE_CODE, "%COMMISSION%"))
+            .OrderByDescending(x => x.UPDATETIME)
+            .ToListAsync();
+        _importCustomers = await db.Customer.AsNoTracking().OrderBy(x => x.shortname).ToListAsync();
     }
 
     private void CallSnackBar(string message, MudBlazor.Severity severity)
@@ -432,6 +478,290 @@
             _busy = false;
         }
     }
+
+    private async Task OnImportInputChanged(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null)
+            return;
+
+        if (!EorImportDefinitions.Maps.TryGetValue(_importFileType, out var map))
+        {
+            CallSnackBar("Loại file chưa được hỗ trợ.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        await ImportContainersFromExcelAsync(file, map);
+    }
+
+    /// <summary>Import file EOR/HDS: tự tạo (hoặc khớp) container theo số container trong file, rồi thêm phí Credit cho từng container.</summary>
+    private async Task ImportContainersFromExcelAsync(IBrowserFile file, EorColumnMap map)
+    {
+        if (!await ssv.CheckPermission(usr, "Add", PermissionMenuName))
+        {
+            CallSnackBar(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var isXlsx = file.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase);
+        var isXls = !isXlsx && file.Name.EndsWith(".xls", StringComparison.OrdinalIgnoreCase);
+        if (!isXlsx && !isXls)
+        {
+            CallSnackBar("Chỉ nhận file Excel .xlsx hoặc .xls.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (isXls && !map.RequiresXls)
+        {
+            CallSnackBar("Loại file này chỉ hỗ trợ .xlsx. Vui lòng lưu lại file dưới dạng .xlsx trước khi import.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        // Phải đọc file vào memory TRƯỚC khi mở dialog / StateHasChanged,
+        // nếu không InputFile bị dispose → lỗi _blazorFilesById.
+        using var memoryStream = new MemoryStream();
+        try
+        {
+            await using (var uploadStream = file.OpenReadStream(50 * 1024 * 1024))
+            {
+                await uploadStream.CopyToAsync(memoryStream);
+            }
+            memoryStream.Position = 0;
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Không đọc được file Excel: " + ex.Message, MudBlazor.Severity.Error);
+            return;
+        }
+
+        try
+        {
+            _importing = true;
+
+            EorParseResult parseResult;
+            try
+            {
+                parseResult = EorExcelParser.Parse(memoryStream, map);
+            }
+            catch (InvalidOperationException ex)
+            {
+                CallSnackBar(ex.Message, MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var groups = parseResult.Rows
+                .Where(r => !string.IsNullOrWhiteSpace(r.ContainerNo))
+                .GroupBy(r => r.ContainerNo!.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (groups.Count == 0)
+            {
+                CallSnackBar("Không tìm thấy số container nào trong file.", MudBlazor.Severity.Warning);
+                return;
+            }
+
+            var containerKeys = groups.Select(g => g.Key.ToUpperInvariant()).ToHashSet();
+            HashSet<string> existingContainers;
+            await using (var previewDb = await DbFactory.CreateDbContextAsync())
+            {
+                existingContainers = (await previewDb.QuanLy_Cont.AsNoTracking()
+                        .Where(x => containerKeys.Contains(x.Container.Trim().ToUpper()))
+                        .Select(x => x.Container.Trim().ToUpper())
+                        .ToListAsync())
+                    .ToHashSet();
+            }
+
+            var previewDialog = await DialogService.ShowAsync<EorImportPreviewDialog>(
+                "Xem trước dữ liệu import",
+                new DialogParameters
+                {
+                    ["Rows"] = parseResult.Rows,
+                    ["SkippedRowCount"] = parseResult.SkippedRowCount,
+                    ["FileTypeLabel"] = CurrentImportTypeLabel,
+                    ["ExistingContainers"] = existingContainers
+                },
+                new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+            var previewResult = await previewDialog.Result;
+            if (previewResult is null || previewResult.Canceled)
+            {
+                CallSnackBar("Đã hủy import.", MudBlazor.Severity.Info);
+                return;
+            }
+
+            var customerDialog = await DialogService.ShowAsync<CreDitTab_QuanLy_ImportCustomerDialog>(
+                "Chọn Customer",
+                new DialogParameters { ["Customers"] = _importCustomers },
+                new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true });
+            var customerResult = await customerDialog.Result;
+            if (customerResult is null || customerResult.Canceled || customerResult.Data is not Guid customerId || customerId == Guid.Empty)
+            {
+                CallSnackBar("Đã hủy import — chưa chọn Customer.", MudBlazor.Severity.Info);
+                return;
+            }
+
+            var laborCharge = _importCharges.FirstOrDefault(x =>
+                string.Equals(x.CHARGE?.Trim(), "LABOR COST", StringComparison.OrdinalIgnoreCase));
+            var materialCharge = _importCharges.FirstOrDefault(x =>
+                string.Equals(x.CHARGE?.Trim(), "MATERIAL COST", StringComparison.OrdinalIgnoreCase));
+            if (laborCharge is null || materialCharge is null)
+            {
+                CallSnackBar("Không tìm thấy Charge \"LABOR COST\" hoặc \"MATERIAL COST\".", MudBlazor.Severity.Error);
+                return;
+            }
+
+            var usdRate = await Vcbsv.Getexchange_cur("USD");
+            var createdContainers = 0;
+            var matchedContainers = 0;
+            var feeCount = 0;
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var hblCandidates = await db.HBL.AsNoTracking()
+                .Where(x => x.hbl != null && x.hbl != string.Empty)
+                .ToListAsync();
+
+            foreach (var group in groups)
+            {
+                var containerNo = group.Key;
+                var entity = await db.QuanLy_Cont.FirstOrDefaultAsync(x => x.Container.Trim().ToUpper() == containerNo.ToUpper());
+                var firstSizeText = group.Select(r => r.Size).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+
+                if (entity is null)
+                {
+                    var (contSize, contType) = ParseContainerSizeText(firstSizeText);
+                    entity = new QuanLy_Cont
+                    {
+                        Id = Guid.NewGuid(),
+                        Container = containerNo,
+                        ContSize = contSize,
+                        ContType = contType
+                    };
+                    db.QuanLy_Cont.Add(entity);
+                    await db.SaveChangesAsync();
+                    createdContainers++;
+                }
+                else
+                {
+                    matchedContainers++;
+                    if (entity.ContSize is null)
+                    {
+                        var (contSize, contType) = ParseContainerSizeText(firstSizeText);
+                        if (contSize.HasValue)
+                        {
+                            entity.ContSize = contSize;
+                            entity.ContType ??= contType;
+                            await db.SaveChangesAsync();
+                        }
+                    }
+                }
+
+                var hblId = Guid.Empty;
+                if (!string.IsNullOrWhiteSpace(entity.HBL_No))
+                {
+                    var hbl = hblCandidates.FirstOrDefault(x =>
+                        string.Equals(x.hbl?.Trim(), entity.HBL_No!.Trim(), StringComparison.OrdinalIgnoreCase));
+                    hblId = hbl?.hblID ?? Guid.Empty;
+                }
+
+                foreach (var row in group)
+                {
+                    var baseCredit = new M_Credit
+                    {
+                        customerid = customerId,
+                        hblid = hblId,
+                        Quanly_contid = entity.Id,
+                        tiente = row.Currency,
+                        Date_Of_EST = row.DateOfEst,
+                        Date_In_Yard = row.DateInYard,
+                        Manufacturing_Date = row.ManufacturingDate,
+                        ContainerNo = containerNo,
+                        Size = row.Size,
+                        IT = row.IT,
+                        Com_Code = row.ComCode,
+                        COMPONENTS_DETAILS = row.ComponentDetails,
+                        LOC = row.Loc,
+                        DM_Code = row.DamCode,
+                        RP_Code = row.RepCode,
+                        LHT = row.Lht,
+                        WDT = row.Wdt,
+                        R = row.R,
+                        soluong = 1,
+                        Hours = row.Hours,
+                        Labor_Cost = row.LaborCost,
+                        Material_Cost = row.MaterialCost,
+                        Labor_Rate = row.LaborRate,
+                        Billing = row.Billing,
+                        Owner = row.Owner,
+                        Location = row.Location,
+                        EstNo = row.EstNo,
+                        Grade = row.Grade,
+                        DamageDetail = row.DamageDetail,
+                        Remark = row.Remark,
+                        type = "CONT",
+                        thue = 0,
+                        tigiacredit = usdRate,
+                        tigiahoadondauvao = usdRate,
+                        userupdate = usr,
+                        dateupdate = DateTime.Now.ToString("dd/MM/yyyy HH:mm:ss")
+                    };
+
+                    if (row.LaborCost.HasValue && row.LaborCost != 0)
+                    {
+                        var laborFee = CloneCredit(baseCredit);
+                        laborFee.itemid = laborCharge.CHARGE_ID;
+                        laborFee.dongia = row.LaborCost;
+                        laborFee.thanhtien = row.LaborCost;
+                        laborFee.thanhtiensauthue = row.LaborCost;
+                        var rs = await shipsv.CreateCreditMBL(laborFee);
+                        if (rs.Flag) feeCount++;
+                    }
+
+                    if (row.MaterialCost.HasValue && row.MaterialCost != 0)
+                    {
+                        var materialFee = CloneCredit(baseCredit);
+                        materialFee.itemid = materialCharge.CHARGE_ID;
+                        materialFee.dongia = row.MaterialCost;
+                        materialFee.thanhtien = row.MaterialCost;
+                        materialFee.thanhtiensauthue = row.MaterialCost;
+                        var rs = await shipsv.CreateCreditMBL(materialFee);
+                        if (rs.Flag) feeCount++;
+                    }
+                }
+            }
+
+            await LoadListAsync();
+            CallSnackBar(
+                $"Import {CurrentImportTypeLabel}: tạo mới {createdContainers} container, khớp {matchedContainers} container có sẵn, thêm {feeCount} phí Credit." +
+                (parseResult.SkippedRowCount > 0 ? $" Bỏ qua {parseResult.SkippedRowCount} dòng." : string.Empty),
+                feeCount > 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Import Excel lỗi: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    /// <summary>Tách "20DC"/"45G0"/"20'DC" thành (Size=20/45, Type="DC"/"G0").</summary>
+    private static (int? Size, string? Type) ParseContainerSizeText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return (null, null);
+
+        var cleaned = text.Replace("'", "").Trim();
+        var match = Regex.Match(cleaned, @"^(\d+)\s*(.*)$");
+        if (!match.Success)
+            return (null, null);
+
+        var size = int.TryParse(match.Groups[1].Value, out var s) ? s : (int?)null;
+        var type = match.Groups[2].Value.Trim();
+        return (size, string.IsNullOrWhiteSpace(type) ? null : type);
+    }
+
+    private static M_Credit CloneCredit(M_Credit source) =>
+        JsonSerializer.Deserialize<M_Credit>(JsonSerializer.Serialize(source))!;
 }
 
 <style>

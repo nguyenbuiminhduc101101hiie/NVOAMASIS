@@ -1,0 +1,102 @@
+@using MudBlazor
+@using NVOAMASIS.Services
+
+<MudDialog Style="max-height: 92vh;">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Xem trước dữ liệu import — @FileTypeLabel</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3" Color="Color.Secondary">
+            @Rows.Count dòng phí sẽ được import@(SkippedRowCount > 0 ? $" (đã bỏ qua {SkippedRowCount} dòng trống/không hợp lệ)." : ".")
+            @if (ShowContainerSummary)
+            {
+                <text> Trong đó @NewContainerCount container mới sẽ được tạo, @ExistingContainerCount container đã có sẵn.</text>
+            }
+        </MudText>
+
+        @if (Rows.Count == 0)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Warning">Không có dòng dữ liệu hợp lệ nào để import.</MudAlert>
+        }
+        else
+        {
+            <MudDataGrid Items="@Rows"
+                         Dense="true"
+                         Bordered="true"
+                         Striped="true"
+                         FixedHeader="true"
+                         Virtualize="true"
+                         Height="60vh"
+                         ColumnResizeMode="ResizeMode.Column">
+                <Columns>
+                    @if (ShowContainerSummary)
+                    {
+                        <TemplateColumn Title="Trạng thái" Sortable="false" ShowColumnOptions="false">
+                            <CellTemplate>
+                                <MudChip T="string" Size="Size.Small" Color="@(IsNewContainer(context.Item.ContainerNo) ? Color.Success : Color.Default)">
+                                    @(IsNewContainer(context.Item.ContainerNo) ? "Mới" : "Đã có")
+                                </MudChip>
+                            </CellTemplate>
+                        </TemplateColumn>
+                    }
+                    <PropertyColumn Property="x => x.ContainerNo" Title="Container" />
+                    <PropertyColumn Property="x => x.Size" Title="Size" />
+                    <PropertyColumn Property="x => x.DateOfEst" Title="Date Of EST" Format="dd/MM/yyyy" />
+                    <PropertyColumn Property="x => x.ComCode" Title="Com Code" />
+                    <PropertyColumn Property="x => x.ComponentDetails" Title="Component Details" />
+                    <PropertyColumn Property="x => x.Loc" Title="LOC" />
+                    <PropertyColumn Property="x => x.DamCode" Title="Dam Code" />
+                    <PropertyColumn Property="x => x.RepCode" Title="Rep Code" />
+                    <PropertyColumn Property="x => x.Lht" Title="LHT" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.Wdt" Title="WDT" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.Hours" Title="Hours" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.LaborCost" Title="Labor Cost" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.MaterialCost" Title="Material Cost" Format="#,##0.##" />
+                    <PropertyColumn Property="x => x.Currency" Title="Tiền tệ" />
+                    <PropertyColumn Property="x => x.EstNo" Title="Est No" />
+                    <PropertyColumn Property="x => x.Grade" Title="Grade" />
+                    <PropertyColumn Property="x => x.DamageDetail" Title="Damage Detail" />
+                    <PropertyColumn Property="x => x.Remark" Title="Remark" />
+                </Columns>
+            </MudDataGrid>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Hủy</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Confirm" Disabled="Rows.Count == 0">
+            Xác nhận Import (@Rows.Count dòng)
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<EorImportRow> Rows { get; set; } = new();
+    [Parameter] public int SkippedRowCount { get; set; }
+    [Parameter] public string FileTypeLabel { get; set; } = string.Empty;
+    /// <summary>Số container (đã chuẩn hoá UPPER, trim) hiện có trong DB — truyền vào để hiển thị cột "Trạng thái". Để null nếu không cần (import cho 1 container cụ thể).</summary>
+    [Parameter] public HashSet<string>? ExistingContainers { get; set; }
+
+    private bool ShowContainerSummary => ExistingContainers != null;
+
+    private IEnumerable<string> DistinctContainers =>
+        Rows.Select(r => r.ContainerNo)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c!.Trim().ToUpperInvariant())
+            .Distinct();
+
+    private int NewContainerCount =>
+        ExistingContainers == null ? 0 : DistinctContainers.Count(c => !ExistingContainers.Contains(c));
+
+    private int ExistingContainerCount =>
+        ExistingContainers == null ? 0 : DistinctContainers.Count(c => ExistingContainers.Contains(c));
+
+    private bool IsNewContainer(string? containerNo) =>
+        ExistingContainers != null
+        && !string.IsNullOrWhiteSpace(containerNo)
+        && !ExistingContainers.Contains(containerNo.Trim().ToUpperInvariant());
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Confirm() => MudDialog.Close(DialogResult.Ok(true));
+}
