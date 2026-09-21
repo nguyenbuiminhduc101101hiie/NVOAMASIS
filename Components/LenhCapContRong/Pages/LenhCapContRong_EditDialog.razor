@@ -106,7 +106,7 @@
                                      ValueChanged="OnHaContTaiValueChanged"
                                      Text="@_haContTaiInput"
                                      TextChanged="OnHaContTaiTextChanged"
-                                     Label="HaContTai"
+                                     Label="Hạ cont tại"
                                      Variant="Variant.Outlined"
                                      Margin="Margin.Dense"
                                      SearchFunc="SearchHaContTai"
@@ -221,7 +221,8 @@
                         OT20 = x.OT20,
                         OT40 = x.OT40,
                         FR20 = x.FR20,
-                        FR40 = x.FR40
+                        FR40 = x.FR40,
+                        ReturnLadenPlace = x.ReturnLadenPlace
                     })
                     .FirstOrDefaultAsync();
             }
@@ -284,6 +285,7 @@
             var cn = rs.Branch;
 
             _model.OrderNo = cn + "LS" + formattedYear + formattedMonth + refno.Value.ToString("D4");
+            LinkHaContTaiFromBooking();
             StateHasChanged();
         }
         catch
@@ -292,10 +294,22 @@
         }
     }
 
+    // HaContTai (drop container at) is taken from the booking's Return Laden Place.
+    private void LinkHaContTaiFromBooking()
+    {
+        var place = _selectedBooking?.ReturnLadenPlace?.Trim();
+        if (string.IsNullOrWhiteSpace(place))
+            return;
+
+        _model.HaContTai = place;
+        _haContTaiInput = place;
+    }
+
     private async Task OnBookingChanged(Booking? booking)
     {
         _selectedBooking = booking;
         _model.bookingid = booking?.ContainerOutBoundNotifyId ?? Guid.Empty;
+        LinkHaContTaiFromBooking();
         await RecomputeRemainingAsync();
     }
 
@@ -343,7 +357,8 @@
                 OT20 = x.OT20,
                 OT40 = x.OT40,
                 FR20 = x.FR20,
-                FR40 = x.FR40
+                FR40 = x.FR40,
+                ReturnLadenPlace = x.ReturnLadenPlace
             })
             .Take(30)
             .ToListAsync();
@@ -561,18 +576,19 @@
         var s = value?.Trim() ?? string.Empty;
 
         await using var db = await DbFactory.CreateDbContextAsync();
-        var query = db.LenhCapContRong
+        // Same source as Return Laden Place in Booking: Terminal names.
+        var query = db.Terminal
             .AsNoTracking()
-            .Where(x => x.HaContTai != null && x.HaContTai != "");
+            .Where(x => x.TermiNalName != null && x.TermiNalName != "")
+            .Select(x => x.TermiNalName!);
 
         if (!string.IsNullOrWhiteSpace(s))
-            query = query.Where(x => x.HaContTai!.Contains(s));
+            query = query.Where(x => x.Contains(s));
 
         var list = await query
-            .Select(x => x.HaContTai!)
             .Distinct()
             .OrderBy(x => x)
-            .Take(50)
+            .Take(100)
             .ToListAsync();
 
         return list;
