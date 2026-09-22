@@ -2317,25 +2317,27 @@ namespace NVOAMASIS.Services
 
                 StiBlazorHelper.Initialize(JSRuntime);
 
-                report = StimulsoftLicenseHelper.CreateReport();
-                report.Load(new MemoryStream(templateBytes));
-                ApplyReportConnectionString(report, connectionString);
-                ApplyCompanyLogoToReport(report, reportLogo, showLogo: !isOriginal);
-                ApplyBillSeaFormToReport(report, formBackground);
-                // Watermark full-page chỉ khi form có ảnh nền riêng (tránh đổi hành vi nền công ty cũ).
-                ApplyFormBackgroundWatermark(report, customFormBackground);
-                report.Dictionary.Variables["ID"].Value = id.ToString();
-                report.Dictionary.Variables["chk_show_pre_Carr"].Value = showPreCarriage ? "true" : "false";
-                // Original = không logo, Draft = có logo
-                if (report.Dictionary.Variables["IsOriginal"] != null)
-                    report.Dictionary.Variables["IsOriginal"].Value = isOriginal ? "true" : "false";
-                StimulsoftLicenseHelper.PrepareAndRender(report);
-                using (var ms = new MemoryStream())
+                byte[] pdfData;
+                using (StimulsoftLicenseHelper.AcquireReportLock())
                 {
+                    report = StimulsoftLicenseHelper.CreateReport();
+                    report.Load(new MemoryStream(templateBytes));
+                    ApplyReportConnectionString(report, connectionString);
+                    ApplyCompanyLogoToReport(report, reportLogo, showLogo: !isOriginal);
+                    ApplyBillSeaFormToReport(report, formBackground);
+                    // Watermark full-page chỉ khi form có ảnh nền riêng (tránh đổi hành vi nền công ty cũ).
+                    ApplyFormBackgroundWatermark(report, customFormBackground);
+                    report.Dictionary.Variables["ID"].Value = id.ToString();
+                    report.Dictionary.Variables["chk_show_pre_Carr"].Value = showPreCarriage ? "true" : "false";
+                    // Original = không logo, Draft = có logo
+                    if (report.Dictionary.Variables["IsOriginal"] != null)
+                        report.Dictionary.Variables["IsOriginal"].Value = isOriginal ? "true" : "false";
+                    StimulsoftLicenseHelper.PrepareAndRender(report);
+                    using var ms = new MemoryStream();
                     report.ExportDocument(StiExportFormat.Pdf, ms);
-                    var pdfData = ms.ToArray();
-                    await JSRuntime.InvokeVoidAsync("openReportInNewTab", pdfData);
+                    pdfData = ms.ToArray();
                 }
+                await JSRuntime.InvokeVoidAsync("openReportInNewTab", pdfData);
 
 
                 return new BoolandMessReponse(true, "Export successfully!");
@@ -2344,7 +2346,9 @@ namespace NVOAMASIS.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                // Log full stack trace (kể cả inner exception) để chẩn đoán lỗi Stimulsoft
+                // "Item has already been added" — ex.Message không đủ để biết dòng/hàm nào ném.
+                Console.WriteLine(ex.ToString());
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
@@ -3232,25 +3236,32 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Resources["logo_bill"].Content = formBillSea;
         }
 
-        /// <summary>Đặt ảnh nền full-page phía sau nội dung (khi form dùng ảnh scanned / form blank).</summary>
+        /// <summary>
+        /// Đặt ảnh nền full-page phía sau nội dung (khi form dùng ảnh scanned / form blank).
+        /// Chỉ áp cho trang đầu tiên — form Attach có trang 2 (danh sách đính kèm) không dùng
+        /// ảnh nền của trang 1, nên trang 2 (và các trang sau) luôn bị tắt watermark.
+        /// </summary>
         private static void ApplyFormBackgroundWatermark(StiReport report, byte[]? background)
         {
-            if (background is not { Length: > 0 })
-                return;
-
-            var image = CreateLogoImage(background);
-            if (image is null)
-                return;
-
-            foreach (StiPage page in report.Pages)
+            var pages = report.Pages.Cast<StiPage>().ToList();
+            for (var i = 0; i < pages.Count; i++)
             {
-                page.Watermark.Enabled = true;
-                page.Watermark.Image = image;
-                page.Watermark.ImageStretch = true;
-                page.Watermark.AspectRatio = false;
-                page.Watermark.ImageTransparency = 0;
-                page.Watermark.ShowImageBehind = true;
-                page.Watermark.Text = string.Empty;
+                var page = pages[i];
+                if (i == 0 && background is { Length: > 0 } && CreateLogoImage(background) is { } image)
+                {
+                    page.Watermark.Enabled = true;
+                    page.Watermark.Image = image;
+                    page.Watermark.ImageStretch = true;
+                    page.Watermark.AspectRatio = false;
+                    page.Watermark.ImageTransparency = 0;
+                    page.Watermark.ShowImageBehind = true;
+                    page.Watermark.Text = string.Empty;
+                }
+                else
+                {
+                    page.Watermark.Enabled = false;
+                    page.Watermark.Image = null;
+                }
             }
         }
 
