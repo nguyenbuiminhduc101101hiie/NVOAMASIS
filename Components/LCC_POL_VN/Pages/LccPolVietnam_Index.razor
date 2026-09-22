@@ -1,0 +1,234 @@
+@page "/LccPolVietnam"
+@using Microsoft.AspNetCore.Components.Forms
+@attribute [Authorize]
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject AccountService asv
+@inject SharedServices ssv
+@inject LccPolVietnamServices lcpv
+@inject HistoryLogService HistoryLogService
+
+<style>
+    .lcc-pol-title { font-weight: 800; color: #0f3557; }
+    .lcc-pol-toolbar { background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 10px 12px; margin: 8px 12px; }
+    .lcc-pol-toolbar .mud-button-root { border-radius: 999px; text-transform: none; font-weight: 700; }
+    .lcc-pol-grid { border-radius: 14px; border: 1px solid #e2e8f0 !important; overflow: hidden; }
+    .lcc-pol-grid .mud-table-head th, .lcc-pol-grid .mud-table thead th { background: linear-gradient(180deg,#118ab2 0%,#0d6f91 100%) !important; color: #fff !important; font-weight: 800 !important; }
+    .lcc-pol-grid .mud-table-row:hover td { background-color: #eef8ff !important; }
+</style>
+
+<PageTitle>LCC POL VIETNAM</PageTitle>
+<MudText Class="pa-2 lcc-pol-title" Typo="Typo.h6">4.1.1 LCC POL VIETNAM</MudText>
+
+<MudStack Row Justify="Justify.FlexStart" Class="pa-4 lcc-pol-toolbar" Style="flex-wrap:wrap;">
+    <MudButton HtmlTag="label" OnClick="Refresh" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Refresh">
+        Tải lại
+    </MudButton>
+    <MudButton HtmlTag="label" @onclick="AddItem" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Add">
+        Thêm mới
+    </MudButton>
+    <MudButton HtmlTag="label" OnClick="OpenImportDialog" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.UploadFile">
+        Import Excel
+    </MudButton>
+    <MudButton HtmlTag="label" OnClick="OpenImportedFilesDialog" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.FolderDelete">
+        Quản lý file đã import
+    </MudButton>
+    <MudTextField T="string" @bind-Value="search" Placeholder="Tìm hãng tàu / loại phí..." Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true" Class="mt-0" Style="max-width:320px;" />
+</MudStack>
+
+<MudDataGrid T="M_LccPolVietnam" Items="@Listdata" Filterable="true" @ref="mudTable" Class="pa-4 lcc-pol-grid" Bordered="true"
+             FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true" QuickFilter="@FilterFunc1"
+             FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
+             ReadOnly="false" EditMode="DataGridEditMode.Form" EditDialogOptions="@options"
+             CommittedItemChanges="@CommittedItem" ColumnResizeMode="@(ResizeMode.Column)" Loading="_loading">
+    <Columns>
+        <TemplateColumn CellClass="d-flex justify-end" Editable="false" Filterable="false">
+            <CellTemplate>
+                <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" OnClick="@(()=>DeleteItem(context.Item))" />
+            </CellTemplate>
+        </TemplateColumn>
+
+        <PropertyColumn Required="false" Property="x => Listdata.IndexOf(x) + 1" Title="STT" Filterable="false" Editable="false" />
+
+        <PropertyColumn Property="x => x.Carrier" Title="Hãng tàu (Carrier)" Required="true">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Carrier" Label="Hãng tàu" Required Class="custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.ChargeType" Title="Loại phí (Charge Type)" Required="true">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.ChargeType" Label="Loại phí" Required Class="custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Container20DC" Title="20DC" CellClass="custom-right-align">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Container20DC" Label="20DC" Class="custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Container40HC" Title="40HC" CellClass="custom-right-align">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Container40HC" Label="40HC" Class="custom-label" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Remarks" Title="Ghi chú">
+            <EditTemplate>
+                <MudTextField @bind-Value="context.Item.Remarks" Label="Ghi chú" Class="custom-label" Lines="2" />
+            </EditTemplate>
+        </PropertyColumn>
+
+        <PropertyColumn Property="x => x.Userupdate" Title="Người cập nhật" Editable="false" />
+        <PropertyColumn Property="x => x.Dateupdate" Title="Ngày cập nhật" Editable="false" />
+        <PropertyColumn Property="x => x.SourceFileName" Title="File đã import" Editable="false" />
+    </Columns>
+
+    <PagerContent>
+        <MudDataGridPager T="M_LccPolVietnam" PageSizeOptions="@(new int[] { 20, 50, 100 })" />
+    </PagerContent>
+</MudDataGrid>
+
+@code {
+    List<M_LccPolVietnam> Listdata = new();
+    MudDataGrid<M_LccPolVietnam> mudTable;
+    string usr;
+    bool _loading = false;
+    string search;
+
+    DialogOptions options = new DialogOptions
+    {
+        ClassBackground = "class-dialog-custom",
+        FullWidth = true,
+        MaxWidth = MaxWidth.Medium,
+        CloseOnEscapeKey = false,
+        DisableBackdropClick = true
+    };
+
+    DialogOptions importOptions = new DialogOptions
+    {
+        ClassBackground = "class-dialog-custom",
+        FullWidth = true,
+        MaxWidth = MaxWidth.ExtraLarge,
+        CloseOnEscapeKey = false,
+        DisableBackdropClick = true
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        await Refresh();
+    }
+
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            if (!await ssv.CheckPermission(usr, "View", "LCC_POL_Vietnam"))
+            {
+                CallSnackBar("Bạn không có quyền xem dữ liệu này", MudBlazor.Severity.Warning);
+                Listdata = new();
+                return;
+            }
+            Listdata = await lcpv.GetList();
+            StateHasChanged();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+
+    private bool FilterFunc1(M_LccPolVietnam x) => FilterFunc(x, search);
+
+    private bool FilterFunc(M_LccPolVietnam x, string searchString)
+    {
+        if (string.IsNullOrWhiteSpace(searchString))
+            return true;
+        if (!string.IsNullOrWhiteSpace(x.Carrier) && x.Carrier.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!string.IsNullOrWhiteSpace(x.ChargeType) && x.ChargeType.Contains(searchString, StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
+    async Task AddItem()
+    {
+        if (!await ssv.CheckPermission(usr, "Add", "LCC_POL_Vietnam"))
+        {
+            CallSnackBar("Bạn không có quyền thêm mới", MudBlazor.Severity.Warning);
+            return;
+        }
+        var item = new M_LccPolVietnam();
+        Listdata.Insert(0, item);
+        await mudTable.SetEditingItemAsync(item);
+    }
+
+    async Task CommittedItem(M_LccPolVietnam item)
+    {
+        bool isNew = item.Id == Guid.Empty;
+        var permissionOk = isNew
+            ? await ssv.CheckPermission(usr, "Add", "LCC_POL_Vietnam")
+            : await ssv.CheckPermission(usr, "Edit", "LCC_POL_Vietnam");
+
+        if (!permissionOk)
+        {
+            CallSnackBar(isNew ? "Bạn không có quyền thêm mới" : "Bạn không có quyền chỉnh sửa", MudBlazor.Severity.Warning);
+            await Refresh();
+            return;
+        }
+
+        var rs = isNew ? await lcpv.Create(item, usr) : await lcpv.Update(item, item, usr);
+
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    async Task DeleteItem(M_LccPolVietnam item)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "LCC_POL_Vietnam"))
+        {
+            CallSnackBar("Bạn không có quyền xóa", MudBlazor.Severity.Warning);
+            return;
+        }
+        var resultMess = await DialogService.ShowMessageBox("Xác nhận", "Bạn có chắc muốn xóa dòng này?", yesText: "Xóa", cancelText: "Hủy");
+        if (resultMess.HasValue)
+        {
+            var rs = await lcpv.Delete(item, usr);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            await Refresh();
+        }
+    }
+
+    async Task OpenImportDialog()
+    {
+        if (!await ssv.CheckPermission(usr, "Edit", "LCC_POL_Vietnam"))
+        {
+            CallSnackBar("Bạn không có quyền import dữ liệu", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var dialog = await DialogService.ShowAsync<ImportDialog>("Import Excel - LCC POL VIETNAM", importOptions);
+        var result = await dialog.Result;
+        if (!result.Canceled)
+            await Refresh();
+    }
+
+    async Task OpenImportedFilesDialog()
+    {
+        var dialog = await DialogService.ShowAsync<ImportedFilesDialog>("File đã import - LCC POL VIETNAM", options);
+        await dialog.Result;
+        await Refresh();
+    }
+}

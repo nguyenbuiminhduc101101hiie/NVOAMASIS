@@ -236,6 +236,7 @@ builder.Services.AddScoped<GlobalServices>();
 builder.Services.AddScoped<BillSeaLayoutFormService>();
 builder.Services.AddScoped<ProductPriceServices>();
 builder.Services.AddScoped<LocalChargesServices>();
+builder.Services.AddScoped<LccPolVietnamServices>();
 builder.Services.AddScoped<LenhDieuXeServices>();
 builder.Services.AddScoped<YeuCauTruckingServices>();
 builder.Services.AddScoped<TKHQ_Services>();
