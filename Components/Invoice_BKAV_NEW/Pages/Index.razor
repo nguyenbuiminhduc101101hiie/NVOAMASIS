@@ -222,6 +222,24 @@
                                      Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined"
                                      Format="N2" Style="min-width:180px" />
                 </MudStack>
+                <MudStack Row="true" Spacing="2" Class="mt-3 flex-wrap" AlignItems="AlignItems.Start">
+                    <MudTextField Value="@_noteItemText"
+                                  T="string"
+                                  Label="Ghi chú trên Hóa đơn (item ItemTypeID = 4)"
+                                  Lines="2"
+                                  ReadOnly="true"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Style="min-width:480px; flex:1;" />
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Secondary"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.EditNote"
+                               OnClick="@OpenNoteDialog"
+                               Disabled="@(_busy || !HasSelectedGroup)">
+                        Sửa ghi chú
+                    </MudButton>
+                </MudStack>
             </MudPaper>
 
             @* ===== Bước 2 ===== *@
@@ -535,6 +553,7 @@
     private string _invoiceForm = "1";
     private string _invoiceSerial = string.Empty;
     private string _invoiceNoText = string.Empty;
+    private string _noteItemText = string.Empty;
     private string _taxCode = string.Empty;
     private string _demoAccount = string.Empty;
     private int _createCommandType;
@@ -642,6 +661,7 @@
         _invoiceNoText = group.BkavInvoiceNo?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         ApplyInvoiceTotals(group);
         _taxCode = string.Empty;
+        _noteItemText = BuildSuggestedNoteText(group);
         SetMessage(Localizer["BkavNew.SelectedDetail", group.InternalInvoiceNo, group.CustomerName].Value, MudBlazor.Severity.Info);
     }
 
@@ -951,8 +971,35 @@
             PayMethodID = _payMethodId,
             TaxCode = _taxCode,
             // Status local; CreateDraft/Publish map theo CmdType FAQ (1/11/2), không gửi InvoiceStatusID lên wire
-            InvoiceStatusID = _selected?.BkavStatusID ?? BkavInvoiceStatusIds.WaitingSign
+            InvoiceStatusID = _selected?.BkavStatusID ?? BkavInvoiceStatusIds.WaitingSign,
+            NoteItemText = string.IsNullOrWhiteSpace(_noteItemText) ? null : _noteItemText.Trim()
         };
+    }
+
+    private async Task OpenNoteDialog()
+    {
+        var initial = string.IsNullOrWhiteSpace(_noteItemText) ? BuildSuggestedNoteText(_selected) : _noteItemText;
+        var parameters = new DialogParameters { [nameof(InvoiceNoteDialog.InitialText)] = initial };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true };
+        var dialog = await DialogService.ShowAsync<InvoiceNoteDialog>("Ghi chú trên Hóa đơn", parameters, options);
+        var result = await dialog.Result;
+
+        if (result.Canceled || result.Data is not string text)
+            return;
+
+        _noteItemText = text.Trim();
+    }
+
+    /// <summary>Gợi ý nội dung ghi chú từ HBL: VESSEL/VOYAGE - POL - POD - BILL.</summary>
+    private static string BuildSuggestedNoteText(BkavInvoiceGroup? group)
+    {
+        if (group is null)
+            return string.Empty;
+
+        return $"TÊN CHUYẾN TÀU/SỐ CHUYẾN (VESSEL/VOYAGE): {group.HblVessel} / {group.HblVoy}" +
+               $" - CẢNG XẾP HÀNG (POL): {group.HblPolName}" +
+               $" - CẢNG DỠ HÀNG (POD): {group.HblPodName}" +
+               $" - SỐ VẬN ĐƠN (BILL): {group.HblNo}";
     }
 
     private BkavInvoiceRuntimeCredentials? GetRuntimeCredentials()
