@@ -146,6 +146,8 @@ public class BkavInvoiceActionInput
     public string? TaxCode { get; set; }
     /// <summary>Status local theo FAQ (1/11/2). Không gửi lên wire khi tạo HĐ.</summary>
     public int InvoiceStatusID { get; set; } = BkavInvoiceStatusIds.WaitingSign;
+    /// <summary>Nội dung ghi chú — nếu có, thêm 1 item ItemTypeID=4 vào ListInvoiceDetailsWS.</summary>
+    public string? NoteItemText { get; set; }
 }
 
 public class BkavInvoiceRuntimeCredentials
@@ -154,12 +156,26 @@ public class BkavInvoiceRuntimeCredentials
     public string? PartnerToken { get; set; }
 }
 
+/// <summary>Thông tin HBL rút gọn, dùng để gợi ý nội dung ghi chú (note item ItemTypeID=4) trên Hóa đơn.</summary>
+public sealed class HblNoteInfo
+{
+    public string Hbl { get; set; } = string.Empty;
+    public string Vessel { get; set; } = string.Empty;
+    public string Voy { get; set; } = string.Empty;
+    public string PolName { get; set; } = string.Empty;
+    public string PodName { get; set; } = string.Empty;
+}
+
 public class BkavInvoiceGroup
 {
     public string InternalInvoiceNo { get; set; } = string.Empty;
     public Guid CustomerId { get; set; }
     public string CustomerName { get; set; } = string.Empty;
     public string HblNo { get; set; } = string.Empty;
+    public string HblVessel { get; set; } = string.Empty;
+    public string HblVoy { get; set; } = string.Empty;
+    public string HblPolName { get; set; } = string.Empty;
+    public string HblPodName { get; set; } = string.Empty;
     public int LineCount { get; set; }
     public DateTime? InvoiceDate { get; set; }
     public string? ElectronicInvoiceNo { get; set; }
@@ -266,9 +282,16 @@ public class BkavInvoiceService(
         var hbls = (await context.HBL
             .AsNoTracking()
             .Where(x => hblIds.Contains(x.hblID))
-            .Select(x => new { x.hblID, x.hbl })
+            .Select(x => new { x.hblID, x.hbl, x.vessel, x.voy, x.polname, x.podname })
             .ToListAsync(cancellationToken))
-            .ToDictionary(x => x.hblID, x => x.hbl ?? string.Empty);
+            .ToDictionary(x => x.hblID, x => new HblNoteInfo
+            {
+                Hbl = x.hbl ?? string.Empty,
+                Vessel = x.vessel ?? string.Empty,
+                Voy = x.voy ?? string.Empty,
+                PolName = x.polname ?? string.Empty,
+                PodName = x.podname ?? string.Empty
+            });
 
         return invoices
             .GroupBy(x => new { InternalInvoiceNo = Clean(x.sohoadonNoibo), x.customerid })
@@ -1216,9 +1239,16 @@ public class BkavInvoiceService(
         var hbls = (await context.HBL
             .AsNoTracking()
             .Where(x => hblIds.Contains(x.hblID))
-            .Select(x => new { x.hblID, x.hbl })
+            .Select(x => new { x.hblID, x.hbl, x.vessel, x.voy, x.polname, x.podname })
             .ToListAsync(cancellationToken))
-            .ToDictionary(x => x.hblID, x => x.hbl ?? string.Empty);
+            .ToDictionary(x => x.hblID, x => new HblNoteInfo
+            {
+                Hbl = x.hbl ?? string.Empty,
+                Vessel = x.vessel ?? string.Empty,
+                Voy = x.voy ?? string.Empty,
+                PolName = x.polname ?? string.Empty,
+                PodName = x.podname ?? string.Empty
+            });
 
         return new GroupState(normalizedInternalNo, customerId, lines, customer, charges, BuildGroup(normalizedInternalNo, customerId, lines, new Dictionary<Guid, M_Customer> { [customer.Customer_ID] = customer }, charges, hbls), string.Empty);
     }
@@ -1248,6 +1278,9 @@ public class BkavInvoiceService(
             + details.Where(x => x.IsDiscount).Sum(x => Math.Abs(x.Amount));
         var calculatedTaxAmount = details.Sum(x => x.IsDiscount ? -Math.Abs(x.TaxAmount) : x.TaxAmount);
         var calculatedPaymentAmount = calculatedItemAmount - calculatedDiscountAmount + calculatedTaxAmount;
+
+        if (!string.IsNullOrWhiteSpace(input.NoteItemText))
+            details.Add(BuildNoteDetail(input.NoteItemText.Trim()));
 
         var invoiceWs = new BkavInvoiceWS
         {
@@ -1357,6 +1390,24 @@ public class BkavInvoiceService(
             IsIncrease = adjustmentIsIncrease
         };
     }
+
+    /// <summary>Item ghi chú trên Hóa đơn (ItemTypeID=4) — IsDiscount=true + Amount=0 để không ảnh hưởng tổng tiền.</summary>
+    private static BkavInvoiceDetailsWS BuildNoteDetail(string noteText) => new()
+    {
+        ItemTypeID = 4,
+        ItemName = noteText,
+        UnitName = string.Empty,
+        Qty = 0,
+        Price = 0,
+        Amount = 0,
+        TaxRateID = 0,
+        TaxRate = 0,
+        TaxAmount = 0,
+        DiscountRate = 0,
+        DiscountAmount = 0,
+        IsDiscount = true,
+        UserDefineDetails = string.Empty
+    };
 
     private BkavInvoiceDataWS BuildPartnerLookup(GroupState state, long? partnerInvoiceIdOverride = null)
     {
@@ -1959,7 +2010,7 @@ public class BkavInvoiceService(
         List<M_HoaDonDauRa> lines,
         IReadOnlyDictionary<Guid, M_Customer> customers,
         IReadOnlyDictionary<Guid, ChargeModel>? charges = null,
-        IReadOnlyDictionary<Guid, string>? hbls = null)
+        IReadOnlyDictionary<Guid, HblNoteInfo>? hbls = null)
     {
         customers.TryGetValue(customerId, out var customer);
         var first = lines.FirstOrDefault();
@@ -1978,16 +2029,20 @@ public class BkavInvoiceService(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var hblNos = lines
-            .Select(line =>
-            {
-                if (hbls == null || line.hblid == Guid.Empty)
-                    return string.Empty;
-                return hbls.TryGetValue(line.hblid, out var hblNo) ? Clean(hblNo) : string.Empty;
-            })
+        var hblSnapshots = lines
+            .Select(line => hbls != null && line.hblid != Guid.Empty && hbls.TryGetValue(line.hblid, out var snap) ? snap : null)
+            .Where(x => x != null)
+            .Select(x => x!)
+            .ToList();
+
+        var hblNos = hblSnapshots
+            .Select(x => Clean(x.Hbl))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        // Ghi chú (note item) chỉ cần thông tin của 1 HBL đại diện — lấy HBL đầu tiên tìm thấy.
+        var firstHbl = hblSnapshots.FirstOrDefault();
 
         return new BkavInvoiceGroup
         {
@@ -1995,6 +2050,10 @@ public class BkavInvoiceService(
             CustomerId = customerId,
             CustomerName = customer == null ? string.Empty : FirstNonEmpty(customer.Customer_Code, customer.COMPANY, customer.EnglishName),
             HblNo = string.Join("; ", hblNos),
+            HblVessel = firstHbl == null ? string.Empty : Clean(firstHbl.Vessel),
+            HblVoy = firstHbl == null ? string.Empty : Clean(firstHbl.Voy),
+            HblPolName = firstHbl == null ? string.Empty : Clean(firstHbl.PolName),
+            HblPodName = firstHbl == null ? string.Empty : Clean(firstHbl.PodName),
             LineCount = lines.Count,
             InvoiceDate = lines.Select(x => x.ngayphathanhhoadonDientu).FirstOrDefault(x => x.HasValue),
             ElectronicInvoiceNo = first?.sohoadonDientu,
