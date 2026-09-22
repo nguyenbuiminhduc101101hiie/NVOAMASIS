@@ -339,10 +339,23 @@
                     </MudSelect>
                 </EditTemplate>
             </PropertyColumn>
-            <PropertyColumn Property="x => x.JobNo" Title="@Localizer["Job No"]" Required CellStyleFunc="_cellStyleFunc" >
+            <PropertyColumn Property="x => x.Loai" Title="@Localizer["Type"]" Required CellStyleFunc="_cellStyleFunc">
+                <EditTemplate>
+                    <MudSelect T="string" Value="context.Item.Loai" ValueChanged="@(value => UpdateJobType(context.Item, value))" Label="@Localizer["Type"]" Required>
+                        <MudSelectItem Value="@("AI")">AI</MudSelectItem>
+                        <MudSelectItem Value="@("AE")">AE</MudSelectItem>
+                        <MudSelectItem Value="@("SI")">SI</MudSelectItem>
+                        <MudSelectItem Value="@("SE")">SE</MudSelectItem>
+                        <MudSelectItem Value="@("Truck")">Truck</MudSelectItem>
+                        <MudSelectItem Value="@("Customs")">Customs</MudSelectItem>
+                        <MudSelectItem Value="@("WH")">WH</MudSelectItem>
+                    </MudSelect>
+                    <MudDatePicker Label="@Localizer["Selected Date Create Job"]" DateChanged="((t)=>UpdateJobNo(context.Item,(DateTime)t!))" ImmediateText DateFormat="MM/yyyy" Disabled="@string.IsNullOrWhiteSpace(context.Item.Loai)" />
+                </EditTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.JobNo" Title="@Localizer["Job No"]" Required CellStyleFunc="_cellStyleFunc">
                 <EditTemplate>
                     <MudTextField @bind-Value="context.Item.JobNo" Immediate Label="@Localizer["Job No"]" Disabled Required />
-                    <MudDatePicker Label="@Localizer["Selected Date Create Job"]" DateChanged="((t)=>UpdateJobNo(context.Item,(DateTime)t!))" ImmediateText DateFormat="MM/yyyy" />
                 </EditTemplate>
             </PropertyColumn>
             <PropertyColumn Property="x => CountMBL(x.JobID)" Title="@Localizer["Total MBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
@@ -374,19 +387,6 @@
                         <MudSelectItem Value="@("F")">F</MudSelectItem>
                         <MudSelectItem Value="@("L")">L</MudSelectItem>
                         <MudSelectItem Value="@("C")">C</MudSelectItem>
-                    </MudSelect>
-                </EditTemplate>
-            </PropertyColumn>
-            <PropertyColumn Property="x => x.Loai" Title="@Localizer["Type"]" Required CellStyleFunc="_cellStyleFunc">
-                <EditTemplate>
-                    <MudSelect @bind-Value="context.Item.Loai" Label="@Localizer["Type"]">
-                        <MudSelectItem Value="@("AI")">AI</MudSelectItem>
-                        <MudSelectItem Value="@("AE")">AE</MudSelectItem>
-                        <MudSelectItem Value="@("SI")">SI</MudSelectItem>
-                        <MudSelectItem Value="@("SE")">SE</MudSelectItem>
-                        <MudSelectItem Value="@("Truck")">Truck</MudSelectItem>
-                        <MudSelectItem Value="@("Customs")">Customs</MudSelectItem>
-                        <MudSelectItem Value="@("WH")">WH</MudSelectItem>
                     </MudSelect>
                 </EditTemplate>
             </PropertyColumn>
@@ -1203,18 +1203,37 @@
     MudDataGrid<M_Job> mudTable;
     async Task UpdateJobNo(M_Job item ,DateTime value)
     {
-        var refno = await supsv.GetRefNoByFunc("JOB", value.Month, value.Year, usr);
-        string tiepdaungu = "";
-        if(item.Loai_Nvo_Fre == "NVOCC-Freight")
-        {
-             tiepdaungu = await supsv.GetTiepDauNguByFunc("JOBNVO");
-        }
-        else
-        {
-             tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");
-        }
+        if (string.IsNullOrWhiteSpace(item.Loai))
+            return;
 
-        item.JobNo = tiepdaungu + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D5") : "RefNoError!");
+        var refno = await supsv.GetRefNoByFunc("JOB", value.Month, value.Year, usr);
+        var prefix = await GetJobNoPrefix(item);
+        item.JobNo = prefix + item.Loai + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D5") : "RefNoError!");
+    }
+
+    async Task UpdateJobType(M_Job item, string? type)
+    {
+        var previousType = item.Loai;
+        item.Loai = type;
+
+        if (string.IsNullOrWhiteSpace(item.JobNo))
+            return;
+
+        var prefix = await GetJobNoPrefix(item);
+        if (string.IsNullOrEmpty(prefix) || !item.JobNo.StartsWith(prefix, StringComparison.Ordinal))
+            return;
+
+        var jobSuffix = item.JobNo[prefix.Length..];
+        if (!string.IsNullOrWhiteSpace(previousType) && jobSuffix.StartsWith(previousType, StringComparison.Ordinal))
+            jobSuffix = jobSuffix[previousType.Length..];
+
+        item.JobNo = prefix + type + jobSuffix;
+    }
+
+    async Task<string> GetJobNoPrefix(M_Job item)
+    {
+        var prefixType = item.Loai_Nvo_Fre == "NVOCC-Freight" ? "JOBNVO" : "JOB";
+        return await supsv.GetTiepDauNguByFunc(prefixType);
     }
 
     async Task AddItem() => await AddNewJobRow(null);
@@ -1672,7 +1691,7 @@
         return matchLoai && matchSearch;
     };
 
-    // Khớp filter "View Document": tìm theo Job/MBL/HBL/BK/Container.
+    // Khớp filter "View Document": tìm theo Job/MBL/HBL/BK/Container/Customer.
     private bool MatchesViewDocFilter(M_Job x)
     {
         if (!HasViewDocFilter) return true;
@@ -1687,8 +1706,7 @@
         bool needCheckChildren = !string.IsNullOrWhiteSpace(SearchMBL)
             || !string.IsNullOrWhiteSpace(SearchHBL)
             || !string.IsNullOrWhiteSpace(SearchBK)
-            || !string.IsNullOrWhiteSpace(SearchContNo)
-            || SearchCusID != Guid.Empty;
+            || !string.IsNullOrWhiteSpace(SearchContNo);
 
         if (!needCheckChildren) return true;
 

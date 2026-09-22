@@ -875,6 +875,10 @@
             if (customerId.HasValue && customerId.Value != Guid.Empty)
                 Item.CustomerID = customerId.Value;
 
+            var agentId = ResolveBookingAgentId(bk);
+            if (agentId != Guid.Empty)
+                Item.AgentID = agentId;
+
             var sale = FirstNonEmpty(bk.SaleCode, bk.SaleName);
             if (!string.IsNullOrWhiteSpace(sale)
                 && SaleNames.Any(x => string.Equals(x, sale, StringComparison.OrdinalIgnoreCase)))
@@ -930,6 +934,29 @@
         return port != null ? (port.PORT, port.PORT_CODE) : (name, code);
     }
 
+    private Guid ResolveBookingAgentId(Booking bk)
+    {
+        if (Customers == null)
+            return Guid.Empty;
+
+        if (bk.agencyID.HasValue && bk.agencyID.Value != Guid.Empty
+            && Customers.Any(x => x.Customer_ID == bk.agencyID.Value))
+            return bk.agencyID.Value;
+
+        // Booking stores the agency as "shortname___COMPANY" text.
+        var name = bk.agencyname_box?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return Guid.Empty;
+
+        var match = Customers.FirstOrDefault(x =>
+                        string.Equals((x.shortname + "___" + x.COMPANY).Trim(), name, StringComparison.OrdinalIgnoreCase))
+                    ?? Customers.FirstOrDefault(x =>
+                        string.Equals(x.COMPANY?.Trim(), name, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(x.shortname?.Trim(), name, StringComparison.OrdinalIgnoreCase));
+
+        return match?.Customer_ID ?? Guid.Empty;
+    }
+
     private static string? FirstNonEmpty(params string?[] values)
         => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
 
@@ -980,9 +1007,9 @@
     string AgentidtoName(Guid id)
     {
         if (id == Guid.Empty) return string.Empty;
-        // In the current page, Agent name is read from Customers table.
+        // Same format as Agency Name in Booking: shortname___COMPANY
         var rs = Customers.FirstOrDefault(x => x.Customer_ID == id);
-        return rs == null ? string.Empty : rs.COMPANY ?? string.Empty;
+        return rs == null ? string.Empty : rs.shortname + "___" + rs.COMPANY;
     }
 
     private async Task<IEnumerable<Guid>> SearchCustomer(string text)
@@ -1007,16 +1034,16 @@
     private async Task<IEnumerable<Guid>> SearchAgent(string text)
     {
         await Task.Delay(1);
-        if (string.IsNullOrWhiteSpace(text))
+        IEnumerable<M_Customer> query = Customers;
+        if (!string.IsNullOrWhiteSpace(text))
         {
-            return Customers
-                .Where(x => !string.IsNullOrWhiteSpace(x.MainCode) && x.MainCode.Contains("Agent"))
-                .Select(x => x.Customer_ID);
+            query = query.Where(x => (x.shortname + "___" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase));
         }
 
-        return Customers
-            .Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase))
-            .Select(x => x.Customer_ID);
+        var ids = query.Select(x => x.Customer_ID).Distinct().ToList();
+        if (Item.AgentID != Guid.Empty && !ids.Contains(Item.AgentID))
+            ids.Insert(0, Item.AgentID);
+        return ids;
     }
 
     private async Task<IEnumerable<string?>> SearchCFS(string text)
