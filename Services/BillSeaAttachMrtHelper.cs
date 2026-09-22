@@ -122,7 +122,12 @@ namespace NVOAMASIS.Services
 
                 foreach (var attribute in element.Attributes())
                 {
-                    if (!attribute.Name.LocalName.EndsWith("Ref", StringComparison.Ordinal))
+                    // Bỏ qua "Ref" — đã remap ở nhánh trên. Nếu xử lý lại ở đây, attribute.Value
+                    // lúc này đã là giá trị MỚI (vừa gán), có thể trùng với một oldRef khác trong
+                    // refMap và bị remap chồng lần 2 → sinh Ref trùng (bug gốc gây "Item has already
+                    // been added"). Chỉ còn "isRef" (Page/Parent) mới cần xử lý ở đây.
+                    if (attribute.Name.LocalName == "Ref"
+                        || !attribute.Name.LocalName.EndsWith("Ref", StringComparison.Ordinal))
                         continue;
 
                     if (refMap.TryGetValue(attribute.Value, out var mappedReference))
