@@ -79,6 +79,7 @@ namespace NVOAMASIS.Data
         public DbSet<ZaloAccessToken> ZaloAccesstoken { get; set; }
 
         public DbSet<M_LocalCharge_pt>localcharges_pt { get; set; }
+        public DbSet<M_LccPolVietnam> LccPolVietnam { get; set; }
         public DbSet<M_LenhDieuXe> LenhDieuXe { get; set; }
         public DbSet<M_YeuCauTrucking> YeuCauTrucking { get; set; }
         public DbSet<M_TKHQ_Thongtinchitiet> TKHQ_Thongtinchitiet { get; set; }

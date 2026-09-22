@@ -1,0 +1,91 @@
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject LccPolVietnamServices lcpv
+@inject SharedServices ssv
+@inject AccountService asv
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Danh sách các file Excel đã import. Xóa 1 file sẽ xóa toàn bộ các dòng dữ liệu (Carrier + Loại phí) được nạp từ file đó.
+        </MudText>
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-3" />
+        }
+        else if (_files.Count == 0)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info">Chưa có file nào được import.</MudAlert>
+        }
+        else
+        {
+            <MudTable Items="@_files" Dense="true" Hover="true" Bordered="true">
+                <HeaderContent>
+                    <MudTh>Tên file</MudTh>
+                    <MudTh>Số dòng</MudTh>
+                    <MudTh>Import lần cuối</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Tên file">@context.FileName</MudTd>
+                    <MudTd DataLabel="Số dòng">@context.RowCount</MudTd>
+                    <MudTd DataLabel="Import lần cuối">@(context.LastImportDate?.ToString("dd/MM/yyyy HH:mm"))</MudTd>
+                    <MudTd>
+                        <MudIconButton Icon="@Icons.Material.Outlined.Delete" Color="Color.Error" Size="Size.Small"
+                                       OnClick="@(() => DeleteFile(context.FileName))" />
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">Đóng</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; }
+
+    List<LccPolVietnamImportedFile> _files = new();
+    bool _loading;
+    string usr = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+        await LoadFiles();
+    }
+
+    async Task LoadFiles()
+    {
+        _loading = true;
+        StateHasChanged();
+        _files = await lcpv.GetImportedFiles();
+        _loading = false;
+    }
+
+    async Task DeleteFile(string fileName)
+    {
+        if (!await ssv.CheckPermission(usr, "Delete", "LCC_POL_Vietnam"))
+        {
+            Snackbar.Add("Bạn không có quyền xóa", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "Xác nhận",
+            $"Xóa toàn bộ dữ liệu đã import từ file '{fileName}'?",
+            yesText: "Xóa", cancelText: "Hủy");
+
+        if (confirmed != true)
+            return;
+
+        var rs = await lcpv.DeleteByFileName(fileName, usr);
+        Snackbar.Add(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        if (rs.Flag)
+            await LoadFiles();
+    }
+
+    void Close() => MudDialog.Close(DialogResult.Ok(true));
+}
