@@ -1,0 +1,261 @@
+@inject BkavInvoiceService bkavsv
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+@using System.Globalization
+
+<PageTitle>@Localizer["BkavThongKe.Title"]</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@Localizer["BkavThongKe.Title"]" Subtitle="@Localizer["BkavThongKe.Subtitle"]" />
+    <MudPaper Class="product-price-card" Elevation="0">
+        <MudContainer MaxWidth="MaxWidth.False" Class="pa-3">
+
+            @* ===== Bộ lọc ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.CloudDownload"
+                               OnClick="@LoadGroups"
+                               Disabled="@_loading">
+                        @Localizer["BkavNew.LoadInvoices"]
+                    </MudButton>
+
+                    <MudSelect T="InvoiceStatusFilter"
+                               @bind-Value="_statusFilter"
+                               Label="@Localizer["BkavThongKe.Filter.Status"]"
+                               Dense="true"
+                               Margin="Margin.Dense"
+                               Variant="Variant.Outlined"
+                               Style="min-width:220px">
+                        <MudSelectItem T="InvoiceStatusFilter" Value="InvoiceStatusFilter.All">@Localizer["BkavThongKe.Filter.Status.All"]</MudSelectItem>
+                        <MudSelectItem T="InvoiceStatusFilter" Value="InvoiceStatusFilter.Draft">@Localizer["BkavThongKe.Filter.Status.Draft"]</MudSelectItem>
+                        <MudSelectItem T="InvoiceStatusFilter" Value="InvoiceStatusFilter.Signed">@Localizer["BkavThongKe.Filter.Status.Signed"]</MudSelectItem>
+                    </MudSelect>
+
+                    <MudSelect T="ThuHoFilter"
+                               @bind-Value="_thuHoFilter"
+                               Label="@Localizer["BkavThongKe.Filter.ThuHo"]"
+                               Dense="true"
+                               Margin="Margin.Dense"
+                               Variant="Variant.Outlined"
+                               Style="min-width:180px">
+                        <MudSelectItem T="ThuHoFilter" Value="ThuHoFilter.All">@Localizer["BkavThongKe.Filter.ThuHo.All"]</MudSelectItem>
+                        <MudSelectItem T="ThuHoFilter" Value="ThuHoFilter.Yes">@Localizer["BkavThongKe.Filter.ThuHo.Yes"]</MudSelectItem>
+                        <MudSelectItem T="ThuHoFilter" Value="ThuHoFilter.No">@Localizer["BkavThongKe.Filter.ThuHo.No"]</MudSelectItem>
+                    </MudSelect>
+
+                    <MudDatePicker @bind-Date="_fromDate"
+                                   Label="@Localizer["BkavThongKe.Filter.FromDate"]"
+                                   Dense="true"
+                                   Margin="Margin.Dense"
+                                   Variant="Variant.Outlined"
+                                   Editable="true"
+                                   DateFormat="dd/MM/yyyy"
+                                   Style="min-width:160px" />
+
+                    <MudDatePicker @bind-Date="_toDate"
+                                   Label="@Localizer["BkavThongKe.Filter.ToDate"]"
+                                   Dense="true"
+                                   Margin="Margin.Dense"
+                                   Variant="Variant.Outlined"
+                                   Editable="true"
+                                   DateFormat="dd/MM/yyyy"
+                                   Style="min-width:160px" />
+
+                    <MudTextField @bind-Value="_textFilter"
+                                  Label="@Localizer["BkavNew.Filter"]"
+                                  Immediate="true"
+                                  Dense="true"
+                                  Margin="Margin.Dense"
+                                  Variant="Variant.Outlined"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search"
+                                  Style="min-width:260px" />
+
+                    <MudButton Variant="Variant.Text"
+                               Color="Color.Secondary"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.FilterAltOff"
+                               OnClick="@ClearFilters">
+                        @Localizer["BkavThongKe.Filter.Clear"]
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+
+            @* ===== Thẻ tổng hợp ===== *@
+            <MudGrid Class="mb-3">
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-3" Outlined="true">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Localizer["BkavThongKe.Summary.Total"]</MudText>
+                        <MudText Typo="Typo.h5">@FilteredGroups.Count()</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-3" Outlined="true">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Localizer["BkavThongKe.Summary.Draft"]</MudText>
+                        <MudText Typo="Typo.h5" Color="Color.Warning">@FilteredGroups.Count(x => IsDraftStatus(x.BkavStatusID))</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-3" Outlined="true">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Localizer["BkavThongKe.Summary.Signed"]</MudText>
+                        <MudText Typo="Typo.h5" Color="Color.Success">@FilteredGroups.Count(x => IsSignedStatus(x.BkavStatusID))</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudPaper Class="pa-3" Outlined="true">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@Localizer["BkavThongKe.Summary.ThuHo"]</MudText>
+                        <MudText Typo="Typo.h5" Color="Color.Info">@FilteredGroups.Count(x => x.Thuho)</MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            @* ===== Bảng dữ liệu ===== *@
+            <MudDataGrid T="BkavInvoiceGroup"
+                         Items="@FilteredGroups"
+                         Dense="true"
+                         Bordered="true"
+                         Hover="true"
+                         Loading="_loading"
+                         Height="560px"
+                         FixedHeader="true"
+                         Virtualize="true"
+                         SortMode="SortMode.Multiple"
+                         Class="bkav-new-grid">
+                <Columns>
+                    <PropertyColumn Property="x => x.InternalInvoiceNo" Title="@Localizer["BkavNew.Col.InternalNo"]" />
+                    <PropertyColumn Property="x => x.HblNo" Title="@Localizer["BkavNew.Col.HblNo"]" />
+                    <PropertyColumn Property="x => x.CustomerName" Title="@Localizer["Customer"]" />
+                    <TemplateColumn Title="@Localizer["BkavThongKe.Filter.ThuHo"]" Width="90px" SortBy="@(x => x.Thuho)">
+                        <CellTemplate>
+                            <MudChip T="string" Size="Size.Small" Color="@(context.Item.Thuho ? Color.Info : Color.Default)" Variant="Variant.Outlined">
+                                @(context.Item.Thuho ? Localizer["BkavThongKe.Filter.ThuHo.Yes"] : Localizer["BkavThongKe.Filter.ThuHo.No"])
+                            </MudChip>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.InvoiceDate" Title="@Localizer["BkavNew.Col.Date"]" Format="dd/MM/yyyy" />
+                    <PropertyColumn Property="x => x.TotalBeforeTax" Title="@Localizer["BkavNew.Col.Amount"]" Format="N0" />
+                    <PropertyColumn Property="x => x.TotalAfterTax" Title="@Localizer["BkavNew.Col.AmountVat"]" Format="N0" />
+                    <PropertyColumn Property="x => x.Currency" Title="@Localizer["BkavNew.Col.Currency"]" />
+                    <PropertyColumn Property="x => x.ElectronicInvoiceNo" Title="@Localizer["BkavNew.Col.EInvoice"]" />
+                    <TemplateColumn Title="@Localizer["BkavThongKe.Col.Status"]" Width="150px" SortBy="@(x => x.BkavStatusID)">
+                        <CellTemplate>
+                            <MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Item.BkavStatusID)" Variant="Variant.Filled">
+                                @StatusLabel(context.Item.BkavStatusID)
+                            </MudChip>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.BkavInvoiceNo" Title="InvoiceNo" />
+                    <PropertyColumn Property="x => x.BkavInvoiceGUID" Title="InvoiceGUID" />
+                </Columns>
+                <PagerContent>
+                    <MudDataGridPager T="BkavInvoiceGroup" />
+                </PagerContent>
+            </MudDataGrid>
+
+        </MudContainer>
+    </MudPaper>
+</div>
+
+@code {
+    private enum InvoiceStatusFilter { All, Draft, Signed }
+    private enum ThuHoFilter { All, Yes, No }
+
+    private List<BkavInvoiceGroup> _groups = [];
+    private bool _loading;
+    private bool _loaded;
+
+    private InvoiceStatusFilter _statusFilter = InvoiceStatusFilter.All;
+    private ThuHoFilter _thuHoFilter = ThuHoFilter.All;
+    private DateTime? _fromDate;
+    private DateTime? _toDate;
+    private string _textFilter = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadGroups();
+    }
+
+    private async Task LoadGroups()
+    {
+        try
+        {
+            _loading = true;
+            _groups = await bkavsv.GetInvoiceGroupsAsync();
+            _loaded = true;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ClearFilters()
+    {
+        _statusFilter = InvoiceStatusFilter.All;
+        _thuHoFilter = ThuHoFilter.All;
+        _fromDate = null;
+        _toDate = null;
+        _textFilter = string.Empty;
+    }
+
+    private IEnumerable<BkavInvoiceGroup> FilteredGroups => _groups.Where(MatchesFilters);
+
+    private bool MatchesFilters(BkavInvoiceGroup x)
+    {
+        if (_statusFilter == InvoiceStatusFilter.Draft && !IsDraftStatus(x.BkavStatusID))
+            return false;
+        if (_statusFilter == InvoiceStatusFilter.Signed && !IsSignedStatus(x.BkavStatusID))
+            return false;
+
+        if (_thuHoFilter == ThuHoFilter.Yes && !x.Thuho)
+            return false;
+        if (_thuHoFilter == ThuHoFilter.No && x.Thuho)
+            return false;
+
+        if (_fromDate.HasValue && (!x.InvoiceDate.HasValue || x.InvoiceDate.Value.Date < _fromDate.Value.Date))
+            return false;
+        if (_toDate.HasValue && (!x.InvoiceDate.HasValue || x.InvoiceDate.Value.Date > _toDate.Value.Date))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_textFilter) &&
+            !Contains(x.InternalInvoiceNo, _textFilter) &&
+            !Contains(x.HblNo, _textFilter) &&
+            !Contains(x.CustomerName, _textFilter) &&
+            !Contains(x.ItemNames, _textFilter) &&
+            !Contains(x.BkavInvoiceGUID, _textFilter) &&
+            !Contains(x.BkavPartnerInvoiceID?.ToString(CultureInfo.InvariantCulture), _textFilter) &&
+            !Contains(x.ElectronicInvoiceNo, _textFilter))
+            return false;
+
+        return true;
+    }
+
+    /// <summary>Chưa có trạng thái, Mới tạo (1) hoặc Trống chờ ký (11) đều tính là "đã xuất nháp".</summary>
+    private static bool IsDraftStatus(int? statusId)
+        => statusId is null or BkavInvoiceStatusIds.New or BkavInvoiceStatusIds.WaitingSign;
+
+    /// <summary>Đã phát hành/đã ký (2) là hóa đơn thực.</summary>
+    private static bool IsSignedStatus(int? statusId)
+        => statusId == BkavInvoiceStatusIds.Issued;
+
+    private string StatusLabel(int? statusId) => statusId switch
+    {
+        BkavInvoiceStatusIds.Issued => Localizer["BkavThongKe.Status.Signed"],
+        BkavInvoiceStatusIds.WaitingSign => Localizer["BkavThongKe.Status.WaitingSign"],
+        BkavInvoiceStatusIds.New => Localizer["BkavThongKe.Status.Draft"],
+        _ => Localizer["BkavThongKe.Status.Draft"]
+    };
+
+    private static Color StatusColor(int? statusId) => statusId switch
+    {
+        BkavInvoiceStatusIds.Issued => Color.Success,
+        BkavInvoiceStatusIds.WaitingSign => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static bool Contains(string? value, string filter)
+        => value?.Contains(filter, StringComparison.OrdinalIgnoreCase) == true;
+}

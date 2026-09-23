@@ -567,7 +567,9 @@
                 </PropertyColumn>
                 <PropertyColumn Property="x=>x.type" Title="@Localizer["Type"]" Required="false" >
                     <EditTemplate>
-                        <MudAutocomplete @bind-Value="context.Item.type" Label="@Localizer["Type"]" Required
+                        <MudAutocomplete @bind-Value="context.Item.type"
+                        @bind-Value:after="@(() => ApplyQuantityByType(context.Item))"
+                        Label="@Localizer["Type"]" Required
                         SearchFunc="SearchType" CoerceValue/>
                     </EditTemplate>
                 </PropertyColumn>
@@ -1270,6 +1272,68 @@
 
 
     }
+
+    private static readonly System.Text.RegularExpressions.Regex ContainerSizeTokenRegex =
+        new(@"(20|40|45)[A-Za-z]{0,4}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string NormalizeAlnum(string? s)
+        => string.IsNullOrWhiteSpace(s) ? string.Empty : new string(s.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+
+    private static double SumContainerCbm(IEnumerable<M_Container> containers)
+    {
+        double sum = 0;
+        foreach (var c in containers)
+        {
+            if (string.IsNullOrWhiteSpace(c.cbm))
+                continue;
+            var s = c.cbm.Trim().Replace(',', '.');
+            if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v))
+                sum += v;
+            else if (double.TryParse(c.cbm.Trim(), NumberStyles.Any, CultureInfo.GetCultureInfo("vi-VN"), out v))
+                sum += v;
+        }
+        return sum;
+    }
+
+    /// <summary>
+    /// Khi chọn Type: "CBM" -> tổng CBM container của HBL; type chứa cont size (20/40/45, vd CONT 20GP)
+    /// -> đếm số container cùng size/type đó trong HBL; type khác -> mặc định 1.
+    /// Chỉ set giá trị gợi ý ban đầu, người dùng vẫn sửa lại Quantity thủ công được sau đó.
+    /// </summary>
+    private void ApplyQuantityByType(M_Debit item)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(item.type))
+            return;
+
+        var typeText = item.type.Trim();
+        var normalizedType = NormalizeAlnum(typeText);
+        var containers = GetContainerSourceForCurrentShipment().ToList();
+
+        if (normalizedType.Contains("CBM"))
+        {
+            item.soluong = Math.Round(SumContainerCbm(containers), 2);
+        }
+        else if (typeText.Contains("20") || typeText.Contains("40") || typeText.Contains("45"))
+        {
+            var tokenMatch = ContainerSizeTokenRegex.Match(normalizedType);
+            var digitPrefix = tokenMatch.Success
+                ? tokenMatch.Groups[1].Value
+                : typeText.Contains("20") ? "20" : typeText.Contains("40") ? "40" : "45";
+            var fullToken = tokenMatch.Success ? tokenMatch.Value : digitPrefix;
+
+            var exactCount = containers.Count(c => NormalizeAlnum(c.CTN_SIZE_TYPE) == fullToken);
+            item.soluong = exactCount > 0
+                ? exactCount
+                : containers.Count(c => NormalizeAlnum(c.CTN_SIZE_TYPE).Contains(digitPrefix));
+        }
+        else
+        {
+            item.soluong = 1;
+        }
+
+        CalculateTotal(item);
+    }
+
     private async Task GetTigia(M_Debit item)
     {
         item.tigiadebit = await Vcbsv.Getexchange_cur(item.tiente);
