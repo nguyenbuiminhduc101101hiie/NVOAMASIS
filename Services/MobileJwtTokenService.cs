@@ -45,6 +45,38 @@ public class MobileJwtTokenService(IOptions<JwtSettings> jwtOptions)
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    /// <summary>
+    /// JWT ngắn hạn để HubConnection phía server (MainLayout) xác thực với /notificationhub
+    /// thay cho ?userid= (giả mạo được). Token chỉ tồn tại trên server, không gửi xuống trình duyệt.
+    /// </summary>
+    public string CreateHubToken(ClaimsPrincipal principal)
+    {
+        var userId = GetUserId(principal) ?? throw new InvalidOperationException("User id claim missing.");
+
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.Name, principal.Identity?.Name ?? ""),
+            new(ClaimTypes.NameIdentifier, userId.ToString()),
+            new(ClaimTypes.Sid, userId.ToString())
+        };
+        foreach (var type in new[] { TenantClaimTypes.TenantId, TenantClaimTypes.DatabaseName })
+        {
+            var value = principal.FindFirstValue(type);
+            if (!string.IsNullOrWhiteSpace(value))
+                claims.Add(new Claim(type, value));
+        }
+
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.SecretKey));
+        var token = new JwtSecurityToken(
+            issuer: _settings.Issuer,
+            audience: _settings.Audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(10),
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
     public static Guid? GetUserId(ClaimsPrincipal user)
     {
         var raw = user.FindFirstValue(ClaimTypes.Sid)

@@ -1,0 +1,95 @@
+@using NVOAMASIS.Models.Chat
+@inject IStringLocalizer<SharedResource> Localizer
+
+<div class="chat-sidebar">
+    <div class="chat-sidebar__head">
+        <MudTextField T="string" @bind-Value="_filter" Immediate="true" Placeholder="@Localizer["chat_search_conversation"]"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" />
+        <MudIconButton Icon="@Icons.Material.Filled.AddComment" Color="Color.Primary"
+                       Title="@Localizer["chat_new_conversation"]" OnClick="OnNew" />
+    </div>
+    <div class="chat-sidebar__list">
+        @if (Loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (!Filtered.Any())
+        {
+            <div class="chat-empty">@Localizer[string.IsNullOrWhiteSpace(_filter) ? "chat_no_conversations" : "chat_no_match"]</div>
+        }
+        @foreach (var c in Filtered)
+        {
+            var css = "chat-conv" + (c.Id == SelectedId ? " chat-conv--active" : "") + (c.UnreadCount > 0 ? " chat-conv--unread" : "");
+            <button type="button" class="@css" @onclick="() => OnSelect.InvokeAsync(c.Id)">
+                <span class="chat-avatar @(c.Type == ChatConversationType.Group ? "chat-avatar--group" : "")">
+                    @if (c.Type == ChatConversationType.Group)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Groups" Size="Size.Small" />
+                    }
+                    else
+                    {
+                        @Initials(c.DisplayName)
+                    }
+                </span>
+                <span class="chat-conv__body">
+                    <span class="chat-conv__top">
+                        <span class="chat-conv__name">@c.DisplayName</span>
+                        <span class="chat-conv__time">@FormatTime(c.LastMessageAt)</span>
+                    </span>
+                    <span class="chat-conv__bottom">
+                        <span class="chat-conv__preview">@PreviewText(c)</span>
+                        @if (c.UnreadCount > 0)
+                        {
+                            <span class="chat-unread">@(c.UnreadCount > 99 ? "99+" : c.UnreadCount.ToString())</span>
+                        }
+                    </span>
+                </span>
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<ChatConversationSummary> Conversations { get; set; } = [];
+    [Parameter] public Guid? SelectedId { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public EventCallback<Guid> OnSelect { get; set; }
+    [Parameter] public EventCallback OnNew { get; set; }
+
+    private string? _filter;
+
+    private IEnumerable<ChatConversationSummary> Filtered =>
+        string.IsNullOrWhiteSpace(_filter)
+            ? Conversations
+            : Conversations.Where(c => c.DisplayName.Contains(_filter.Trim(), StringComparison.CurrentCultureIgnoreCase));
+
+    private string PreviewText(ChatConversationSummary c) => c.LastMessagePreview switch
+    {
+        ChatService.RecalledPreview => Localizer["chat_message_recalled"],
+        { } preview => preview,
+        null when c.Type == ChatConversationType.Group => $"{c.MemberCount} {Localizer["chat_members"]}",
+        _ => ""
+    };
+
+    internal static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length switch
+        {
+            0 => "?",
+            1 => parts[0][..1].ToUpperInvariant(),
+            _ => (parts[0][..1] + parts[^1][..1]).ToUpperInvariant()
+        };
+    }
+
+    private static string FormatTime(DateTime? utc)
+    {
+        if (utc is null)
+            return "";
+        var local = utc.Value.ToLocalTime();
+        return local.Date == DateTime.Today ? local.ToString("HH:mm")
+            : local.Year == DateTime.Today.Year ? local.ToString("dd/MM")
+            : local.ToString("dd/MM/yy");
+    }
+}

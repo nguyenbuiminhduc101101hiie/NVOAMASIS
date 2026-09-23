@@ -1,0 +1,998 @@
+@using NVOAMASIS.Models.Chat
+@using NVOAMASIS.Services.Chat
+@implements IAsyncDisposable
+@inject ChatService ChatService
+@inject ChatNotifier ChatNotifier
+@inject ChatIdentity ChatIdentity
+@inject ChatNavigator ChatNavigator
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+@inject ILogger<ChatIndex> Logger
+
+@if (_caller is null)
+{
+    <MudAlert Severity="Severity.Warning" Class="ma-4">@Localizer["chat_not_member"]</MudAlert>
+}
+else
+{
+    <div class="chat-shell @(_selected is not null ? "chat-shell--has-selection" : "")">
+        <ConversationList Conversations="_conversations" SelectedId="_selected?.Id" Loading="_loadingList"
+                          OnSelect="SelectAsync" OnNew="NewConversationAsync" />
+
+        <div class="chat-pane">
+            @if (_selected is null)
+            {
+                <div class="chat-empty">
+                    <div>
+                        <MudIcon Icon="@Icons.Material.Filled.Forum" Style="font-size:48px" Color="Color.Default" /><br />
+                        @Localizer["chat_select_conversation"]
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="chat-pane__head">
+                    <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" Size="Size.Small" Class="d-md-none" OnClick="CloseConversation" />
+                    <span class="chat-avatar @(IsGroup ? "chat-avatar--group" : "")">
+                        @if (IsGroup)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Groups" Size="Size.Small" />
+                        }
+                        else
+                        {
+                            @ConversationList.Initials(_selected.DisplayName)
+                        }
+                    </span>
+                    <div class="chat-pane__title">
+                        <MudText Typo="Typo.subtitle1" Style="font-weight:600">@_selected.DisplayName</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@HeaderSubtitle</MudText>
+                    </div>
+                    <MudIconButton Icon="@Icons.Material.Filled.Search" Title="@Localizer["chat_search_messages"]"
+                                   Color="@(_searchOpen ? Color.Primary : Color.Default)" OnClick="ToggleSearch" />
+                    <MudMenu Icon="@Icons.Material.Filled.MoreVert" Title="@Localizer["chat_more"]"
+                             AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                        @if (IsGroup)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Filled.ManageAccounts" OnClick="OpenMembersAsync">@Localizer["chat_members"]</MudMenuItem>
+                        }
+                        <MudMenuItem Icon="@Icons.Material.Filled.DeleteSweep" OnClick="HideConversationAsync">@Localizer["chat_hide_conversation"]</MudMenuItem>
+                        @if (IsGroup && IsOwner)
+                        {
+                            <MudMenuItem Icon="@Icons.Material.Filled.DeleteForever" IconColor="Color.Error" OnClick="DisbandGroupAsync">
+                                @Localizer["chat_disband_group"]
+                            </MudMenuItem>
+                        }
+                    </MudMenu>
+                </div>
+
+                @if (_pins.Count > 0)
+                {
+                    <div class="chat-pins">
+                        @foreach (var pin in _pinsExpanded ? _pins : _pins.Take(1))
+                        {
+                            <div class="chat-pin">
+                                <MudIcon Icon="@Icons.Material.Filled.PushPin" Size="Size.Small" Color="Color.Warning" />
+                                <button type="button" class="chat-pin__body" @onclick="() => JumpToAsync(pin.Id)">
+                                    <span class="chat-pin__sender">@pin.SenderName</span>
+                                    <span class="chat-pin__text">@(pin.HasAttachment ? "📎 " + pin.AttachmentName : pin.Text)</span>
+                                </button>
+                                <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Title="@Localizer["chat_unpin"]"
+                                               OnClick="() => TogglePinAsync(pin)" />
+                            </div>
+                        }
+                        @if (_pins.Count > 1)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text" FullWidth="true" OnClick="() => _pinsExpanded = !_pinsExpanded"
+                                       EndIcon="@(_pinsExpanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)">
+                                @Localizer["chat_pinned_messages"] (@_pins.Count)
+                            </MudButton>
+                        }
+                    </div>
+                }
+
+                @if (_searchOpen)
+                {
+                    <div class="chat-pane__search">
+                        <MudTextField T="string" @bind-Value="_searchText" Placeholder="@Localizer["chat_search_messages"]"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" AutoFocus="true"
+                                      Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search"
+                                      OnAdornmentClick="SearchAsync" OnKeyUp="OnSearchKeyUp" />
+                        @if (_searching)
+                        {
+                            <MudProgressLinear Indeterminate="true" />
+                        }
+                        else if (_searchResults is not null)
+                        {
+                            <div class="chat-search-results">
+                                @if (_searchResults.Count == 0)
+                                {
+                                    <MudText Typo="Typo.body2" Class="pa-2">@Localizer["chat_no_match"]</MudText>
+                                }
+                                @foreach (var hit in _searchResults)
+                                {
+                                    <button type="button" class="chat-search-hit" @onclick="() => JumpToAsync(hit.Id)">
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                            @hit.SenderName · @hit.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                                        </MudText>
+                                        <MudText Typo="Typo.body2" Style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                                            @(hit.HasAttachment ? "📎 " + hit.AttachmentName : hit.Text)
+                                        </MudText>
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+
+                <div class="chat-messages" @ref="_messagesEl">
+                    @if (_loadingMessages)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                    }
+                    else
+                    {
+                        @if (_hasMore)
+                        {
+                            <div class="chat-load-older">
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_loadingOlder" OnClick="LoadOlderAsync">
+                                    @Localizer["chat_load_older"]
+                                </MudButton>
+                            </div>
+                        }
+                        @if (_messages.Count == 0)
+                        {
+                            <div class="chat-empty">@Localizer["chat_no_messages"]</div>
+                        }
+                        @for (var i = 0; i < _messages.Count; i++)
+                        {
+                            var m = _messages[i];
+                            var prev = i > 0 ? _messages[i - 1] : null;
+                            var next = i < _messages.Count - 1 ? _messages[i + 1] : null;
+                            var mine = m.SenderUserId == _caller.Value.UserId;
+                            var showMeta = next is null || !SameRun(m, next);
+                            @if (prev is null || prev.CreatedAt.ToLocalTime().Date != m.CreatedAt.ToLocalTime().Date)
+                            {
+                                <div class="chat-day"><span>@DayLabel(m.CreatedAt)</span></div>
+                            }
+                            <MessageBubble @key="m.Id" Message="m" IsMine="mine"
+                                           ShowSender="@(IsGroup && (prev is null || !SameRun(prev, m)))"
+                                           ShowMeta="showMeta"
+                                           Receipt="@(mine && showMeta ? ReceiptFor(m) : null)"
+                                           CanRecall="@(mine && CanRecall(m))"
+                                           OnRecall="RecallAsync"
+                                           OnReply="StartReply"
+                                           OnForward="ForwardAsync"
+                                           OnTogglePin="TogglePinAsync"
+                                           OnJumpTo="JumpToAsync"
+                                           OnImageClick="OpenImageAsync" />
+                        }
+                    }
+                </div>
+                <div class="chat-typing">@TypingLabel</div>
+                <ChatComposer @key="_selected.Id" @ref="_composer" Disabled="_loadingMessages"
+                              ReplyTo="_replyTo" OnCancelReply="() => _replyTo = null"
+                              OnSend="SendTextAsync" OnFile="SendFileAsync" OnTyping="NotifyTypingAsync" />
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private static readonly TimeSpan RunGap = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan TypingTtl = TimeSpan.FromSeconds(4);
+
+    private ChatCaller? _caller;
+    private string _myName = "";
+
+    private List<ChatConversationSummary> _conversations = [];
+    private bool _loadingList = true;
+    private ChatConversationSummary? _selected;
+
+    private List<ChatMessageDto> _messages = [];
+    private bool _hasMore;
+    private bool _loadingMessages;
+    private bool _loadingOlder;
+    private IReadOnlyList<ChatMemberDto> _members = [];
+    private IReadOnlyList<ChatMessageDto> _pins = [];
+    private bool _pinsExpanded;
+    private ChatMessageDto? _replyTo;
+    private ChatComposer? _composer;
+    private readonly Dictionary<Guid, (string Name, DateTime ExpiresAt)> _typing = [];
+    private Timer? _typingTimer;
+
+    private bool _searchOpen;
+    private string? _searchText;
+    private List<ChatMessageDto>? _searchResults;
+    private bool _searching;
+
+    private ElementReference _messagesEl;
+    private bool _scrollToBottomPending;
+    private bool _attachScrollPending;
+    private (double Height, double Top)? _restoreScrollPending;
+    private Guid? _scrollToMessagePending;
+
+    private bool _pageVisible = true;
+    private bool _disposed;
+    private IDisposable? _subscription;
+    private DotNetObjectReference<ChatIndex>? _selfRef;
+    private IJSObjectReference? _visibilityWatcher;
+
+    private static readonly TimeSpan RecallWindow = TimeSpan.FromHours(24);
+
+    private bool IsGroup => _selected?.Type == ChatConversationType.Group;
+
+    private bool IsOwner => _members.Any(m => m.UserId == _caller?.UserId && m.Role == ChatParticipantRole.Owner);
+
+    private bool CanMarkRead => _selected is not null && _pageVisible && ChatNavigator.IsChatTabActive;
+
+    private string HeaderSubtitle => IsGroup
+        ? $"{_members.Count} {Localizer["chat_members"]}"
+        : _members.FirstOrDefault(m => m.UserId != _caller?.UserId)?.Department ?? "";
+
+    private string? TypingLabel
+    {
+        get
+        {
+            var active = _typing.Where(t => t.Value.ExpiresAt > DateTime.UtcNow).ToList();
+            return active.Count switch
+            {
+                0 => null,
+                1 => $"{active[0].Value.Name} {Localizer["chat_is_typing"]}",
+                _ => Localizer["chat_many_typing"]
+            };
+        }
+    }
+
+    // ---------- Lifecycle ----------
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _caller = ChatIdentity.Resolve(auth.User);
+        if (_caller is not { } caller)
+            return;
+
+        _myName = auth.User.FindFirst(System.Security.Claims.ClaimTypes.GivenName)?.Value is { Length: > 0 } given
+            ? given
+            : auth.User.Identity?.Name ?? "";
+
+        _subscription = ChatNotifier.Subscribe(caller.TenantKey, caller.UserId, OnChatEventAsync);
+        ChatNavigator.Changed += OnNavigatorChanged;
+
+        await ReloadConversationsAsync();
+        if (ChatNavigator.TakePending() is { } pending)
+            await SelectAsync(pending);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_caller is null || _disposed)
+            return;
+
+        try
+        {
+            if (firstRender)
+            {
+                _selfRef = DotNetObjectReference.Create(this);
+                _visibilityWatcher = await JS.InvokeAsync<IJSObjectReference>("nvoChat.watchVisibility", _selfRef);
+                _pageVisible = await JS.InvokeAsync<bool>("nvoChat.isPageVisible");
+            }
+
+            if (_attachScrollPending && _selected is not null && !_loadingMessages)
+            {
+                _attachScrollPending = false;
+                await JS.InvokeVoidAsync("nvoChat.watchScroll", _messagesEl, _selfRef);
+            }
+
+            if (_restoreScrollPending is { } restore)
+            {
+                _restoreScrollPending = null;
+                await JS.InvokeVoidAsync("nvoChat.restoreScroll", _messagesEl, restore.Height, restore.Top);
+            }
+            else if (_scrollToMessagePending is { } messageId)
+            {
+                _scrollToMessagePending = null;
+                await JS.InvokeVoidAsync("nvoChat.scrollToMessage", messageId);
+            }
+            else if (_scrollToBottomPending)
+            {
+                _scrollToBottomPending = false;
+                await JS.InvokeVoidAsync("nvoChat.scrollToBottom", _messagesEl);
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Circuit đã đóng.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        _subscription?.Dispose();
+        ChatNavigator.Changed -= OnNavigatorChanged;
+        ChatNavigator.ActiveConversationId = null;
+        _typingTimer?.Dispose();
+        try
+        {
+            if (_visibilityWatcher is not null)
+            {
+                await _visibilityWatcher.InvokeVoidAsync("dispose");
+                await _visibilityWatcher.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        _selfRef?.Dispose();
+    }
+
+    // ---------- Hội thoại ----------
+
+    private async Task ReloadConversationsAsync()
+    {
+        await RunAsync(async () => _conversations = (await ChatService.GetConversationsAsync(_caller!.Value)).ToList());
+        _loadingList = false;
+    }
+
+    private async Task SelectAsync(Guid conversationId)
+    {
+        if (_caller is not { } caller)
+            return;
+
+        var summary = _conversations.FirstOrDefault(c => c.Id == conversationId);
+        if (summary is null)
+        {
+            await ReloadConversationsAsync();
+            summary = _conversations.FirstOrDefault(c => c.Id == conversationId);
+            if (summary is null)
+                return;
+        }
+
+        _selected = summary;
+        ChatNavigator.ActiveConversationId = conversationId;
+        _messages = [];
+        _members = [];
+        _pins = [];
+        _pinsExpanded = false;
+        _replyTo = null;
+        _typing.Clear();
+        _searchOpen = false;
+        _searchResults = null;
+        _searchText = null;
+        _loadingMessages = true;
+        StateHasChanged();
+
+        var loaded = await RunAsync(async () =>
+        {
+            var page = await ChatService.GetMessagesAsync(caller, conversationId);
+            _members = await ChatService.GetMembersAsync(caller, conversationId);
+            _pins = await ChatService.GetPinnedAsync(caller, conversationId);
+            _messages = page.Messages.ToList();
+            _hasMore = page.HasMore;
+        });
+        if (_selected?.Id != conversationId)
+            return; // Người dùng đã chọn hội thoại khác trong lúc tải.
+
+        _loadingMessages = false;
+        if (!loaded)
+        {
+            _selected = null;
+            ChatNavigator.ActiveConversationId = null;
+            return;
+        }
+
+        _scrollToBottomPending = true;
+        _attachScrollPending = true;
+        await MarkReadIfVisibleAsync();
+    }
+
+    private void CloseConversation()
+    {
+        _selected = null;
+        ChatNavigator.ActiveConversationId = null;
+    }
+
+    private async Task NewConversationAsync()
+    {
+        IReadOnlyList<ChatUserOption> users = [];
+        if (!await RunAsync(async () => users = await ChatService.GetUserDirectoryAsync(_caller!.Value)))
+            return;
+
+        var parameters = new DialogParameters<NewConversationDialog> { { x => x.Users, users } };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<NewConversationDialog>(Localizer["chat_new_conversation"], parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not NewConversationDialog.Result request)
+            return;
+
+        Guid conversationId = default;
+        var created = await RunAsync(async () =>
+        {
+            conversationId = request.DirectUserId is { } otherId
+                ? await ChatService.GetOrCreateDirectAsync(_caller!.Value, otherId)
+                : await ChatService.CreateGroupAsync(_caller!.Value, request.GroupName ?? "", request.MemberIds);
+        });
+        if (!created)
+            return;
+
+        await ReloadConversationsAsync();
+        await SelectAsync(conversationId);
+    }
+
+    private async Task OpenMembersAsync()
+    {
+        if (_selected is null || _caller is not { } caller)
+            return;
+
+        var parameters = new DialogParameters<GroupMembersDialog>
+        {
+            { x => x.Caller, caller },
+            { x => x.ConversationId, _selected.Id },
+            { x => x.GroupName, _selected.DisplayName }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<GroupMembersDialog>(Localizer["chat_members"], parameters, options);
+        var result = await dialog.Result;
+        if (!result.Canceled && result.Data is true)
+        {
+            CloseConversation();
+            await ReloadConversationsAsync();
+        }
+    }
+
+    // ---------- Tin nhắn ----------
+
+    private async Task<bool> SendTextAsync(string text)
+    {
+        if (_selected is null || _caller is not { } caller)
+            return false;
+
+        var conversationId = _selected.Id;
+        var replyToId = _replyTo?.Id;
+        ChatMessageDto? sent = null;
+        var ok = await RunAsync(async () => sent = await ChatService.SendTextAsync(caller, conversationId, text, replyToId));
+        if (sent is not null)
+        {
+            _replyTo = null;
+            AppendMessage(sent, forceScroll: true);
+        }
+        return ok;
+    }
+
+    private async Task SendFileAsync(IBrowserFile file)
+    {
+        if (_selected is null || _caller is not { } caller)
+            return;
+
+        var conversationId = _selected.Id;
+        var replyToId = _replyTo?.Id;
+        ChatMessageDto? sent = null;
+        await RunAsync(async () =>
+        {
+            await using var stream = file.OpenReadStream(ChatFileStorage.MaxAttachmentBytes);
+            sent = await ChatService.SendAttachmentAsync(caller, conversationId, file.Name, file.ContentType, file.Size, stream, replyToId);
+        });
+        if (sent is not null)
+        {
+            _replyTo = null;
+            AppendMessage(sent, forceScroll: true);
+        }
+    }
+
+    private async Task NotifyTypingAsync()
+    {
+        if (_selected is null || _caller is not { } caller)
+            return;
+        try
+        {
+            await ChatService.NotifyTypingAsync(caller, _selected.Id, _myName);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Gửi typing thất bại");
+        }
+    }
+
+    [JSInvokable]
+    public Task LoadOlderFromJs() => InvokeAsync(LoadOlderAsync);
+
+    private async Task LoadOlderAsync()
+    {
+        if (_selected is null || _caller is not { } caller || !_hasMore || _loadingOlder || _messages.Count == 0)
+            return;
+
+        _loadingOlder = true;
+        var conversationId = _selected.Id;
+        try
+        {
+            var captured = await JS.InvokeAsync<double[]>("nvoChat.captureScroll", _messagesEl);
+            ChatMessagePage? page = null;
+            await RunAsync(async () => page = await ChatService.GetMessagesAsync(caller, conversationId, _messages[0].CreatedAt));
+            if (page is null || _selected?.Id != conversationId)
+                return;
+
+            var known = _messages.Select(m => m.Id).ToHashSet();
+            _messages.InsertRange(0, page.Messages.Where(m => !known.Contains(m.Id)));
+            _hasMore = page.HasMore;
+            _restoreScrollPending = (captured[0], captured[1]);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        finally
+        {
+            _loadingOlder = false;
+            StateHasChanged();
+        }
+    }
+
+    private void AppendMessage(ChatMessageDto message, bool forceScroll)
+    {
+        if (_messages.Any(m => m.Id == message.Id))
+            return;
+        _messages.Add(message);
+        if (forceScroll)
+            _scrollToBottomPending = true;
+    }
+
+    private async Task MarkReadIfVisibleAsync()
+    {
+        if (!CanMarkRead || _caller is not { } caller)
+            return;
+
+        var conversationId = _selected!.Id;
+        try
+        {
+            await ChatService.MarkReadAsync(caller, conversationId);
+            SetUnread(conversationId, 0);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Mark read thất bại cho {ConversationId}", conversationId);
+        }
+    }
+
+    private void SetUnread(Guid conversationId, int unread)
+    {
+        var index = _conversations.FindIndex(c => c.Id == conversationId);
+        if (index >= 0 && _conversations[index].UnreadCount != unread)
+            _conversations[index] = _conversations[index] with { UnreadCount = unread };
+    }
+
+    // ---------- Trả lời / chuyển tiếp / ghim ----------
+
+    private async Task StartReply(ChatMessageDto message)
+    {
+        _replyTo = message;
+        if (_composer is not null)
+        {
+            try
+            {
+                await _composer.FocusAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+    }
+
+    private async Task ForwardAsync(ChatMessageDto message)
+    {
+        if (_caller is not { } caller)
+            return;
+
+        IReadOnlyList<ChatUserOption> users = [];
+        if (!await RunAsync(async () => users = await ChatService.GetUserDirectoryAsync(caller)))
+            return;
+
+        var parameters = new DialogParameters<ForwardDialog>
+        {
+            { x => x.Message, message },
+            { x => x.Conversations, _conversations },
+            { x => x.Users, users }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true };
+        var dialog = await DialogService.ShowAsync<ForwardDialog>(Localizer["chat_forward"], parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not ForwardDialog.Result targets)
+            return;
+
+        var count = 0;
+        if (await RunAsync(async () => count = await ChatService.ForwardAsync(caller, message.Id, targets.ConversationIds, targets.UserIds)))
+            Snackbar.Add($"{Localizer["chat_forward_done"]} ({count})", Severity.Success);
+    }
+
+    private async Task TogglePinAsync(ChatMessageDto message)
+    {
+        if (_caller is not { } caller)
+            return;
+
+        var pinned = _pins.Any(p => p.Id == message.Id) || message.IsPinned;
+        await RunAsync(() => pinned
+            ? ChatService.UnpinAsync(caller, message.Id)
+            : ChatService.PinAsync(caller, message.Id));
+        await ReloadPinsAsync();
+    }
+
+    private async Task ReloadPinsAsync()
+    {
+        if (_selected is null || _caller is not { } caller)
+            return;
+
+        var conversationId = _selected.Id;
+        IReadOnlyList<ChatMessageDto> pins = [];
+        if (!await RunAsync(async () => pins = await ChatService.GetPinnedAsync(caller, conversationId)) || _selected?.Id != conversationId)
+            return;
+
+        _pins = pins;
+        if (_pins.Count <= 1)
+            _pinsExpanded = false;
+
+        // Đồng bộ biểu tượng ghim trên các bubble đang hiển thị.
+        var pinnedAt = pins.ToDictionary(p => p.Id, p => p.PinnedAt);
+        for (var i = 0; i < _messages.Count; i++)
+        {
+            var current = _messages[i].PinnedAt;
+            var updated = pinnedAt.GetValueOrDefault(_messages[i].Id);
+            if (current != updated)
+                _messages[i] = _messages[i] with { PinnedAt = updated };
+        }
+    }
+
+    // ---------- Xoá ----------
+
+    private static bool CanRecall(ChatMessageDto message) =>
+        !message.IsDeleted && message.Kind != ChatMessageKind.System && DateTime.UtcNow - message.CreatedAt < RecallWindow;
+
+    private async Task RecallAsync(ChatMessageDto message)
+    {
+        if (_caller is not { } caller || !await ConfirmAsync("chat_recall", "chat_recall_confirm", "chat_recall"))
+            return;
+
+        if (await RunAsync(() => ChatService.RecallMessageAsync(caller, message.Id)))
+            MarkRecalled(message.Id);
+    }
+
+    private async Task HideConversationAsync()
+    {
+        if (_selected is null || _caller is not { } caller ||
+            !await ConfirmAsync("chat_hide_conversation", "chat_hide_confirm", "chat_hide_conversation"))
+            return;
+
+        var conversationId = _selected.Id;
+        if (!await RunAsync(() => ChatService.HideConversationAsync(caller, conversationId)))
+            return;
+
+        CloseConversation();
+        _conversations.RemoveAll(c => c.Id == conversationId);
+    }
+
+    private async Task DisbandGroupAsync()
+    {
+        if (_selected is null || _caller is not { } caller ||
+            !await ConfirmAsync("chat_disband_group", "chat_disband_confirm", "chat_disband_group"))
+            return;
+
+        var conversationId = _selected.Id;
+        if (!await RunAsync(() => ChatService.DisbandGroupAsync(caller, conversationId)))
+            return;
+
+        CloseConversation();
+        _conversations.RemoveAll(c => c.Id == conversationId);
+    }
+
+    private void MarkRecalled(Guid messageId)
+    {
+        for (var i = 0; i < _messages.Count; i++)
+        {
+            var m = _messages[i];
+            if (m.Id == messageId)
+            {
+                _messages[i] = m with
+                {
+                    IsDeleted = true,
+                    Text = "",
+                    AttachmentName = null,
+                    AttachmentContentType = null,
+                    AttachmentSizeBytes = null,
+                    PinnedAt = null
+                };
+            }
+            else if (m.ReplyTo?.MessageId == messageId)
+            {
+                _messages[i] = m with { ReplyTo = m.ReplyTo with { IsDeleted = true, Text = "", AttachmentName = null } };
+            }
+        }
+        if (_replyTo?.Id == messageId)
+            _replyTo = null;
+        _pins = _pins.Where(p => p.Id != messageId).ToList();
+    }
+
+    private async Task<bool> ConfirmAsync(string titleKey, string messageKey, string yesKey)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            Localizer[titleKey], Localizer[messageKey],
+            yesText: Localizer[yesKey], cancelText: Localizer["chat_cancel"]);
+        return confirmed == true;
+    }
+
+    // ---------- Tìm kiếm ----------
+
+    private void ToggleSearch()
+    {
+        _searchOpen = !_searchOpen;
+        _searchResults = null;
+        _searchText = null;
+    }
+
+    private async Task OnSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        if (_selected is null || _caller is not { } caller || string.IsNullOrWhiteSpace(_searchText))
+            return;
+
+        _searching = true;
+        await RunAsync(async () => _searchResults = (await ChatService.SearchMessagesAsync(caller, _selected.Id, _searchText)).ToList());
+        _searching = false;
+    }
+
+    private async Task JumpToAsync(Guid messageId)
+    {
+        if (_selected is null || _caller is not { } caller)
+            return;
+
+        if (_messages.All(m => m.Id != messageId))
+        {
+            ChatMessagePage? page = null;
+            if (!await RunAsync(async () => page = await ChatService.GetMessagesFromAsync(caller, _selected.Id, messageId)) || page is null)
+                return;
+            _messages = page.Messages.ToList();
+            _hasMore = page.HasMore;
+        }
+        _scrollToMessagePending = messageId;
+    }
+
+    private async Task OpenImageAsync(ChatMessageDto message)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("openUrlInNewTab", $"{message.AttachmentUrl}?inline=true");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
+
+    // ---------- Realtime ----------
+
+    private Task OnChatEventAsync(ChatEvent evt) => InvokeAsync(async () =>
+    {
+        if (_disposed || _caller is not { } caller)
+            return;
+
+        switch (evt)
+        {
+            case ChatMessageReceived { Message: var message }:
+                await OnMessageReceivedAsync(caller, message);
+                break;
+
+            case ChatReadUpdated read:
+                if (read.UserId == caller.UserId)
+                    SetUnread(read.ConversationId, 0);
+                if (_selected?.Id == read.ConversationId)
+                    _members = _members.Select(m => m.UserId == read.UserId ? m with { LastReadAt = read.LastReadAt } : m).ToList();
+                break;
+
+            case ChatTyping typing when _selected?.Id == typing.ConversationId && typing.UserId != caller.UserId:
+                _typing[typing.UserId] = (typing.UserName, DateTime.UtcNow + TypingTtl);
+                EnsureTypingTimer();
+                break;
+
+            case ChatConversationChanged changed:
+                await OnConversationChangedAsync(caller, changed.ConversationId);
+                break;
+
+            case ChatMessageRecalled recalled:
+                if (_selected?.Id == recalled.ConversationId)
+                    MarkRecalled(recalled.MessageId);
+                await ReloadConversationsAsync(); // preview / số chưa đọc có thể đổi
+                break;
+
+            case ChatPinsChanged pinsChanged when _selected?.Id == pinsChanged.ConversationId:
+                await ReloadPinsAsync();
+                break;
+
+            case ChatConversationHidden hidden:
+                // Ẩn từ một tab khác của chính mình.
+                _conversations.RemoveAll(c => c.Id == hidden.ConversationId);
+                if (_selected?.Id == hidden.ConversationId)
+                    CloseConversation();
+                break;
+
+            case ChatConversationDeleted deleted:
+                _conversations.RemoveAll(c => c.Id == deleted.ConversationId);
+                if (_selected?.Id == deleted.ConversationId)
+                {
+                    CloseConversation();
+                    Snackbar.Add(Localizer["chat_group_disbanded"], Severity.Info);
+                }
+                break;
+        }
+
+        StateHasChanged();
+    });
+
+    private async Task OnMessageReceivedAsync(ChatCaller caller, ChatMessageDto message)
+    {
+        var mine = message.SenderUserId == caller.UserId;
+        var isOpen = _selected?.Id == message.ConversationId;
+
+        var index = _conversations.FindIndex(c => c.Id == message.ConversationId);
+        if (index < 0)
+        {
+            await ReloadConversationsAsync();
+        }
+        else if (message.Kind != ChatMessageKind.System)
+        {
+            var current = _conversations[index];
+            var countsAsUnread = !mine && !(isOpen && CanMarkRead);
+            _conversations.RemoveAt(index);
+            _conversations.Insert(0, current with
+            {
+                LastMessageAt = message.CreatedAt,
+                LastMessagePreview = PreviewOf(message),
+                UnreadCount = mine ? 0 : current.UnreadCount + (countsAsUnread ? 1 : 0)
+            });
+        }
+
+        if (!isOpen)
+            return;
+
+        _typing.Remove(message.SenderUserId);
+        var nearBottom = true;
+        try
+        {
+            nearBottom = await JS.InvokeAsync<bool>("nvoChat.isNearBottom", _messagesEl);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        AppendMessage(message, forceScroll: mine || nearBottom);
+
+        if (!mine)
+            await MarkReadIfVisibleAsync();
+    }
+
+    private async Task OnConversationChangedAsync(ChatCaller caller, Guid conversationId)
+    {
+        await ReloadConversationsAsync();
+        if (_selected?.Id != conversationId)
+            return;
+
+        var summary = _conversations.FirstOrDefault(c => c.Id == conversationId);
+        if (summary is null)
+        {
+            CloseConversation();
+            Snackbar.Add(Localizer["chat_removed_from_group"], Severity.Info);
+            return;
+        }
+
+        _selected = summary;
+        await RunAsync(async () => _members = await ChatService.GetMembersAsync(caller, conversationId));
+    }
+
+    private void OnNavigatorChanged() => _ = InvokeAsync(async () =>
+    {
+        if (_disposed)
+            return;
+        if (ChatNavigator.TakePending() is { } pending)
+            await SelectAsync(pending);
+        else
+            await MarkReadIfVisibleAsync();
+        StateHasChanged();
+    });
+
+    [JSInvokable]
+    public Task OnPageVisibilityChanged(bool visible) => InvokeAsync(async () =>
+    {
+        _pageVisible = visible;
+        if (visible)
+        {
+            await MarkReadIfVisibleAsync();
+            StateHasChanged();
+        }
+    });
+
+    private void EnsureTypingTimer()
+    {
+        _typingTimer ??= new Timer(_ => _ = InvokeAsync(() =>
+        {
+            if (_disposed)
+                return;
+            var expired = _typing.Where(t => t.Value.ExpiresAt <= DateTime.UtcNow).Select(t => t.Key).ToList();
+            foreach (var userId in expired)
+                _typing.Remove(userId);
+            if (expired.Count > 0)
+                StateHasChanged();
+        }), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    // ---------- Hiển thị ----------
+
+    private MessageBubble.ReadReceipt? ReceiptFor(ChatMessageDto message)
+    {
+        if (message.IsDeleted)
+            return null;
+
+        var others = _members.Where(m => m.UserId != _caller?.UserId).ToList();
+        if (others.Count == 0)
+            return null;
+
+        if (!IsGroup)
+        {
+            var isRead = others[0].LastReadAt >= message.CreatedAt;
+            return new MessageBubble.ReadReceipt(isRead, null, Localizer[isRead ? "chat_seen" : "chat_sent"]);
+        }
+
+        // Nhóm: chỉ hiển thị dưới tin cuối cùng của mình.
+        var lastMine = _messages.LastOrDefault(m => m.SenderUserId == _caller?.UserId && m.Kind != ChatMessageKind.System && !m.IsDeleted);
+        if (lastMine?.Id != message.Id)
+            return null;
+
+        var seenBy = others.Where(m => m.LastReadAt >= message.CreatedAt).Select(m => m.Name).ToList();
+        return seenBy.Count == 0
+            ? new MessageBubble.ReadReceipt(false, null, Localizer["chat_sent"])
+            : new MessageBubble.ReadReceipt(seenBy.Count == others.Count, $"{Localizer["chat_seen_by"]} {seenBy.Count}", string.Join(", ", seenBy));
+    }
+
+    private static bool SameRun(ChatMessageDto a, ChatMessageDto b) =>
+        a.Kind != ChatMessageKind.System && b.Kind != ChatMessageKind.System &&
+        a.SenderUserId == b.SenderUserId &&
+        (b.CreatedAt - a.CreatedAt).Duration() < RunGap &&
+        a.CreatedAt.ToLocalTime().Date == b.CreatedAt.ToLocalTime().Date;
+
+    private string DayLabel(DateTime utc)
+    {
+        var date = utc.ToLocalTime().Date;
+        if (date == DateTime.Today)
+            return Localizer["chat_today"];
+        if (date == DateTime.Today.AddDays(-1))
+            return Localizer["chat_yesterday"];
+        return date.ToString("dd/MM/yyyy");
+    }
+
+    private static string PreviewOf(ChatMessageDto message)
+    {
+        var text = message.HasAttachment ? "📎 " + message.AttachmentName : message.Text.ReplaceLineEndings(" ");
+        return text.Length > 200 ? text[..199] + "…" : text;
+    }
+
+    /// <summary>Chạy thao tác, hiển thị lỗi thân thiện. Trả về false nếu lỗi.</summary>
+    private async Task<bool> RunAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+            return true;
+        }
+        catch (ChatException ex)
+        {
+            Snackbar.Add(Localizer[ex.Message], Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Chat: thao tác thất bại");
+            Snackbar.Add(Localizer["chat_error_generic"], Severity.Error);
+        }
+        return false;
+    }
+}

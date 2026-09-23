@@ -1,0 +1,121 @@
+@using NVOAMASIS.Models.Chat
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <DialogContent>
+        <div class="chat-quote mb-3" style="cursor:default">
+            <span class="chat-quote__sender">@Message.SenderName</span>
+            <span class="chat-quote__text">@(Message.HasAttachment ? "📎 " + Message.AttachmentName : Message.Text)</span>
+        </div>
+
+        <MudTextField T="string" @bind-Value="_filter" Immediate="true" Placeholder="@Localizer["chat_search_conversation"]"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="mb-2" />
+        <MudText Typo="Typo.caption" Class="mb-1">
+            @Localizer["chat_selected"]: @SelectedCount / @ChatService.MaxForwardTargets
+        </MudText>
+
+        <div style="max-height:360px; overflow-y:auto;">
+            @if (FilteredConversations.Any())
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-1">@Localizer["chat_recent_conversations"]</MudText>
+                @foreach (var c in FilteredConversations)
+                {
+                    var selected = _conversationIds.Contains(c.Id);
+                    <div class="d-flex align-center gap-2 px-1 py-1" style="cursor:pointer;" @onclick="() => Toggle(_conversationIds, c.Id)">
+                        <MudIcon Color="@(selected ? Color.Primary : Color.Default)"
+                                 Icon="@(selected ? Icons.Material.Filled.CheckBox : Icons.Material.Filled.CheckBoxOutlineBlank)" />
+                        <span class="chat-avatar @(c.Type == ChatConversationType.Group ? "chat-avatar--group" : "")" style="width:30px;height:30px;font-size:0.8rem;">
+                            @if (c.Type == ChatConversationType.Group)
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Groups" Size="Size.Small" />
+                            }
+                            else
+                            {
+                                @ConversationList.Initials(c.DisplayName)
+                            }
+                        </span>
+                        <MudText Typo="Typo.body2">@c.DisplayName</MudText>
+                    </div>
+                }
+            }
+            @if (FilteredUsers.Any())
+            {
+                <MudText Typo="Typo.subtitle2" Class="mt-2">@Localizer["chat_users"]</MudText>
+                @foreach (var u in FilteredUsers)
+                {
+                    var selected = _userIds.Contains(u.UserId);
+                    <div class="d-flex align-center gap-2 px-1 py-1" style="cursor:pointer;" @onclick="() => Toggle(_userIds, u.UserId)">
+                        <MudIcon Color="@(selected ? Color.Primary : Color.Default)"
+                                 Icon="@(selected ? Icons.Material.Filled.CheckBox : Icons.Material.Filled.CheckBoxOutlineBlank)" />
+                        <span class="chat-avatar" style="width:30px;height:30px;font-size:0.8rem;">@ConversationList.Initials(u.Name)</span>
+                        <span>
+                            <MudText Typo="Typo.body2">@u.Name</MudText>
+                            @if (!string.IsNullOrWhiteSpace(u.Department))
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@u.Department</MudText>
+                            }
+                        </span>
+                    </div>
+                }
+            }
+            @if (!FilteredConversations.Any() && !FilteredUsers.Any())
+            {
+                <MudText Typo="Typo.body2" Class="pa-2">@Localizer["chat_no_match"]</MudText>
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">@Localizer["chat_cancel"]</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Shortcut"
+                   Disabled="@(SelectedCount == 0)" OnClick="Submit">
+            @Localizer["chat_forward"]
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter, EditorRequired] public ChatMessageDto Message { get; set; } = default!;
+    [Parameter] public IReadOnlyList<ChatConversationSummary> Conversations { get; set; } = [];
+    [Parameter] public IReadOnlyList<ChatUserOption> Users { get; set; } = [];
+
+    public sealed record Result(IReadOnlyCollection<Guid> ConversationIds, IReadOnlyCollection<Guid> UserIds);
+
+    private readonly HashSet<Guid> _conversationIds = [];
+    private readonly HashSet<Guid> _userIds = [];
+    private string? _filter;
+
+    private int SelectedCount => _conversationIds.Count + _userIds.Count;
+
+    private IEnumerable<ChatConversationSummary> FilteredConversations =>
+        Conversations.Where(c => Matches(c.DisplayName));
+
+    // Người đã có hội thoại 1-1 trong danh sách trên thì không lặp lại ở đây.
+    private IEnumerable<ChatUserOption> FilteredUsers
+    {
+        get
+        {
+            var withDirect = Conversations.Where(c => c.OtherUserId is not null).Select(c => c.OtherUserId!.Value).ToHashSet();
+            return Users.Where(u => !withDirect.Contains(u.UserId) && (Matches(u.Name) || Matches(u.Department)));
+        }
+    }
+
+    private bool Matches(string? text) =>
+        string.IsNullOrWhiteSpace(_filter) ||
+        (text?.Contains(_filter.Trim(), StringComparison.CurrentCultureIgnoreCase) ?? false);
+
+    private void Toggle(HashSet<Guid> set, Guid id)
+    {
+        if (set.Remove(id))
+            return;
+        if (SelectedCount < ChatService.MaxForwardTargets)
+            set.Add(id);
+    }
+
+    private void Submit()
+    {
+        if (SelectedCount > 0)
+            MudDialog.Close(DialogResult.Ok(new Result(_conversationIds.ToList(), _userIds.ToList())));
+    }
+}
