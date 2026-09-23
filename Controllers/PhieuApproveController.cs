@@ -6,15 +6,15 @@ namespace NVOAMASIS.Controllers;
 
 /// <summary>
 /// Public email approval page for PhieuThu / PhieuChi.
-/// URL: /api/phieu-approve/{tenantId}/{token}?uid={userId}
+/// URL: /api/phieu-approve/{token}?uid={userId}
 /// </summary>
 [ApiController]
 [Route("api/phieu-approve")]
 public class PhieuApproveController(PhieuApproveService approveService) : ControllerBase
 {
-    [HttpGet("{tenantId:guid}/{token}")]
+    [HttpGet("{token}")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetPage(Guid tenantId, string token, [FromQuery] string? uid)
+    public async Task<IActionResult> GetPage(string token, [FromQuery] string? uid)
     {
         if (string.IsNullOrWhiteSpace(token))
             return Content("<h3>Token không hợp lệ</h3>", "text/html; charset=utf-8");
@@ -23,15 +23,14 @@ public class PhieuApproveController(PhieuApproveService approveService) : Contro
         if (Guid.TryParse(uid, out var parsed))
             userId = parsed;
 
-        var html = await approveService.BuildDecisionPageHtmlAsync(tenantId, token, userId);
+        var html = await approveService.BuildDecisionPageHtmlAsync(token, userId);
         return Content(html, "text/html; charset=utf-8");
     }
 
-    [HttpPost("{tenantId:guid}/{token}/decide")]
+    [HttpPost("{token}/decide")]
     [AllowAnonymous]
     [Consumes("application/x-www-form-urlencoded")]
     public async Task<IActionResult> Decide(
-        Guid tenantId,
         string token,
         [FromForm] string? uid,
         [FromForm] string? action,
@@ -41,7 +40,6 @@ public class PhieuApproveController(PhieuApproveService approveService) : Contro
             return Content("<h3>Thiếu thông tin người duyệt</h3>", "text/html; charset=utf-8");
 
         var html = await approveService.ProcessDecisionHtmlAsync(
-            tenantId,
             token,
             userId,
             action ?? "",

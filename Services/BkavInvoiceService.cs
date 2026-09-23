@@ -177,6 +177,7 @@ public class BkavInvoiceGroup
     public string HblPolName { get; set; } = string.Empty;
     public string HblPodName { get; set; } = string.Empty;
     public bool Thuho { get; set; }
+    public bool Dathanhtoan { get; set; }
     public int LineCount { get; set; }
     public DateTime? InvoiceDate { get; set; }
     public string? ElectronicInvoiceNo { get; set; }
@@ -301,6 +302,42 @@ public class BkavInvoiceService(
             .OrderByDescending(x => x.InvoiceDate)
             .ThenByDescending(x => x.InternalInvoiceNo)
             .ToList();
+    }
+
+    /// <summary>Tick/bỏ tick "Đã thanh toán" ngay trên lưới thống kê — cập nhật cho toàn bộ dòng HoaDonDauRa thuộc nhóm (InternalInvoiceNo + Customer).</summary>
+    public async Task<BkavInvoiceOperationResult> SetDaThanhToanAsync(string internalInvoiceNo, Guid customerId, bool value, string? usr = null, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var normalizedInternalNo = Clean(internalInvoiceNo);
+            if (string.IsNullOrWhiteSpace(normalizedInternalNo))
+                return BkavInvoiceOperationResult.Fail("Internal invoice number is required.");
+
+            var lines = await context.HoaDonDauRa
+                .Where(x => x.continued == true && x.customerid == customerId && x.sohoadonNoibo != null && x.sohoadonNoibo.Trim() == normalizedInternalNo)
+                .ToListAsync(cancellationToken);
+
+            if (lines.Count == 0)
+                return BkavInvoiceOperationResult.Fail("HoaDonDauRa group not found.");
+
+            var nowText = DateTime.Now.ToString(CultureInfo.InvariantCulture);
+            foreach (var line in lines)
+            {
+                line.dathanhtoan = value;
+                if (!string.IsNullOrWhiteSpace(usr))
+                    line.userupdate = usr;
+                line.dateupdate = nowText;
+            }
+
+            await context.SaveChangesAsync(cancellationToken);
+            return BkavInvoiceOperationResult.Ok(
+                value ? "Đã đánh dấu Đã thanh toán." : "Đã bỏ đánh dấu Đã thanh toán.",
+                await ReloadGroupAsync(normalizedInternalNo, customerId, cancellationToken));
+        }
+        catch (Exception ex)
+        {
+            return BkavInvoiceOperationResult.Fail(ex.Message);
+        }
     }
 
     public Task<BkavInvoiceOperationResult> CreateDraftInvoiceGroupAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
@@ -2049,13 +2086,14 @@ public class BkavInvoiceService(
         {
             InternalInvoiceNo = internalInvoiceNo,
             CustomerId = customerId,
-            CustomerName = customer == null ? string.Empty : FirstNonEmpty(customer.Customer_Code, customer.COMPANY, customer.EnglishName),
+            CustomerName = customer == null ? string.Empty : BuildCustomerDisplayName(customer),
             HblNo = string.Join("; ", hblNos),
             HblVessel = firstHbl == null ? string.Empty : Clean(firstHbl.Vessel),
             HblVoy = firstHbl == null ? string.Empty : Clean(firstHbl.Voy),
             HblPolName = firstHbl == null ? string.Empty : Clean(firstHbl.PolName),
             HblPodName = firstHbl == null ? string.Empty : Clean(firstHbl.PodName),
             Thuho = lines.Any(x => x.thuho == true),
+            Dathanhtoan = lines.Count > 0 && lines.All(x => x.dathanhtoan == true),
             LineCount = lines.Count,
             InvoiceDate = lines.Select(x => x.ngayphathanhhoadonDientu).FirstOrDefault(x => x.HasValue),
             ElectronicInvoiceNo = first?.sohoadonDientu,
@@ -2170,6 +2208,19 @@ public class BkavInvoiceService(
         => values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x))?.Trim() ?? string.Empty;
 
     private static string Clean(string? value) => value?.Trim() ?? string.Empty;
+
+    /// <summary>Hiển thị "Mã số thuế - Tên công ty" cho lưới danh sách hóa đơn BKAV.</summary>
+    private static string BuildCustomerDisplayName(M_Customer customer)
+    {
+        var taxCode = Clean(customer.TaxCode);
+        var company = FirstNonEmpty(customer.COMPANY, customer.EnglishName);
+
+        if (string.IsNullOrWhiteSpace(taxCode))
+            return company;
+        if (string.IsNullOrWhiteSpace(company))
+            return taxCode;
+        return $"{taxCode} - {company}";
+    }
 
     private static string NormalizeReceiverEmails(string? email)
     {

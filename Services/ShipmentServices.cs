@@ -3363,7 +3363,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -3463,7 +3463,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -3553,7 +3553,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -3659,7 +3659,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -3772,7 +3772,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -3875,7 +3875,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -3977,7 +3977,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -4080,7 +4080,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -4183,7 +4183,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -4285,7 +4285,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
@@ -4391,7 +4391,7 @@ namespace NVOAMASIS.Services
                     }
                 }
 
-                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString(cur_type == "VND" ? "#,##0" : "#,##0.##");
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
