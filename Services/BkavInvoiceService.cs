@@ -176,6 +176,7 @@ public class BkavInvoiceGroup
     public string HblVoy { get; set; } = string.Empty;
     public string HblPolName { get; set; } = string.Empty;
     public string HblPodName { get; set; } = string.Empty;
+    public bool Thuho { get; set; }
     public int LineCount { get; set; }
     public DateTime? InvoiceDate { get; set; }
     public string? ElectronicInvoiceNo { get; set; }
@@ -2054,6 +2055,7 @@ public class BkavInvoiceService(
             HblVoy = firstHbl == null ? string.Empty : Clean(firstHbl.Voy),
             HblPolName = firstHbl == null ? string.Empty : Clean(firstHbl.PolName),
             HblPodName = firstHbl == null ? string.Empty : Clean(firstHbl.PodName),
+            Thuho = lines.Any(x => x.thuho == true),
             LineCount = lines.Count,
             InvoiceDate = lines.Select(x => x.ngayphathanhhoadonDientu).FirstOrDefault(x => x.HasValue),
             ElectronicInvoiceNo = first?.sohoadonDientu,
