@@ -2695,7 +2695,7 @@ namespace NVOAMASIS.Services
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Dictionary.Variables["hblid"].Value = detail.hblID.ToString();
-                report.Dictionary.Variables["BillType"].Value = billType;
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 var mawb = await GetMBL_byHBLid(detail.mblid);
                 report.Dictionary.Variables["MAWB"].Value = mawb.Mbl;
 
@@ -3409,11 +3409,16 @@ namespace NVOAMASIS.Services
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Truck.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Load(rpt);
                 report.Culture = "en-US";
-                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 ApplyCompanyBranchVariable(report, branches);
 
                 var list_debit = await GetListDebit_Debitno(detail.debitno);
@@ -3506,7 +3511,7 @@ namespace NVOAMASIS.Services
 
                 report.Load(rpt);
                 report.Culture = "en-US";
-                report.Dictionary.Variables["BillType"].Value = billType;
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 var fcl = await GetFLCByMBLID(hblinfo.First().mblid);
                 double? total_payment = 0;
                 double? total_amount_notvat = 0;
@@ -3710,11 +3715,16 @@ namespace NVOAMASIS.Services
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaImport_MBL.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
-                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 ApplyCompanyBranchVariable(report, branches);
 
                 var mblinfo = await GetMBL_byHBLid(detail.mblid);
@@ -3808,11 +3818,16 @@ namespace NVOAMASIS.Services
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaExport.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
-                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 ApplyCompanyBranchVariable(report, branches);
 
                 var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
@@ -3905,11 +3920,16 @@ namespace NVOAMASIS.Services
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaExport_MBL.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
-                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 ApplyCompanyBranchVariable(report, branches);
 
                 var mblinfo = await GetMBL_byHBLid(detail.mblid);
@@ -4003,11 +4023,16 @@ namespace NVOAMASIS.Services
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_AirExport.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
-                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 ApplyCompanyBranchVariable(report, branches);
 
                 var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
@@ -4100,12 +4125,17 @@ namespace NVOAMASIS.Services
             try
             {
                 var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Airxport_MBL.mrt");
+                var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_AirExport_MBL.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
-                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 ApplyCompanyBranchVariable(report, branches);
 
                 var mblinfo = await GetMBL_byHBLid(detail.mblid);
@@ -4198,11 +4228,16 @@ namespace NVOAMASIS.Services
             {
                 var report = new StiReport();
                 var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_AirImport.mrt");
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
                 report.Load(rpt);
-                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 ApplyCompanyBranchVariable(report, branches);
 
                 var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
@@ -4301,10 +4336,13 @@ namespace NVOAMASIS.Services
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
                 report.Culture = "en-US";
-
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
 
                 report.Load(rpt);
-                report.Dictionary.Variables["BillType"].Value = billType;
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //report.Dictionary.Variables["BillType"].Value = billType;
                 ApplyCompanyBranchVariable(report, branches);
 
 
