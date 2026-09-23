@@ -1,0 +1,198 @@
+@using Microsoft.AspNetCore.Components.Forms
+@inject ISnackbar Snackbar
+@inject LccPolVietnamServices lcpv
+@inject AccountService asv
+
+<MudDialog>
+    <DialogContent>
+        @if (_step == Step.SelectFile)
+        {
+            <MudText Typo="Typo.body2" Class="mb-3">
+                Chọn file Excel gốc (chỉ đọc sheet đầu tiên "POL LOCAL"). Sau khi chọn file, hệ thống sẽ hiển thị trước
+                dữ liệu sẽ được import để bạn kiểm tra trước khi ghi vào hệ thống.
+            </MudText>
+
+            <InputFile OnChange="OnFileSelected" accept=".xlsx" />
+
+            @if (_reading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-3" />
+            }
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <MudAlert Severity="MudBlazor.Severity.Error" Class="mt-3" Dense="true">@_errorMessage</MudAlert>
+            }
+        }
+        else if (_step == Step.Preview && _preview != null)
+        {
+            <MudText Typo="Typo.body2" Class="mb-2">File: <b>@_fileName</b></MudText>
+            <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mb-3">@_preview.Message</MudAlert>
+
+            <MudTable Items="@_preview.Rows" Dense="true" Hover="true" Bordered="true" FixedHeader="true" Height="420px" Striped="true">
+                <HeaderContent>
+                    <MudTh></MudTh>
+                    <MudTh>Hãng tàu</MudTh>
+                    <MudTh>Loại phí</MudTh>
+                    <MudTh>20DC (mới)</MudTh>
+                    <MudTh>40HC (mới)</MudTh>
+                    <MudTh>20DC (hiện có)</MudTh>
+                    <MudTh>40HC (hiện có)</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>
+                        @if (context.IsNew)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">Mới</MudChip>
+                        }
+                        else if (context.HasChange)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled">Thay đổi</MudChip>
+                        }
+                        else
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Text">Không đổi</MudChip>
+                        }
+                    </MudTd>
+                    <MudTd>@context.Carrier</MudTd>
+                    <MudTd>@context.ChargeType</MudTd>
+                    <MudTd>@context.NewContainer20DC</MudTd>
+                    <MudTd>@context.NewContainer40HC</MudTd>
+                    <MudTd>@context.OldContainer20DC</MudTd>
+                    <MudTd>@context.OldContainer40HC</MudTd>
+                </RowTemplate>
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="@(new int[] { 25, 50, 100 })" />
+                </PagerContent>
+            </MudTable>
+
+            @if (_committing)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-3" />
+            }
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <MudAlert Severity="MudBlazor.Severity.Error" Class="mt-3" Dense="true">@_errorMessage</MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        @if (_step == Step.SelectFile)
+        {
+            <MudButton OnClick="Cancel">Hủy</MudButton>
+        }
+        else
+        {
+            <MudButton OnClick="BackToSelect" Disabled="@_committing">Chọn file khác</MudButton>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@_committing" OnClick="ConfirmImport">
+                Xác nhận Import (@_preview?.InsertCount mới, @_preview?.UpdateCount thay đổi)
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; }
+
+    enum Step { SelectFile, Preview }
+    Step _step = Step.SelectFile;
+
+    string? _fileName;
+    bool _reading;
+    bool _committing;
+    string? _errorMessage;
+
+    List<LccPolVietnamParsedRow>? _parsedRows;
+    LccPolVietnamPreview? _preview;
+    string usr = "";
+
+    protected override void OnInitialized()
+    {
+        usr = asv.GetAuth().Result.User.Identity!.Name!;
+    }
+
+    async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        _errorMessage = null;
+
+        if (file.Size > 20 * 1024 * 1024)
+        {
+            _errorMessage = "File vượt quá 20MB";
+            return;
+        }
+
+        try
+        {
+            _reading = true;
+            StateHasChanged();
+
+            using var ms = new MemoryStream();
+            await using var stream = file.OpenReadStream(20 * 1024 * 1024);
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            var parseResult = lcpv.ParseExcelSheet1(ms);
+            if (!parseResult.Flag)
+            {
+                _errorMessage = parseResult.Message;
+                return;
+            }
+
+            var preview = await lcpv.BuildPreview(parseResult.Rows);
+            if (!preview.Flag)
+            {
+                _errorMessage = preview.Message;
+                return;
+            }
+
+            _fileName = file.Name;
+            _parsedRows = parseResult.Rows;
+            _preview = preview;
+            _step = Step.Preview;
+        }
+        finally
+        {
+            _reading = false;
+        }
+    }
+
+    void BackToSelect()
+    {
+        _step = Step.SelectFile;
+        _parsedRows = null;
+        _preview = null;
+        _fileName = null;
+        _errorMessage = null;
+    }
+
+    async Task ConfirmImport()
+    {
+        if (_parsedRows == null || _fileName == null) return;
+
+        try
+        {
+            _committing = true;
+            _errorMessage = null;
+            StateHasChanged();
+
+            var rs = await lcpv.CommitImport(_parsedRows, usr, _fileName);
+            if (rs.Flag)
+            {
+                Snackbar.Add(rs.Message, MudBlazor.Severity.Success);
+                MudDialog.Close(DialogResult.Ok(true));
+            }
+            else
+            {
+                _errorMessage = rs.Message;
+            }
+        }
+        finally
+        {
+            _committing = false;
+        }
+    }
+
+    void Cancel() => MudDialog.Cancel();
+}

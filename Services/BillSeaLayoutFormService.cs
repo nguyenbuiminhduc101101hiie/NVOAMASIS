@@ -180,19 +180,22 @@ namespace NVOAMASIS.Services
             if (mrtBytes is not { Length: > 0 } || LooksLikeXml(mrtBytes))
                 return mrtBytes;
 
-            StimulsoftLicenseHelper.EnsureApplied();
-            var report = new StiReport();
-            using (var input = new MemoryStream(mrtBytes))
-                report.Load(input); // tự nhận diện JSON
+            using (StimulsoftLicenseHelper.AcquireReportLock())
+            {
+                StimulsoftLicenseHelper.EnsureApplied();
+                var report = new StiReport();
+                using (var input = new MemoryStream(mrtBytes))
+                    report.Load(input); // tự nhận diện JSON
 
-            // Stimulsoft 2023 mặc định serialize JSON; ép về XML để editor (XDocument) đọc được.
-            // IsJsonReport chỉ có getter công khai nên phải set qua reflection (setter non-public).
-            ForceXmlReportFormat(report);
-            StimulsoftLicenseHelper.ClearTrialWatermark(report);
+                // Stimulsoft 2023 mặc định serialize JSON; ép về XML để editor (XDocument) đọc được.
+                // IsJsonReport chỉ có getter công khai nên phải set qua reflection (setter non-public).
+                ForceXmlReportFormat(report);
+                StimulsoftLicenseHelper.ClearTrialWatermark(report);
 
-            using var output = new MemoryStream();
-            report.Save(output); // giờ ghi ở định dạng XML (StiSerializer)
-            return output.ToArray();
+                using var output = new MemoryStream();
+                report.Save(output); // giờ ghi ở định dạng XML (StiSerializer)
+                return output.ToArray();
+            }
         }
 
         private static void ForceXmlReportFormat(StiReport report)
