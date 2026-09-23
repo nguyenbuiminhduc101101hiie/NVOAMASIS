@@ -17,7 +17,6 @@ public class PhieuApproveService(
     GlobalServices gsv,
     IHttpContextAccessor httpContextAccessor,
     ITenantContext tenantContext,
-    RegistryDbContext registry,
     NotificationService notificationService,
     FcmPushService fcmPushService)
 {
@@ -55,10 +54,6 @@ public class PhieuApproveService(
         try
         {
             db.ChangeTracker.Clear();
-            var tenantId = tenantContext.TenantId;
-            if (tenantId == null)
-                return new BoolandMessReponse(false, "Không xác định được tenant. Vui lòng đăng nhập lại.");
-
             var smtpReady = await IsSmtpConfiguredAsync();
 
             if (loai == LoaiThu)
@@ -93,7 +88,7 @@ public class PhieuApproveService(
 
                 BoolandMessReponse? mailRs = null;
                 if (smtpReady)
-                    mailRs = await SendRequestEmailsAsync(tenantId.Value, LoaiThu, token, BuildThuSummary(item), approvers, requestedBy, baseUrl);
+                    mailRs = await SendRequestEmailsAsync(LoaiThu, token, BuildThuSummary(item), approvers, requestedBy, baseUrl);
 
                 return BuildSendResult(approvers.Count, mailRs, smtpReady);
             }
@@ -129,7 +124,7 @@ public class PhieuApproveService(
 
                 BoolandMessReponse? mailRs = null;
                 if (smtpReady)
-                    mailRs = await SendRequestEmailsAsync(tenantId.Value, LoaiChi, token, BuildChiSummary(item), approvers, requestedBy, baseUrl);
+                    mailRs = await SendRequestEmailsAsync(LoaiChi, token, BuildChiSummary(item), approvers, requestedBy, baseUrl);
 
                 return BuildSendResult(approvers.Count, mailRs, smtpReady);
             }
@@ -370,14 +365,9 @@ public class PhieuApproveService(
         }
     }
 
-    public async Task<string> BuildDecisionPageHtmlAsync(Guid tenantId, string token, Guid? userId)
+    public async Task<string> BuildDecisionPageHtmlAsync(string token, Guid? userId)
     {
-        var (ok, conn, err) = await ResolveTenantConnectionAsync(tenantId);
-        if (!ok)
-            return HtmlResult("Lỗi", err, isError: true);
-
-        await using var ctx = CreateDb(conn!);
-        var snapshot = await LoadSnapshotAsync(ctx, token);
+        var snapshot = await LoadSnapshotAsync(db, token);
         if (snapshot == null)
             return HtmlResult("Không tìm thấy", "Link duyệt không hợp lệ hoặc đã hết hiệu lực.", isError: true);
 
@@ -398,11 +388,11 @@ public class PhieuApproveService(
         if (userId == null || userId == Guid.Empty)
             return HtmlResult("Thiếu thông tin", "Link không có thông tin người duyệt. Vui lòng mở đúng link trong email.", isError: true);
 
-        var approver = await ctx.UserList.AsNoTracking().FirstOrDefaultAsync(x => x.UsrId == userId.Value);
+        var approver = await db.UserList.AsNoTracking().FirstOrDefaultAsync(x => x.UsrId == userId.Value);
         if (approver == null || !IsUserAllowed(approver, snapshot.Loai))
             return HtmlResult("Không có quyền", "Bạn không có quyền duyệt loại phiếu này.", isError: true);
 
-        var actionUrl = $"{GetBaseUrl()}/api/phieu-approve/{tenantId:N}/{token}/decide";
+        var actionUrl = $"{GetBaseUrl()}/api/phieu-approve/{token}/decide";
         var title = snapshot.Loai == LoaiThu ? "Duyệt phiếu thu" : "Duyệt phiếu chi";
         var sb = new StringBuilder();
         sb.Append($@"<!DOCTYPE html><html><head><meta charset='utf-8'/><meta name='viewport' content='width=device-width,initial-scale=1'/>
@@ -443,14 +433,9 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
         return sb.ToString();
     }
 
-    public async Task<string> ProcessDecisionHtmlAsync(Guid tenantId, string token, Guid userId, string action, string? remarks)
+    public async Task<string> ProcessDecisionHtmlAsync(string token, Guid userId, string action, string? remarks)
     {
-        var (ok, conn, err) = await ResolveTenantConnectionAsync(tenantId);
-        if (!ok)
-            return HtmlResult("Lỗi", err, isError: true);
-
-        await using var ctx = CreateDb(conn!);
-        var snapshot = await LoadSnapshotAsync(ctx, token, track: true);
+        var snapshot = await LoadSnapshotAsync(db, token, track: true);
         if (snapshot == null)
             return HtmlResult("Không tìm thấy", "Link duyệt không hợp lệ hoặc đã hết hiệu lực.", isError: true);
 
@@ -463,7 +448,7 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
                 isError: false);
         }
 
-        var approver = await ctx.UserList.AsNoTracking().FirstOrDefaultAsync(x => x.UsrId == userId);
+        var approver = await db.UserList.AsNoTracking().FirstOrDefaultAsync(x => x.UsrId == userId);
         if (approver == null || !IsUserAllowed(approver, snapshot.Loai))
             return HtmlResult("Không có quyền", "Bạn không có quyền duyệt loại phiếu này.", isError: true);
 
@@ -476,7 +461,7 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
 
         if (snapshot.Loai == LoaiThu)
         {
-            var item = await ctx.Phieuthu.FirstAsync(x => x.PhieuthuID == snapshot.PhieuId);
+            var item = await db.Phieuthu.FirstAsync(x => x.PhieuthuID == snapshot.PhieuId);
             if (IsAlreadyDecided(item.Approve, item.ApproveBy, item.ApproveDate))
                 return HtmlResult("Đã xử lý", $"Phiếu thu đã được xử lý bởi <b>{WebUtility.HtmlEncode(item.ApproveBy)}</b>.", isError: false);
 
@@ -488,9 +473,9 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
             item.Trangthai = isApprove ? "DaDuyet" : "TuChoi";
             item.UserUpdate = actorName;
             item.DateUpdate = now.ToString("dd/MMM/yyyy");
-            await ctx.SaveChangesAsync();
+            await db.SaveChangesAsync();
 
-            await NotifyWatchersAndOtherApproversAsync(ctx, LoaiThu, BuildThuSummary(item), isApprove, actorName, item.Remarks, userId);
+            await NotifyWatchersAndOtherApproversAsync(db, LoaiThu, BuildThuSummary(item), isApprove, actorName, item.Remarks, userId);
             return HtmlResult(
                 isApprove ? "Đã Approve" : "Đã Deny",
                 $"Bạn đã {(isApprove ? "Approve" : "Deny")} phiếu thu <b>{WebUtility.HtmlEncode(item.SoPhieuthu)}</b>.",
@@ -498,7 +483,7 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
         }
         else
         {
-            var item = await ctx.Phieuchi.FirstAsync(x => x.PhieuchiID == snapshot.PhieuId);
+            var item = await db.Phieuchi.FirstAsync(x => x.PhieuchiID == snapshot.PhieuId);
             if (IsAlreadyDecided(item.Approve, item.ApproveBy, item.ApproveDate))
                 return HtmlResult("Đã xử lý", $"Phiếu chi đã được xử lý bởi <b>{WebUtility.HtmlEncode(item.ApproveBy)}</b>.", isError: false);
 
@@ -510,9 +495,9 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
             item.Trangthai = isApprove ? "DaDuyet" : "TuChoi";
             item.Useupdate = actorName;
             item.DateUpdate = now.ToString("dd/MMM/yyyy");
-            await ctx.SaveChangesAsync();
+            await db.SaveChangesAsync();
 
-            await NotifyWatchersAndOtherApproversAsync(ctx, LoaiChi, BuildChiSummary(item), isApprove, actorName, item.Remarks, userId);
+            await NotifyWatchersAndOtherApproversAsync(db, LoaiChi, BuildChiSummary(item), isApprove, actorName, item.Remarks, userId);
             return HtmlResult(
                 isApprove ? "Đã Approve" : "Đã Deny",
                 $"Bạn đã {(isApprove ? "Approve" : "Deny")} phiếu chi <b>{WebUtility.HtmlEncode(item.Sophieuchi)}</b>.",
@@ -588,7 +573,6 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
     }
 
     private async Task<BoolandMessReponse> SendRequestEmailsAsync(
-        Guid tenantId,
         string loai,
         string token,
         string summaryHtml,
@@ -612,7 +596,7 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
                 continue;
             }
 
-            var link = $"{root}/api/phieu-approve/{tenantId:N}/{token}?uid={user.UsrId:N}";
+            var link = $"{root}/api/phieu-approve/{token}?uid={user.UsrId:N}";
             var body = $@"
 <div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#0f172a'>
   <p>Xin chào <b>{WebUtility.HtmlEncode(user.Name ?? user.Usr)}</b>,</p>
@@ -666,25 +650,6 @@ textarea{{width:100%;min-height:90px;border:1px solid #cbd5e1;border-radius:8px;
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-    }
-
-    private async Task<(bool ok, string? conn, string err)> ResolveTenantConnectionAsync(Guid tenantId)
-    {
-        var row = await registry.TenantDatabases.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.IsActive);
-        if (row == null)
-            return (false, null, "Không tìm thấy tenant.");
-
-        var conn = TenantConnectionStringBuilder.Build(row.ServerName, row.DatabaseName, row.SqlUserId, row.SqlPassword);
-        return (true, conn, "");
-    }
-
-    private static AppDbContext CreateDb(string connectionString)
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlServer(connectionString)
-            .Options;
-        return new AppDbContext(options);
     }
 
     private async Task<PhieuSnapshot?> LoadSnapshotAsync(AppDbContext ctx, string token, bool track = false)

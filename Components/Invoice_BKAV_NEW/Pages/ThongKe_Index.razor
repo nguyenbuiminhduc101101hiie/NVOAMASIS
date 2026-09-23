@@ -1,5 +1,7 @@
 @inject BkavInvoiceService bkavsv
 @inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+@inject AccountService asv
 @attribute [Authorize]
 @using System.Globalization
 
@@ -135,6 +137,15 @@
                             </MudChip>
                         </CellTemplate>
                     </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["BkavThongKe.Col.DaThanhToan"]" Width="120px" SortBy="@(x => x.Dathanhtoan)">
+                        <CellTemplate>
+                            <MudCheckBox T="bool"
+                                         Value="@context.Item.Dathanhtoan"
+                                         ValueChanged="@(v => OnDathanhtoanChanged(context.Item, v))"
+                                         Color="Color.Success"
+                                         Disabled="@_savingDathanhtoan.Contains(context.Item)" />
+                        </CellTemplate>
+                    </TemplateColumn>
                     <PropertyColumn Property="x => x.InvoiceDate" Title="@Localizer["BkavNew.Col.Date"]" Format="dd/MM/yyyy" />
                     <PropertyColumn Property="x => x.TotalBeforeTax" Title="@Localizer["BkavNew.Col.Amount"]" Format="N0" />
                     <PropertyColumn Property="x => x.TotalAfterTax" Title="@Localizer["BkavNew.Col.AmountVat"]" Format="N0" />
@@ -166,6 +177,8 @@
     private List<BkavInvoiceGroup> _groups = [];
     private bool _loading;
     private bool _loaded;
+    private string _usr = string.Empty;
+    private readonly HashSet<BkavInvoiceGroup> _savingDathanhtoan = new();
 
     private InvoiceStatusFilter _statusFilter = InvoiceStatusFilter.All;
     private ThuHoFilter _thuHoFilter = ThuHoFilter.All;
@@ -175,7 +188,33 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _usr = asv.GetAuth().Result.User.Identity?.Name ?? string.Empty;
         await LoadGroups();
+    }
+
+    private async Task OnDathanhtoanChanged(BkavInvoiceGroup group, bool value)
+    {
+        if (string.IsNullOrWhiteSpace(group.InternalInvoiceNo) || group.CustomerId == Guid.Empty)
+            return;
+
+        _savingDathanhtoan.Add(group);
+        try
+        {
+            var rs = await bkavsv.SetDaThanhToanAsync(group.InternalInvoiceNo, group.CustomerId, value, _usr);
+            if (rs.Success)
+            {
+                group.Dathanhtoan = value;
+                Snackbar.Add(rs.Message, MudBlazor.Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add(rs.Message, MudBlazor.Severity.Error);
+            }
+        }
+        finally
+        {
+            _savingDathanhtoan.Remove(group);
+        }
     }
 
     private async Task LoadGroups()

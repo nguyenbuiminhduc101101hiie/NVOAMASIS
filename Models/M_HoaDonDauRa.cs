@@ -25,6 +25,7 @@ namespace NVOAMASIS.Models
         public bool? editable { get; set; } = true;
         public bool? continued { get; set; } = true;
         public bool? thuho { get; set; } = false;
+        public bool? dathanhtoan { get; set; } = false;
         public string? ghiChu { get; set; }
         public int? soThuTu { get; set; }
         public double? tigia { get; set; }
