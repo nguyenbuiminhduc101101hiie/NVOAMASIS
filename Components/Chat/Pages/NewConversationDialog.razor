@@ -1,0 +1,58 @@
+@using NVOAMASIS.Models.Chat
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <DialogContent>
+        <MudTabs ActivePanelIndex="_tab" ActivePanelIndexChanged="OnTabChanged" Elevation="0" Rounded="true" PanelClass="pt-3">
+            <MudTabPanel Text="@Localizer["chat_direct"]" Icon="@Icons.Material.Filled.Person" />
+            <MudTabPanel Text="@Localizer["chat_group"]" Icon="@Icons.Material.Filled.Groups" />
+        </MudTabs>
+        @if (IsGroup)
+        {
+            <MudTextField T="string" @bind-Value="_groupName" Label="@Localizer["chat_group_name"]" MaxLength="200"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2" Immediate="true" />
+            <MudText Typo="Typo.caption" Class="mb-1">@Localizer["chat_selected"]: @_selected.Count</MudText>
+        }
+        <UserPicker Users="Users" Multiple="IsGroup" Selected="_selected" SelectedChanged="StateHasChanged" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">@Localizer["chat_cancel"]</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="!CanSubmit" OnClick="Submit">
+            @Localizer[IsGroup ? "chat_create_group" : "chat_start"]
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter] public IReadOnlyList<ChatUserOption> Users { get; set; } = [];
+
+    public sealed record Result(Guid? DirectUserId, string? GroupName, IReadOnlyList<Guid> MemberIds);
+
+    private int _tab;
+    private string? _groupName;
+    private HashSet<Guid> _selected = [];
+
+    private bool IsGroup => _tab == 1;
+
+    private bool CanSubmit => IsGroup
+        ? _selected.Count >= 2 && !string.IsNullOrWhiteSpace(_groupName)
+        : _selected.Count == 1;
+
+    private void OnTabChanged(int index)
+    {
+        _tab = index;
+        // Chuyển sang 1-1: chỉ giữ tối đa 1 lựa chọn.
+        if (!IsGroup && _selected.Count > 1)
+            _selected.Clear();
+    }
+
+    private void Submit()
+    {
+        if (!CanSubmit)
+            return;
+        MudDialog.Close(DialogResult.Ok(IsGroup
+            ? new Result(null, _groupName!.Trim(), _selected.ToList())
+            : new Result(_selected.First(), null, [])));
+    }
+}

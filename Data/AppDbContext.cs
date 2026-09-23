@@ -3,6 +3,7 @@ using NVOAMASIS.Accounting.B09.Data;
 using NVOAMASIS.Components.Accounting.Pages;
 using NVOAMASIS.Models;
 using NVOAMASIS.Models.Accounting;
+using NVOAMASIS.Models.Chat;
 namespace NVOAMASIS.Data
 {
     public class AppDbContext (DbContextOptions <AppDbContext> options) : DbContext(options)
@@ -192,6 +193,10 @@ namespace NVOAMASIS.Data
 
         public DbSet<FixedAsset> FixedAssets => Set<FixedAsset>();
         public DbSet<FixedAssetDepreciationRecord> FixedAssetDepreciations => Set<FixedAssetDepreciationRecord>();
+
+        public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
+        public DbSet<ChatParticipant> ChatParticipants => Set<ChatParticipant>();
+        public DbSet<ChatMessageRecord> ChatMessages => Set<ChatMessageRecord>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -631,6 +636,31 @@ namespace NVOAMASIS.Data
             });
 
             modelBuilder.ConfigureB09();
+
+            // Chat nội bộ — script Scripts/CreateChatTables.sql
+            modelBuilder.Entity<ChatConversation>(entity =>
+            {
+                entity.ToTable("ChatConversations");
+                entity.Property(x => x.Name).HasMaxLength(200);
+                entity.Property(x => x.DirectKey).HasMaxLength(80);
+                entity.Property(x => x.LastMessagePreview).HasMaxLength(200);
+                entity.HasIndex(x => x.DirectKey).IsUnique().HasFilter("[DirectKey] IS NOT NULL");
+            });
+            modelBuilder.Entity<ChatParticipant>(entity =>
+            {
+                entity.ToTable("ChatParticipants");
+                entity.HasKey(x => new { x.ConversationId, x.UserId });
+                entity.HasIndex(x => x.UserId);
+            });
+            modelBuilder.Entity<ChatMessageRecord>(entity =>
+            {
+                entity.ToTable("ChatMessages");
+                entity.Property(x => x.Text).HasMaxLength(4000);
+                entity.Property(x => x.AttachmentPath).HasMaxLength(500);
+                entity.Property(x => x.AttachmentName).HasMaxLength(260);
+                entity.Property(x => x.AttachmentContentType).HasMaxLength(150);
+                entity.HasIndex(x => new { x.ConversationId, x.CreatedAt });
+            });
         }
 
     }

@@ -1,0 +1,174 @@
+@using NVOAMASIS.Models.Chat
+@using NVOAMASIS.Services.Chat
+@inject ChatService ChatService
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ILogger<GroupMembersDialog> Logger
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+        else
+        {
+            @if (IsOwner)
+            {
+                <div class="d-flex gap-2 align-center mb-3">
+                    <MudTextField T="string" @bind-Value="_name" Label="@Localizer["chat_group_name"]" MaxLength="200"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true" />
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="@(_busy || string.IsNullOrWhiteSpace(_name) || _name!.Trim() == GroupName)"
+                               OnClick="RenameAsync">@Localizer["chat_rename"]</MudButton>
+                </div>
+            }
+
+            <MudText Typo="Typo.subtitle2" Class="mb-1">@Localizer["chat_members"] (@_members.Count)</MudText>
+            <div style="max-height:260px; overflow-y:auto;">
+                @foreach (var m in _members)
+                {
+                    <div class="d-flex align-center gap-2 py-1">
+                        <span class="chat-avatar" style="width:30px;height:30px;font-size:0.8rem;">@ConversationList.Initials(m.Name)</span>
+                        <span class="flex-grow-1">
+                            <MudText Typo="Typo.body2">
+                                @m.Name
+                                @if (m.Role == ChatParticipantRole.Owner)
+                                {
+                                    <MudChip Size="Size.Small" Color="Color.Primary" Variant="Variant.Text">@Localizer["chat_owner"]</MudChip>
+                                }
+                            </MudText>
+                            @if (!string.IsNullOrWhiteSpace(m.Department))
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@m.Department</MudText>
+                            }
+                        </span>
+                        @if (IsOwner && m.UserId != Caller.UserId)
+                        {
+                            <MudIconButton Icon="@Icons.Material.Filled.PersonRemove" Size="Size.Small" Color="Color.Error"
+                                           Disabled="_busy" Title="@Localizer["chat_remove_member"]" OnClick="() => RemoveAsync(m)" />
+                        }
+                    </div>
+                }
+            </div>
+
+            @if (IsOwner)
+            {
+                <MudDivider Class="my-3" />
+                <MudText Typo="Typo.subtitle2" Class="mb-1">@Localizer["chat_add_members"]</MudText>
+                <UserPicker Users="Candidates" Multiple="true" Selected="_toAdd" SelectedChanged="StateHasChanged" />
+                <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_busy || _toAdd.Count == 0)"
+                           StartIcon="@Icons.Material.Filled.PersonAdd" OnClick="AddAsync">
+                    @Localizer["chat_add_members"] (@_toAdd.Count)
+                </MudButton>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Error" StartIcon="@Icons.Material.Filled.Logout" Disabled="_busy" OnClick="LeaveAsync">
+            @Localizer["chat_leave_group"]
+        </MudButton>
+        <MudSpacer />
+        <MudButton OnClick="() => MudDialog.Close(DialogResult.Ok(false))">@Localizer["chat_close"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = null!;
+    [Parameter, EditorRequired] public ChatCaller Caller { get; set; }
+    [Parameter, EditorRequired] public Guid ConversationId { get; set; }
+    [Parameter] public string GroupName { get; set; } = "";
+
+    // Kết quả dialog: Ok(true) = người dùng đã rời nhóm.
+    private IReadOnlyList<ChatMemberDto> _members = [];
+    private IReadOnlyList<ChatUserOption> _directory = [];
+    private HashSet<Guid> _toAdd = [];
+    private string? _name;
+    private bool _loading = true;
+    private bool _busy;
+
+    private bool IsOwner => _members.Any(m => m.UserId == Caller.UserId && m.Role == ChatParticipantRole.Owner);
+
+    private IReadOnlyList<ChatUserOption> Candidates =>
+        _directory.Where(u => _members.All(m => m.UserId != u.UserId)).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _name = GroupName;
+        await RunAsync(async () =>
+        {
+            _members = await ChatService.GetMembersAsync(Caller, ConversationId);
+            _directory = await ChatService.GetUserDirectoryAsync(Caller);
+        });
+        _loading = false;
+    }
+
+    private Task RenameAsync() => RunAsync(async () =>
+    {
+        await ChatService.RenameGroupAsync(Caller, ConversationId, _name ?? "");
+        GroupName = _name!.Trim();
+        Snackbar.Add(Localizer["chat_saved"], Severity.Success);
+    });
+
+    private Task AddAsync() => RunAsync(async () =>
+    {
+        await ChatService.AddMembersAsync(Caller, ConversationId, _toAdd);
+        _toAdd.Clear();
+        _members = await ChatService.GetMembersAsync(Caller, ConversationId);
+    });
+
+    private async Task RemoveAsync(ChatMemberDto member)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["chat_remove_member"], $"{member.Name}?",
+            yesText: Localizer["chat_remove_member"], cancelText: Localizer["chat_cancel"]);
+        if (confirm != true)
+            return;
+
+        await RunAsync(async () =>
+        {
+            await ChatService.RemoveMemberAsync(Caller, ConversationId, member.UserId);
+            _members = await ChatService.GetMembersAsync(Caller, ConversationId);
+        });
+    }
+
+    private async Task LeaveAsync()
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["chat_leave_group"], Localizer["chat_leave_confirm"],
+            yesText: Localizer["chat_leave_group"], cancelText: Localizer["chat_cancel"]);
+        if (confirm != true)
+            return;
+
+        var left = false;
+        await RunAsync(async () =>
+        {
+            await ChatService.LeaveGroupAsync(Caller, ConversationId);
+            left = true;
+        });
+        if (left)
+            MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private async Task RunAsync(Func<Task> action)
+    {
+        _busy = true;
+        try
+        {
+            await action();
+        }
+        catch (ChatException ex)
+        {
+            Snackbar.Add(Localizer[ex.Message], Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Chat: thao tác thành viên nhóm thất bại");
+            Snackbar.Add(Localizer["chat_error_generic"], Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

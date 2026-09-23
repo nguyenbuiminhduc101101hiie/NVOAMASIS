@@ -1,0 +1,165 @@
+@using NVOAMASIS.Models.Chat
+@inject IStringLocalizer<SharedResource> Localizer
+
+@if (Message.Kind == ChatMessageKind.System)
+{
+    <div class="chat-system">@Message.SenderName @Localizer[Message.Text]</div>
+}
+else
+{
+    <div id="chat-msg-@Message.Id" class="chat-msg @(IsMine ? "chat-msg--mine" : "")">
+        @if (ShowSender && !IsMine)
+        {
+            <div class="chat-msg__sender">@Message.SenderName</div>
+        }
+        <div class="chat-msg__row">
+            <div class="chat-msg__bubble @(Message.IsDeleted ? "chat-msg__bubble--recalled" : "")" title="@Message.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")">
+                @if (Message.IsDeleted)
+                {
+                    @Localizer["chat_message_recalled"]
+                }
+                else
+                {
+                    @if (Message.IsForwarded)
+                    {
+                        <div class="chat-msg__forwarded">
+                            <MudIcon Icon="@Icons.Material.Filled.Shortcut" Style="font-size:14px" /> @Localizer["chat_forwarded"]
+                        </div>
+                    }
+                    @if (Message.ReplyTo is { } reply)
+                    {
+                        <button type="button" class="chat-quote" @onclick="() => OnJumpTo.InvokeAsync(reply.MessageId)">
+                            <span class="chat-quote__sender">@reply.SenderName</span>
+                            <span class="chat-quote__text">@QuoteText(reply)</span>
+                        </button>
+                    }
+                    @if (Message.IsImage)
+                    {
+                        <img class="chat-msg__image" src="@($"{Message.AttachmentUrl}?inline=true")" alt="@Message.AttachmentName"
+                             loading="lazy" @onclick="() => OnImageClick.InvokeAsync(Message)" />
+                    }
+                    else if (Message.HasAttachment)
+                    {
+                        <a class="chat-file" href="@Message.AttachmentUrl" target="_blank" rel="noopener" download="@Message.AttachmentName">
+                            <MudIcon Icon="@FileIcon(Message.AttachmentName)" />
+                            <span>
+                                <span class="chat-file__name">@Message.AttachmentName</span><br />
+                                <span class="chat-file__size">@FormatSize(Message.AttachmentSizeBytes)</span>
+                            </span>
+                        </a>
+                    }
+                    else
+                    {
+                        @Message.Text
+                    }
+                }
+            </div>
+            @if (!Message.IsDeleted)
+            {
+                @* Rê chuột: chỉ hiện Trả lời + ⋮; các hành động khác nằm trong menu ⋮. Tin của mình: ⋮ nằm ngoài cùng bên trái. *@
+                <div class="chat-msg__actions">
+                    @if (IsMine)
+                    {
+                        @MoreMenu
+                    }
+                    <MudIconButton Icon="@Icons.Material.Filled.Reply" Size="Size.Small" Class="chat-msg__action-btn"
+                                   Title="@Localizer["chat_reply"]" OnClick="() => OnReply.InvokeAsync(Message)" />
+                    @if (!IsMine)
+                    {
+                        @MoreMenu
+                    }
+                </div>
+            }
+        </div>
+        @if (ShowMeta || Message.IsPinned || IsEdited)
+        {
+            <div class="chat-msg__meta">
+                @if (Message.IsPinned)
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.PushPin" Color="Color.Warning" Style="font-size:13px" Title="@Localizer["chat_pinned_messages"]" />
+                }
+                @if (IsEdited)
+                {
+                    <span title="@Message.EditedAt!.Value.ToLocalTime().ToString("dd/MM/yyyy HH:mm")">(@Localizer["chat_edited"])</span>
+                }
+                <span>@Message.CreatedAt.ToLocalTime().ToString("HH:mm")</span>
+                @if (IsMine && Receipt is not null)
+                {
+                    <span title="@Receipt.Tooltip">
+                        <MudIcon Icon="@(Receipt.IsRead ? Icons.Material.Filled.DoneAll : Icons.Material.Filled.Done)"
+                                 Color="@(Receipt.IsRead ? Color.Info : Color.Default)" Style="font-size:14px" />
+                        @Receipt.Label
+                    </span>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public ChatMessageDto Message { get; set; } = default!;
+    [Parameter] public bool IsMine { get; set; }
+    [Parameter] public bool ShowSender { get; set; }
+
+    /// <summary>Hiện giờ gửi (+ receipt) — chỉ ở tin cuối của một chuỗi liên tiếp để gọn giao diện.</summary>
+    [Parameter] public bool ShowMeta { get; set; } = true;
+
+    [Parameter] public ReadReceipt? Receipt { get; set; }
+
+    /// <summary>ChatIndex quyết định: tin của mình, chưa thu hồi, trong 24 giờ.</summary>
+    [Parameter] public bool CanRecall { get; set; }
+
+    /// <summary>Tin chữ của mình, chưa thu hồi, trong 24 giờ.</summary>
+    [Parameter] public bool CanEdit { get; set; }
+    [Parameter] public EventCallback<ChatMessageDto> OnEdit { get; set; }
+
+    private bool IsEdited => Message.EditedAt is not null && !Message.IsDeleted;
+
+    [Parameter] public EventCallback<ChatMessageDto> OnImageClick { get; set; }
+    [Parameter] public EventCallback<ChatMessageDto> OnReply { get; set; }
+    [Parameter] public EventCallback<ChatMessageDto> OnForward { get; set; }
+    [Parameter] public EventCallback<ChatMessageDto> OnTogglePin { get; set; }
+    [Parameter] public EventCallback<ChatMessageDto> OnRecall { get; set; }
+
+    /// <summary>Bấm vào trích dẫn → nhảy tới tin gốc.</summary>
+    [Parameter] public EventCallback<Guid> OnJumpTo { get; set; }
+
+    public sealed record ReadReceipt(bool IsRead, string? Label, string? Tooltip);
+
+    private RenderFragment MoreMenu => @<MudMenu Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small" Dense="true"
+                                                Class="chat-msg__action-btn" Title="@Localizer["chat_more"]"
+                                                AnchorOrigin="Origin.TopCenter" TransformOrigin="Origin.BottomCenter">
+        @if (CanEdit)
+        {
+            <MudMenuItem OnClick="() => OnEdit.InvokeAsync(Message)">@Localizer["chat_edit"]</MudMenuItem>
+        }
+        @if (CanRecall)
+        {
+            <MudMenuItem OnClick="() => OnRecall.InvokeAsync(Message)">@Localizer["chat_recall"]</MudMenuItem>
+        }
+        <MudMenuItem OnClick="() => OnForward.InvokeAsync(Message)">@Localizer["chat_forward"]</MudMenuItem>
+        <MudMenuItem OnClick="() => OnTogglePin.InvokeAsync(Message)">@Localizer[Message.IsPinned ? "chat_unpin" : "chat_pin"]</MudMenuItem>
+    </MudMenu>;
+
+    private string QuoteText(ChatReplyPreview reply) =>
+        reply.IsDeleted ? Localizer["chat_message_recalled"]
+        : reply.AttachmentName is { } name ? "📎 " + name
+        : reply.Text;
+
+    private static string FormatSize(long? bytes) => bytes switch
+    {
+        null => "",
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / 1024.0 / 1024.0:0.#} MB"
+    };
+
+    private static string FileIcon(string? name) => Path.GetExtension(name ?? "").ToLowerInvariant() switch
+    {
+        ".pdf" => Icons.Material.Filled.PictureAsPdf,
+        ".xls" or ".xlsx" or ".csv" => Icons.Material.Filled.TableChart,
+        ".doc" or ".docx" => Icons.Material.Filled.Description,
+        ".zip" or ".rar" or ".7z" => Icons.Material.Filled.FolderZip,
+        _ => Icons.Material.Filled.InsertDriveFile
+    };
+}

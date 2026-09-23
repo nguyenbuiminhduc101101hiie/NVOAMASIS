@@ -1,0 +1,170 @@
+@using NVOAMASIS.Models.Chat
+@using NVOAMASIS.Services.Chat
+@implements IDisposable
+@inject IJSRuntime JS
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+
+@if (EditingMessage is not null)
+{
+    <div class="chat-replying chat-replying--edit">
+        <MudIcon Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning" />
+        <div class="chat-replying__body">
+            <MudText Typo="Typo.caption"><b>@Localizer["chat_editing"]</b></MudText>
+            <div class="chat-replying__text">@EditingMessage.Text</div>
+        </div>
+        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Title="@Localizer["chat_cancel"]" OnClick="OnCancelEdit" />
+    </div>
+}
+else if (ReplyTo is { } reply)
+{
+    <div class="chat-replying">
+        <MudIcon Icon="@Icons.Material.Filled.Reply" Size="Size.Small" Color="Color.Primary" />
+        <div class="chat-replying__body">
+            <MudText Typo="Typo.caption">@Localizer["chat_replying_to"] <b>@reply.SenderName</b></MudText>
+            <div class="chat-replying__text">@(reply.HasAttachment ? "📎 " + reply.AttachmentName : reply.Text)</div>
+        </div>
+        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Title="@Localizer["chat_cancel"]" OnClick="OnCancelReply" />
+    </div>
+}
+<div class="chat-composer">
+    <InputFile id="@_fileInputId" class="chat-composer__file" OnChange="OnFileSelected" disabled="@(Disabled || _uploading)" />
+    @if (_uploading)
+    {
+        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ma-2" />
+    }
+    else if (EditingMessage is null)
+    {
+        <MudIconButton HtmlTag="label" for="@_fileInputId" Icon="@Icons.Material.Filled.AttachFile"
+                       Disabled="Disabled" Title="@Localizer["chat_attach"]" />
+    }
+    <textarea @ref="_textarea" rows="1" maxlength="@ChatService.MaxTextLength" disabled="@Disabled"
+              placeholder="@Localizer["chat_input_placeholder"]"
+              value="@_text" @oninput="OnInput"></textarea>
+    <MudIconButton Icon="@(EditingMessage is null ? Icons.Material.Filled.Send : Icons.Material.Filled.Check)" Color="Color.Primary"
+                   Disabled="@(Disabled || _sending || string.IsNullOrWhiteSpace(_text))"
+                   OnClick="SubmitAsync" Title="@Localizer[EditingMessage is null ? "chat_send" : "chat_edit"]" />
+</div>
+
+@code {
+    private static readonly TimeSpan TypingThrottle = TimeSpan.FromSeconds(2);
+
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>Trả về true nếu gửi thành công (khi đó ô nhập được xoá).</summary>
+    [Parameter, EditorRequired] public Func<string, Task<bool>> OnSend { get; set; } = default!;
+
+    [Parameter, EditorRequired] public Func<IBrowserFile, Task> OnFile { get; set; } = default!;
+    [Parameter] public Func<Task>? OnTyping { get; set; }
+
+    /// <summary>Tin đang được trả lời (ChatIndex giữ state và xoá sau khi gửi thành công).</summary>
+    [Parameter] public ChatMessageDto? ReplyTo { get; set; }
+    [Parameter] public EventCallback OnCancelReply { get; set; }
+
+    /// <summary>Tin đang chỉnh sửa: ô nhập điền sẵn nội dung, OnSend = lưu chỉnh sửa (ChatIndex xử lý).</summary>
+    [Parameter] public ChatMessageDto? EditingMessage { get; set; }
+    [Parameter] public EventCallback OnCancelEdit { get; set; }
+
+    private Guid? _editingId;
+    private bool _syncTextPending;
+
+    private readonly string _fileInputId = $"chat-file-{Guid.NewGuid():N}";
+    private ElementReference _textarea;
+    private DotNetObjectReference<ChatComposer>? _selfRef;
+    private string _text = "";
+    private bool _sending;
+    private bool _uploading;
+    private DateTime _lastTypingSent = DateTime.MinValue;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("nvoChat.attachComposer", _textarea, _selfRef);
+        }
+        if (_syncTextPending)
+        {
+            _syncTextPending = false;
+            await JS.InvokeVoidAsync("nvoChat.setComposer", _textarea, _text);
+        }
+    }
+
+    public ValueTask FocusAsync() => JS.InvokeVoidAsync("nvoChat.focus", _textarea);
+
+    protected override void OnParametersSet()
+    {
+        if (EditingMessage?.Id == _editingId)
+            return;
+
+        // Vào chế độ sửa → điền nội dung cũ; thoát (huỷ/đã lưu) → xoá ô nhập.
+        _text = EditingMessage?.Text ?? "";
+        _editingId = EditingMessage?.Id;
+        _syncTextPending = true;
+    }
+
+    [JSInvokable]
+    public Task CancelFromKeyboard() => InvokeAsync(() =>
+        EditingMessage is not null ? OnCancelEdit.InvokeAsync()
+        : ReplyTo is not null ? OnCancelReply.InvokeAsync()
+        : Task.CompletedTask);
+
+    [JSInvokable]
+    public Task SubmitFromKeyboard() => InvokeAsync(SubmitAsync);
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        _text = e.Value?.ToString() ?? "";
+        if (OnTyping is null || string.IsNullOrWhiteSpace(_text) || DateTime.UtcNow - _lastTypingSent < TypingThrottle)
+            return;
+        _lastTypingSent = DateTime.UtcNow;
+        await OnTyping();
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (Disabled || _sending || string.IsNullOrWhiteSpace(_text))
+            return;
+
+        _sending = true;
+        try
+        {
+            // Lỗi → giữ nguyên nội dung để người dùng gửi lại.
+            if (await OnSend(_text))
+            {
+                _text = "";
+                _lastTypingSent = DateTime.MinValue;
+                await JS.InvokeVoidAsync("nvoChat.resetComposer", _textarea);
+            }
+        }
+        finally
+        {
+            _sending = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file.Size > ChatFileStorage.MaxAttachmentBytes)
+        {
+            Snackbar.Add(Localizer["chat_attachment_too_large"], Severity.Warning);
+            return;
+        }
+
+        _uploading = true;
+        StateHasChanged();
+        try
+        {
+            await OnFile(file);
+        }
+        finally
+        {
+            _uploading = false;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose() => _selfRef?.Dispose();
+}

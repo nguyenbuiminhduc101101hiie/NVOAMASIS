@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@implements IAsyncDisposable
 @inject IStringLocalizer<SharedResource> Localizer
 @inject AccountService asv
 @inject FontService FontSizeService
@@ -15,6 +16,11 @@
 @inject HttpClient Http
 @inject IDialogService DialogService
 @inject IHttpContextAccessor HttpContextAccessor
+@inject MobileJwtTokenService JwtTokenService
+@inject NVOAMASIS.Services.Chat.ChatService ChatService
+@inject NVOAMASIS.Services.Chat.ChatNotifier ChatNotifier
+@inject NVOAMASIS.Services.Chat.ChatIdentity ChatIdentity
+@inject NVOAMASIS.Services.Chat.ChatNavigator ChatNavigator
 
 <MudThemeProvider />
 <MudDialogProvider />
@@ -94,6 +100,17 @@
                     </NotAuthorized>
                     <Authorized>
                         @*  <Message_index OnTabRequest="@((t) => OpenTab(t.Key,t.Title,t.Content))" /> *@
+
+                        <MudBadge Content="@(_chatUnreadCount > 99 ? "99+" : _chatUnreadCount.ToString())"
+                                  Color="Color.Error"
+                                  Visible="_chatUnreadCount > 0"
+                                  Overlap="true"
+                                  Style="margin-right: 24px;">
+                            <MudIconButton Icon="@Icons.Material.Filled.Forum"
+                                           Color="Color.Inherit"
+                                           Title="@Localizer["chat_title"]"
+                                           OnClick="() => OpenChat(null)" Style="padding:0.5px" />
+                        </MudBadge>
 
                         <MudBadge Content="@_unreadEmailCount"
                         Color="Color.Error"
@@ -351,6 +368,7 @@
         await LoadThemePreference();
         await LoadFontPreferenceFromDb();
         await StartHub();
+        await StartChatAsync();
         // await LoadCheckInStatus();
         ScheduleNextCheck();
     }
@@ -558,8 +576,12 @@
         if (usr.Identity != null && usr.Identity.IsAuthenticated)
         {
 
+            // JWT ngắn hạn tạo mới mỗi lần (re)connect; HubConnection chạy trên server nên token không lộ ra trình duyệt.
             _hubConnection = new HubConnectionBuilder()
-                    .WithUrl(Navigation.ToAbsoluteUri($"/notificationhub?userid={user.UsrId}"))
+                    .WithUrl(Navigation.ToAbsoluteUri("/notificationhub"), options =>
+                    {
+                        options.AccessTokenProvider = () => Task.FromResult<string?>(JwtTokenService.CreateHubToken(usr));
+                    })
                     .WithAutomaticReconnect()
                     .Build();
 
@@ -588,16 +610,104 @@
             });
 
             await InvokeAsync(StateHasChanged);
-            await _hubConnection.StartAsync();
+            try
+            {
+                await _hubConnection.StartAsync();
+            }
+            catch (Exception ex)
+            {
+                // Thông báo realtime lỗi không được làm hỏng layout.
+                Console.WriteLine($"[MainLayout] notification hub start failed: {ex.Message}");
+            }
         }
 
     }
     public async ValueTask DisposeAsync()
     {
+        Dispose();
+        _chatSubscription?.Dispose();
         if (_hubConnection != null)
         {
             await _hubConnection.DisposeAsync();
         }
+    }
+
+    // ---------- Chat nội bộ ----------
+
+    private int _chatUnreadCount;
+    private IDisposable? _chatSubscription;
+    private NVOAMASIS.Services.Chat.ChatCaller? _chatCaller;
+
+    private async Task StartChatAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        _chatCaller = ChatIdentity.Resolve(authState.User);
+        if (_chatCaller is not { } caller)
+            return;
+
+        _chatSubscription = ChatNotifier.Subscribe(caller.TenantKey, caller.UserId, OnChatEventAsync);
+        await RefreshChatUnreadAsync();
+    }
+
+    private async Task RefreshChatUnreadAsync()
+    {
+        if (_chatCaller is not { } caller)
+            return;
+        try
+        {
+            _chatUnreadCount = await ChatService.GetTotalUnreadAsync(caller);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MainLayout] chat unread load failed: {ex.Message}");
+        }
+    }
+
+    private Task OnChatEventAsync(NVOAMASIS.Services.Chat.ChatEvent evt) => InvokeAsync(async () =>
+    {
+        if (_disposed || _chatCaller is not { } caller)
+            return;
+
+        switch (evt)
+        {
+            case NVOAMASIS.Services.Chat.ChatMessageReceived { Message: var message }
+                when message.SenderUserId != caller.UserId && message.Kind != NVOAMASIS.Models.Chat.ChatMessageKind.System:
+                if (!ChatNavigator.IsViewing(message.ConversationId))
+                {
+                    var text = message.HasAttachment ? "📎 " + message.AttachmentName : message.Text;
+                    if (text.Length > 80)
+                        text = text[..80] + "…";
+                    var conversationId = message.ConversationId;
+                    Snackbar.Add($"💬 {message.SenderName}: {text}", MudBlazor.Severity.Normal, options =>
+                    {
+                        options.Onclick = _ => OpenChat(conversationId);
+                    });
+                }
+                await RefreshChatUnreadAsync();
+                break;
+
+            case NVOAMASIS.Services.Chat.ChatReadUpdated read when read.UserId == caller.UserId:
+            case NVOAMASIS.Services.Chat.ChatConversationChanged:
+            case NVOAMASIS.Services.Chat.ChatMessageRecalled:
+            case NVOAMASIS.Services.Chat.ChatConversationHidden:
+            case NVOAMASIS.Services.Chat.ChatConversationDeleted:
+                await RefreshChatUnreadAsync();
+                break;
+
+            default:
+                return;
+        }
+
+        StateHasChanged();
+    });
+
+    private Task OpenChat(Guid? conversationId)
+    {
+        // Đặt yêu cầu trước khi mở tab: ChatIndex mới tạo sẽ lấy pending trong OnInitializedAsync.
+        if (conversationId is { } id)
+            ChatNavigator.RequestOpen(id);
+        return OpenTab(NVOAMASIS.Services.Chat.ChatNavigator.TabKey, Localizer["chat_title"],
+            RenderComponent(typeof(Components.Chat.Pages.ChatIndex)));
     }
 
     RenderFragment RenderComponent(Type componentType) => builder =>
