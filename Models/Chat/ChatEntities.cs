@@ -75,4 +75,7 @@ public class ChatMessageRecord
 
     /// <summary>Trả lời tin khác trong cùng hội thoại.</summary>
     public Guid? ReplyToMessageId { get; set; }
+
+    /// <summary>Lần chỉnh sửa gần nhất (không lưu lịch sử nội dung cũ).</summary>
+    public DateTime? EditedAt { get; set; }
 }

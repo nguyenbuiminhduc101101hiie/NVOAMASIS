@@ -22,6 +22,7 @@ public sealed class ChatService(
     private const int MaxJumpWindow = 500;
     private const int PreviewLength = 200;
     private static readonly TimeSpan RecallWindow = TimeSpan.FromHours(24);
+    private static readonly TimeSpan EditWindow = TimeSpan.FromHours(24);
 
     /// <summary>LastMessagePreview rỗng = tin cuối đã bị thu hồi; UI hiển thị chuỗi localize "chat_message_recalled".</summary>
     public const string RecalledPreview = "";
@@ -491,6 +492,42 @@ public sealed class ChatService(
             new ChatTyping(conversationId, caller.UserId, userName));
     }
 
+    // ---------- Chỉnh sửa ----------
+
+    /// <summary>Người gửi sửa tin chữ của mình trong 24 giờ. Không lưu nội dung cũ.</summary>
+    public async Task<ChatMessageDto> EditMessageAsync(ChatCaller caller, Guid messageId, string text)
+    {
+        var normalized = (text ?? "").Trim();
+        if (normalized.Length == 0)
+            throw new ChatException("chat_message_empty");
+        if (normalized.Length > MaxTextLength)
+            throw new ChatException("chat_message_too_long");
+
+        await using var db = dbFactory.CreateDbContext();
+        var message = await db.ChatMessages.SingleOrDefaultAsync(m => m.Id == messageId)
+            ?? throw new ChatException("chat_message_not_found");
+
+        if (message.SenderUserId != caller.UserId || message.Kind != ChatMessageKind.Text || message.DeletedAt is not null)
+            throw new ChatException("chat_edit_not_allowed");
+        if (DateTime.UtcNow - message.CreatedAt > EditWindow)
+            throw new ChatException("chat_edit_expired");
+
+        var conversation = await EnsureMemberAsync(db, caller, message.ConversationId, tracking: true);
+        if (message.Text != normalized)
+        {
+            message.Text = normalized;
+            message.EditedAt = DateTime.UtcNow;
+            if (conversation.LastMessageAt == message.CreatedAt)
+                conversation.LastMessagePreview = Preview(normalized);
+            await db.SaveChangesAsync();
+
+            await PublishToMembersAsync(db, caller.TenantKey, message.ConversationId,
+                new ChatMessageEdited(message.ConversationId, message.Id, message.Text, message.EditedAt.Value));
+        }
+
+        return await ProjectWithSender(db, db.ChatMessages.AsNoTracking().Where(m => m.Id == messageId)).SingleAsync();
+    }
+
     // ---------- Chuyển tiếp ----------
 
     /// <summary>
@@ -889,7 +926,8 @@ public sealed class ChatService(
                     ru == null ? "?" : (ru.Name ?? ru.Usr ?? "?"),
                     r.Text,
                     r.AttachmentName,
-                    r.DeletedAt != null));
+                    r.DeletedAt != null),
+            m.EditedAt);
 
     private static async Task<Guid?> FindDirectAsync(AppDbContext db, string directKey) =>
         await db.ChatConversations.AsNoTracking()

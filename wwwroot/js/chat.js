@@ -40,7 +40,7 @@ window.nvoChat = (function () {
         el.addEventListener('scroll', el._nvoChatScroll, { passive: true });
     }
 
-    // Enter gửi, Shift+Enter xuống dòng; textarea tự giãn tối đa 160px.
+    // Enter gửi, Shift+Enter xuống dòng, Esc huỷ trả lời/chỉnh sửa; textarea tự giãn tối đa 160px.
     function attachComposer(textarea, dotnetRef) {
         if (!textarea || textarea._nvoChatComposer) return;
         const grow = () => {
@@ -51,10 +51,22 @@ window.nvoChat = (function () {
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
                 e.preventDefault();
                 dotnetRef.invokeMethodAsync('SubmitFromKeyboard');
+            } else if (e.key === 'Escape') {
+                dotnetRef.invokeMethodAsync('CancelFromKeyboard');
             }
         };
         textarea.addEventListener('keydown', textarea._nvoChatComposer);
         textarea.addEventListener('input', grow);
+    }
+
+    // Điền nội dung (chỉnh sửa tin), giãn chiều cao và đặt con trỏ cuối.
+    function setComposer(textarea, text) {
+        if (!textarea) return;
+        textarea.value = text;
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.min(textarea.scrollHeight, 160) + 'px';
+        textarea.focus();
+        textarea.setSelectionRange(text.length, text.length);
     }
 
     function resetComposer(textarea) {
@@ -80,6 +92,6 @@ window.nvoChat = (function () {
 
     return {
         scrollToBottom, isNearBottom, captureScroll, restoreScroll, scrollToMessage,
-        watchScroll, attachComposer, resetComposer, focus, isPageVisible, watchVisibility
+        watchScroll, attachComposer, setComposer, resetComposer, focus, isPageVisible, watchVisibility
     };
 })();

@@ -338,7 +338,27 @@ BEGIN TRANSACTION;
 
     SELECT N'chat_sys_unpinned', N'en-US', N'unpinned a message' UNION ALL
     SELECT N'chat_sys_unpinned', N'vi-VN', N'đã bỏ ghim một tin nhắn' UNION ALL
-    SELECT N'chat_sys_unpinned', N'zh-CN', N'取消置顶了一条消息'
+    SELECT N'chat_sys_unpinned', N'zh-CN', N'取消置顶了一条消息' UNION ALL
+
+    SELECT N'chat_edit', N'en-US', N'Edit' UNION ALL
+    SELECT N'chat_edit', N'vi-VN', N'Chỉnh sửa' UNION ALL
+    SELECT N'chat_edit', N'zh-CN', N'编辑' UNION ALL
+
+    SELECT N'chat_editing', N'en-US', N'Editing message' UNION ALL
+    SELECT N'chat_editing', N'vi-VN', N'Đang chỉnh sửa tin nhắn' UNION ALL
+    SELECT N'chat_editing', N'zh-CN', N'正在编辑消息' UNION ALL
+
+    SELECT N'chat_edited', N'en-US', N'edited' UNION ALL
+    SELECT N'chat_edited', N'vi-VN', N'đã chỉnh sửa' UNION ALL
+    SELECT N'chat_edited', N'zh-CN', N'已编辑' UNION ALL
+
+    SELECT N'chat_edit_expired', N'en-US', N'Messages can only be edited within 24 hours' UNION ALL
+    SELECT N'chat_edit_expired', N'vi-VN', N'Chỉ chỉnh sửa được tin nhắn trong vòng 24 giờ' UNION ALL
+    SELECT N'chat_edit_expired', N'zh-CN', N'只能编辑 24 小时内的消息' UNION ALL
+
+    SELECT N'chat_edit_not_allowed', N'en-US', N'You can only edit your own text messages' UNION ALL
+    SELECT N'chat_edit_not_allowed', N'vi-VN', N'Bạn chỉ chỉnh sửa được tin nhắn chữ của mình' UNION ALL
+    SELECT N'chat_edit_not_allowed', N'zh-CN', N'只能编辑自己的文字消息'
 )
 MERGE dbo.LocalizationResources AS tgt
 USING src

@@ -15,7 +15,8 @@ public sealed record ChatMessageDto(
     bool IsDeleted,
     bool IsForwarded,
     DateTime? PinnedAt,
-    ChatReplyPreview? ReplyTo)
+    ChatReplyPreview? ReplyTo,
+    DateTime? EditedAt)
 {
     public bool IsPinned => PinnedAt is not null;
 

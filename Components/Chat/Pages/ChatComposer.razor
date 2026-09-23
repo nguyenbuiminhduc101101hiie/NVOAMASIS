@@ -5,7 +5,18 @@
 @inject IStringLocalizer<SharedResource> Localizer
 @inject ISnackbar Snackbar
 
-@if (ReplyTo is { } reply)
+@if (EditingMessage is not null)
+{
+    <div class="chat-replying chat-replying--edit">
+        <MudIcon Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Warning" />
+        <div class="chat-replying__body">
+            <MudText Typo="Typo.caption"><b>@Localizer["chat_editing"]</b></MudText>
+            <div class="chat-replying__text">@EditingMessage.Text</div>
+        </div>
+        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Title="@Localizer["chat_cancel"]" OnClick="OnCancelEdit" />
+    </div>
+}
+else if (ReplyTo is { } reply)
 {
     <div class="chat-replying">
         <MudIcon Icon="@Icons.Material.Filled.Reply" Size="Size.Small" Color="Color.Primary" />
@@ -22,7 +33,7 @@
     {
         <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ma-2" />
     }
-    else
+    else if (EditingMessage is null)
     {
         <MudIconButton HtmlTag="label" for="@_fileInputId" Icon="@Icons.Material.Filled.AttachFile"
                        Disabled="Disabled" Title="@Localizer["chat_attach"]" />
@@ -30,9 +41,9 @@
     <textarea @ref="_textarea" rows="1" maxlength="@ChatService.MaxTextLength" disabled="@Disabled"
               placeholder="@Localizer["chat_input_placeholder"]"
               value="@_text" @oninput="OnInput"></textarea>
-    <MudIconButton Icon="@Icons.Material.Filled.Send" Color="Color.Primary"
+    <MudIconButton Icon="@(EditingMessage is null ? Icons.Material.Filled.Send : Icons.Material.Filled.Check)" Color="Color.Primary"
                    Disabled="@(Disabled || _sending || string.IsNullOrWhiteSpace(_text))"
-                   OnClick="SubmitAsync" Title="@Localizer["chat_send"]" />
+                   OnClick="SubmitAsync" Title="@Localizer[EditingMessage is null ? "chat_send" : "chat_edit"]" />
 </div>
 
 @code {
@@ -50,6 +61,13 @@
     [Parameter] public ChatMessageDto? ReplyTo { get; set; }
     [Parameter] public EventCallback OnCancelReply { get; set; }
 
+    /// <summary>Tin đang chỉnh sửa: ô nhập điền sẵn nội dung, OnSend = lưu chỉnh sửa (ChatIndex xử lý).</summary>
+    [Parameter] public ChatMessageDto? EditingMessage { get; set; }
+    [Parameter] public EventCallback OnCancelEdit { get; set; }
+
+    private Guid? _editingId;
+    private bool _syncTextPending;
+
     private readonly string _fileInputId = $"chat-file-{Guid.NewGuid():N}";
     private ElementReference _textarea;
     private DotNetObjectReference<ChatComposer>? _selfRef;
@@ -60,13 +78,36 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender)
-            return;
-        _selfRef = DotNetObjectReference.Create(this);
-        await JS.InvokeVoidAsync("nvoChat.attachComposer", _textarea, _selfRef);
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("nvoChat.attachComposer", _textarea, _selfRef);
+        }
+        if (_syncTextPending)
+        {
+            _syncTextPending = false;
+            await JS.InvokeVoidAsync("nvoChat.setComposer", _textarea, _text);
+        }
     }
 
     public ValueTask FocusAsync() => JS.InvokeVoidAsync("nvoChat.focus", _textarea);
+
+    protected override void OnParametersSet()
+    {
+        if (EditingMessage?.Id == _editingId)
+            return;
+
+        // Vào chế độ sửa → điền nội dung cũ; thoát (huỷ/đã lưu) → xoá ô nhập.
+        _text = EditingMessage?.Text ?? "";
+        _editingId = EditingMessage?.Id;
+        _syncTextPending = true;
+    }
+
+    [JSInvokable]
+    public Task CancelFromKeyboard() => InvokeAsync(() =>
+        EditingMessage is not null ? OnCancelEdit.InvokeAsync()
+        : ReplyTo is not null ? OnCancelReply.InvokeAsync()
+        : Task.CompletedTask);
 
     [JSInvokable]
     public Task SubmitFromKeyboard() => InvokeAsync(SubmitAsync);

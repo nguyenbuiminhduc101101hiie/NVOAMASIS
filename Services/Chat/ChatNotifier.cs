@@ -15,6 +15,8 @@ public sealed record ChatConversationChanged(Guid ConversationId) : ChatEvent(Co
 
 public sealed record ChatMessageRecalled(Guid ConversationId, Guid MessageId) : ChatEvent(ConversationId);
 
+public sealed record ChatMessageEdited(Guid ConversationId, Guid MessageId, string Text, DateTime EditedAt) : ChatEvent(ConversationId);
+
 /// <summary>User tự xoá hội thoại phía mình — chỉ gửi cho chính user đó (các tab khác của họ).</summary>
 public sealed record ChatConversationHidden(Guid ConversationId) : ChatEvent(ConversationId);
 

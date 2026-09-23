@@ -163,6 +163,8 @@ else
                                            Receipt="@(mine && showMeta ? ReceiptFor(m) : null)"
                                            CanRecall="@(mine && CanRecall(m))"
                                            OnRecall="RecallAsync"
+                                           CanEdit="@(mine && CanEdit(m))"
+                                           OnEdit="StartEdit"
                                            OnReply="StartReply"
                                            OnForward="ForwardAsync"
                                            OnTogglePin="TogglePinAsync"
@@ -174,6 +176,7 @@ else
                 <div class="chat-typing">@TypingLabel</div>
                 <ChatComposer @key="_selected.Id" @ref="_composer" Disabled="_loadingMessages"
                               ReplyTo="_replyTo" OnCancelReply="() => _replyTo = null"
+                              EditingMessage="_editing" OnCancelEdit="() => _editing = null"
                               OnSend="SendTextAsync" OnFile="SendFileAsync" OnTyping="NotifyTypingAsync" />
             }
         </div>
@@ -199,6 +202,7 @@ else
     private IReadOnlyList<ChatMessageDto> _pins = [];
     private bool _pinsExpanded;
     private ChatMessageDto? _replyTo;
+    private ChatMessageDto? _editing;
     private ChatComposer? _composer;
     private readonly Dictionary<Guid, (string Name, DateTime ExpiresAt)> _typing = [];
     private Timer? _typingTimer;
@@ -359,6 +363,7 @@ else
         _pins = [];
         _pinsExpanded = false;
         _replyTo = null;
+        _editing = null;
         _typing.Clear();
         _searchOpen = false;
         _searchResults = null;
@@ -450,6 +455,18 @@ else
     {
         if (_selected is null || _caller is not { } caller)
             return false;
+
+        if (_editing is { } editing)
+        {
+            ChatMessageDto? edited = null;
+            var saved = await RunAsync(async () => edited = await ChatService.EditMessageAsync(caller, editing.Id, text));
+            if (edited is not null)
+            {
+                ApplyEdit(edited.Id, edited.Text, edited.EditedAt);
+                _editing = null;
+            }
+            return saved;
+        }
 
         var conversationId = _selected.Id;
         var replyToId = _replyTo?.Id;
@@ -563,10 +580,40 @@ else
             _conversations[index] = _conversations[index] with { UnreadCount = unread };
     }
 
+    // ---------- Chỉnh sửa ----------
+
+    private static readonly TimeSpan EditWindow = TimeSpan.FromHours(24);
+
+    private static bool CanEdit(ChatMessageDto message) =>
+        message.Kind == ChatMessageKind.Text && !message.IsDeleted && DateTime.UtcNow - message.CreatedAt < EditWindow;
+
+    private void StartEdit(ChatMessageDto message)
+    {
+        _replyTo = null;
+        _editing = message;
+    }
+
+    /// <summary>Cập nhật nội dung ở mọi chỗ đang hiển thị: bubble, trích dẫn trả lời, thanh ghim, thanh trả lời.</summary>
+    private void ApplyEdit(Guid messageId, string text, DateTime? editedAt)
+    {
+        for (var i = 0; i < _messages.Count; i++)
+        {
+            var m = _messages[i];
+            if (m.Id == messageId)
+                _messages[i] = m with { Text = text, EditedAt = editedAt };
+            else if (m.ReplyTo?.MessageId == messageId)
+                _messages[i] = m with { ReplyTo = m.ReplyTo with { Text = text } };
+        }
+        _pins = _pins.Select(p => p.Id == messageId ? p with { Text = text, EditedAt = editedAt } : p).ToList();
+        if (_replyTo?.Id == messageId)
+            _replyTo = _replyTo with { Text = text, EditedAt = editedAt };
+    }
+
     // ---------- Trả lời / chuyển tiếp / ghim ----------
 
     private async Task StartReply(ChatMessageDto message)
     {
+        _editing = null;
         _replyTo = message;
         if (_composer is not null)
         {
@@ -709,6 +756,8 @@ else
         }
         if (_replyTo?.Id == messageId)
             _replyTo = null;
+        if (_editing?.Id == messageId)
+            _editing = null;
         _pins = _pins.Where(p => p.Id != messageId).ToList();
     }
 
@@ -805,6 +854,12 @@ else
                 if (_selected?.Id == recalled.ConversationId)
                     MarkRecalled(recalled.MessageId);
                 await ReloadConversationsAsync(); // preview / số chưa đọc có thể đổi
+                break;
+
+            case ChatMessageEdited edited:
+                if (_selected?.Id == edited.ConversationId)
+                    ApplyEdit(edited.MessageId, edited.Text, edited.EditedAt);
+                await ReloadConversationsAsync(); // preview có thể đổi nếu là tin cuối
                 break;
 
             case ChatPinsChanged pinsChanged when _selected?.Id == pinsChanged.ConversationId:

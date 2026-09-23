@@ -165,3 +165,11 @@ Script: `Scripts/AlterChatTables_AddForwardPin.sql` (chạy sau `AlterChatTables
 | Ghim | Mọi thành viên được ghim/bỏ ghim; tối đa 3 tin/hội thoại, ghim tin thứ 4 thì tin ghim cũ nhất tự bỏ. Thanh ghim dưới header (tin mới nhất, mở rộng xem cả 3), bấm → nhảy tới tin. Tin hệ thống "đã ghim / đã bỏ ghim". Thu hồi tin đang ghim → tự bỏ ghim. Event `ChatPinsChanged`. |
 
 Sửa kèm: tin hệ thống (tạo nhóm, đổi tên, thêm/xoá thành viên, rời nhóm, ghim) giờ được publish `ChatMessageReceived` nên hiện realtime trong khung chat đang mở.
+
+## 11. Chỉnh sửa tin nhắn (bổ sung 2026-09-26)
+
+Script: `Scripts/AlterChatTables_AddEdit.sql` (chạy sau `AlterChatTables_AddForwardPin.sql`) / migration `20260926090000_AddChatEdit`. Cột mới `ChatMessages.EditedAt`.
+
+- Chỉ người gửi, chỉ tin chữ (không áp dụng file/ảnh), chưa thu hồi, trong 24 giờ. Không lưu nội dung cũ.
+- ⋮ → "Chỉnh sửa": ô nhập điền sẵn nội dung, thanh "Đang chỉnh sửa tin nhắn" (✕ hoặc Esc để huỷ), Enter/✓ để lưu; nút đính kèm ẩn khi đang sửa. Trả lời và chỉnh sửa loại trừ nhau.
+- Tin đã sửa hiện "(đã chỉnh sửa)" cạnh giờ gửi (tooltip = thời điểm sửa). Event `ChatMessageEdited` cập nhật realtime bubble, trích dẫn trả lời, thanh ghim và preview danh sách (nếu là tin cuối).
