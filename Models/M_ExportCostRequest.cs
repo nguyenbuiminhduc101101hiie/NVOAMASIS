@@ -26,5 +26,7 @@ namespace NVOAMASIS.Models
         public string? CreateAt { get; set; }
         public string? Usercreate { get; set; }
         public string? loaihinh { get; set; }
+        /// <summary>Id các file đính kèm (bảng ProductPriceAttachments), ngăn cách bằng dấu ;</summary>
+        public string? AttachmentIds { get; set; }
     }
 }

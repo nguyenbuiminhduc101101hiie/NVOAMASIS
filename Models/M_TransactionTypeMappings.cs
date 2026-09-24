@@ -22,6 +22,10 @@ namespace NVOAMASIS.Models
         public int? SortOrder { get; set; } = 1;
 
         public bool? IsActive { get; set; } = true;
+
+        /// <summary>Nguồn số tiền khi hạch toán tự động hóa đơn: TOTAL (sau thuế) / NET (trước thuế) / TAX (thuế) / MANUAL (nhập tay). Rỗng = tự đề xuất.</summary>
+        [MaxLength(10)]
+        public string? AmountSource { get; set; }
     }
 }
 

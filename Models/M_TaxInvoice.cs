@@ -37,5 +37,16 @@ namespace NVOAMASIS.Models
         public double? tongThue { get; set; }
         public double? tongSauThue { get; set; }
         public string? ghichuNoibo { get; set; }
+        // Kết quả BKAV (InvoiceGUID dùng lại cột InvoiceGUID phía trên)
+        public long? BkavPartnerInvoiceID { get; set; }
+        public string? BkavPartnerInvoiceStringID { get; set; }
+        public int? BkavInvoiceNo { get; set; }
+        public string? BkavInvoiceForm { get; set; }
+        public string? BkavInvoiceSerial { get; set; }
+        public string? BkavInvoiceLink { get; set; }
+        public string? BkavPdfPath { get; set; }
+        public string? BkavXmlPath { get; set; }
+        public int? BkavStatusID { get; set; }
+        public string? BkavLastMessage { get; set; }
     }
 }

@@ -166,6 +166,13 @@ public sealed class HblNoteInfo
     public string PodName { get; set; } = string.Empty;
 }
 
+/// <summary>Nguồn dữ liệu hóa đơn khi gọi BKAV: Hóa đơn đầu ra (mặc định) hoặc Tax Invoice.</summary>
+public enum BkavInvoiceSource
+{
+    HoaDonDauRa = 0,
+    TaxInvoice = 1
+}
+
 public class BkavInvoiceGroup
 {
     public string InternalInvoiceNo { get; set; } = string.Empty;
@@ -241,6 +248,11 @@ public class BkavInvoiceService(
 
     private readonly BkavInvoiceSettings settings = options.Value;
 
+    /// <summary>Nguồn dữ liệu của instance này (đăng ký typed-client nên mỗi trang có instance riêng).</summary>
+    public BkavInvoiceSource Source { get; set; } = BkavInvoiceSource.HoaDonDauRa;
+
+    private bool IsTaxSource => Source == BkavInvoiceSource.TaxInvoice;
+
     private sealed record EffectiveBkavCredentials(string PartnerGuid, string PartnerToken);
 
     public int DefaultCreateCommandType => settings.DefaultCreateCommandType;
@@ -259,6 +271,9 @@ public class BkavInvoiceService(
 
     public async Task<List<BkavInvoiceGroup>> GetInvoiceGroupsAsync(CancellationToken cancellationToken = default)
     {
+        if (IsTaxSource)
+            return await GetTaxInvoiceGroupsAsync(cancellationToken);
+
         var invoices = await context.HoaDonDauRa
             .AsNoTracking()
             .Where(x => x.continued == true && x.sohoadonNoibo != null && x.sohoadonNoibo != string.Empty)
@@ -309,6 +324,9 @@ public class BkavInvoiceService(
     {
         try
         {
+            if (IsTaxSource)
+                return BkavInvoiceOperationResult.Fail("Tax Invoice chưa có cột Đã thanh toán.");
+
             var normalizedInternalNo = Clean(internalInvoiceNo);
             if (string.IsNullOrWhiteSpace(normalizedInternalNo))
                 return BkavInvoiceOperationResult.Fail("Internal invoice number is required.");
@@ -329,15 +347,86 @@ public class BkavInvoiceService(
                 line.dateupdate = nowText;
             }
 
+            var alreadyFullyPaid = await SyncAutoCongNoAsync(lines, normalizedInternalNo, customerId, value, usr, cancellationToken);
             await context.SaveChangesAsync(cancellationToken);
+            var message = value ? "Đã đánh dấu Đã thanh toán." : "Đã bỏ đánh dấu Đã thanh toán.";
+            if (alreadyFullyPaid > 0)
+                message += $" {alreadyFullyPaid} dòng đã có công nợ đủ số tiền nên không thêm công nợ.";
             return BkavInvoiceOperationResult.Ok(
-                value ? "Đã đánh dấu Đã thanh toán." : "Đã bỏ đánh dấu Đã thanh toán.",
+                message,
                 await ReloadGroupAsync(normalizedInternalNo, customerId, cancellationToken));
         }
         catch (Exception ex)
         {
             return BkavInvoiceOperationResult.Fail(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Id cố định của dòng công nợ tự tạo cho 1 dòng hóa đơn đầu ra — nhờ vậy khi bỏ tick chỉ xóa đúng dòng này,
+    /// không đụng các dòng công nợ nhập tay (trả từng phần) của cùng hóa đơn.
+    /// </summary>
+    private static Guid AutoCongNoId(Guid hoaDonDauRaId)
+        => new(MD5.HashData(Encoding.UTF8.GetBytes("CONGNO_DATHANHTOAN|" + hoaDonDauRaId.ToString("D"))));
+
+    /// <summary>
+    /// Tick Đã thanh toán → thêm công nợ cho từng dòng với phần còn thiếu (tiền sau thuế trừ công nợ đã có), dòng đã trả đủ thì bỏ qua;
+    /// bỏ tick → xóa dòng công nợ tự tạo. Chỉ Add/Remove, chưa Save. Trả về số dòng bị bỏ qua vì đã trả đủ.
+    /// </summary>
+    private async Task<int> SyncAutoCongNoAsync(List<M_HoaDonDauRa> lines, string internalInvoiceNo, Guid customerId, bool paid, string? usr, CancellationToken cancellationToken)
+    {
+        // JOIN thay vì Contains(list): DB mức tương thích thấp không hỗ trợ OPENJSON
+        var existing = await (
+            from c in context.CongNoHoaDonDauRa
+            join h in context.HoaDonDauRa on c.hoadondauraid equals h.hoadondauraid
+            where h.continued == true && h.customerid == customerId && h.sohoadonNoibo != null && h.sohoadonNoibo.Trim() == internalInvoiceNo
+            select c).ToListAsync(cancellationToken);
+        var existingById = existing.ToDictionary(x => x.congnoHoadonDauraid);
+        var paidByLine = existing
+            .GroupBy(x => x.hoadondauraid)
+            .ToDictionary(x => x.Key, x => x.Sum(c => c.tongtien.GetValueOrDefault()));
+
+        var skipped = 0;
+        var now = DateTime.Now;
+        foreach (var line in lines)
+        {
+            var autoId = AutoCongNoId(line.hoadondauraid);
+            existingById.TryGetValue(autoId, out var current);
+
+            if (paid)
+            {
+                if (current != null)
+                    continue;
+
+                var due = line.thanhtiensauthue ?? line.thanhtien ?? 0;
+                var remaining = due - paidByLine.GetValueOrDefault(line.hoadondauraid);
+                if (remaining < 0.005)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                context.CongNoHoaDonDauRa.Add(new M_CongNoHoaDonDauRa
+                {
+                    congnoHoadonDauraid = autoId,
+                    hoadondauraid = line.hoadondauraid,
+                    tongtien = remaining,
+                    ngaytra = now,
+                    tiente = line.tiente,
+                    userupdate = usr,
+                    dateupdate = now,
+                    approve = true,
+                    continued = true,
+                    editable = true
+                });
+            }
+            else if (current != null)
+            {
+                context.CongNoHoaDonDauRa.Remove(current);
+            }
+        }
+
+        return skipped;
     }
 
     public Task<BkavInvoiceOperationResult> CreateDraftInvoiceGroupAsync(string internalInvoiceNo, Guid customerId, BkavInvoiceActionInput input, BkavInvoiceRuntimeCredentials? credentials = null, CancellationToken cancellationToken = default)
@@ -428,7 +517,7 @@ public class BkavInvoiceService(
                     line.dateupdate = DateTime.Now.ToString(CultureInfo.InvariantCulture);
                 }
 
-                await context.SaveChangesAsync(cancellationToken);
+                await SaveLinesAsync(state.Lines, cancellationToken);
             }
 
             var reloadNo = FirstNonEmpty(state.Lines.FirstOrDefault()?.sohoadonNoibo, internalInvoiceNo);
@@ -570,7 +659,7 @@ public class BkavInvoiceService(
                     line.dateupdate = DateTime.Now.ToString(CultureInfo.InvariantCulture);
                 }
 
-                await context.SaveChangesAsync(cancellationToken);
+                await SaveLinesAsync(state.Lines, cancellationToken);
             }
 
             var reloadNo = FirstNonEmpty(state.Lines.FirstOrDefault()?.sohoadonNoibo, internalInvoiceNo);
@@ -670,7 +759,7 @@ public class BkavInvoiceService(
                 line.dateupdate = DateTime.Now.ToString(CultureInfo.InvariantCulture);
             }
 
-            await context.SaveChangesAsync(cancellationToken);
+            await SaveLinesAsync(state.Lines, cancellationToken);
             return BkavInvoiceOperationResult.Ok("BKAV invoice link received.", await ReloadGroupAsync(internalInvoiceNo, customerId, cancellationToken), invoiceResult.MessLog, objectText: result.DebugText);
         }
         catch (Exception ex)
@@ -1238,7 +1327,7 @@ public class BkavInvoiceService(
                 line.dateupdate = DateTime.Now.ToString(CultureInfo.InvariantCulture);
             }
 
-            await context.SaveChangesAsync(cancellationToken);
+            await SaveLinesAsync(state.Lines, cancellationToken);
             return BkavInvoiceOperationResult.Ok($"BKAV {extension.ToUpperInvariant()} downloaded.", await ReloadGroupAsync(internalInvoiceNo, customerId, cancellationToken), filePath: relativePath, objectText: result.DebugText);
         }
         catch (Exception ex)
@@ -1252,6 +1341,9 @@ public class BkavInvoiceService(
         var normalizedInternalNo = Clean(internalInvoiceNo);
         if (string.IsNullOrWhiteSpace(normalizedInternalNo))
             return GroupState.Fail("Internal invoice number is required.");
+
+        if (IsTaxSource)
+            return await LoadTaxGroupStateAsync(normalizedInternalNo, customerId, cancellationToken);
 
         var lines = await context.HoaDonDauRa
             .Where(x => x.continued == true && x.customerid == customerId && x.sohoadonNoibo != null && x.sohoadonNoibo.Trim() == normalizedInternalNo)
@@ -1524,7 +1616,7 @@ public class BkavInvoiceService(
             line.dateupdate = now.ToString(CultureInfo.InvariantCulture);
         }
 
-        await context.SaveChangesAsync(cancellationToken);
+        await SaveLinesAsync(lines, cancellationToken);
     }
 
     private async Task SetLastMessageAsync(List<M_HoaDonDauRa> lines, string? message, CancellationToken cancellationToken)
@@ -1535,7 +1627,223 @@ public class BkavInvoiceService(
             line.dateupdate = DateTime.Now.ToString(CultureInfo.InvariantCulture);
         }
 
+        await SaveLinesAsync(lines, cancellationToken);
+    }
+
+    /// <summary>
+    /// Lưu thay đổi của các dòng. Nguồn HoaDonDauRa: dòng đang được EF theo dõi nên SaveChanges là đủ.
+    /// Nguồn Tax Invoice: các dòng chỉ là bản "ảo" dựng từ TaxInvoice + TaxDetail, nên đồng bộ kết quả BKAV về bảng TaxInvoice.
+    /// </summary>
+    private async Task SaveLinesAsync(List<M_HoaDonDauRa> lines, CancellationToken cancellationToken)
+    {
+        if (!IsTaxSource)
+        {
+            await context.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        var first = lines.FirstOrDefault();
+        if (first == null)
+            return;
+
+        // dòng ảo mang TaxInvoiceID trong mblid (xem BuildTaxLines)
+        var invoice = await context.TaxInvoice.FirstOrDefaultAsync(x => x.TaxInvoiceID == first.mblid, cancellationToken);
+        if (invoice == null)
+            return;
+
+        invoice.BkavPartnerInvoiceID = first.BkavPartnerInvoiceID;
+        invoice.BkavPartnerInvoiceStringID = first.BkavPartnerInvoiceStringID;
+        invoice.InvoiceGUID = first.BkavInvoiceGUID;
+        invoice.BkavInvoiceNo = first.BkavInvoiceNo;
+        invoice.BkavInvoiceForm = first.BkavInvoiceForm;
+        invoice.BkavInvoiceSerial = first.BkavInvoiceSerial;
+        invoice.BkavInvoiceLink = first.BkavInvoiceLink;
+        invoice.BkavPdfPath = first.BkavPdfPath;
+        invoice.BkavXmlPath = first.BkavXmlPath;
+        invoice.BkavStatusID = first.BkavStatusID;
+        invoice.BkavLastMessage = first.BkavLastMessage;
+        if (first.BkavStatusID == BkavInvoiceStatusIds.Issued)
+        {
+            invoice.daXuatHDDT = true;
+            invoice.daKy = true;
+        }
+
+        invoice.Updatetime = DateTime.Now;
         await context.SaveChangesAsync(cancellationToken);
+
+        // số HĐ nội bộ của Tax Invoice (InvoiceNo) không đổi theo số HĐĐT — trả lại để ReloadGroupAsync tìm đúng nhóm
+        foreach (var line in lines)
+            line.sohoadonNoibo = invoice.InvoiceNo;
+    }
+
+    private async Task<List<BkavInvoiceGroup>> GetTaxInvoiceGroupsAsync(CancellationToken cancellationToken)
+    {
+        var invoices = await context.TaxInvoice
+            .AsNoTracking()
+            .Where(x => x.Continued != false && x.Customer_ID != null && x.InvoiceNo != null && x.InvoiceNo != string.Empty)
+            .OrderByDescending(x => x.DateInvoice)
+            .ThenByDescending(x => x.InvoiceNo)
+            .ToListAsync(cancellationToken);
+
+        // JOIN thay vì Contains(list): DB mức tương thích thấp không hỗ trợ OPENJSON mà EF dùng cho Contains
+        var details = (await (
+                from d in context.TaxDetail.AsNoTracking()
+                join i in context.TaxInvoice.AsNoTracking() on d.taxInvoiceID equals i.TaxInvoiceID
+                where i.Continued != false && i.Customer_ID != null && i.InvoiceNo != null && i.InvoiceNo != string.Empty
+                select d).ToListAsync(cancellationToken))
+            .ToLookup(x => x.taxInvoiceID!.Value);
+
+        var customerIds = invoices.Select(x => x.Customer_ID!.Value).Distinct().ToHashSet();
+        var customers = (await context.Customer.AsNoTracking().ToListAsync(cancellationToken))
+            .Where(x => customerIds.Contains(x.Customer_ID))
+            .ToDictionary(x => x.Customer_ID);
+
+        var chargeIds = details.SelectMany(x => x).Select(x => x.itemid).Where(x => x.HasValue).Select(x => x!.Value).ToHashSet();
+        var charges = (await context.Charge.AsNoTracking().ToListAsync(cancellationToken))
+            .Where(x => chargeIds.Contains(x.CHARGE_ID))
+            .ToDictionary(x => x.CHARGE_ID);
+
+        var hblsByNo = (await (
+                from h in context.HBL.AsNoTracking()
+                join i in context.TaxInvoice.AsNoTracking() on h.hbl equals i.hbl
+                where i.Continued != false && i.Customer_ID != null && i.InvoiceNo != null && i.InvoiceNo != string.Empty
+                select new { h.hbl, h.vessel, h.voy, h.polname, h.podname }).ToListAsync(cancellationToken))
+            .GroupBy(x => Clean(x.hbl))
+            .ToDictionary(x => x.Key, x => ToHblNote(x.First().hbl, x.First().vessel, x.First().voy, x.First().polname, x.First().podname));
+
+        var groups = new List<BkavInvoiceGroup>();
+        foreach (var invoice in invoices)
+        {
+            var lines = BuildTaxLines(invoice, details[invoice.TaxInvoiceID].OrderBy(x => x.STT).ToList());
+            if (lines.Count == 0)
+                continue;
+
+            var group = BuildGroup(Clean(invoice.InvoiceNo), invoice.Customer_ID!.Value, lines, customers, charges);
+            ApplyTaxHblInfo(group, invoice, hblsByNo.GetValueOrDefault(Clean(invoice.hbl)));
+            groups.Add(group);
+        }
+
+        return groups;
+    }
+
+    private async Task<GroupState> LoadTaxGroupStateAsync(string normalizedInternalNo, Guid customerId, CancellationToken cancellationToken)
+    {
+        var invoice = await context.TaxInvoice
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Continued != false && x.Customer_ID == customerId && x.InvoiceNo != null && x.InvoiceNo.Trim() == normalizedInternalNo, cancellationToken);
+        if (invoice == null)
+            return GroupState.Fail("Tax Invoice not found.");
+
+        var details = await context.TaxDetail
+            .AsNoTracking()
+            .Where(x => x.taxInvoiceID == invoice.TaxInvoiceID)
+            .OrderBy(x => x.STT)
+            .ToListAsync(cancellationToken);
+        var lines = BuildTaxLines(invoice, details);
+        if (lines.Count == 0)
+            return GroupState.Fail("Tax Invoice has no detail lines.");
+
+        var customer = await context.Customer.AsNoTracking().FirstOrDefaultAsync(x => x.Customer_ID == customerId, cancellationToken);
+        if (customer == null)
+            return GroupState.Fail("Customer is required before issuing BKAV invoice.", BuildGroup(normalizedInternalNo, customerId, lines, new Dictionary<Guid, M_Customer>(), new Dictionary<Guid, ChargeModel>()));
+
+        var chargeIds = lines.Select(x => x.itemid).Distinct().ToHashSet();
+        var charges = (await context.Charge.AsNoTracking().ToListAsync(cancellationToken))
+            .Where(x => chargeIds.Contains(x.CHARGE_ID))
+            .ToDictionary(x => x.CHARGE_ID);
+
+        var hblNo = Clean(invoice.hbl);
+        HblNoteInfo? hbl = null;
+        if (hblNo.Length > 0)
+        {
+            var found = await context.HBL.AsNoTracking()
+                .Where(x => x.hbl == hblNo)
+                .Select(x => new { x.hbl, x.vessel, x.voy, x.polname, x.podname })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (found != null)
+                hbl = ToHblNote(found.hbl, found.vessel, found.voy, found.polname, found.podname);
+        }
+
+        var group = BuildGroup(normalizedInternalNo, customerId, lines, new Dictionary<Guid, M_Customer> { [customer.Customer_ID] = customer }, charges);
+        ApplyTaxHblInfo(group, invoice, hbl);
+        return new GroupState(normalizedInternalNo, customerId, lines, customer, charges, group, string.Empty);
+    }
+
+    /// <summary>Dựng các dòng "ảo" kiểu HoaDonDauRa từ TaxDetail để dùng lại toàn bộ logic BuildInvoiceData/gọi API. mblid mang TaxInvoiceID.</summary>
+    private static List<M_HoaDonDauRa> BuildTaxLines(M_TaxInvoice invoice, List<M_TaxDetail> details)
+    {
+        var vatText = Clean(invoice.VAT).Replace("%", string.Empty).Trim();
+        var vat = double.TryParse(vatText, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
+        var electronicNo = invoice.BkavInvoiceNo.GetValueOrDefault() > 0
+            ? invoice.BkavInvoiceNo!.Value.ToString(CultureInfo.InvariantCulture)
+            : null;
+
+        return details.Select(d =>
+        {
+            var amount = d.thanhtientruocthueVND ?? d.soLuong.GetValueOrDefault(1) * d.dongiatruocthueVND.GetValueOrDefault();
+            return new M_HoaDonDauRa
+            {
+                hoadondauraid = d.taxDetailID,
+                mblid = invoice.TaxInvoiceID,
+                hblid = Guid.Empty,
+                itemid = d.itemid ?? Guid.Empty,
+                customerid = invoice.Customer_ID ?? Guid.Empty,
+                dongia = d.dongiatruocthueVND,
+                soluong = d.soLuong,
+                thanhtien = amount,
+                tiente = d.Currency,
+                thue = vat,
+                thanhtiensauthue = amount + Math.Round(amount * vat / 100, 0),
+                sohoadonNoibo = invoice.InvoiceNo,
+                sohoadonDientu = electronicNo,
+                ngayphathanhhoadonDientu = invoice.DateInvoice,
+                approve = invoice.Approve,
+                continued = true,
+                thuho = false,
+                dathanhtoan = false,
+                ghiChu = FirstNonEmpty(d.Note, d.Items),
+                soThuTu = d.STT,
+                tigia = invoice.Exchange,
+                BkavPartnerInvoiceID = invoice.BkavPartnerInvoiceID,
+                BkavPartnerInvoiceStringID = invoice.BkavPartnerInvoiceStringID,
+                BkavInvoiceGUID = invoice.InvoiceGUID,
+                BkavInvoiceNo = invoice.BkavInvoiceNo,
+                BkavInvoiceForm = invoice.BkavInvoiceForm,
+                BkavInvoiceSerial = invoice.BkavInvoiceSerial,
+                BkavInvoiceLink = invoice.BkavInvoiceLink,
+                BkavPdfPath = invoice.BkavPdfPath,
+                BkavXmlPath = invoice.BkavXmlPath,
+                BkavStatusID = invoice.BkavStatusID,
+                BkavLastMessage = invoice.BkavLastMessage
+            };
+        }).ToList();
+    }
+
+    private static HblNoteInfo ToHblNote(string? hbl, string? vessel, string? voy, string? pol, string? pod) => new()
+    {
+        Hbl = hbl ?? string.Empty,
+        Vessel = vessel ?? string.Empty,
+        Voy = voy ?? string.Empty,
+        PolName = pol ?? string.Empty,
+        PodName = pod ?? string.Empty
+    };
+
+    private static void ApplyTaxHblInfo(BkavInvoiceGroup group, M_TaxInvoice invoice, HblNoteInfo? hbl)
+    {
+        group.HblNo = Clean(invoice.hbl);
+        if (hbl != null)
+        {
+            group.HblVessel = Clean(hbl.Vessel);
+            group.HblVoy = Clean(hbl.Voy);
+            group.HblPolName = Clean(hbl.PolName);
+            group.HblPodName = Clean(hbl.PodName);
+        }
+        else
+        {
+            var parts = Clean(invoice.VesselVoy).Split('/', 2, StringSplitOptions.TrimEntries);
+            group.HblVessel = parts[0];
+            group.HblVoy = parts.Length > 1 ? parts[1] : string.Empty;
+        }
     }
 
     private string ValidateSettings(BkavInvoiceRuntimeCredentials? credentials = null)
