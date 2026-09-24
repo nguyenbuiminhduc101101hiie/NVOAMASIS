@@ -1,0 +1,129 @@
+@using Microsoft.Extensions.Localization
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@(IsNew ? Icons.Material.Filled.AddCircleOutline : Icons.Material.Filled.EditNote)" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">@Localizer[IsNew ? "LccPol_AddDialogTitle" : "LccPol_EditDialogTitle"]</MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <div class="lcc-dialog">
+                <section>
+                    <div class="lcc-section-title">
+                        <MudIcon Icon="@Icons.Material.Filled.DirectionsBoat" Size="Size.Small" />
+                        <span>@Localizer["LccPol_Section_Charge"]</span>
+                    </div>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="6">
+                            <MudAutocomplete T="string" @bind-Value="Model.Carrier" Label="@Localizer["LccPol_Col_Carrier"]"
+                                             SearchFunc="SearchCarrier" CoerceValue="true" ResetValueOnEmptyText="true" MaxItems="50"
+                                             Required="true" RequiredError="@Localizer["LccPol_Required"]" MaxLength="150"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" AutoFocus="true" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudAutocomplete T="string" @bind-Value="Model.ChargeType" Label="@Localizer["LccPol_Col_ChargeType"]"
+                                             SearchFunc="SearchChargeType" CoerceValue="true" ResetValueOnEmptyText="true" MaxItems="50"
+                                             Required="true" RequiredError="@Localizer["LccPol_Required"]" MaxLength="250"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                    </MudGrid>
+                    @if (IsDuplicate)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-3">
+                            @Localizer["LccPol_DuplicateWarning", Model.Carrier ?? string.Empty, Model.ChargeType ?? string.Empty]
+                        </MudAlert>
+                    }
+                </section>
+
+                <section>
+                    <div class="lcc-section-title">
+                        <MudIcon Icon="@Icons.Material.Filled.ViewInAr" Size="Size.Small" />
+                        <span>@Localizer["LccPol_Section_Containers"]</span>
+                    </div>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="6">
+                            <MudTextField @bind-Value="Model.Container20DC" Label="20DC" MaxLength="300"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="lcc-num" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField @bind-Value="Model.Container40HC" Label="40HC" MaxLength="300"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" Class="lcc-num" />
+                        </MudItem>
+                    </MudGrid>
+                </section>
+
+                <section>
+                    <div class="lcc-section-title">
+                        <MudIcon Icon="@Icons.Material.Filled.StickyNote2" Size="Size.Small" />
+                        <span>@Localizer["LccPol_Section_Notes"]</span>
+                    </div>
+                    <MudTextField @bind-Value="Model.Remarks" Label="@Localizer["LccPol_Col_Remarks"]"
+                                  Lines="3" MaxLength="1000" Counter="1000" Immediate="true"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </section>
+            </div>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <div class="lcc-meta">
+            <MudIcon Icon="@(string.IsNullOrWhiteSpace(Model.SourceFileName) ? Icons.Material.Filled.Keyboard : Icons.Material.Filled.Description)" Size="Size.Small" />
+            <span>@(string.IsNullOrWhiteSpace(Model.SourceFileName) ? Localizer["LccPol_Meta_Manual"].Value : Model.SourceFileName)</span>
+            @if (!IsNew && !string.IsNullOrWhiteSpace(Model.Userupdate))
+            {
+                <span>· @Localizer["LccPol_Meta_UpdatedBy", Model.Userupdate]</span>
+            }
+            @if (!IsNew && !string.IsNullOrWhiteSpace(Model.Dateupdate))
+            {
+                <span>· @Model.Dateupdate</span>
+            }
+        </div>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">@Localizer["cancel"]</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="SaveAsync">@Localizer["save"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public M_LccPolVietnam Model { get; set; } = default!;
+    [Parameter] public bool IsNew { get; set; }
+    [Parameter] public IReadOnlyList<string> CarrierOptions { get; set; } = Array.Empty<string>();
+    [Parameter] public IReadOnlyList<string> ChargeTypeOptions { get; set; } = Array.Empty<string>();
+    /// <summary>Carrier + ChargeType keys (see <see cref="DuplicateKey"/>) of the other rows, excluding the one being edited.</summary>
+    [Parameter] public IReadOnlySet<string> ExistingKeys { get; set; } = new HashSet<string>();
+
+    private MudForm _form = default!;
+
+    /// <summary>Import matches rows on Carrier + ChargeType, so a second row with the same pair is almost always a mistake.</summary>
+    public static string DuplicateKey(string? carrier, string? chargeType) =>
+        $"{carrier?.Trim().ToUpperInvariant()}|{chargeType?.Trim().ToUpperInvariant()}";
+
+    private bool IsDuplicate =>
+        !string.IsNullOrWhiteSpace(Model.Carrier) && !string.IsNullOrWhiteSpace(Model.ChargeType)
+        && ExistingKeys.Contains(DuplicateKey(Model.Carrier, Model.ChargeType));
+
+    private Task<IEnumerable<string>> SearchCarrier(string? text) => Task.FromResult(Filter(CarrierOptions, text));
+    private Task<IEnumerable<string>> SearchChargeType(string? text) => Task.FromResult(Filter(ChargeTypeOptions, text));
+
+    private static IEnumerable<string> Filter(IReadOnlyList<string> options, string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? options
+            : options.Where(x => x.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private async Task SaveAsync()
+    {
+        await _form.Validate();
+        if (!_form.IsValid)
+            return;
+
+        Model.Carrier = Model.Carrier?.Trim();
+        Model.ChargeType = Model.ChargeType?.Trim();
+        MudDialog.Close(DialogResult.Ok(Model));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

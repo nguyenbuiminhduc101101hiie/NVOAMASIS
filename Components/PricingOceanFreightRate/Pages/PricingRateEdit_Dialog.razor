@@ -1,0 +1,256 @@
+@using System.Globalization
+@using Microsoft.Extensions.Localization
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2 flex-wrap">
+            <MudIcon Icon="@(IsNew ? Icons.Material.Filled.AddCircleOutline : Icons.Material.Filled.EditNote)" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">@Localizer[IsNew ? "PricingOceanFreight_AddDialogTitle" : "PricingOceanFreight_EditDialogTitle"]</MudText>
+            @if (!string.IsNullOrWhiteSpace(LaneTitle))
+            {
+                <MudChip Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.DirectionsBoat">@LaneTitle</MudChip>
+            }
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <div class="ofr-dialog">
+                <section class="ofr-section">
+                    <div class="ofr-section-title">
+                        <MudIcon Icon="@Icons.Material.Filled.Route" Size="Size.Small" />
+                        <span>@Localizer["PricingOceanFreight_Section_Route"]</span>
+                    </div>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudTextField @bind-Value="Model.Carrier" Label="@Localizer["PricingOceanFreight_Col_Carrier"]"
+                                          Required="true" RequiredError="@Localizer["PricingOceanFreight_Required"]"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" AutoFocus="true" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudTextField @bind-Value="Model.Country" Label="@Localizer["PricingOceanFreight_Col_Country"]"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudTextField @bind-Value="Model.Pol" Label="@Localizer["PricingOceanFreight_Col_Pol"]"
+                                          Required="true" RequiredError="@Localizer["PricingOceanFreight_Required"]"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudTextField @bind-Value="Model.Pod" Label="@Localizer["PricingOceanFreight_Col_Pod"]"
+                                          Required="true" RequiredError="@Localizer["PricingOceanFreight_Required"]"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudDatePicker @bind-Date="Model.EffDate" Label="@Localizer["PricingOceanFreight_Col_EffDate"]"
+                                           DateFormat="dd/MM/yyyy" Clearable="true" Editable="true"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudDatePicker @bind-Date="Model.ValidDate" Label="@Localizer["PricingOceanFreight_Col_ValidDate"]"
+                                           DateFormat="dd/MM/yyyy" Clearable="true" Editable="true"
+                                           Validation="@(new Func<DateTime?, string?>(ValidateValidDate))"
+                                           Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                        <MudItem xs="12" sm="12" md="6">
+                            <MudTextField @bind-Value="Model.FreeTimeAtPod" Label="@Localizer["PricingOceanFreight_Col_FreeTime"]"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                    </MudGrid>
+                </section>
+
+                <section class="ofr-section">
+                    <div class="ofr-section-title">
+                        <MudIcon Icon="@Icons.Material.Filled.RequestQuote" Size="Size.Small" />
+                        <span>@Localizer["PricingOceanFreight_Section_Rates"]</span>
+                        <MudSpacer />
+                        <MudTooltip Text="@Localizer["PricingOceanFreight_RecalculateHint"]">
+                            <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.Calculate" OnClick="RecalculateAll">
+                                @Localizer["PricingOceanFreight_Recalculate"]
+                            </MudButton>
+                        </MudTooltip>
+                    </div>
+                    <div class="ofr-rate-scroll">
+                        <div class="ofr-rate-table" role="table">
+                            <div class="ofr-rate-row ofr-rate-head" role="row">
+                                <div role="columnheader">@Localizer["PricingOceanFreight_Rate_ChargeItem"]</div>
+                                @foreach (var size in ContainerSizes)
+                                {
+                                    <div role="columnheader" class="ofr-num-head">@size</div>
+                                }
+                            </div>
+                            @foreach (var row in RateRows)
+                            {
+                                <div class="@RowClass(row)" role="row">
+                                    <div class="ofr-rate-label" role="rowheader">
+                                        <span>@Localizer[row.LabelKey]</span>
+                                        <small>@row.ExcelColumns</small>
+                                    </div>
+                                    @for (var i = 0; i < ContainerSizes.Length; i++)
+                                    {
+                                        var c = i;
+                                        var hint = SuggestedValue(row, c);
+                                        <div role="cell">
+                                            <MudNumericField T="decimal?" Value="@row.Get[c](Model)" ValueChanged="@(v => row.Set[c](Model, v))"
+                                                             Format="#,##0.##" Culture="@Invariant" HideSpinButtons="true"
+                                                             Variant="Variant.Outlined" Margin="Margin.Dense" Class="ofr-num"
+                                                             aria-label="@($"{Localizer[row.LabelKey]} {ContainerSizes[c]}")" />
+                                            @if (hint.HasValue)
+                                            {
+                                                <button type="button" class="ofr-hint" title="@Localizer["PricingOceanFreight_ApplyComputed"]"
+                                                        @onclick="@(() => row.Set[c](Model, hint))">
+                                                    @Localizer["PricingOceanFreight_ComputedHint", FormatNumber(hint)]
+                                                </button>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </section>
+
+                <section class="ofr-section">
+                    <div class="ofr-section-title">
+                        <MudIcon Icon="@Icons.Material.Filled.StickyNote2" Size="Size.Small" />
+                        <span>@Localizer["PricingOceanFreight_Section_Notes"]</span>
+                    </div>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" md="6">
+                            <MudTextField @bind-Value="Model.Remark" Label="@Localizer["PricingOceanFreight_Col_Remark"]"
+                                          Lines="2" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudTextField @bind-Value="Model.ExtraNote" Label="@Localizer["PricingOceanFreight_Col_ExtraNote"]"
+                                          Lines="2" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                        </MudItem>
+                    </MudGrid>
+                </section>
+            </div>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <div class="ofr-meta">
+            <MudIcon Icon="@(string.IsNullOrWhiteSpace(Model.SourceFileName) ? Icons.Material.Filled.Keyboard : Icons.Material.Filled.Description)" Size="Size.Small" />
+            <span>@(string.IsNullOrWhiteSpace(Model.SourceFileName) ? Localizer["PricingOceanFreight_Meta_Manual"].Value : Model.SourceFileName)</span>
+            @if (!string.IsNullOrWhiteSpace(Model.UserImport))
+            {
+                <span>· @Localizer["PricingOceanFreight_Meta_ImportedBy", Model.UserImport]</span>
+            }
+            <span>· @Model.DateImport.ToString("dd/MM/yyyy")</span>
+        </div>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">@Localizer["cancel"]</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="SaveAsync">@Localizer["save"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public M_PricingRate Model { get; set; } = default!;
+    [Parameter] public string? LaneTitle { get; set; }
+    [Parameter] public bool IsNew { get; set; }
+
+    private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
+    private static readonly string[] ContainerSizes = { "20'", "40'", "40HC" };
+
+    private MudForm _form = default!;
+
+    /// <summary>TotalPart rows add up to TOTAL O/F; TOTAL + Commission gives O/F+COM.</summary>
+    private enum RateKind { TotalPart, Total, Commission, OfRateCom, Other }
+
+    /// <summary>One line of the rate matrix; Get/Set are indexed by container size (0 = 20', 1 = 40', 2 = 40HC).</summary>
+    private sealed record RateRow(string LabelKey, string ExcelColumns, RateKind Kind,
+        Func<M_PricingRate, decimal?>[] Get, Action<M_PricingRate, decimal?>[] Set);
+
+    // Ordered by how the price is built up: base + surcharges -> TOTAL, + commission -> O/F+COM.
+    private static readonly RateRow[] RateRows =
+    {
+        new("PricingOceanFreight_Rate_BasicOfNet", "P · Q · R", RateKind.TotalPart,
+            new Func<M_PricingRate, decimal?>[] { m => m.BasicOfNet20, m => m.BasicOfNet40, m => m.BasicOfNet40Hc },
+            new Action<M_PricingRate, decimal?>[] { (m, v) => m.BasicOfNet20 = v, (m, v) => m.BasicOfNet40 = v, (m, v) => m.BasicOfNet40Hc = v }),
+        new("PricingOceanFreight_Rate_SurchargeFuel", "S · T · U", RateKind.TotalPart,
+            new Func<M_PricingRate, decimal?>[] { m => m.SurchargeFuelEnv20, m => m.SurchargeFuelEnv40, m => m.SurchargeFuelEnv40Hc },
+            new Action<M_PricingRate, decimal?>[] { (m, v) => m.SurchargeFuelEnv20 = v, (m, v) => m.SurchargeFuelEnv40 = v, (m, v) => m.SurchargeFuelEnv40Hc = v }),
+        new("PricingOceanFreight_Rate_SurchargeMisc", "V · W · X", RateKind.TotalPart,
+            new Func<M_PricingRate, decimal?>[] { m => m.SurchargeMisc20, m => m.SurchargeMisc40, m => m.SurchargeMisc40Hc },
+            new Action<M_PricingRate, decimal?>[] { (m, v) => m.SurchargeMisc20 = v, (m, v) => m.SurchargeMisc40 = v, (m, v) => m.SurchargeMisc40Hc = v }),
+        new("PricingOceanFreight_Rate_SurchargeSecurity", "Y · Z · AA", RateKind.TotalPart,
+            new Func<M_PricingRate, decimal?>[] { m => m.SurchargeSecurityEnv20, m => m.SurchargeSecurityEnv40, m => m.SurchargeSecurityEnv40Hc },
+            new Action<M_PricingRate, decimal?>[] { (m, v) => m.SurchargeSecurityEnv20 = v, (m, v) => m.SurchargeSecurityEnv40 = v, (m, v) => m.SurchargeSecurityEnv40Hc = v }),
+        new("PricingOceanFreight_Rate_Total", "AB · AC · AD", RateKind.Total,
+            new Func<M_PricingRate, decimal?>[] { m => m.TotalOf20, m => m.TotalOf40, m => m.TotalOf40Hc },
+            new Action<M_PricingRate, decimal?>[] { (m, v) => m.TotalOf20 = v, (m, v) => m.TotalOf40 = v, (m, v) => m.TotalOf40Hc = v }),
+        new("PricingOceanFreight_Rate_Commission", "K · L · M", RateKind.Commission,
+            new Func<M_PricingRate, decimal?>[] { m => m.CommissionHdl20, m => m.CommissionHdl40, m => m.CommissionHdl40Hc },
+            new Action<M_PricingRate, decimal?>[] { (m, v) => m.CommissionHdl20 = v, (m, v) => m.CommissionHdl40 = v, (m, v) => m.CommissionHdl40Hc = v }),
+        new("PricingOceanFreight_Rate_OfCom", "H · I · J", RateKind.OfRateCom,
+            new Func<M_PricingRate, decimal?>[] { m => m.OfRateCom20, m => m.OfRateCom40, m => m.OfRateCom40Hc },
+            new Action<M_PricingRate, decimal?>[] { (m, v) => m.OfRateCom20 = v, (m, v) => m.OfRateCom40 = v, (m, v) => m.OfRateCom40Hc = v }),
+        new("PricingOceanFreight_Rate_Vat", "AE · AF · AG", RateKind.Other,
+            new Func<M_PricingRate, decimal?>[] { m => m.VatCom20, m => m.VatCom40, m => m.VatCom40Hc },
+            new Action<M_PricingRate, decimal?>[] { (m, v) => m.VatCom20 = v, (m, v) => m.VatCom40 = v, (m, v) => m.VatCom40Hc = v }),
+    };
+
+    private static readonly RateRow[] TotalParts = RateRows.Where(r => r.Kind == RateKind.TotalPart).ToArray();
+    private static readonly RateRow TotalRow = RateRows.Single(r => r.Kind == RateKind.Total);
+    private static readonly RateRow CommissionRow = RateRows.Single(r => r.Kind == RateKind.Commission);
+    private static readonly RateRow OfRateComRow = RateRows.Single(r => r.Kind == RateKind.OfRateCom);
+
+    private static string RowClass(RateRow row) => row.Kind switch
+    {
+        RateKind.Total => "ofr-rate-row ofr-rate-total",
+        RateKind.OfRateCom => "ofr-rate-row ofr-rate-total ofr-rate-grand",
+        _ => "ofr-rate-row"
+    };
+
+    /// <summary>Sum of the non-null values; null when every value is null (nothing entered yet).</summary>
+    private static decimal? SumOrNull(IEnumerable<decimal?> values)
+    {
+        var entered = values.Where(v => v.HasValue).ToList();
+        return entered.Count == 0 ? null : entered.Sum(v => v!.Value);
+    }
+
+    private decimal? ComputedTotal(int c) => SumOrNull(TotalParts.Select(r => r.Get[c](Model)));
+
+    private decimal? ComputedOfRateCom(int c) => SumOrNull(new[] { TotalRow.Get[c](Model), CommissionRow.Get[c](Model) });
+
+    /// <summary>The computed value to offer for a total cell, or null when the cell already matches it.</summary>
+    private decimal? SuggestedValue(RateRow row, int c)
+    {
+        var computed = row.Kind switch
+        {
+            RateKind.Total => ComputedTotal(c),
+            RateKind.OfRateCom => ComputedOfRateCom(c),
+            _ => null
+        };
+        return computed.HasValue && computed != row.Get[c](Model) ? computed : null;
+    }
+
+    private void RecalculateAll()
+    {
+        for (var c = 0; c < ContainerSizes.Length; c++)
+        {
+            TotalRow.Set[c](Model, ComputedTotal(c));
+            OfRateComRow.Set[c](Model, ComputedOfRateCom(c));
+        }
+    }
+
+    private static string FormatNumber(decimal? value) => value?.ToString("#,##0.##", Invariant) ?? string.Empty;
+
+    private string? ValidateValidDate(DateTime? validDate) =>
+        validDate.HasValue && Model.EffDate.HasValue && validDate.Value.Date < Model.EffDate.Value.Date
+            ? Localizer["PricingOceanFreight_ValidDateBeforeEff"].Value
+            : null;
+
+    private async Task SaveAsync()
+    {
+        await _form.Validate();
+        if (_form.IsValid)
+            MudDialog.Close(DialogResult.Ok(Model));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}
