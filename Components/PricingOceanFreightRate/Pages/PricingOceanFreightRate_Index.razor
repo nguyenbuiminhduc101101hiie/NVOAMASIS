@@ -129,8 +129,40 @@
         ("user", "PricingOceanFreight_SearchField_ImportedBy", r => r.UserImport),
     };
 
+    // ===== Lọc cột C: VALID theo nhiều ngày (ví dụ 14/12/2025;01/04/2026) =====
+    private static readonly string[] ValidDateFormats = { "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "d-M-yyyy", "yyyy-MM-dd" };
+    private string _validDatesText = string.Empty;
+    private HashSet<DateTime> _validDates = new();
+    private string? _validDatesError;
+
+    private void OnValidDatesChanged(string? text)
+    {
+        _validDatesText = text ?? string.Empty;
+        _validDates = new HashSet<DateTime>();
+        _validDatesError = null;
+
+        var invalid = new List<string>();
+        foreach (var token in _validDatesText.Split(new[] { ';', ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (DateTime.TryParseExact(token, ValidDateFormats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date))
+                _validDates.Add(date.Date);
+            else
+                invalid.Add(token);
+        }
+
+        // ngày sai định dạng thì báo lỗi và bỏ qua, các ngày đúng vẫn được lọc
+        if (invalid.Count > 0)
+            _validDatesError = $"Sai định dạng (dd/MM/yyyy): {string.Join(", ", invalid)}";
+    }
+
+    private bool MatchesValidDates(M_PricingRate row) =>
+        _validDates.Count == 0 || (row.ValidDate.HasValue && _validDates.Contains(row.ValidDate.Value.Date));
+
     private Func<M_PricingRate, bool> QuickFilterFunc => row =>
     {
+        if (!MatchesValidDates(row))
+            return false;
+
         if (string.IsNullOrWhiteSpace(_searchText))
             return true;
 
@@ -169,7 +201,12 @@
         <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.Add" OnClick="AddCurrentAsync" Disabled="_loading || !_canAdd">@Localizer["new"]</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Info" StartIcon="@Icons.Material.Filled.Edit" OnClick="EditCurrentAsync" Disabled="_loading || !_canEdit">@Localizer["edit"]</MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteCurrentAsync" Disabled="_loading || !_canDelete">@Localizer["delete"]</MudButton>
-        <MudSelect T="string" @bind-Value="_searchField" Variant="Variant.Outlined" Margin="Margin.Dense" Class="ml-md-auto" Style="min-width:170px;">
+        <MudTextField T="string" Value="_validDatesText" ValueChanged="OnValidDatesChanged" Immediate="true" DebounceInterval="300" Clearable="true"
+                      Label="C: VALID (nhiều ngày)" Placeholder="14/12/2025;01/04/2026" HelperText="Cách nhau bằng dấu ;"
+                      Error="@(_validDatesError != null)" ErrorText="@_validDatesError"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.CalendarMonth"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="ml-md-auto" Style="min-width:300px;" />
+        <MudSelect T="string" @bind-Value="_searchField" Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:170px;">
             @foreach (var opt in SearchFieldOptions)
             {
                 <MudSelectItem Value="@opt.Key">@Localizer[opt.LabelKey]</MudSelectItem>

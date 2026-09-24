@@ -2,6 +2,8 @@
 @inject IStringLocalizer<SharedResource> Localizer
 @inject ISnackbar Snackbar
 @inject AccountService asv
+@inject SharedServices ssv
+@inject IDialogService DialogService
 @attribute [Authorize]
 @using System.Globalization
 
@@ -48,6 +50,18 @@
                         <MudSelectItem T="ThuHoFilter" Value="ThuHoFilter.No">@Localizer["BkavThongKe.Filter.ThuHo.No"]</MudSelectItem>
                     </MudSelect>
 
+                    <MudSelect T="PaidFilter"
+                               @bind-Value="_paidFilter"
+                               Label="@Localizer["BkavThongKe.Col.DaThanhToan"]"
+                               Dense="true"
+                               Margin="Margin.Dense"
+                               Variant="Variant.Outlined"
+                               Style="min-width:200px">
+                        <MudSelectItem T="PaidFilter" Value="PaidFilter.All">Tất cả</MudSelectItem>
+                        <MudSelectItem T="PaidFilter" Value="PaidFilter.Paid">Đã thanh toán</MudSelectItem>
+                        <MudSelectItem T="PaidFilter" Value="PaidFilter.Unpaid">Chưa thanh toán</MudSelectItem>
+                    </MudSelect>
+
                     <MudDatePicker @bind-Date="_fromDate"
                                    Label="@Localizer["BkavThongKe.Filter.FromDate"]"
                                    Dense="true"
@@ -75,6 +89,15 @@
                                   Adornment="Adornment.Start"
                                   AdornmentIcon="@Icons.Material.Filled.Search"
                                   Style="min-width:260px" />
+
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.AccountBalance"
+                               OnClick="@OpenAutoPostingAsync"
+                               Disabled="@(_loading || _selectedGroups.Count == 0)">
+                        Hạch toán tự động (@_selectedGroups.Count)
+                    </MudButton>
 
                     <MudButton Variant="Variant.Text"
                                Color="Color.Secondary"
@@ -125,8 +148,11 @@
                          FixedHeader="true"
                          Virtualize="true"
                          SortMode="SortMode.Multiple"
+                         MultiSelection="true"
+                         @bind-SelectedItems="_selectedGroups"
                          Class="bkav-new-grid">
                 <Columns>
+                    <SelectColumn T="BkavInvoiceGroup" />
                     <PropertyColumn Property="x => x.InternalInvoiceNo" Title="@Localizer["BkavNew.Col.InternalNo"]" />
                     <PropertyColumn Property="x => x.HblNo" Title="@Localizer["BkavNew.Col.HblNo"]" />
                     <PropertyColumn Property="x => x.CustomerName" Title="@Localizer["Customer"]" />
@@ -173,15 +199,18 @@
 @code {
     private enum InvoiceStatusFilter { All, Draft, Signed }
     private enum ThuHoFilter { All, Yes, No }
+    private enum PaidFilter { All, Paid, Unpaid }
 
     private List<BkavInvoiceGroup> _groups = [];
     private bool _loading;
     private bool _loaded;
     private string _usr = string.Empty;
     private readonly HashSet<BkavInvoiceGroup> _savingDathanhtoan = new();
+    private HashSet<BkavInvoiceGroup> _selectedGroups = new();
 
     private InvoiceStatusFilter _statusFilter = InvoiceStatusFilter.All;
     private ThuHoFilter _thuHoFilter = ThuHoFilter.All;
+    private PaidFilter _paidFilter = PaidFilter.All;
     private DateTime? _fromDate;
     private DateTime? _toDate;
     private string _textFilter = string.Empty;
@@ -217,12 +246,32 @@
         }
     }
 
+    private async Task OpenAutoPostingAsync()
+    {
+        if (_selectedGroups.Count == 0)
+            return;
+
+        if (!await ssv.CheckPermission(_usr, "Add", "PhieuKeToan"))
+        {
+            Snackbar.Add(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters<AutoPostingDialog>
+        {
+            { x => x.Groups, _selectedGroups.ToList() }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true };
+        await DialogService.ShowAsync<AutoPostingDialog>("Hạch toán tự động", parameters, options);
+    }
+
     private async Task LoadGroups()
     {
         try
         {
             _loading = true;
             _groups = await bkavsv.GetInvoiceGroupsAsync();
+            _selectedGroups = new();
             _loaded = true;
         }
         finally
@@ -235,6 +284,7 @@
     {
         _statusFilter = InvoiceStatusFilter.All;
         _thuHoFilter = ThuHoFilter.All;
+        _paidFilter = PaidFilter.All;
         _fromDate = null;
         _toDate = null;
         _textFilter = string.Empty;
@@ -252,6 +302,11 @@
         if (_thuHoFilter == ThuHoFilter.Yes && !x.Thuho)
             return false;
         if (_thuHoFilter == ThuHoFilter.No && x.Thuho)
+            return false;
+
+        if (_paidFilter == PaidFilter.Paid && !x.Dathanhtoan)
+            return false;
+        if (_paidFilter == PaidFilter.Unpaid && x.Dathanhtoan)
             return false;
 
         if (_fromDate.HasValue && (!x.InvoiceDate.HasValue || x.InvoiceDate.Value.Date < _fromDate.Value.Date))

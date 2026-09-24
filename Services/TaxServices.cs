@@ -99,8 +99,7 @@ namespace NVOAMASIS.Services
                 if (_Inv == null) 
                     return new BoolandMessReponse(true, "Not found Invoice!");
                 var Details = await _context.TaxDetail.Where(x => x.taxInvoiceID == taxInvoiceID).ToListAsync();
-                if(Details.Any())
-                    _Inv.tongTruocThue = Details.Sum(x => x.thanhtientruocthueVND);
+                _Inv.tongTruocThue = Details.Sum(x => x.thanhtientruocthueVND ?? 0); // hết dòng detail thì về 0
                 var VAT = (double.TryParse(_Inv.VAT, out double VATparse) ? VATparse : 0) / 100;
                 _Inv.tongThue = _Inv.tongTruocThue * VAT;
                 _Inv.tongSauThue = _Inv.tongTruocThue + _Inv.tongThue;

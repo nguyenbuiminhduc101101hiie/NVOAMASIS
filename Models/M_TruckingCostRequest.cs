@@ -30,5 +30,7 @@ namespace NVOAMASIS.Models
         public bool? Editable { get; set; } = true;
         public string? Userhandle {  get; set; }
 
+        /// <summary>Id các file đính kèm (bảng ProductPriceAttachments), ngăn cách bằng dấu ;</summary>
+        public string? AttachmentIds { get; set; }
     }
 }

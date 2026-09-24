@@ -1,0 +1,264 @@
+@inject TaxServices tsv
+@inject ShipmentService shipsv
+@inject SupportServices supsv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2" Style="min-width:min(980px, 88vw)">
+            <MudAlert Severity="MudBlazor.Severity.Info" Dense="true">
+                Hóa đơn gốc: <b>@Original.InternalInvoiceNo</b> — @Original.CustomerName — mã định danh BKAV:
+                <b>@OriginalIdentify</b>. Lưu xong hệ thống tạo 1 Tax Invoice mới, chọn sẵn nó ở lưới và điền mã định danh gốc + lý do vào Bước 3.
+                Bạn kiểm tra rồi tự bấm nút <b>Replace</b>.
+            </MudAlert>
+
+            @if (_invoiceNoError)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Error" Dense="true">Chưa cấp được số hóa đơn mới (thiếu RefNo tháng này). Không thể lưu.</MudAlert>
+            }
+
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_invoiceNo" Label="Số hóa đơn mới" ReadOnly="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudDatePicker @bind-Date="_dateInvoice" Label="Ngày hóa đơn" DateFormat="dd/MM/yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_methodPayment" Label="Phương thức thanh toán" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="double" @bind-Value="_vat" Label="VAT (%)" Variant="Variant.Outlined" Margin="Margin.Dense" HideSpinButtons="true" Min="0" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudNumericField T="double" @bind-Value="_exchange" Label="Tỷ giá" Variant="Variant.Outlined" Margin="Margin.Dense" HideSpinButtons="true" Min="0" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudTextField @bind-Value="_reason" Label="Lý do thay thế (bắt buộc)" Required="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_note" Label="Ghi chú nội bộ" Lines="2" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+            </MudGrid>
+
+            <MudText Typo="Typo.subtitle2">Các dòng hóa đơn mới</MudText>
+            <MudSimpleTable Dense="true" Bordered="true" Style="overflow:auto; max-height:320px">
+                <thead>
+                    <tr>
+                        <th style="width:44px">#</th>
+                        <th>Nội dung</th>
+                        <th style="width:110px">Số lượng</th>
+                        <th style="width:150px">Đơn giá</th>
+                        <th style="width:160px">Thành tiền</th>
+                        <th style="width:80px">Tiền tệ</th>
+                        <th style="width:48px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (var i = 0; i < _lines.Count; i++)
+                    {
+                        var line = _lines[i];
+                        <tr>
+                            <td>@(i + 1)</td>
+                            <td><MudTextField @bind-Value="line.Items" Variant="Variant.Text" Margin="Margin.Dense" /></td>
+                            <td>
+                                <MudNumericField T="double" Value="line.Qty" ValueChanged="@(v => { line.Qty = v; line.Amount = Math.Round(v * line.Price, 2); })" Variant="Variant.Text" Margin="Margin.Dense" HideSpinButtons="true" />
+                            </td>
+                            <td>
+                                <MudNumericField T="double" Value="line.Price" ValueChanged="@(v => { line.Price = v; line.Amount = Math.Round(line.Qty * v, 2); })" Variant="Variant.Text" Margin="Margin.Dense" HideSpinButtons="true" Format="N2" />
+                            </td>
+                            <td><MudNumericField T="double" @bind-Value="line.Amount" Variant="Variant.Text" Margin="Margin.Dense" HideSpinButtons="true" Format="N2" /></td>
+                            <td>@line.Currency</td>
+                            <td><MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" OnClick="@(() => _lines.Remove(line))" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+            <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Add" OnClick="AddLine">Thêm dòng</MudButton>
+                <MudText Typo="Typo.body2">
+                    Trước thuế: <b>@TotalNet.ToString("N2")</b> · Thuế: <b>@TotalTax.ToString("N2")</b> · Sau thuế: <b>@(TotalNet + TotalTax)</b>
+                </MudText>
+            </MudStack>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Color="Color.Secondary" Disabled="_busy">Hủy</MudButton>
+        <MudButton OnClick="SaveAsync" Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_busy || _invoiceNoError)">Lưu hóa đơn mới</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    public sealed record Result(string InvoiceNo, Guid CustomerId, string Reason);
+
+    private sealed class ReplaceLine
+    {
+        public Guid? ItemId { get; set; }
+        public string Items { get; set; } = string.Empty;
+        public double Qty { get; set; } = 1;
+        public double Price { get; set; }
+        public double Amount { get; set; }
+        public string Currency { get; set; } = "VND";
+        public string? Note { get; set; }
+    }
+
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public BkavInvoiceGroup Original { get; set; } = default!;
+    [Parameter] public string OriginalIdentify { get; set; } = string.Empty;
+
+    private readonly List<ReplaceLine> _lines = [];
+    private string _invoiceNo = string.Empty;
+    private DateTime? _dateInvoice = DateTime.Today;
+    private string _methodPayment = string.Empty;
+    private double _vat;
+    private double _exchange = 1;
+    private string _reason = string.Empty;
+    private string _note = string.Empty;
+    private bool _busy;
+    private bool _invoiceNoError;
+
+    private double TotalNet => _lines.Sum(x => x.Amount);
+    private double TotalTax => Math.Round(TotalNet * _vat / 100, 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _busy = true;
+            var charges = await supsv.GetListCharge();
+            var first = Original.Lines.FirstOrDefault();
+            _vat = first?.thue ?? 0;
+            _exchange = first?.tigia is > 0 ? first.tigia.Value : 1;
+            _note = $"Thay thế HĐ {Original.InternalInvoiceNo}";
+
+            foreach (var l in Original.Lines.OrderBy(x => x.soThuTu ?? int.MaxValue))
+            {
+                var charge = charges.FirstOrDefault(c => c.CHARGE_ID == l.itemid);
+                var label = charge == null ? (l.ghiChu ?? string.Empty) : $"{charge.CHARGE_CODE} - {charge.CHARGE}";
+                var qty = l.soluong ?? 1;
+                var amount = l.thanhtien ?? qty * l.dongia.GetValueOrDefault();
+                _lines.Add(new ReplaceLine
+                {
+                    ItemId = l.itemid == Guid.Empty ? null : l.itemid,
+                    Items = label,
+                    Qty = qty,
+                    Price = l.dongia ?? (qty == 0 ? amount : amount / qty),
+                    Amount = amount,
+                    Currency = string.IsNullOrWhiteSpace(l.tiente) ? "VND" : l.tiente
+                });
+            }
+
+            _invoiceNo = await shipsv.GetInvoiceNo();
+            _invoiceNoError = string.IsNullOrWhiteSpace(_invoiceNo) || _invoiceNo.Contains("Error", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+            _invoiceNoError = true;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void AddLine() => _lines.Add(new ReplaceLine { Currency = _lines.FirstOrDefault()?.Currency ?? "VND" });
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_reason))
+        {
+            Snackbar.Add("Nhập lý do thay thế.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var lines = _lines.Where(x => x.Amount != 0 || x.Qty != 0).ToList();
+        if (lines.Count == 0)
+        {
+            Snackbar.Add("Hóa đơn mới chưa có dòng nào.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            var usr = (await asv.GetAuth()).User.Identity?.Name ?? "system";
+            var now = DateTime.Now;
+            var vatText = _vat.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+            var invoice = new M_TaxInvoice
+            {
+                TaxInvoiceID = Guid.NewGuid(),
+                Customer_ID = Original.CustomerId,
+                InvoiceNo = _invoiceNo,
+                DateInvoice = _dateInvoice ?? DateTime.Today,
+                MethodPayment = string.IsNullOrWhiteSpace(_methodPayment) ? null : _methodPayment,
+                VAT = vatText,
+                VATShow = vatText,
+                Exchange = _exchange,
+                hbl = string.IsNullOrWhiteSpace(Original.HblNo) ? null : Original.HblNo,
+                VesselVoy = string.IsNullOrWhiteSpace(Original.HblVessel) ? null : $"{Original.HblVessel} / {Original.HblVoy}",
+                ghichuNoibo = string.IsNullOrWhiteSpace(_note) ? null : _note,
+                huy = false,
+                Approve = false,
+                Editable = true,
+                Continued = true,
+                daXuatHDDT = false,
+                daKy = false,
+                UserID = usr,
+                Updatetime = now,
+                tongTruocThue = TotalNet,
+                tongThue = TotalTax,
+                tongSauThue = TotalNet + TotalTax
+            };
+
+            var rs = await tsv.CreateTaxInvoice(invoice);
+            if (!rs.Flag)
+            {
+                Snackbar.Add(rs.Message, MudBlazor.Severity.Error);
+                return;
+            }
+
+            var details = lines.Select((l, i) => new M_TaxDetail
+            {
+                taxInvoiceID = invoice.TaxInvoiceID,
+                STT = i + 1,
+                Items = l.Items,
+                itemid = l.ItemId,
+                soLuong = l.Qty,
+                dongiatruocthueVND = l.Price,
+                thanhtientruocthueVND = l.Amount,
+                Currency = l.Currency,
+                Note = l.Note,
+                Editable = true,
+                Continued = true,
+                Approve = false,
+                UpdateTime = now,
+                UserID = usr
+            }).ToList();
+
+            var rd = await tsv.CreateTaxDetail(details);
+            if (!rd.Flag)
+            {
+                // không để lại hóa đơn mới không có dòng chi tiết
+                await tsv.DeleteTaxInvoice(invoice);
+                Snackbar.Add(rd.Message, MudBlazor.Severity.Error);
+                return;
+            }
+
+            await tsv.UpdateTotalInvoiceByTaxInvoiceID(invoice.TaxInvoiceID);
+            Snackbar.Add($"Đã tạo Tax Invoice {invoice.InvoiceNo}.", MudBlazor.Severity.Success);
+            MudDialog.Close(DialogResult.Ok(new Result(invoice.InvoiceNo!, Original.CustomerId, _reason.Trim())));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

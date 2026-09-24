@@ -1,0 +1,182 @@
+@inject ProductPriceAttachmentService attachsv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+
+@* Đính kèm file (hình, PDF, Word, Excel...) cho 1 bản ghi, lưu dạng byte trong bảng ProductPriceAttachments.
+   Value = danh sách AttachmentId ngăn cách bằng ';' (lưu vào cột AttachmentIds của bản ghi chủ).
+   File tải lên được ghi vào DB ngay để lấy Id. Gỡ 1 file cũ chỉ gỡ khỏi danh sách (không xóa dòng trong DB, tránh mất file
+   nếu lưu bản ghi thất bại). Form cha gọi CommitAsync() khi lưu xong và RollbackAsync() khi hủy để dọn file vừa tải lên. *@
+<MudPaper Outlined="true" Class="pa-3 mb-3">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+        <MudText Typo="Typo.subtitle2" Style="font-weight:800; color:#0f6f91; text-transform:uppercase; letter-spacing:.5px;">@Title</MudText>
+        <MudSpacer />
+        <MudFileUpload T="IReadOnlyList<IBrowserFile>"
+                       Accept="@AcceptTypes"
+                       MaximumFileCount="10"
+                       FilesChanged="@OnFilesChanged"
+                       Disabled="_busy">
+            <ButtonTemplate Context="uploadId">
+                <MudButton HtmlTag="label"
+                           for="@uploadId"
+                           Variant="Variant.Outlined"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.AttachFile"
+                           Disabled="_busy">
+                    Đính kèm file
+                </MudButton>
+            </ButtonTemplate>
+        </MudFileUpload>
+    </MudStack>
+
+    @if (_items.Count == 0)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Secondary">Chưa có file đính kèm (hình, PDF, Word, Excel; tối đa @(ProductPriceAttachmentService.MaxFileBytes / 1024 / 1024) MB mỗi file).</MudText>
+    }
+    else
+    {
+        <MudStack Spacing="1" Style="max-height:200px; overflow-y:auto;">
+            @foreach (var item in _items)
+            {
+                <MudPaper Elevation="0" Class="d-flex align-center pa-1" Style="border:1px solid #e2e8f0; border-radius:8px;">
+                    <MudIcon Icon="@GetIcon(item.FileName)" Size="Size.Small" Class="mx-2" />
+                    <MudLink Href="@($"/api/product-price-attachment/{item.AttachmentId}")" Target="_blank" Style="flex-grow:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">@item.FileName</MudLink>
+                    <MudText Typo="Typo.caption" Class="mx-2" Color="Color.Secondary">@FormatSize(item.FileSize)</MudText>
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                   Size="Size.Small"
+                                   Color="Color.Error"
+                                   Disabled="_busy"
+                                   OnClick="@(() => RemoveAsync(item))" />
+                </MudPaper>
+            }
+        </MudStack>
+    }
+</MudPaper>
+
+@code {
+    private static string AcceptTypes => string.Join(",", ProductPriceAttachmentService.AllowedExtensions);
+
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    /// <summary>Loại bản ghi chủ: Import, Export, Truck, KTCL, Custom.</summary>
+    [Parameter] public string Folder { get; set; } = "Other";
+    [Parameter] public string Title { get; set; } = "Attachments";
+
+    private bool _busy;
+    private string? _loadedValue = "\0";
+    private List<M_ProductPriceAttachmentItem> _items = [];
+    private readonly List<Guid> _uploadedThisSession = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // chỉ đọc lại metadata khi Value đổi từ bên ngoài (mở form sửa); thay đổi do chính component này thì đã cập nhật _items
+        if (Value == _loadedValue)
+            return;
+
+        _loadedValue = Value;
+        var ids = (Value ?? string.Empty)
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => Guid.TryParse(x, out var id) ? id : Guid.Empty)
+            .Where(x => x != Guid.Empty)
+            .ToList();
+        try
+        {
+            _items = await attachsv.GetItemsAsync(ids);
+        }
+        catch (Exception ex)
+        {
+            _items = [];
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task OnFilesChanged(IReadOnlyList<IBrowserFile> files)
+    {
+        if (files == null || files.Count == 0)
+            return;
+
+        try
+        {
+            _busy = true;
+            var user = (await asv.GetAuth()).User.Identity?.Name;
+            foreach (var file in files)
+            {
+                if (!ProductPriceAttachmentService.IsAllowed(file.Name))
+                {
+                    Snackbar.Add($"{file.Name}: loại file không được hỗ trợ.", MudBlazor.Severity.Warning);
+                    continue;
+                }
+
+                try
+                {
+                    var item = await attachsv.UploadAsync(Folder, file, user);
+                    _items.Add(item);
+                    _uploadedThisSession.Add(item.AttachmentId);
+                }
+                catch (Exception ex)
+                {
+                    Snackbar.Add($"{file.Name}: {ex.Message}", MudBlazor.Severity.Error);
+                }
+            }
+
+            await PublishValueAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RemoveAsync(M_ProductPriceAttachmentItem item)
+    {
+        _items.Remove(item);
+
+        // chỉ xóa hẳn file vừa tải lên trong phiên này (chưa thuộc bản ghi nào)
+        if (_uploadedThisSession.Remove(item.AttachmentId))
+        {
+            try { await attachsv.DeleteAsync(item.AttachmentId); }
+            catch { /* xóa lỗi không được làm hỏng thao tác của người dùng */ }
+        }
+
+        await PublishValueAsync();
+    }
+
+    /// <summary>Gọi khi lưu xong: các file vừa tải lên đã thuộc bản ghi, không dọn nữa.</summary>
+    public Task CommitAsync()
+    {
+        _uploadedThisSession.Clear();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Gọi khi hủy form: xóa các file vừa tải lên nhưng chưa lưu vào bản ghi.</summary>
+    public async Task RollbackAsync()
+    {
+        foreach (var id in _uploadedThisSession)
+        {
+            try { await attachsv.DeleteAsync(id); }
+            catch { /* bỏ qua */ }
+        }
+
+        _uploadedThisSession.Clear();
+    }
+
+    private async Task PublishValueAsync()
+    {
+        Value = _items.Count == 0 ? null : string.Join(";", _items.Select(x => x.AttachmentId));
+        _loadedValue = Value;
+        await ValueChanged.InvokeAsync(Value);
+    }
+
+    private static string FormatSize(long bytes)
+        => bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:0.#} MB" : $"{Math.Max(1, bytes / 1024d):0} KB";
+
+    private static string GetIcon(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp" or ".bmp" => Icons.Material.Filled.Image,
+        ".pdf" => Icons.Material.Filled.PictureAsPdf,
+        ".doc" or ".docx" => Icons.Material.Filled.Description,
+        ".xls" or ".xlsx" or ".csv" => Icons.Material.Filled.TableChart,
+        ".ppt" or ".pptx" => Icons.Material.Filled.Slideshow,
+        _ => Icons.Material.Filled.InsertDriveFile
+    };
+}

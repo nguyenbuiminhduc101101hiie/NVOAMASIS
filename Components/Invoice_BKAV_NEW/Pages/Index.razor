@@ -42,6 +42,18 @@
                 <MudStack Spacing="2">
                     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                         <MudText Typo="Typo.subtitle1"><b>@Localizer["BkavNew.Step0"]</b></MudText>
+                        <MudSelect T="BkavInvoiceSource"
+                                   Value="_source"
+                                   ValueChanged="@OnSourceChanged"
+                                   Label="Nguồn dữ liệu"
+                                   Dense="true"
+                                   Margin="Margin.Dense"
+                                   Variant="Variant.Outlined"
+                                   Disabled="@_busy"
+                                   Style="min-width:200px">
+                            <MudSelectItem T="BkavInvoiceSource" Value="BkavInvoiceSource.HoaDonDauRa">Hóa đơn đầu ra</MudSelectItem>
+                            <MudSelectItem T="BkavInvoiceSource" Value="BkavInvoiceSource.TaxInvoice">Tax Invoice</MudSelectItem>
+                        </MudSelect>
                         <MudButton Variant="Variant.Filled"
                                    Color="Color.Primary"
                                    Size="Size.Small"
@@ -57,6 +69,14 @@
                                       Margin="Margin.Dense"
                                       Variant="Variant.Outlined"
                                       Style="max-width:260px" />
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Warning"
+                                   Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.FindReplace"
+                                   OnClick="@OpenReplaceDialogAsync"
+                                   Disabled="@(_busy || !CanReplaceSelected)">
+                            Thay thế hóa đơn đã ký
+                        </MudButton>
                     </MudStack>
 
                     <MudDataGrid T="BkavInvoiceGroup"
@@ -82,6 +102,7 @@
                                 </CellTemplate>
                             </TemplateColumn>
                             <PropertyColumn Property="x => x.Thuho" Title="Thu hộ" Width="80px" />
+                            <PropertyColumn Property="x => x.Dathanhtoan" Title="Đã thanh toán" Width="110px" />
                             <PropertyColumn Property="x => x.InternalInvoiceNo" Title="@Localizer["BkavNew.Col.InternalNo"]" />
                             <PropertyColumn Property="x => x.HblNo" Title="@Localizer["BkavNew.Col.HblNo"]" />
                             <PropertyColumn Property="x => x.CustomerName" Title="@Localizer["Customer"]" />
@@ -531,6 +552,7 @@
     private bool _loading;
     private bool _busy;
     private bool _credentialsLoaded;
+    private BkavInvoiceSource _source = BkavInvoiceSource.HoaDonDauRa;
     private string _filter = string.Empty;
     private string _message = string.Empty;
     private MudBlazor.Severity _msgSeverity = MudBlazor.Severity.Info;
@@ -624,6 +646,82 @@
         await LoadBrowserCredentialsAsync();
         _credentialsLoaded = true;
         StateHasChanged();
+    }
+
+    private async Task OnSourceChanged(BkavInvoiceSource source)
+    {
+        if (source == _source)
+            return;
+
+        _source = source;
+        bkavsv.Source = source;
+        ResetSelection();
+        await LoadGroups();
+    }
+
+    /// <summary>Bỏ nhóm đang chọn và các ô liên quan để không gửi nhầm sang hóa đơn của nguồn khác.</summary>
+    private void ResetSelection()
+    {
+        _groups = [];
+        _selected = null;
+        _selectedCustomerId = Guid.Empty;
+        _internalInvoiceNo = string.Empty;
+        _invoiceGuid = string.Empty;
+        _partnerInvoiceId = string.Empty;
+        _cancelPartnerInvoiceId = string.Empty;
+        _deletePartnerInvoiceId = string.Empty;
+        _filePartnerInvoiceId = string.Empty;
+        _invoiceNoText = string.Empty;
+        _noteItemText = string.Empty;
+        _sumItemAmount = _sumDiscountAmount = _sumTaxAmount = _sumPaymentAmount = null;
+    }
+
+    /// <summary>Mã định danh hóa đơn gốc theo BKAV: Mẫu số_Ký hiệu_Số HĐ (7 chữ số). Rỗng nếu hóa đơn chưa có đủ thông tin.</summary>
+    private static string BuildOriginalIdentify(BkavInvoiceGroup? group)
+        => group is { BkavInvoiceNo: > 0 } && !string.IsNullOrWhiteSpace(group.BkavInvoiceForm) && !string.IsNullOrWhiteSpace(group.BkavInvoiceSerial)
+            ? $"{group.BkavInvoiceForm.Trim()}_{group.BkavInvoiceSerial.Trim()}_{group.BkavInvoiceNo.Value:D7}"
+            : string.Empty;
+
+    private bool CanReplaceSelected =>
+        _selected?.BkavStatusID == BkavInvoiceStatusIds.Issued && BuildOriginalIdentify(_selected).Length > 0;
+
+    private async Task OpenReplaceDialogAsync()
+    {
+        var original = _selected;
+        var identify = BuildOriginalIdentify(original);
+        if (original == null || identify.Length == 0)
+            return;
+
+        var parameters = new DialogParameters<ReplaceInvoiceDialog>
+        {
+            { x => x.Original, original },
+            { x => x.OriginalIdentify, identify }
+        };
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = false, DisableBackdropClick = true };
+        var dialog = await DialogService.ShowAsync<ReplaceInvoiceDialog>("Thay thế hóa đơn " + original.InternalInvoiceNo, parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not ReplaceInvoiceDialog.Result created)
+            return;
+
+        // hóa đơn mới nằm ở Tax Invoice: chuyển nguồn, chọn sẵn nó và điền Bước 3 — người dùng tự bấm Replace
+        _source = BkavInvoiceSource.TaxInvoice;
+        bkavsv.Source = _source;
+        ResetSelection();
+        await LoadGroups();
+
+        var newGroup = _groups.FirstOrDefault(x =>
+            x.CustomerId == created.CustomerId &&
+            string.Equals(x.InternalInvoiceNo, created.InvoiceNo, StringComparison.OrdinalIgnoreCase));
+        if (newGroup == null)
+        {
+            SetMessage($"Đã tạo Tax Invoice {created.InvoiceNo} nhưng chưa thấy trong lưới, hãy bấm Load invoices.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        SelectGroup(newGroup);
+        _originalIdentify = identify;
+        _reason = created.Reason;
+        SetMessage($"Đã tạo {created.InvoiceNo}. Kiểm tra Bước 3 (mã định danh gốc {identify}) rồi bấm Replace để gửi BKAV.", MudBlazor.Severity.Success);
     }
 
     private async Task LoadGroups()

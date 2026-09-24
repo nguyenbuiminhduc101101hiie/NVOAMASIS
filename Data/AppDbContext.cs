@@ -166,6 +166,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_SI> SI { get; set; }
         public DbSet<M_SI_Attachment> SI_Attachment { get; set; }
         public DbSet<M_HBL_Attachment> HBL_Attachment { get; set; }
+        public DbSet<M_ProductPriceAttachment> ProductPriceAttachments { get; set; }
         public DbSet<M_Booking_LenhCapRong_Attachment> Booking_LenhCapRong_Attachment { get; set; }
 
         public DbSet<M_TransactionTypes> TransactionTypes { get; set; }

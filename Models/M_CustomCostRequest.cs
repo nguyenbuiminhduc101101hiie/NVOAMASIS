@@ -20,5 +20,7 @@ namespace NVOAMASIS.Models
         public string? Noidung { get; set; }
         public string? Userhandle {  get; set; }
         public string? Trangthai { get; set; }
+        /// <summary>Id các file đính kèm (bảng ProductPriceAttachments), ngăn cách bằng dấu ;</summary>
+        public string? AttachmentIds { get; set; }
     }
 }

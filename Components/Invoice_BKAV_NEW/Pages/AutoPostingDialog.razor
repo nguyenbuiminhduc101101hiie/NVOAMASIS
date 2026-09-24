@@ -1,0 +1,413 @@
+@using NVOAMASIS.Components.Accounting.Pages
+@inject AccountingAutoPostingService postingsv
+@inject AccountService asv
+@inject SharedServices ssv
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject TabRequestService Tabs
+@inject IStringLocalizer<SharedResource> Localizer
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2" Style="min-width:min(1040px, 90vw)">
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Đã chọn @Groups.Count hóa đơn — mỗi hóa đơn tạo một chứng từ nháp (chưa ghi sổ) ở trang Chứng từ kế toán.
+            </MudText>
+
+            @* ===== Bước 1: chọn nghiệp vụ ===== *@
+            <MudStack Row="true" Spacing="2" Class="flex-wrap" AlignItems="AlignItems.End">
+                <MudAutocomplete T="Guid?"
+                                 Value="_typeId"
+                                 ValueChanged="OnTypeChanged"
+                                 SearchFunc="SearchTypes"
+                                 ToStringFunc="TypeToText"
+                                 Label="Lệnh hạch toán (Transaction code - name)"
+                                 Placeholder="Gõ mã, tên hoặc mô tả để tìm..."
+                                 Dense="true"
+                                 Margin="Margin.Dense"
+                                 Variant="Variant.Outlined"
+                                 Clearable="true"
+                                 ResetValueOnEmptyText="true"
+                                 Strict="false"
+                                 MinCharacters="0"
+                                 MaxItems="200"
+                                 DebounceInterval="150"
+                                 Disabled="_busy"
+                                 Style="min-width:420px" />
+                <MudDatePicker Date="_voucherDate"
+                               DateChanged="@(d => _voucherDate = d ?? DateTime.Today)"
+                               Label="Ngày chứng từ"
+                               Dense="true"
+                               Margin="Margin.Dense"
+                               Variant="Variant.Outlined"
+                               DateFormat="dd/MM/yyyy"
+                               Style="min-width:160px" />
+            </MudStack>
+
+            @* ===== Chi tiết nghiệp vụ ===== *@
+            @if (_selectedType != null)
+            {
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="flex-wrap mb-2">
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.subtitle2">Chi tiết nghiệp vụ: @_selectedType.Code - @_selectedType.Name</MudText>
+                            @if (!string.IsNullOrWhiteSpace(_selectedType.Description))
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@_selectedType.Description</MudText>
+                            }
+                        </MudStack>
+                        <MudStack Row="true" Spacing="1">
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AccountTree" OnClick="OpenConfigAsync" Disabled="_busy">
+                                Mở cấu hình nghiệp vụ
+                            </MudButton>
+                        </MudStack>
+                    </MudStack>
+
+                    @if (_setup?.Error != null)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true">@_setup.Error</MudAlert>
+                    }
+                    else if (_setup != null)
+                    {
+                        <MudSimpleTable Dense="true" Bordered="true">
+                            <thead>
+                                <tr>
+                                    <th style="width:44px">#</th>
+                                    <th style="width:80px">Nợ/Có</th>
+                                    <th>Tài khoản</th>
+                                    <th>Tên tài khoản</th>
+                                    <th style="width:230px">Lấy số tiền từ</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @for (var i = 0; i < _setup.Accounts.Count; i++)
+                                {
+                                    var a = _setup.Accounts[i];
+                                    <tr>
+                                        <td>@(i + 1)</td>
+                                        <td>
+                                            <MudChip T="string" Size="Size.Small" Color="@(a.IsDebit ? Color.Info : Color.Warning)" Variant="Variant.Filled">@(a.IsDebit ? "Nợ" : "Có")</MudChip>
+                                        </td>
+                                        <td><b>@a.Code</b></td>
+                                        <td>@a.Name</td>
+                                        <td>
+                                            <MudSelect T="string"
+                                                       Value="@(a.ConfiguredSource.HasValue ? AutoPostingSources.Code(a.ConfiguredSource.Value) : string.Empty)"
+                                                       ValueChanged="@(v => OnSourceChanged(a, v))"
+                                                       Dense="true"
+                                                       Margin="Margin.Dense"
+                                                       Variant="Variant.Text"
+                                                       Disabled="_busy"
+                                                       Class="mt-0">
+                                                <MudSelectItem T="string" Value="@string.Empty">Tự đề xuất (@AutoPostingSources.Label(a.Source))</MudSelectItem>
+                                                <MudSelectItem T="string" Value="@("TOTAL")">Tổng sau thuế</MudSelectItem>
+                                                <MudSelectItem T="string" Value="@("NET")">Tiền trước thuế</MudSelectItem>
+                                                <MudSelectItem T="string" Value="@("TAX")">Tiền thuế</MudSelectItem>
+                                                <MudSelectItem T="string" Value="@("MANUAL")">Nhập tay từng hóa đơn</MudSelectItem>
+                                            </MudSelect>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </MudSimpleTable>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+                            Lựa chọn ở cột "Lấy số tiền từ" được lưu vào cấu hình nghiệp vụ (cần quyền sửa Transaction Types), lần sau tự áp dụng.
+                        </MudText>
+                    }
+                </MudPaper>
+            }
+
+            @* ===== Bước 2: xem trước từng hóa đơn ===== *@
+            @if (_rows.Count > 0 && _setup?.Error == null)
+            {
+                <MudText Typo="Typo.subtitle2">Hóa đơn sẽ hạch toán (mỗi hóa đơn một chứng từ)</MudText>
+                <MudSimpleTable Dense="true" Bordered="true" Style="max-height:320px; overflow:auto">
+                    <thead>
+                        <tr>
+                            <th>Số HĐ</th>
+                            <th>Khách hàng</th>
+                            <th style="text-align:right">Trước thuế</th>
+                            <th style="text-align:right">Thuế</th>
+                            <th style="text-align:right">Sau thuế</th>
+                            <th>Tiền tệ</th>
+                            @foreach (var m in ManualAccounts)
+                            {
+                                <th style="min-width:150px">Nhập tay: @m.Code</th>
+                            }
+                            <th style="text-align:right">Nợ</th>
+                            <th style="text-align:right">Có</th>
+                            <th>Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in _rows)
+                        {
+                            <tr>
+                                <td>@r.Group.InternalInvoiceNo</td>
+                                <td>@r.Group.CustomerName</td>
+                                <td style="text-align:right">@r.NetAmount.ToString("N0")</td>
+                                <td style="text-align:right">@r.TaxAmount.ToString("N0")</td>
+                                <td style="text-align:right">@r.TotalAmount.ToString("N0")</td>
+                                <td>@r.Currency</td>
+                                @foreach (var m in ManualAccounts)
+                                {
+                                    <td>
+                                        <MudNumericField T="decimal"
+                                                         Value="@(r.ManualAmounts.GetValueOrDefault(m.MappingId))"
+                                                         ValueChanged="@(v => OnManualChanged(r, m, v))"
+                                                         Variant="Variant.Text"
+                                                         Margin="Margin.Dense"
+                                                         HideSpinButtons="true"
+                                                         Format="N0" />
+                                    </td>
+                                }
+                                <td style="text-align:right">@r.DebitTotal.ToString("N0")</td>
+                                <td style="text-align:right">@r.CreditTotal.ToString("N0")</td>
+                                <td>
+                                    @if (r.ExistingVoucherNo != null)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">Đã hạch toán: @r.ExistingVoucherNo</MudChip>
+                                    }
+                                    else if (r.Error != null)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">@r.Error</MudChip>
+                                    }
+                                    else
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Sẵn sàng</MudChip>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Color="Color.Secondary" Disabled="_busy">Đóng</MudButton>
+        @if (_createdNos.Count > 0)
+        {
+            <MudButton OnClick="OpenVouchers" Color="Color.Info">Mở chứng từ kế toán</MudButton>
+        }
+        else
+        {
+            <MudButton OnClick="CreateAsync" Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_busy || PostableCount == 0)">
+                Tạo chứng từ nháp (@PostableCount)
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const string TransactionTypesPermission = "TransactionTypes";
+
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<BkavInvoiceGroup> Groups { get; set; } = [];
+
+    private List<M_TransactionTypes> _types = [];
+    private Guid? _typeId;
+    private M_TransactionTypes? _selectedType;
+    private AutoPostingSetup? _setup;
+    private List<AutoPostingInvoiceRow> _rows = [];
+    private Dictionary<string, string> _existing = new();
+    private DateTime? _voucherDate = DateTime.Today;
+    private bool _busy;
+    private bool? _canEditConfig;
+    private List<string> _createdNos = [];
+
+    private int PostableCount => _rows.Count(x => x.CanPost);
+    private IEnumerable<AutoPostingAccount> ManualAccounts =>
+        _setup?.Accounts.Where(x => x.Source == AutoPostingSource.Manual) ?? Enumerable.Empty<AutoPostingAccount>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _busy = true;
+            _types = await postingsv.GetTransactionTypesAsync();
+            _existing = await postingsv.FindExistingVouchersAsync(Groups);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>Tìm nghiệp vụ theo mã, tên hoặc mô tả (không phân biệt hoa thường, có thể gõ nhiều từ).</summary>
+    private Task<IEnumerable<Guid?>> SearchTypes(string? text)
+    {
+        IEnumerable<M_TransactionTypes> query = _types;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            query = query.Where(t => words.All(w =>
+                (t.Code?.Contains(w, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (t.Name?.Contains(w, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (t.Description?.Contains(w, StringComparison.OrdinalIgnoreCase) ?? false)));
+        }
+
+        return Task.FromResult(query.Select(t => (Guid?)t.Id));
+    }
+
+    private string TypeToText(Guid? id)
+    {
+        var t = _types.FirstOrDefault(x => x.Id == id);
+        return t == null ? string.Empty : $"{t.Code} - {t.Name}";
+    }
+
+    private async Task OnTypeChanged(Guid? id)
+    {
+        _typeId = id;
+        _selectedType = _types.FirstOrDefault(x => x.Id == id);
+        await LoadSetupAsync();
+    }
+
+    private async Task LoadSetupAsync()
+    {
+        _setup = null;
+        _rows = [];
+        if (_selectedType == null)
+            return;
+
+        try
+        {
+            _busy = true;
+            _setup = await postingsv.LoadSetupAsync(_selectedType.Id);
+            _rows = Groups.Select(g =>
+            {
+                var row = AccountingAutoPostingService.BuildRow(g);
+                if (_existing.TryGetValue(AccountingAutoPostingService.InvoiceKey(g), out var voucherNo))
+                    row.ExistingVoucherNo = voucherNo;
+                row.Recalculate(_setup);
+                return row;
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void RecalculateAll()
+    {
+        if (_setup == null)
+            return;
+
+        foreach (var row in _rows)
+            row.Recalculate(_setup);
+    }
+
+    private async Task OnSourceChanged(AutoPostingAccount account, string code)
+    {
+        if (_setup == null)
+            return;
+
+        var chosen = AutoPostingSources.Parse(code);
+        account.ConfiguredSource = chosen;
+        _setup.ResolveSources();
+        RecalculateAll();
+
+        _canEditConfig ??= await ssv.CheckPermission(await GetUserAsync(), "Edit", TransactionTypesPermission);
+        if (_canEditConfig == true)
+        {
+            try
+            {
+                await postingsv.SaveAmountSourceAsync(account.MappingId, chosen);
+                Snackbar.Add("Đã lưu nguồn số tiền vào cấu hình nghiệp vụ.", MudBlazor.Severity.Success);
+            }
+            catch (Exception ex)
+            {
+                Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+            }
+        }
+        else
+        {
+            Snackbar.Add("Bạn không có quyền sửa Transaction Types: lựa chọn chỉ áp dụng cho lần hạch toán này.", MudBlazor.Severity.Warning);
+        }
+    }
+
+    private void OnManualChanged(AutoPostingInvoiceRow row, AutoPostingAccount account, decimal value)
+    {
+        row.ManualAmounts[account.MappingId] = value;
+        if (_setup != null)
+            row.Recalculate(_setup);
+    }
+
+    private async Task OpenConfigAsync()
+    {
+        if (_selectedType == null)
+            return;
+
+        var parameters = new DialogParameters
+        {
+            ["TransactionId"] = _selectedType.Id,
+            ["TransactionName"] = _selectedType.Name ?? _selectedType.Code,
+            ["PermissionCode"] = TransactionTypesPermission
+        };
+        var dialog = await DialogService.ShowAsync<TransactionTypeMappings_ManagerDialog>(
+            "Cấu hình nghiệp vụ",
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+        await dialog.Result;
+
+        // cấu hình có thể đã đổi: đọc lại các dòng tài khoản
+        await LoadSetupAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        if (_selectedType == null || _setup == null)
+            return;
+
+        try
+        {
+            _busy = true;
+            var result = await postingsv.CreateVouchersAsync(_selectedType.Code, _rows, _voucherDate ?? DateTime.Today, await GetUserAsync());
+            Snackbar.Add(result.Message, result.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (result.Success)
+            {
+                _createdNos = result.VoucherNos;
+                // báo cho tab Chứng từ kế toán (nếu đang mở) tải lại để thấy chứng từ mới
+                await Tabs.NotifyVouchersChangedAsync();
+                // đánh dấu các hóa đơn vừa hạch toán để không tạo lại
+                foreach (var row in _rows.Where(x => x.CanPost))
+                    row.ExistingVoucherNo = "vừa tạo";
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task<string> GetUserAsync() => (await asv.GetAuth()).User.Identity?.Name ?? "system";
+
+    private async Task OpenVouchers()
+    {
+        MudDialog.Close(DialogResult.Ok(_createdNos));
+
+        // ứng dụng chạy theo dạng tab: mở đúng tab Phiếu kế toán như menu 10.4.1 (cùng key nên nếu đã mở thì chỉ chuyển tới)
+        var opened = await Tabs.OpenAsync(
+            "AccountingVouchers584",
+            $"10.4.1 {Localizer["PhieuKeToan"]}",
+            builder =>
+            {
+                builder.OpenComponent(0, typeof(AccountingVouchers_5_8_4_Index));
+                builder.CloseComponent();
+            });
+        if (!opened)
+            Nav.NavigateTo("/AccountingVouchers584");
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}
