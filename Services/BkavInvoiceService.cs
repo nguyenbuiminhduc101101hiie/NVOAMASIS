@@ -193,6 +193,10 @@ public class BkavInvoiceGroup
     public double TotalTax { get; set; }
     public double TotalAfterTax { get; set; }
     public string ItemNames { get; set; } = string.Empty;
+    /// <summary>Số Job (M_Job.JobNo) lấy qua HBL/MBL của các dòng — dùng để tìm kiếm.</summary>
+    public string JobNos { get; set; } = string.Empty;
+    /// <summary>Ghi chú của các dòng (HoaDonDauRa.ghiChu, TaxDetail.Note) — dùng để tìm kiếm.</summary>
+    public string Notes { get; set; } = string.Empty;
     public long? BkavPartnerInvoiceID { get; set; }
     public string? BkavPartnerInvoiceStringID { get; set; }
     public string? BkavInvoiceGUID { get; set; }
@@ -310,13 +314,57 @@ public class BkavInvoiceService(
                 PodName = x.podname ?? string.Empty
             });
 
-        return invoices
+        var groups = invoices
             .GroupBy(x => new { InternalInvoiceNo = Clean(x.sohoadonNoibo), x.customerid })
             .Where(x => !string.IsNullOrWhiteSpace(x.Key.InternalInvoiceNo))
             .Select(x => BuildGroup(x.Key.InternalInvoiceNo, x.Key.customerid, x.ToList(), customers, charges, hbls))
             .OrderByDescending(x => x.InvoiceDate)
             .ThenByDescending(x => x.InternalInvoiceNo)
             .ToList();
+
+        await ApplyHoaDonDauRaSearchInfoAsync(groups, cancellationToken);
+        return groups;
+    }
+
+    /// <summary>Gắn Số Job (qua HBL/MBL) và ghi chú TaxDetail (qua Tax Invoice cùng số HĐ nội bộ + khách hàng) để lọc trên trang thống kê.</summary>
+    private async Task ApplyHoaDonDauRaSearchInfoAsync(List<BkavInvoiceGroup> groups, CancellationToken cancellationToken)
+    {
+        // JOIN thay vì Contains(list): DB mức tương thích thấp không hỗ trợ OPENJSON mà EF dùng cho Contains
+        var jobByHbl = (await (
+                from l in context.HoaDonDauRa.AsNoTracking()
+                join h in context.HBL.AsNoTracking() on l.hblid equals h.hblID
+                join j in context.Job.AsNoTracking() on h.Jobid equals (Guid?)j.JobID
+                where l.continued == true && j.JobNo != null && j.JobNo != string.Empty
+                select new { l.hblid, j.JobNo }).Distinct().ToListAsync(cancellationToken))
+            .ToLookup(x => x.hblid, x => x.JobNo!);
+
+        var jobByMbl = (await (
+                from l in context.HoaDonDauRa.AsNoTracking()
+                join m in context.MBL.AsNoTracking() on l.mblid equals m.MblID
+                join j in context.Job.AsNoTracking() on m.Jobid equals (Guid?)j.JobID
+                where l.continued == true && j.JobNo != null && j.JobNo != string.Empty
+                select new { l.mblid, j.JobNo }).Distinct().ToListAsync(cancellationToken))
+            .ToLookup(x => x.mblid, x => x.JobNo!);
+
+        var taxNotes = (await (
+                from d in context.TaxDetail.AsNoTracking()
+                join i in context.TaxInvoice.AsNoTracking() on d.taxInvoiceID equals i.TaxInvoiceID
+                where i.Continued != false && i.Customer_ID != null && i.InvoiceNo != null && d.Note != null && d.Note != string.Empty
+                select new { i.InvoiceNo, CustomerId = i.Customer_ID!.Value, d.Note }).ToListAsync(cancellationToken))
+            .ToLookup(x => (Clean(x.InvoiceNo), x.CustomerId), x => x.Note!);
+
+        foreach (var group in groups)
+        {
+            var jobNos = group.Lines
+                .SelectMany(l => jobByHbl[l.hblid].Concat(jobByMbl[l.mblid]))
+                .Select(Clean)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            group.JobNos = string.Join("; ", jobNos);
+
+            var notes = taxNotes[(group.InternalInvoiceNo, group.CustomerId)].Select(Clean).Where(x => !string.IsNullOrWhiteSpace(x));
+            group.Notes = string.Join("; ", group.Notes.Split("; ", StringSplitOptions.RemoveEmptyEntries).Concat(notes).Distinct(StringComparer.OrdinalIgnoreCase));
+        }
     }
 
     /// <summary>Tick/bỏ tick "Đã thanh toán" ngay trên lưới thống kê — cập nhật cho toàn bộ dòng HoaDonDauRa thuộc nhóm (InternalInvoiceNo + Customer).</summary>
@@ -1711,6 +1759,22 @@ public class BkavInvoiceService(
             .GroupBy(x => Clean(x.hbl))
             .ToDictionary(x => x.Key, x => ToHblNote(x.First().hbl, x.First().vessel, x.First().voy, x.First().polname, x.First().podname));
 
+        var jobByHblNo = (await (
+                from h in context.HBL.AsNoTracking()
+                join i in context.TaxInvoice.AsNoTracking() on h.hbl equals i.hbl
+                join j in context.Job.AsNoTracking() on h.Jobid equals (Guid?)j.JobID
+                where i.Continued != false && i.hbl != null && i.hbl != string.Empty && j.JobNo != null && j.JobNo != string.Empty
+                select new { h.hbl, j.JobNo }).Distinct().ToListAsync(cancellationToken))
+            .ToLookup(x => Clean(x.hbl), x => x.JobNo!);
+
+        var jobByMblNo = (await (
+                from m in context.MBL.AsNoTracking()
+                join i in context.TaxInvoice.AsNoTracking() on m.Mbl equals i.mbl
+                join j in context.Job.AsNoTracking() on m.Jobid equals (Guid?)j.JobID
+                where i.Continued != false && i.mbl != null && i.mbl != string.Empty && j.JobNo != null && j.JobNo != string.Empty
+                select new { m.Mbl, j.JobNo }).Distinct().ToListAsync(cancellationToken))
+            .ToLookup(x => Clean(x.Mbl), x => x.JobNo!);
+
         var groups = new List<BkavInvoiceGroup>();
         foreach (var invoice in invoices)
         {
@@ -1720,6 +1784,8 @@ public class BkavInvoiceService(
 
             var group = BuildGroup(Clean(invoice.InvoiceNo), invoice.Customer_ID!.Value, lines, customers, charges);
             ApplyTaxHblInfo(group, invoice, hblsByNo.GetValueOrDefault(Clean(invoice.hbl)));
+            group.JobNos = string.Join("; ", jobByHblNo[Clean(invoice.hbl)].Concat(jobByMblNo[Clean(invoice.mbl)])
+                .Select(Clean).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase));
             groups.Add(group);
         }
 
@@ -2412,6 +2478,7 @@ public class BkavInvoiceService(
             ItemNames = itemNames.Count == 0
                 ? string.Empty
                 : string.Join("; ", itemNames.Take(5)) + (itemNames.Count > 5 ? $" (+{itemNames.Count - 5})" : string.Empty),
+            Notes = string.Join("; ", lines.Select(x => Clean(x.ghiChu)).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase)),
             BkavPartnerInvoiceID = first?.BkavPartnerInvoiceID,
             BkavPartnerInvoiceStringID = first?.BkavPartnerInvoiceStringID,
             BkavInvoiceGUID = first?.BkavInvoiceGUID,
