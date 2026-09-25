@@ -14,6 +14,11 @@ namespace NVOAMASIS.Services
             var rs = await _context.TaxInvoice.Where(x => x.Continued == true).OrderByDescending(x => x.Updatetime).ToListAsync();
             return rs;
         }
+        public async Task<M_TaxInvoice?> GetTaxInvoiceByID(Guid TaxInvoiceID)
+        {
+            _context.ChangeTracker.Clear();
+            return await _context.TaxInvoice.AsNoTracking().FirstOrDefaultAsync(x => x.TaxInvoiceID == TaxInvoiceID);
+        }
         public async Task<List<M_TaxDetail>> GetListTaxDetail(Guid TaxInvoiceID)
         {
             _context.ChangeTracker.Clear();

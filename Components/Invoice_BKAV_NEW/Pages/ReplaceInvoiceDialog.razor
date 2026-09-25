@@ -3,15 +3,23 @@
 @inject SupportServices supsv
 @inject AccountService asv
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 
 <MudDialog>
     <DialogContent>
         <MudStack Spacing="2" Style="min-width:min(980px, 88vw)">
             <MudAlert Severity="MudBlazor.Severity.Info" Dense="true">
                 Hóa đơn gốc: <b>@Original.InternalInvoiceNo</b> — @Original.CustomerName — mã định danh BKAV:
-                <b>@OriginalIdentify</b>. Lưu xong hệ thống tạo 1 Tax Invoice mới, chọn sẵn nó ở lưới và điền mã định danh gốc + lý do vào Bước 3.
+                <b>@(string.IsNullOrEmpty(OriginalIdentify) ? "(chưa có)" : OriginalIdentify)</b>. Lưu xong hệ thống tạo 1 Tax Invoice mới, chọn sẵn nó ở lưới và điền mã định danh gốc + lý do vào Bước 3.
                 Bạn kiểm tra rồi tự bấm nút <b>Replace</b>.
             </MudAlert>
+
+            @if (!CanReplace)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true">
+                    Hóa đơn gốc chưa được ký (chưa phát hành) nên chưa thể thay thế. Bạn vẫn xem/chỉnh được thông tin, nhưng không lưu được.
+                </MudAlert>
+            }
 
             @if (_invoiceNoError)
             {
@@ -26,7 +34,12 @@
                     <MudDatePicker @bind-Date="_dateInvoice" Label="Ngày hóa đơn" DateFormat="dd/MM/yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
                 </MudItem>
                 <MudItem xs="12" sm="4">
-                    <MudTextField @bind-Value="_methodPayment" Label="Phương thức thanh toán" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudSelect T="string" @bind-Value="_methodPayment" Label="Phương thức thanh toán" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                        @foreach (var pm in PaymentMethods)
+                        {
+                            <MudSelectItem T="string" Value="@pm">@pm</MudSelectItem>
+                        }
+                    </MudSelect>
                 </MudItem>
                 <MudItem xs="12" sm="4">
                     <MudNumericField T="double" @bind-Value="_vat" Label="VAT (%)" Variant="Variant.Outlined" Margin="Margin.Dense" HideSpinButtons="true" Min="0" />
@@ -78,14 +91,14 @@
             <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center">
                 <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Add" OnClick="AddLine">Thêm dòng</MudButton>
                 <MudText Typo="Typo.body2">
-                    Trước thuế: <b>@TotalNet.ToString("N2")</b> · Thuế: <b>@TotalTax.ToString("N2")</b> · Sau thuế: <b>@(TotalNet + TotalTax)</b>
+                    Trước thuế: <b>@TotalNet.ToString("N2")</b> · Thuế: <b>@TotalTax.ToString("N2")</b> · Sau thuế: <b>@((TotalNet + TotalTax).ToString("N2"))</b>
                 </MudText>
             </MudStack>
         </MudStack>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel" Color="Color.Secondary" Disabled="_busy">Hủy</MudButton>
-        <MudButton OnClick="SaveAsync" Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_busy || _invoiceNoError)">Lưu hóa đơn mới</MudButton>
+        <MudButton OnClick="SaveAsync" Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_busy || _invoiceNoError)">Thay thế</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -106,11 +119,15 @@
     [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
     [Parameter] public BkavInvoiceGroup Original { get; set; } = default!;
     [Parameter] public string OriginalIdentify { get; set; } = string.Empty;
+    /// <summary>Hóa đơn gốc đã ký (phát hành) và có đủ mã định danh — false thì chặn lưu.</summary>
+    [Parameter] public bool CanReplace { get; set; }
 
     private readonly List<ReplaceLine> _lines = [];
     private string _invoiceNo = string.Empty;
     private DateTime? _dateInvoice = DateTime.Today;
-    private string _methodPayment = string.Empty;
+    // khớp PayMethodID BKAV: 1 = TM, 2 = CK, 3 = TM/CK (mặc định)
+    private static readonly string[] PaymentMethods = ["TM", "CK", "TM/CK"];
+    private string _methodPayment = "TM/CK";
     private double _vat;
     private double _exchange = 1;
     private string _reason = string.Empty;
@@ -167,6 +184,15 @@
 
     private async Task SaveAsync()
     {
+        if (!CanReplace)
+        {
+            await DialogService.ShowMessageBox(
+                "Không thể thay thế",
+                $"Hóa đơn {Original.InternalInvoiceNo} chưa được ký (chưa phát hành) nên không thay thế được.",
+                yesText: "Đóng");
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(_reason))
         {
             Snackbar.Add("Nhập lý do thay thế.", MudBlazor.Severity.Warning);
@@ -179,6 +205,14 @@
             Snackbar.Add("Hóa đơn mới chưa có dòng nào.", MudBlazor.Severity.Warning);
             return;
         }
+
+        var confirm = await DialogService.ShowMessageBox(
+            "Xác nhận thay thế",
+            $"Tạo hóa đơn {_invoiceNo} để thay thế hóa đơn đã ký {Original.InternalInvoiceNo} ({OriginalIdentify})? " +
+            $"Tổng sau thuế: {(TotalNet + TotalTax):N2}.",
+            yesText: "Thay thế", cancelText: "Hủy");
+        if (confirm != true)
+            return;
 
         try
         {
