@@ -1,13 +1,16 @@
+@using Microsoft.Extensions.Localization
+@using NVOAMASIS.Resources
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject LccPolVietnamServices lcpv
 @inject SharedServices ssv
 @inject AccountService asv
+@inject IStringLocalizer<SharedResource> Localizer
 
 <MudDialog>
     <DialogContent>
         <MudText Typo="Typo.body2" Class="mb-3">
-            Danh sách các file Excel đã import. Xóa 1 file sẽ xóa toàn bộ các dòng dữ liệu (Carrier + Loại phí) được nạp từ file đó.
+            @Localizer["LccPol_ImportedFilesHint"]
         </MudText>
 
         @if (_loading)
@@ -16,31 +19,31 @@
         }
         else if (_files.Count == 0)
         {
-            <MudAlert Severity="MudBlazor.Severity.Info">Chưa có file nào được import.</MudAlert>
+            <MudAlert Severity="MudBlazor.Severity.Info">@Localizer["LccPol_NoImportedFiles"]</MudAlert>
         }
         else
         {
             <MudTable Items="@_files" Dense="true" Hover="true" Bordered="true">
                 <HeaderContent>
-                    <MudTh>Tên file</MudTh>
-                    <MudTh>Số dòng</MudTh>
-                    <MudTh>Import lần cuối</MudTh>
+                    <MudTh>@Localizer["LccPol_Col_FileName"]</MudTh>
+                    <MudTh>@Localizer["LccPol_Col_RowCount"]</MudTh>
+                    <MudTh>@Localizer["LccPol_Col_LastImport"]</MudTh>
                     <MudTh></MudTh>
                 </HeaderContent>
                 <RowTemplate>
-                    <MudTd DataLabel="Tên file">@context.FileName</MudTd>
-                    <MudTd DataLabel="Số dòng">@context.RowCount</MudTd>
-                    <MudTd DataLabel="Import lần cuối">@(context.LastImportDate?.ToString("dd/MM/yyyy HH:mm"))</MudTd>
+                    <MudTd DataLabel="@Localizer["LccPol_Col_FileName"]">@context.FileName</MudTd>
+                    <MudTd DataLabel="@Localizer["LccPol_Col_RowCount"]">@context.RowCount</MudTd>
+                    <MudTd DataLabel="@Localizer["LccPol_Col_LastImport"]">@(context.LastImportDate?.ToString("dd/MM/yyyy HH:mm"))</MudTd>
                     <MudTd>
                         <MudIconButton Icon="@Icons.Material.Outlined.Delete" Color="Color.Error" Size="Size.Small"
-                                       OnClick="@(() => DeleteFile(context.FileName))" />
+                                       OnClick="@(() => DeleteFile(context))" />
                     </MudTd>
                 </RowTemplate>
             </MudTable>
         }
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Close">Đóng</MudButton>
+        <MudButton OnClick="Close">@Localizer["LccPol_Close"]</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -65,24 +68,25 @@
         _loading = false;
     }
 
-    async Task DeleteFile(string fileName)
+    async Task DeleteFile(LccPolVietnamImportedFile file)
     {
         if (!await ssv.CheckPermission(usr, "Delete", "LCC_POL_Vietnam"))
         {
-            Snackbar.Add("Bạn không có quyền xóa", MudBlazor.Severity.Warning);
+            Snackbar.Add(Localizer["LccPol_NoAccessDelete"], MudBlazor.Severity.Warning);
             return;
         }
 
         var confirmed = await DialogService.ShowMessageBox(
-            "Xác nhận",
-            $"Xóa toàn bộ dữ liệu đã import từ file '{fileName}'?",
-            yesText: "Xóa", cancelText: "Hủy");
+            Localizer["LccPol_Confirm"],
+            Localizer["LccPol_DeleteFileConfirm", file.FileName],
+            yesText: Localizer["delete"].Value, cancelText: Localizer["cancel"].Value);
 
         if (confirmed != true)
             return;
 
-        var rs = await lcpv.DeleteByFileName(fileName, usr);
-        Snackbar.Add(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        var rs = await lcpv.DeleteByFileName(file.FileName, usr);
+        Snackbar.Add(rs.Flag ? Localizer["LccPol_DeletedFileRows", file.RowCount, file.FileName] : rs.Message,
+            rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         if (rs.Flag)
             await LoadFiles();
     }

@@ -112,9 +112,9 @@ BEGIN TRANSACTION;
     SELECT N'PricingOceanFreight_Deleted', N'vi-VN', N'Đã xoá.' UNION ALL
     SELECT N'PricingOceanFreight_Deleted', N'zh-CN', N'已删除。' UNION ALL
 
-    SELECT N'PricingOceanFreight_EditDialogTitle', N'en-US', N'Rate details' UNION ALL
-    SELECT N'PricingOceanFreight_EditDialogTitle', N'vi-VN', N'Chi tiết giá cước' UNION ALL
-    SELECT N'PricingOceanFreight_EditDialogTitle', N'zh-CN', N'费率详情' UNION ALL
+    SELECT N'PricingOceanFreight_EditDialogTitle', N'en-US', N'Edit ocean freight rate' UNION ALL
+    SELECT N'PricingOceanFreight_EditDialogTitle', N'vi-VN', N'Chỉnh sửa giá cước biển' UNION ALL
+    SELECT N'PricingOceanFreight_EditDialogTitle', N'zh-CN', N'编辑海运费' UNION ALL
 
     SELECT N'PricingOceanFreight_SaveFailed', N'en-US', N'Save failed.' UNION ALL
     SELECT N'PricingOceanFreight_SaveFailed', N'vi-VN', N'Lưu thất bại.' UNION ALL
@@ -198,7 +198,111 @@ BEGIN TRANSACTION;
 
     SELECT N'PricingOceanFreight_SearchField_ImportedBy', N'en-US', N'Imported By' UNION ALL
     SELECT N'PricingOceanFreight_SearchField_ImportedBy', N'vi-VN', N'Người import' UNION ALL
-    SELECT N'PricingOceanFreight_SearchField_ImportedBy', N'zh-CN', N'导入人'
+    SELECT N'PricingOceanFreight_SearchField_ImportedBy', N'zh-CN', N'导入人' UNION ALL
+
+    SELECT N'PricingOceanFreight_AddDialogTitle', N'en-US', N'Add ocean freight rate' UNION ALL
+    SELECT N'PricingOceanFreight_AddDialogTitle', N'vi-VN', N'Thêm giá cước biển' UNION ALL
+    SELECT N'PricingOceanFreight_AddDialogTitle', N'zh-CN', N'新增海运费' UNION ALL
+
+    SELECT N'PricingOceanFreight_Section_Route', N'en-US', N'Route & validity' UNION ALL
+    SELECT N'PricingOceanFreight_Section_Route', N'vi-VN', N'Tuyến & hiệu lực' UNION ALL
+    SELECT N'PricingOceanFreight_Section_Route', N'zh-CN', N'航线与有效期' UNION ALL
+
+    SELECT N'PricingOceanFreight_Section_Rates', N'en-US', N'Rates by container (USD)' UNION ALL
+    SELECT N'PricingOceanFreight_Section_Rates', N'vi-VN', N'Bảng giá theo container (USD)' UNION ALL
+    SELECT N'PricingOceanFreight_Section_Rates', N'zh-CN', N'按箱型报价 (USD)' UNION ALL
+
+    SELECT N'PricingOceanFreight_Section_Notes', N'en-US', N'Notes' UNION ALL
+    SELECT N'PricingOceanFreight_Section_Notes', N'vi-VN', N'Ghi chú' UNION ALL
+    SELECT N'PricingOceanFreight_Section_Notes', N'zh-CN', N'备注' UNION ALL
+
+    SELECT N'PricingOceanFreight_Col_Pol', N'en-US', N'Port of loading (POL)' UNION ALL
+    SELECT N'PricingOceanFreight_Col_Pol', N'vi-VN', N'Cảng đi (POL)' UNION ALL
+    SELECT N'PricingOceanFreight_Col_Pol', N'zh-CN', N'起运港 (POL)' UNION ALL
+
+    SELECT N'PricingOceanFreight_Col_Pod', N'en-US', N'Port of discharge (POD)' UNION ALL
+    SELECT N'PricingOceanFreight_Col_Pod', N'vi-VN', N'Cảng đến (POD)' UNION ALL
+    SELECT N'PricingOceanFreight_Col_Pod', N'zh-CN', N'目的港 (POD)' UNION ALL
+
+    SELECT N'PricingOceanFreight_Col_EffDate', N'en-US', N'Effective from' UNION ALL
+    SELECT N'PricingOceanFreight_Col_EffDate', N'vi-VN', N'Hiệu lực từ' UNION ALL
+    SELECT N'PricingOceanFreight_Col_EffDate', N'zh-CN', N'生效日期' UNION ALL
+
+    SELECT N'PricingOceanFreight_Col_ValidDate', N'en-US', N'Valid until' UNION ALL
+    SELECT N'PricingOceanFreight_Col_ValidDate', N'vi-VN', N'Hiệu lực đến' UNION ALL
+    SELECT N'PricingOceanFreight_Col_ValidDate', N'zh-CN', N'有效期至' UNION ALL
+
+    SELECT N'PricingOceanFreight_Col_ExtraNote', N'en-US', N'Extra note' UNION ALL
+    SELECT N'PricingOceanFreight_Col_ExtraNote', N'vi-VN', N'Ghi chú thêm' UNION ALL
+    SELECT N'PricingOceanFreight_Col_ExtraNote', N'zh-CN', N'附加说明' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_ChargeItem', N'en-US', N'Charge item' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_ChargeItem', N'vi-VN', N'Khoản phí' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_ChargeItem', N'zh-CN', N'费用项目' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_BasicOfNet', N'en-US', N'Basic O/F NET' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_BasicOfNet', N'vi-VN', N'Basic O/F NET' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_BasicOfNet', N'zh-CN', N'基本海运费 NET' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_SurchargeFuel', N'en-US', N'LSS/OBS/BAF/FAF/PCS' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_SurchargeFuel', N'vi-VN', N'LSS/OBS/BAF/FAF/PCS' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_SurchargeFuel', N'zh-CN', N'LSS/OBS/BAF/FAF/PCS' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_SurchargeMisc', N'en-US', N'ISO/Premium/WRP/PIS' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_SurchargeMisc', N'vi-VN', N'ISO/Premium/WRP/PIS' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_SurchargeMisc', N'zh-CN', N'ISO/Premium/WRP/PIS' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_SurchargeSecurity', N'en-US', N'ISPS/ECA/CRS/GSF' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_SurchargeSecurity', N'vi-VN', N'ISPS/ECA/CRS/GSF' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_SurchargeSecurity', N'zh-CN', N'ISPS/ECA/CRS/GSF' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_Total', N'en-US', N'TOTAL O/F' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_Total', N'vi-VN', N'TOTAL O/F' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_Total', N'zh-CN', N'海运费合计' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_Commission', N'en-US', N'Commission/HDL' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_Commission', N'vi-VN', N'Commission/HDL' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_Commission', N'zh-CN', N'佣金/操作费' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_OfCom', N'en-US', N'O/F + COM' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_OfCom', N'vi-VN', N'O/F + COM' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_OfCom', N'zh-CN', N'海运费+佣金' UNION ALL
+
+    SELECT N'PricingOceanFreight_Rate_Vat', N'en-US', N'VAT COM' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_Vat', N'vi-VN', N'VAT COM' UNION ALL
+    SELECT N'PricingOceanFreight_Rate_Vat', N'zh-CN', N'佣金增值税' UNION ALL
+
+    SELECT N'PricingOceanFreight_Recalculate', N'en-US', N'Recalculate totals' UNION ALL
+    SELECT N'PricingOceanFreight_Recalculate', N'vi-VN', N'Tính lại tổng' UNION ALL
+    SELECT N'PricingOceanFreight_Recalculate', N'zh-CN', N'重新计算合计' UNION ALL
+
+    SELECT N'PricingOceanFreight_RecalculateHint', N'en-US', N'TOTAL = Basic + surcharges; O/F + COM = TOTAL + Commission' UNION ALL
+    SELECT N'PricingOceanFreight_RecalculateHint', N'vi-VN', N'TOTAL = Basic + các phụ phí; O/F + COM = TOTAL + Commission' UNION ALL
+    SELECT N'PricingOceanFreight_RecalculateHint', N'zh-CN', N'合计 = 基本运费 + 附加费；海运费+佣金 = 合计 + 佣金' UNION ALL
+
+    SELECT N'PricingOceanFreight_ComputedHint', N'en-US', N'Calculated: {0}' UNION ALL
+    SELECT N'PricingOceanFreight_ComputedHint', N'vi-VN', N'Tính được: {0}' UNION ALL
+    SELECT N'PricingOceanFreight_ComputedHint', N'zh-CN', N'计算值：{0}' UNION ALL
+
+    SELECT N'PricingOceanFreight_ApplyComputed', N'en-US', N'Click to use the calculated value' UNION ALL
+    SELECT N'PricingOceanFreight_ApplyComputed', N'vi-VN', N'Bấm để dùng giá trị tính được' UNION ALL
+    SELECT N'PricingOceanFreight_ApplyComputed', N'zh-CN', N'点击使用计算值' UNION ALL
+
+    SELECT N'PricingOceanFreight_ValidDateBeforeEff', N'en-US', N'Valid until must be on or after Effective from' UNION ALL
+    SELECT N'PricingOceanFreight_ValidDateBeforeEff', N'vi-VN', N'Ngày hết hiệu lực phải từ ngày hiệu lực trở đi' UNION ALL
+    SELECT N'PricingOceanFreight_ValidDateBeforeEff', N'zh-CN', N'有效期至不能早于生效日期' UNION ALL
+
+    SELECT N'PricingOceanFreight_Required', N'en-US', N'Required' UNION ALL
+    SELECT N'PricingOceanFreight_Required', N'vi-VN', N'Bắt buộc nhập' UNION ALL
+    SELECT N'PricingOceanFreight_Required', N'zh-CN', N'必填' UNION ALL
+
+    SELECT N'PricingOceanFreight_Meta_ImportedBy', N'en-US', N'by {0}' UNION ALL
+    SELECT N'PricingOceanFreight_Meta_ImportedBy', N'vi-VN', N'bởi {0}' UNION ALL
+    SELECT N'PricingOceanFreight_Meta_ImportedBy', N'zh-CN', N'由 {0}' UNION ALL
+
+    SELECT N'PricingOceanFreight_Meta_Manual', N'en-US', N'Entered manually' UNION ALL
+    SELECT N'PricingOceanFreight_Meta_Manual', N'vi-VN', N'Nhập tay' UNION ALL
+    SELECT N'PricingOceanFreight_Meta_Manual', N'zh-CN', N'手动录入'
 )
 MERGE dbo.LocalizationResources AS tgt
 USING src

@@ -1,0 +1,123 @@
+@page "/BankTransactions"
+@attribute [Authorize]
+@using NVOAMASIS.Models
+@inject BankPaymentService bankSv
+@inject AccountService asv
+@inject SharedServices ssv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>@Localizer["BankTransactions"]</PageTitle>
+
+<MudPaper Class="pa-2">
+    <MudStack Row AlignItems="AlignItems.Center" Class="mb-2">
+        <MudText Typo="Typo.h6">@Localizer["BankTransactions"]</MudText>
+        <MudSpacer />
+        <MudSwitch T="bool" Label="@Localizer["OnlyNeedReview"]" Color="Color.Primary"
+                   Value="_onlyNeedReview" ValueChanged="OnFilterChanged" />
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load">Reload</MudButton>
+    </MudStack>
+
+    <MudDataGrid T="M_BankTransaction" Items="_items" Dense="true" Hover="true" Loading="_loading"
+                 SortMode="SortMode.Multiple" Filterable="true" FilterMode="DataGridFilterMode.Simple">
+        <Columns>
+            <PropertyColumn Property="x => x.TransactionDate" Title="@Localizer["NGAY"]" Format="dd/MM/yyyy HH:mm" />
+            <PropertyColumn Property="x => x.Gateway" Title="Bank" />
+            <PropertyColumn Property="x => x.Amount" Title="@Localizer["Sotien"]" Format="#,##0" />
+            <PropertyColumn Property="x => x.Content" Title="@Localizer["Noidung"]" />
+            <PropertyColumn Property="x => x.ReferenceCode" Title="Ref" />
+            <TemplateColumn Title="@Localizer["status"]">
+                <CellTemplate>
+                    <MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Item.MatchStatus)">
+                        @StatusText(context.Item.MatchStatus)
+                    </MudChip>
+                </CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="" Sortable="false" Filterable="false">
+                <CellTemplate>
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="@(() => Link(context.Item))">
+                        @Localizer["LinkToReceipt"]
+                    </MudButton>
+                </CellTemplate>
+            </TemplateColumn>
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="M_BankTransaction" PageSizeOptions="@(new int[] { 20, 50, 100 })" />
+        </PagerContent>
+    </MudDataGrid>
+</MudPaper>
+
+@code {
+    private List<M_BankTransaction> _items = new();
+    private bool _onlyNeedReview = true;
+    private bool _loading;
+    private string usr = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        usr = (await asv.GetAuth()).User.Identity?.Name ?? "";
+        await Load();
+    }
+
+    private async Task OnFilterChanged(bool value)
+    {
+        _onlyNeedReview = value;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        try
+        {
+            _loading = true;
+            if (!await ssv.CheckPermission(usr, "View", "Phieuthu"))
+            {
+                Snackbar.Add(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+                _items = new();
+                return;
+            }
+            _items = await bankSv.GetTransactionsAsync(_onlyNeedReview);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Link(M_BankTransaction txn)
+    {
+        if (!await ssv.CheckPermission(usr, "Edit", "Phieuthu"))
+        {
+            Snackbar.Add(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters<LinkReceiptDialog> { { x => x.Transaction, txn } };
+        var dialog = await DialogService.ShowAsync<LinkReceiptDialog>(
+            Localizer["LinkToReceipt"], parameters, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not Guid receiptId) return;
+
+        var (ok, message) = await bankSv.LinkToReceiptAsync(txn.Id, receiptId, usr);
+        Snackbar.Add(message, ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Load();
+    }
+
+    private Color StatusColor(string status) => status switch
+    {
+        BankMatchStatus.Matched or BankMatchStatus.Manual => Color.Success,
+        BankMatchStatus.WrongAmount => Color.Warning,
+        BankMatchStatus.AlreadyPaid => Color.Info,
+        _ => Color.Error
+    };
+
+    private string StatusText(string status) => status switch
+    {
+        BankMatchStatus.Matched => Localizer["BankMatched"],
+        BankMatchStatus.Manual => Localizer["BankManual"],
+        BankMatchStatus.WrongAmount => Localizer["WrongAmount"],
+        BankMatchStatus.AlreadyPaid => Localizer["AlreadyPaid"],
+        _ => Localizer["Unmatched"]
+    };
+}
