@@ -13,29 +13,97 @@
                 @Transaction.Amount.ToString("#,##0") — @Transaction.Content
             </MudAlert>
         }
-        <MudAutocomplete T="M_PhieuThu"
-                         Label="@Localizer["SoPhieuthu"]"
-                         @bind-Value="_selected"
-                         SearchFunc="Search"
-                         ToStringFunc="@(r => r == null ? "" : $"{r.SoPhieuthu} | {r.Customername ?? r.Nguoinoptien} | {(r.Sotien ?? 0):#,##0} {r.Currency}")"
-                         CoerceText="false"
-                         ResetValueOnEmptyText="true" />
+
+        @if (PaymentOnly)
+        {
+            <MudAutocomplete T="M_PhieuChi"
+                             Label="@Localizer["Sophieuchi"]"
+                             @bind-Value="_selectedPayment"
+                             SearchFunc="SearchPayments"
+                             ToStringFunc="@(r => r == null ? "" : $"{r.Sophieuchi} | {r.Nguoinoptien} | {(r.Sotien ?? 0):#,##0} {r.Currency}")"
+                             CoerceText="false"
+                             ResetValueOnEmptyText="true" />
+        }
+        else
+        {
+            <MudRadioGroup T="LinkType" @bind-Value="_linkType" Class="mb-2">
+                <MudRadio T="LinkType" Value="LinkType.Receipt" Color="Color.Primary">@Localizer["LinkTypeReceipt"]</MudRadio>
+                <MudRadio T="LinkType" Value="LinkType.Invoice" Color="Color.Primary">@Localizer["LinkTypeInvoice"]</MudRadio>
+            </MudRadioGroup>
+
+            @switch (_linkType)
+            {
+                case LinkType.Receipt:
+                    <MudAutocomplete T="M_PhieuThu"
+                                     Label="@Localizer["SoPhieuthu"]"
+                                     @bind-Value="_selectedReceipt"
+                                     SearchFunc="SearchReceipts"
+                                     ToStringFunc="@(r => r == null ? "" : $"{r.SoPhieuthu} | {r.Customername ?? r.Nguoinoptien} | {(r.Sotien ?? 0):#,##0} {r.Currency}")"
+                                     CoerceText="false"
+                                     ResetValueOnEmptyText="true" />
+                    break;
+                case LinkType.Invoice:
+                    <MudAutocomplete T="InvoiceOption"
+                                     Label="@Localizer["BkavNew.Col.EInvoice"]"
+                                     @bind-Value="_selectedInvoice"
+                                     SearchFunc="SearchInvoices"
+                                     ToStringFunc="@(i => i == null ? "" : i.Display)"
+                                     CoerceText="false"
+                                     ResetValueOnEmptyText="true" />
+                    break;
+            }
+        }
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_selected == null)" OnClick="Submit">OK</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!CanSubmit)" OnClick="Submit">OK</MudButton>
     </DialogActions>
 </MudDialog>
 
 @code {
+    public enum LinkType { Receipt, Invoice }
+
+    public record LinkTarget(Guid? PhieuthuId, string? Noibo, Guid? CustomerId, Guid? PhieuchiId);
+
     [CascadingParameter] MudDialogInstance MudDialog { get; set; } = null!;
     [Parameter] public M_BankTransaction? Transaction { get; set; }
 
-    private M_PhieuThu? _selected;
+    /// <summary>true ở trang 10.2.1 (chiều ra, chỉ gắn Phiếu chi); false ở trang 10.1.1 (chiều vào, chỉ gắn Phiếu thu/Hóa đơn).</summary>
+    [Parameter] public bool PaymentOnly { get; set; }
 
-    private async Task<IEnumerable<M_PhieuThu>> Search(string? text) =>
+    private LinkType _linkType = LinkType.Receipt;
+    private M_PhieuThu? _selectedReceipt;
+    private InvoiceOption? _selectedInvoice;
+    private M_PhieuChi? _selectedPayment;
+
+    private bool CanSubmit => PaymentOnly
+        ? _selectedPayment != null
+        : _linkType switch
+        {
+            LinkType.Invoice => _selectedInvoice != null,
+            _ => _selectedReceipt != null
+        };
+
+    private async Task<IEnumerable<M_PhieuThu>> SearchReceipts(string? text) =>
         await bankSv.SearchReceiptsAsync(text);
 
+    private async Task<IEnumerable<InvoiceOption>> SearchInvoices(string? text) =>
+        await bankSv.SearchInvoicesAsync(text);
+
+    private async Task<IEnumerable<M_PhieuChi>> SearchPayments(string? text) =>
+        await bankSv.SearchPaymentsAsync(text);
+
     void Cancel() => MudDialog.Cancel();
-    void Submit() => MudDialog.Close(DialogResult.Ok(_selected!.PhieuthuID));
+
+    void Submit()
+    {
+        var target = PaymentOnly
+            ? new LinkTarget(null, null, null, _selectedPayment!.PhieuchiID)
+            : _linkType switch
+            {
+                LinkType.Invoice => new LinkTarget(null, _selectedInvoice!.Noibo, _selectedInvoice.CustomerId, null),
+                _ => new LinkTarget(_selectedReceipt!.PhieuthuID, null, null, null)
+            };
+        MudDialog.Close(DialogResult.Ok(target));
+    }
 }

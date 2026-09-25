@@ -4,8 +4,32 @@
 @inject AccountService asv
 @inject SharedServices ssv
 @inject IDialogService DialogService
+@inject BankPaymentService bankSv
+@inject BankPaymentNotifier bankNotifier
+@implements IDisposable
 @attribute [Authorize]
 @using System.Globalization
+
+<style>
+    /* Ô trạng thái Paid: 1 dòng, căn giữa theo chiều dọc, không làm lệch hàng (cùng kiểu Phiếu thu 10.1) */
+    .bkav-new-grid .status-cell {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+    }
+
+        .bkav-new-grid .status-cell .mud-chip {
+            margin: 0 !important;
+            height: 24px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+    .bkav-new-grid .paid-chip {
+        cursor: pointer;
+    }
+</style>
 
 <PageTitle>@Localizer["BkavThongKe.Title"]</PageTitle>
 
@@ -163,13 +187,50 @@
                             </MudChip>
                         </CellTemplate>
                     </TemplateColumn>
-                    <TemplateColumn Title="@Localizer["BkavThongKe.Col.DaThanhToan"]" Width="120px" SortBy="@(x => x.Dathanhtoan)">
+                    <TemplateColumn Title="@Localizer["BkavThongKe.Col.DaThanhToan"]" Width="230px" SortBy="@(x => x.Dathanhtoan)"
+                                    HeaderStyle="min-width:230px" CellStyle="min-width:230px">
                         <CellTemplate>
-                            <MudCheckBox T="bool"
-                                         Value="@context.Item.Dathanhtoan"
-                                         ValueChanged="@(v => OnDathanhtoanChanged(context.Item, v))"
-                                         Color="Color.Success"
-                                         Disabled="@_savingDathanhtoan.Contains(context.Item)" />
+                            @{
+                                var item = context.Item;
+                                var saving = _savingDathanhtoan.Contains(item);
+                                var received = ReceivedAmount(item);
+                            }
+                            <div class="status-cell">
+                                @switch (GetPaidState(item))
+                                {
+                                    case PaidState.Paid:
+                                        <MudTooltip Text="@Localizer["ClickToUnmarkPaid"]">
+                                            <MudChip T="string" Class="paid-chip" Size="Size.Small" Color="Color.Success" Disabled="@saving"
+                                                     Icon="@Icons.Material.Filled.CheckCircle"
+                                                     OnClick="@(() => TogglePaidAsync(item, false))">@Localizer["Paid"]</MudChip>
+                                        </MudTooltip>
+                                        break;
+                                    case PaidState.ReceivedFull:
+                                        <MudTooltip Text="@Localizer["ClickToMarkPaid"]">
+                                            <MudChip T="string" Class="paid-chip" Size="Size.Small" Color="Color.Info" Disabled="@saving"
+                                                     Icon="@Icons.Material.Filled.HelpOutline"
+                                                     OnClick="@(() => TogglePaidAsync(item, true))">@Localizer["ReceivedFullNotConfirmed"]</MudChip>
+                                        </MudTooltip>
+                                        break;
+                                    case PaidState.WrongAmount:
+                                        <MudTooltip Text="@Localizer["ClickToMarkPaid"]">
+                                            <MudChip T="string" Class="paid-chip" Size="Size.Small" Color="Color.Warning" Disabled="@saving"
+                                                     Icon="@Icons.Material.Filled.WarningAmber"
+                                                     OnClick="@(() => TogglePaidAsync(item, true))">
+                                                @string.Format(Localizer["WrongAmountChip"], received.ToString("#,##0"), item.TotalAfterTax.ToString("#,##0"))
+                                            </MudChip>
+                                        </MudTooltip>
+                                        break;
+                                    default:
+                                        <MudTooltip Text="@Localizer["ClickToMarkPaid"]">
+                                            <MudChip T="string" Class="paid-chip" Size="Size.Small" Color="Color.Default" Disabled="@saving"
+                                                     Variant="Variant.Outlined"
+                                                     Icon="@Icons.Material.Filled.RadioButtonUnchecked"
+                                                     OnClick="@(() => TogglePaidAsync(item, true))">@Localizer["Unpaid"]</MudChip>
+                                        </MudTooltip>
+                                        break;
+                                }
+                            </div>
                         </CellTemplate>
                     </TemplateColumn>
                     <PropertyColumn Property="x => x.InvoiceDate" Title="@Localizer["BkavNew.Col.Date"]" Format="dd/MM/yyyy" />
@@ -200,6 +261,9 @@
     private enum InvoiceStatusFilter { All, Draft, Signed }
     private enum ThuHoFilter { All, Yes, No }
     private enum PaidFilter { All, Paid, Unpaid }
+    private enum PaidState { Unpaid, Paid, ReceivedFull, WrongAmount }
+
+    private Dictionary<(string Noibo, Guid CustomerId), decimal> _receivedByInvoice = new();
 
     private List<BkavInvoiceGroup> _groups = [];
     private bool _loading;
@@ -218,7 +282,42 @@
     protected override async Task OnInitializedAsync()
     {
         _usr = asv.GetAuth().Result.User.Identity?.Name ?? string.Empty;
+        bankNotifier.InvoicePaid += OnInvoicePaid;
         await LoadGroups();
+    }
+
+    public void Dispose() => bankNotifier.InvoicePaid -= OnInvoicePaid;
+
+    private Task OnInvoicePaid(string noibo, Guid customerId, string eInvoiceNo) =>
+        InvokeAsync(async () =>
+        {
+            Snackbar.Add(string.Format(Localizer["InvoicePaymentReceivedMsg"], eInvoiceNo), MudBlazor.Severity.Success);
+            await LoadGroups();
+        });
+
+    private decimal ReceivedAmount(BkavInvoiceGroup group) =>
+        _receivedByInvoice.TryGetValue((group.InternalInvoiceNo.Trim(), group.CustomerId), out var v) ? v : 0;
+
+    private PaidState GetPaidState(BkavInvoiceGroup group)
+    {
+        if (group.Dathanhtoan) return PaidState.Paid;
+        var received = ReceivedAmount(group);
+        if (received <= 0) return PaidState.Unpaid;
+        // Đã có tiền gắn vào hóa đơn nhưng chưa tick: đúng Amount (VAT) thì chỉ cần xác nhận, khác thì cảnh báo.
+        return Math.Abs(received - (decimal)group.TotalAfterTax) < 1m ? PaidState.ReceivedFull : PaidState.WrongAmount;
+    }
+
+    private async Task TogglePaidAsync(BkavInvoiceGroup group, bool paid)
+    {
+        if (!paid)
+        {
+            var confirm = await DialogService.ShowMessageBox(
+                "Warning",
+                $"Bỏ đánh dấu Đã thanh toán của hóa đơn {group.ElectronicInvoiceNo ?? group.InternalInvoiceNo}?",
+                yesText: "OK", cancelText: "Cancel");
+            if (confirm != true) return;
+        }
+        await OnDathanhtoanChanged(group, paid);
     }
 
     private async Task OnDathanhtoanChanged(BkavInvoiceGroup group, bool value)
@@ -271,6 +370,7 @@
         {
             _loading = true;
             _groups = await bkavsv.GetInvoiceGroupsAsync();
+            _receivedByInvoice = await bankSv.GetReceivedByInvoiceAsync();
             _selectedGroups = new();
             _loaded = true;
         }

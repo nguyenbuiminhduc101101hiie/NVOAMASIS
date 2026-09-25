@@ -217,6 +217,9 @@ namespace NVOAMASIS.Data
                 entity.Property(e => e.Amount).HasColumnType("decimal(18,2)");
                 entity.HasIndex(e => new { e.Provider, e.ProviderTxnId }).IsUnique();
                 entity.HasIndex(e => e.PhieuthuID);
+                entity.HasIndex(e => e.PhieuchiID);
+                entity.Property(e => e.HoaDonNoibo).HasMaxLength(100);
+                entity.HasIndex(e => new { e.HoaDonNoibo, e.HoaDonCustomerId });
             });
 
             modelBuilder.Entity<M_BillSeaLayoutForm>(entity =>

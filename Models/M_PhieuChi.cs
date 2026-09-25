@@ -42,5 +42,9 @@ namespace NVOAMASIS.Models
         public string? ApproveBy { get; set; }
         public Guid? ApproveByUserId { get; set; }
         public DateTime? ApproveDate { get; set; }
+
+        /// <summary>Đã chuyển khoản cho khách (SePay tự tick khi khớp số phiếu chi + đúng số tiền, hoặc kế toán tick tay).</summary>
+        public bool? dathanhtoan { get; set; }
+        public DateTime? NgayThanhToan { get; set; }
     }
 }
