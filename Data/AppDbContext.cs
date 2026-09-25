@@ -98,6 +98,7 @@ namespace NVOAMASIS.Data
         public DbSet<M_ChiTietBieuGiaLuuKho> chiTietBieuGiaLuuKho { get; set; }
         public DbSet<M_PhieuChi> Phieuchi { get; set; }
         public DbSet<M_PhieuThu> Phieuthu { get; set; }
+        public DbSet<M_BankTransaction> BankTransaction { get; set; }
         public DbSet<PermissionTemplate> PermissionTemplate { get; set; }
         public DbSet<M_PhieuKeToan> Phieuketoan { get; set; }
         public DbSet<M_TaxInvoice> TaxInvoice { get; set; }
@@ -205,6 +206,18 @@ namespace NVOAMASIS.Data
 
             modelBuilder.Entity<M_Debit>()
                 .HasIndex(x => x.PhieuthuID);
+
+            modelBuilder.Entity<M_BankTransaction>(entity =>
+            {
+                entity.ToTable("BankTransaction");
+                entity.Property(e => e.Provider).HasMaxLength(20);
+                entity.Property(e => e.ProviderTxnId).HasMaxLength(50);
+                entity.Property(e => e.MatchStatus).HasMaxLength(20);
+                entity.Property(e => e.Content).HasMaxLength(1000);
+                entity.Property(e => e.Amount).HasColumnType("decimal(18,2)");
+                entity.HasIndex(e => new { e.Provider, e.ProviderTxnId }).IsUnique();
+                entity.HasIndex(e => e.PhieuthuID);
+            });
 
             modelBuilder.Entity<M_BillSeaLayoutForm>(entity =>
             {

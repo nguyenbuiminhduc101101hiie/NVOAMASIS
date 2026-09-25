@@ -51,6 +51,10 @@ namespace NVOAMASIS.Models
         public string? Luuycuoc { get; set; }
         public string? Remarks { get; set; }
 
+        /// <summary>Đã nhận tiền chuyển khoản (SePay tự tick khi khớp số phiếu + đúng số tiền, hoặc kế toán tick tay).</summary>
+        public bool? dathanhtoan { get; set; }
+        public DateTime? NgayThanhToan { get; set; }
+
         /// <summary>Token dùng chung cho link duyệt trên email (1 phiếu = 1 token).</summary>
         public string? ApproveToken { get; set; }
         public string? ApproveBy { get; set; }
