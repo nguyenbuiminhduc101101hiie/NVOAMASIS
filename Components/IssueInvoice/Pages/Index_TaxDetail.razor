@@ -72,8 +72,8 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
         <PropertyColumn Property="x => x.dongiatruocthueVND" Title="@Localizer["Unit Price"]" Format="#,##0.##" Required="false">
             <EditTemplate>
                 <MudNumericField @bind-Value="context.Item.dongiatruocthueVND" Class="text-right"
-                Label="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" T="double?"
-                TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
+                Label="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en" T="double?" Immediate="true"
+                @bind-Value:after="@(() => CalculateTotal(context.Item))" HideSpinButtons="true" />
             </EditTemplate>
         </PropertyColumn>
         <PropertyColumn Property="x=>x.Container_Type" Title="@Localizer["Type"]" Required="false">
@@ -85,8 +85,8 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
         <PropertyColumn Property="x => x.soLuong" Title="@Localizer["Quantity"]" Format="#,##0.##" Required="false">
             <EditTemplate>
                 <MudNumericField @bind-Value="context.Item.soLuong"
-                Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" T="double?"
-                TextChanged="@(e => CalculateTotal(context.Item))" HideSpinButtons="true" />
+                Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en" T="double?" Immediate="true"
+                @bind-Value:after="@(() => CalculateTotal(context.Item))" HideSpinButtons="true" />
             </EditTemplate>
         </PropertyColumn>
 
@@ -96,7 +96,7 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
                 Format="#,##0.##" Culture="@_en" T="double?" Class="text-right" HideSpinButtons="true" />
             </EditTemplate>
         </PropertyColumn>
-        <PropertyColumn Property="x => x.ExchangeRate" Title="@Localizer["Exchange Rate"]"Required="false">
+        <PropertyColumn Property="x => x.ExchangeRate" Title="@Localizer["Exchange Rate"]" Required="false">
         </PropertyColumn>
         <PropertyColumn Property="x => x.UpdateTime" Title="@Localizer["Dateupdate"]" IsEditable="false" Required="false">
             <EditTemplate></EditTemplate>
@@ -126,7 +126,23 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
 
     [Parameter] public string usr { get; set; } = default!;
     [Parameter] public List<string> Types { get; set; } = default!;
+    [Parameter] public EventCallback OnTotalChanged { get; set; }
     M_TaxDetail detail_history;
+
+    // Tính lại tổng hóa đơn trong DB rồi cập nhật vào object đang hiển thị ở grid cha
+    async Task SyncInvoiceTotal()
+    {
+        if (DetailTaxInvoice == null) return;
+        await tsv.UpdateTotalInvoiceByTaxInvoiceID(DetailTaxInvoice.TaxInvoiceID);
+        var inv = await tsv.GetTaxInvoiceByID(DetailTaxInvoice.TaxInvoiceID);
+        if (inv != null)
+        {
+            DetailTaxInvoice.tongTruocThue = inv.tongTruocThue;
+            DetailTaxInvoice.tongThue = inv.tongThue;
+            DetailTaxInvoice.tongSauThue = inv.tongSauThue;
+        }
+        await OnTotalChanged.InvokeAsync();
+    }
     void CallSnackBar(string message, MudBlazor.Severity severity)
     {
         Snackbar.Configuration.SnackbarVariant = Variant.Filled;
@@ -208,7 +224,7 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
         if (rsdlog.Canceled) return;
         var data = (M_TaxDetail)rsdlog.Data;
         var rs = await tsv.CreateTaxDetail(data);
-        if (rs.Flag) await tsv.UpdateTotalInvoiceByTaxInvoiceID(data.taxInvoiceID ?? Guid.Empty);
+        if (rs.Flag) await SyncInvoiceTotal();
         CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         await Refresh();
     }
@@ -239,7 +255,7 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
         if (resultMess.HasValue)
         {
             var rs = await tsv.DeleteTaxDetail(item);
-            if (rs.Flag) await tsv.UpdateTotalInvoiceByTaxInvoiceID(item.taxInvoiceID ?? Guid.Empty);
+            if (rs.Flag) await SyncInvoiceTotal();
             detail_history = JsonSerializer.Deserialize<M_TaxDetail>(JsonSerializer.Serialize(item));
             CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
             await Refresh();
@@ -255,7 +271,7 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
         item.Continued = item.Editable = true;
         item.Approve = false;
         var rs = item.taxDetailID != Guid.Empty ? await tsv.UpdateTaxDetail(item) : await tsv.CreateTaxDetail(item);
-        if (rs.Flag) await tsv.UpdateTotalInvoiceByTaxInvoiceID(item.taxInvoiceID ?? Guid.Empty);
+        if (rs.Flag) await SyncInvoiceTotal();
         CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         await Refresh();
     }
@@ -387,7 +403,7 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
         item.UpdateTime = DateTime.Now;
         item.UserID = usr;
         var rs = await tsv.UpdateTaxDetail(item);
-        if (rs.Flag) await tsv.UpdateTotalInvoiceByTaxInvoiceID(item.taxInvoiceID ?? Guid.Empty);
+        if (rs.Flag) await SyncInvoiceTotal();
         if (!rs.Flag) CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
     }
     DialogOptions optionsdialog = new DialogOptions
@@ -412,7 +428,7 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
         if (rsdlog.Canceled) return;
         var data = (M_TaxDetail)rsdlog.Data;
         var rs = await tsv.UpdateTaxDetail(data);
-        if (rs.Flag) await tsv.UpdateTotalInvoiceByTaxInvoiceID(data.taxInvoiceID ?? Guid.Empty);
+        if (rs.Flag) await SyncInvoiceTotal();
         CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         await Refresh();
     }
@@ -434,6 +450,7 @@ ColumnResizeMode="ResizeMode.Column" Loading="_loading" ShowColumnOptions="false
         var rs = await dialog.Result;
         if (rs.Canceled)
             return;
+        await SyncInvoiceTotal();
         await Refresh();
     }
 }

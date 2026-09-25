@@ -3498,21 +3498,37 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
-        public async Task<BoolandMessReponse> ExportDebitSI(List<M_Debit> list_debit, List<M_HBL> hblinfo, string cur_type, string billType = "PASL")
+        public async Task<BoolandMessReponse> ExportDebitSI(List<M_Debit> list_debit, List<M_HBL> hblinfo_, string cur_type, string billType = "PASL")
         {
             try
             {
                 var report = new StiReport();
-                var rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportListDebitNote_SeaImport.mrt");
+                string rpt;
+                if (cur_type == "USD")
+                {
+                    rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaImport_USD.mrt");
+                }
+                else
+                {
+                    rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_SeaImport_VND.mrt");
+
+                }
+
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
-
-
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
 
                 report.Load(rpt);
                 report.Culture = "en-US";
-                //report.Dictionary.Variables["BillType"].Value = billType;
-                var fcl = await GetFLCByMBLID(hblinfo.First().mblid);
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                //var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
+                var hblinfo = hblinfo_.First();
+                var fcl = await GetFLCByMBLID(hblinfo.mblid); //
+
+                //var list_debit = await GetListDebit_Debitno(detail.debitno);
+
                 double? total_payment = 0;
                 double? total_amount_notvat = 0;
 
@@ -3559,34 +3575,24 @@ namespace NVOAMASIS.Services
 
                 if (fcl == "F")
                 {
-                    report.Dictionary.Variables["volume"].Value = hblinfo.First().say;
+                    report.Dictionary.Variables["volume"].Value = hblinfo.say;
                 }
                 else
                 {
-                    report.Dictionary.Variables["volume"].Value = hblinfo.First().NoOfPackages + " / " + hblinfo.First().gross + " / " + " / " + hblinfo.First().cbm;
+                    report.Dictionary.Variables["volume"].Value = hblinfo.NoOfPackages + " / " + hblinfo.gross + " / " + " / " + hblinfo.cbm;
                 }
                 report.Dictionary.Variables["DatetimeNow"].Value = DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
-                report.Dictionary.Variables["eta"].Value = hblinfo.First().ETA.HasValue ? hblinfo.First().ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
-                report.Dictionary.Variables["etd"].Value = hblinfo.First().ETD.HasValue ? hblinfo.First().ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
+                report.Dictionary.Variables["eta"].Value = hblinfo.ETA.HasValue ? hblinfo.ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
+                report.Dictionary.Variables["etd"].Value = hblinfo.ETD.HasValue ? hblinfo.ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
                 total_payment = Math.Round(total_payment ?? 0, 2);
                 report.Dictionary.Variables["In_Word"].Value = ConvertToWords(total_payment, cur_type);
                 report.Dictionary.Variables["Cur_type"].Value = cur_type;
                 report.Dictionary.Variables["DatetimeNow"].Value = DateTime.Now.ToString("dd-MMM-yyyy");
-                report.Dictionary.Variables["HBLID"].Value = hblinfo.First().hblID.ToString();
-
-                var hbls = string.Join(";", hblinfo.Select(x => x.hbl));
-                report.Dictionary.Variables["HBLs"].Value = hbls;
-                report.Dictionary.Variables["MBLs"].Value = "";
-
-                var querydebit = "WHERE debitId IN (";
-                foreach (var item in list_debit)
-                    querydebit += $"'{item.debitId}',";
-                if (list_debit.Any())
-                    querydebit = querydebit.TrimEnd(',') + ")";
-                else
-                    querydebit = "WHERE 1=0";
-                report.Dictionary.Variables["debitnos"].Value = querydebit.ToString();
-
+                var mblinfo = await GetMBL_byHBLid(hblinfo.mblid);
+                var infojob = await GetJob_byid(mblinfo.Jobid);
+                report.Dictionary.Variables["Refno"].Value = infojob.JobNo.ToString();
+                report.Dictionary.Variables["HBLID"].Value = hblinfo.hblID.ToString();
+                report.Dictionary.Variables["debitno"].Value = list_debit.First().debitno.ToString();
                 StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())
                 {
