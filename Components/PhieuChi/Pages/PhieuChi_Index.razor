@@ -20,6 +20,9 @@
 @inject HistoryLogService HistoryLogService
 @inject AppDbContext Db
 @inject NavigationManager NavManager
+@inject BankPaymentService bankSv
+@inject BankPaymentNotifier bankNotifier
+@implements IDisposable
 @using System.Text.Json;
 
 
@@ -174,6 +177,30 @@
         transition: none !important;
         animation: none !important;
     }
+    /* Ô trạng thái (Duyệt / Đã thanh toán): 1 dòng, căn giữa theo chiều dọc, không làm lệch hàng */
+    .payment-grid .status-cell {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+    }
+
+        .payment-grid .status-cell .mud-chip {
+            margin: 0 !important;
+            height: 24px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .payment-grid .status-cell .status-note {
+            font-size: 11px;
+            color: #64748b;
+        }
+
+    .payment-grid .paid-chip {
+        cursor: pointer;
+    }
+
 </style>
 
 <PageTitle>@Localizer["Phieuchi"] </PageTitle>
@@ -352,6 +379,57 @@
                     </CellTemplate>
                 </TemplateColumn>
 
+                <TemplateColumn Title="@Localizer["Dathanhtoan"]" Filterable="false" Sortable="false"
+                                HeaderStyle="min-width:200px" CellStyle="min-width:200px">
+                    <CellTemplate>
+                        @{
+                            var state = GetPaidState(context.Item);
+                            var received = ReceivedAmount(context.Item);
+                            var required = context.Item.Sotien ?? 0;
+                        }
+                        <div class="status-cell">
+                            @switch (state)
+                            {
+                                case PaidState.Paid:
+                                    <MudTooltip Text="@Localizer["ClickToUnmarkPaid"]">
+                                        <MudChip T="string" Class="paid-chip" Size="Size.Small" Color="Color.Success"
+                                                 Icon="@Icons.Material.Filled.CheckCircle"
+                                                 OnClick="@(() => TogglePaid(context.Item, false))">@Localizer["Paid"]</MudChip>
+                                    </MudTooltip>
+                                    @if (context.Item.NgayThanhToan.HasValue)
+                                    {
+                                        <span class="status-note">@context.Item.NgayThanhToan.Value.ToString("dd/MM/yyyy HH:mm")</span>
+                                    }
+                                    break;
+                                case PaidState.ReceivedFull:
+                                    <MudTooltip Text="@Localizer["ClickToMarkPaid"]">
+                                        <MudChip T="string" Class="paid-chip" Size="Size.Small" Color="Color.Info"
+                                                 Icon="@Icons.Material.Filled.HelpOutline"
+                                                 OnClick="@(() => TogglePaid(context.Item, true))">@Localizer["ReceivedFullNotConfirmed"]</MudChip>
+                                    </MudTooltip>
+                                    break;
+                                case PaidState.WrongAmount:
+                                    <MudTooltip Text="@Localizer["ClickToMarkPaid"]">
+                                        <MudChip T="string" Class="paid-chip" Size="Size.Small" Color="Color.Warning"
+                                                 Icon="@Icons.Material.Filled.WarningAmber"
+                                                 OnClick="@(() => TogglePaid(context.Item, true))">
+                                            @string.Format(Localizer["WrongAmountChip"], received.ToString("#,##0"), required.ToString("#,##0"))
+                                        </MudChip>
+                                    </MudTooltip>
+                                    break;
+                                default:
+                                    <MudTooltip Text="@Localizer["ClickToMarkPaid"]">
+                                        <MudChip T="string" Class="paid-chip" Size="Size.Small" Color="Color.Default"
+                                                 Variant="Variant.Outlined"
+                                                 Icon="@Icons.Material.Filled.RadioButtonUnchecked"
+                                                 OnClick="@(() => TogglePaid(context.Item, true))">@Localizer["Unpaid"]</MudChip>
+                                    </MudTooltip>
+                                    break;
+                            }
+                        </div>
+                    </CellTemplate>
+                </TemplateColumn>
+
                 <PropertyColumn Property="x => x.Sophieuchi"
                                 Title="@Localizer["Sophieuchi"]"
                                 CellStyleFunc="_cellStyleFunc" />
@@ -469,6 +547,41 @@
                             <div class="payment-detail-value">@context.Item.Continued</div>
                         </MudItem>
                     </MudGrid>
+
+                    @if (_linkedTxns.TryGetValue(context.Item.PhieuchiID, out var txns) && txns.Count > 0)
+                    {
+                        <div class="payment-detail-label mt-3">@Localizer["BankTransactions"]</div>
+                        <MudSimpleTable Dense="true" Elevation="0">
+                            <thead>
+                                <tr>
+                                    <th>@Localizer["NGAY"]</th>
+                                    <th>Bank</th>
+                                    <th style="text-align:right">@Localizer["Sotien"]</th>
+                                    <th>@Localizer["Noidung"]</th>
+                                    <th>@Localizer["status"]</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var t in txns)
+                                {
+                                    <tr>
+                                        <td>@t.TransactionDate?.ToString("dd/MM/yyyy HH:mm")</td>
+                                        <td>@t.Gateway</td>
+                                        <td style="text-align:right">@t.Amount.ToString("#,##0")</td>
+                                        <td>@t.Content</td>
+                                        <td>@t.MatchStatus</td>
+                                    </tr>
+                                }
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="5">
+                                        <b>@string.Format(Localizer["ReceivedOfTotal"], ReceivedAmount(context.Item).ToString("#,##0"), (context.Item.Sotien ?? 0).ToString("#,##0"))</b>
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        </MudSimpleTable>
+                    }
                 </MudCard>
             </ChildRowContent>
 
@@ -522,8 +635,70 @@
     public decimal? FilteredTotalAmount_VND;
     public decimal? FilteredTotalAmount_USD;
 
+    private Dictionary<Guid, List<M_BankTransaction>> _linkedTxns = new();
+
+    private enum PaidState { Unpaid, Paid, ReceivedFull, WrongAmount }
+
+    private decimal ReceivedAmount(M_PhieuChi item) =>
+        _linkedTxns.TryGetValue(item.PhieuchiID, out var t) ? t.Sum(x => x.Amount) : 0;
+
+    private PaidState GetPaidState(M_PhieuChi item)
+    {
+        if (item.dathanhtoan == true) return PaidState.Paid;
+        var received = ReceivedAmount(item);
+        if (received <= 0) return PaidState.Unpaid;
+        return decimal.Round(received, 0) == decimal.Round((decimal)(item.Sotien ?? 0), 0)
+            ? PaidState.ReceivedFull
+            : PaidState.WrongAmount;
+    }
+
+    private async Task LoadLinkedTransactionsAsync()
+    {
+        var all = await bankSv.GetLinkedPaymentTransactionsAsync();
+        _linkedTxns = all.GroupBy(x => x.PhieuchiID!.Value).ToDictionary(g => g.Key, g => g.ToList());
+    }
+
+    private async Task TogglePaid(M_PhieuChi item, bool paid)
+    {
+        if (!await ssv.CheckPermission(usr, "Edit", "Phieuchi"))
+        {
+            CallSnackBar(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (!paid)
+        {
+            var confirm = await DialogService.ShowMessageBox(
+                "Warning",
+                $"Bỏ đánh dấu Đã thanh toán của phiếu chi {item.Sophieuchi}?",
+                yesText: "OK", cancelText: "Cancel");
+            if (confirm != true) return;
+        }
+
+        if (await bankSv.SetPaymentPaidAsync(item.PhieuchiID, paid, usr))
+        {
+            item.dathanhtoan = paid;
+            item.NgayThanhToan = paid ? DateTime.Now : null;
+        }
+        else
+        {
+            CallSnackBar(string.Format(Localizer["SomethingWentWrong"], "Payment not found"), MudBlazor.Severity.Warning);
+        }
+        StateHasChanged();
+    }
+
+    private Task OnPaymentPaid(Guid id, string no) =>
+        InvokeAsync(async () =>
+        {
+            CallSnackBar(string.Format(Localizer["PaymentSentMsg"], no), MudBlazor.Severity.Success);
+            await Refresh();
+        });
+
+    public void Dispose() => bankNotifier.PaymentPaid -= OnPaymentPaid;
+
     protected async override Task OnInitializedAsync()
     {
+        bankNotifier.PaymentPaid += OnPaymentPaid;
         M_Trangthais = await supsv.GetListTrangThai();
         var tts = await supsv.GetListTrangThai();
         trangthais = tts.Where(x => x.Tieude == "Phieuchi").OrderBy(x => x.Noidung).Select(x => x.Noidung).ToList();
@@ -551,6 +726,7 @@
                 return;
             }
             Listdata = await thuchiSv.GetList_PhieuChi();
+            await LoadLinkedTransactionsAsync();
             filteredItems = Listdata;
             RecalculateTotals();
 
