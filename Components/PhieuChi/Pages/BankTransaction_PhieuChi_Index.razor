@@ -1,6 +1,7 @@
-@page "/BankTransactions"
+@page "/BankTransactions/PhieuChi"
 @attribute [Authorize]
 @using NVOAMASIS.Models
+@using NVOAMASIS.Components.PhieuThu.Pages
 @inject BankPaymentService bankSv
 @inject AccountService asv
 @inject SharedServices ssv
@@ -8,11 +9,11 @@
 @inject IDialogService DialogService
 @inject IStringLocalizer<SharedResource> Localizer
 
-<PageTitle>@Localizer["BankTransactionsReceipt"]</PageTitle>
+<PageTitle>@Localizer["BankTransactionsPayment"]</PageTitle>
 
 <MudPaper Class="pa-2">
     <MudStack Row AlignItems="AlignItems.Center" Class="mb-2">
-        <MudText Typo="Typo.h6">@Localizer["BankTransactionsReceipt"]</MudText>
+        <MudText Typo="Typo.h6">@Localizer["BankTransactionsPayment"]</MudText>
         <MudSpacer />
         <MudSwitch T="bool" Label="@Localizer["OnlyNeedReview"]" Color="Color.Primary"
                    Value="_onlyNeedReview" ValueChanged="OnFilterChanged" />
@@ -72,13 +73,13 @@
         try
         {
             _loading = true;
-            if (!await ssv.CheckPermission(usr, "View", "Phieuthu"))
+            if (!await ssv.CheckPermission(usr, "View", "Phieuchi"))
             {
                 Snackbar.Add(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
                 _items = new();
                 return;
             }
-            _items = await bankSv.GetTransactionsAsync(_onlyNeedReview, direction: "in");
+            _items = await bankSv.GetTransactionsAsync(_onlyNeedReview, direction: "out");
         }
         finally
         {
@@ -88,24 +89,23 @@
 
     private async Task Link(M_BankTransaction txn)
     {
-        if (!await ssv.CheckPermission(usr, "Edit", "Phieuthu"))
+        if (!await ssv.CheckPermission(usr, "Edit", "Phieuchi"))
         {
             Snackbar.Add(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
             return;
         }
 
-        var parameters = new DialogParameters<LinkReceiptDialog> { { x => x.Transaction, txn } };
+        var parameters = new DialogParameters<LinkReceiptDialog>
+        {
+            { x => x.Transaction, txn },
+            { x => x.PaymentOnly, true }
+        };
         var dialog = await DialogService.ShowAsync<LinkReceiptDialog>(
             Localizer["LinkToReceipt"], parameters, new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.Small });
         var result = await dialog.Result;
-        if (result.Canceled || result.Data is not LinkReceiptDialog.LinkTarget target) return;
+        if (result.Canceled || result.Data is not LinkReceiptDialog.LinkTarget target || target.PhieuchiId is not Guid phieuchiId) return;
 
-        var (ok, message) = target switch
-        {
-            { PhieuthuId: Guid receiptId } => await bankSv.LinkToReceiptAsync(txn.Id, receiptId, usr),
-            { PhieuchiId: Guid phieuchiId } => await bankSv.LinkToPaymentAsync(txn.Id, phieuchiId, usr),
-            _ => await bankSv.LinkToInvoiceAsync(txn.Id, target.Noibo!, target.CustomerId!.Value, usr)
-        };
+        var (ok, message) = await bankSv.LinkToPaymentAsync(txn.Id, phieuchiId, usr);
         Snackbar.Add(message, ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         await Load();
     }

@@ -1,0 +1,677 @@
+@using System.Globalization
+@using System.Text
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using NVOAMASIS.Components.Shipment.Pages
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject ShipmentService shipsv
+@inject InvoiceXmlImportService invoiceXmlImportService
+@inject IStringLocalizer<SharedResource> Localizer
+@attribute [Authorize]
+
+<style>
+    /* Thanh lọc: mọi control cao 40px, thẳng hàng; nút hành động dồn phải */
+    .hddv-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .hddv-filters {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .hddv-toolbar .mud-input-control {
+        margin: 0 !important;
+    }
+
+    .hddv-toolbar .hddv-date {
+        flex: 0 0 170px;
+        width: 170px;
+    }
+
+    .hddv-toolbar .hddv-source {
+        flex: 0 0 150px;
+        width: 150px;
+    }
+
+    .hddv-toolbar .hddv-search {
+        flex: 1 1 260px;
+        min-width: 220px;
+        max-width: 440px;
+    }
+
+    .hddv-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 0 0 auto;
+    }
+
+        .hddv-actions .mud-button-root {
+            height: 40px;
+            white-space: nowrap;
+        }
+
+    .hddv-xml-grid .note-line td {
+        font-style: italic;
+        color: var(--mud-palette-text-secondary);
+    }
+
+    .hddv-xml-grid .party {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.25;
+    }
+
+        .hddv-xml-grid .party small {
+            color: var(--mud-palette-text-secondary);
+        }
+</style>
+
+<PageTitle>@Localizer["HDDVXml.Title"]</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@Localizer["HDDVXml.Title"]" Subtitle="@Localizer["HDDVXml.Subtitle"]" />
+    <MudPaper Class="product-price-card" Elevation="0">
+        <MudContainer MaxWidth="MaxWidth.False" Class="pa-3">
+
+            @* ===== Bộ lọc + Import ===== *@
+            <MudPaper Class="pa-3 mb-3" Outlined="true">
+                <div class="hddv-toolbar">
+                    <div class="hddv-filters">
+                        <MudDatePicker @bind-Date="_fromDate"
+                                       Label="@Localizer["HDDVXml.Filter.FromDate"]"
+                                       Margin="Margin.Dense"
+                                       Variant="Variant.Outlined"
+                                       Editable="true"
+                                       DateFormat="dd/MM/yyyy"
+                                       Class="hddv-date" />
+
+                        <MudDatePicker @bind-Date="_toDate"
+                                       Label="@Localizer["HDDVXml.Filter.ToDate"]"
+                                       Margin="Margin.Dense"
+                                       Variant="Variant.Outlined"
+                                       Editable="true"
+                                       DateFormat="dd/MM/yyyy"
+                                       Class="hddv-date" />
+
+                        <MudSelect T="string"
+                                   @bind-Value="_sourceFilter"
+                                   Label="@Localizer["HDDVXml.Col.Source"]"
+                                   Margin="Margin.Dense"
+                                   Variant="Variant.Outlined"
+                                   AnchorOrigin="Origin.BottomCenter"
+                                   Class="hddv-source">
+                            <MudSelectItem T="string" Value="@SourceAll">@Localizer["HDDVXml.Filter.All"]</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("XML")">XML</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("PDF")">PDF</MudSelectItem>
+                            <MudSelectItem T="string" Value="@SourceManual">@Localizer["HDDVXml.Filter.Manual"]</MudSelectItem>
+                        </MudSelect>
+
+                        <MudTextField @bind-Value="_textFilter"
+                                      Label="@Localizer["HDDVXml.Filter.Search"]"
+                                      Placeholder="@Localizer["HDDVXml.Filter.SearchHelp"]"
+                                      Immediate="true"
+                                      Clearable="true"
+                                      Margin="Margin.Dense"
+                                      Variant="Variant.Outlined"
+                                      Adornment="Adornment.Start"
+                                      AdornmentIcon="@Icons.Material.Filled.Search"
+                                      Class="hddv-search" />
+                    </div>
+
+                    <div class="hddv-actions">
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Success"
+                                   StartIcon="@Icons.Material.Filled.Refresh"
+                                   OnClick="Refresh"
+                                   Disabled="@_loading">
+                            @Localizer["Reload"]
+                        </MudButton>
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.UploadFile"
+                                   HtmlTag="label"
+                                   for="@_xmlInputId"
+                                   Disabled="@_importing">
+                            @(_importing ? Localizer["HDDVXml.Importing"] : Localizer["HDDVXml.ImportXml"])
+                        </MudButton>
+                        <InputFile id="@_xmlInputId" OnChange="ImportXmlAsync" accept=".xml,text/xml,application/xml" multiple style="display:none" />
+                    </div>
+                </div>
+            </MudPaper>
+
+            @* ===== Bảng dữ liệu ===== *@
+            <MudDataGrid T="M_HoaDonDauVao"
+                         Items="@FilteredItems"
+                         Dense="true"
+                         Bordered="true"
+                         Hover="true"
+                         Loading="_loading"
+                         Height="600px"
+                         FixedHeader="true"
+                         FixedFooter="true"
+                         HeaderClass="no-wrap"
+                         SortMode="SortMode.Multiple"
+                         ColumnResizeMode="ResizeMode.Column"
+                         RowClassFunc="@RowClassFunc"
+                         Class="hddv-xml-grid">
+                <Columns>
+                    <HierarchyColumn T="M_HoaDonDauVao" />
+                    <TemplateColumn Filterable="false" Sortable="false" Title="">
+                        <CellTemplate>
+                            <MudStack Row="true" Spacing="0">
+                                <MudTooltip Text="@Localizer["HDDVXml.CreateDebt"]">
+                                    <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.CreditScore" OnClick="@(() => CreateCongNo(context.Item))" />
+                                </MudTooltip>
+                                <MudTooltip Text="@Localizer["HDDVXml.LinkShipment"]">
+                                    <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Link" OnClick="@(() => LinkShipment(context.Item))" />
+                                </MudTooltip>
+                                <MudTooltip Text="@Localizer["Delete"]">
+                                    <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(() => DeleteItem(context.Item))" />
+                                </MudTooltip>
+                            </MudStack>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.ngayphathanhhoadonDientu" Title="@Localizer["HDDVXml.Col.Date"]" Format="dd/MM/yyyy" />
+                    <PropertyColumn Property="x => x.kyhieuhoadon" Title="@Localizer["HDDVXml.Col.Serial"]" />
+                    <PropertyColumn Property="x => x.sohoadonDientu" Title="@Localizer["HDDVXml.Col.InvoiceNo"]" />
+                    <TemplateColumn Title="@Localizer["HDDVXml.Col.Seller"]" SortBy="@(x => x.tennguoiban)">
+                        <CellTemplate>
+                            <div class="party">
+                                <span>@context.Item.tennguoiban</span>
+                                <small>@context.Item.mstnguoiban</small>
+                            </div>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <TemplateColumn Title="@Localizer["HDDVXml.Col.Buyer"]" SortBy="@(x => x.tennguoimua)">
+                        <CellTemplate>
+                            <div class="party">
+                                <span>@context.Item.tennguoimua</span>
+                                <small>@context.Item.mstnguoimua</small>
+                            </div>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => CusidtoCusCode(x.customerid)" Title="@Localizer["HDDVXml.Col.Partner"]" />
+                    <TemplateColumn Title="@Localizer["HDDVXml.Col.Shipment"]" SortBy="@(x => x.billno)">
+                        <CellTemplate>
+                            @{
+                                var linked = LinkedBill(context.Item);
+                            }
+                            <div class="party">
+                                @if (linked != null)
+                                {
+                                    <MudText Typo="Typo.body2" Color="Color.Success">@linked</MudText>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body2" Color="Color.Warning">@Localizer["HDDVXml.NotLinked"]</MudText>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(context.Item.billno))
+                                {
+                                    <small>Bill: @context.Item.billno</small>
+                                }
+                            </div>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.thanhtien" Title="@Localizer["HDDVXml.Col.BeforeTax"]" Format="#,##0.##" Culture="@_en" CellClass="custom-right-align">
+                        <FooterTemplate>
+                            <MudText Typo="Typo.subtitle2" Align="Align.Right">@FilteredItems.Sum(x => x.thanhtien ?? 0).ToString("#,##0.##", _en)</MudText>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.thue" Title="@Localizer["VAT"]" Format="#,##0.##" Culture="@_en" CellClass="custom-right-align" />
+                    <PropertyColumn Property="x => x.tienthue" Title="@Localizer["HDDVXml.Col.TaxAmount"]" Format="#,##0.##" Culture="@_en" CellClass="custom-right-align">
+                        <FooterTemplate>
+                            <MudText Typo="Typo.subtitle2" Align="Align.Right">@FilteredItems.Sum(x => x.tienthue ?? 0).ToString("#,##0.##", _en)</MudText>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.thanhtiensauthue" Title="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" Culture="@_en" CellClass="custom-right-align">
+                        <FooterTemplate>
+                            <MudText Typo="Typo.subtitle2" Align="Align.Right">@FilteredItems.Sum(x => x.thanhtiensauthue ?? 0).ToString("#,##0.##", _en)</MudText>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn Property="x => x.tiente" Title="@Localizer["Loaitiente"]" />
+                    <TemplateColumn Title="@Localizer["Approve"]" SortBy="@(x => x.approve)">
+                        <CellTemplate>
+                            <MudCheckBox T="bool?" @bind-Value="context.Item.approve" @bind-Value:after="@(() => UpdateApprove(context.Item))" Dense="true" />
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.nguonimport" Title="@Localizer["HDDVXml.Col.Source"]" />
+                    <PropertyColumn Property="x => x.userupdate" Title="@Localizer["UserUpdate"]" />
+                    <PropertyColumn Property="x => x.dateupdate" Title="@Localizer["Dateupdate"]" />
+                </Columns>
+                <ChildRowContent>
+                    @RenderDetail(context.Item)
+                </ChildRowContent>
+                <PagerContent>
+                    <MudDataGridPager T="M_HoaDonDauVao" PageSizeOptions="@(new int[] { 20, 50, 100 })" />
+                </PagerContent>
+            </MudDataGrid>
+        </MudContainer>
+    </MudPaper>
+</div>
+
+@code {
+    const string SourceAll = "ALL";
+    const string SourceManual = "MANUAL";
+    const long MaxXmlFileSize = 5 * 1024 * 1024;
+    const int MaxFilesPerImport = 50;
+
+    readonly string _xmlInputId = $"invoice-xml-import-{Guid.NewGuid():N}";
+    readonly CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    string _usr = string.Empty;
+    bool _loading;
+    bool _importing;
+    DateTime? _fromDate = DateTime.Today.AddMonths(-3);
+    DateTime? _toDate = DateTime.Today;
+    string _sourceFilter = SourceAll;
+    string _textFilter = string.Empty;
+
+    List<M_HoaDonDauVao> _items = new();
+    List<M_Customer> _customers = new();
+    List<string> _companyTaxCodes = new();
+    Dictionary<Guid, string> _billNumbers = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _usr = asv.GetAuth().Result.User.Identity?.Name ?? string.Empty;
+            _customers = await csv.GetList();
+            _companyTaxCodes = await shipsv.GetCompanyTaxCodes();
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    IEnumerable<M_HoaDonDauVao> FilteredItems => _items.Where(MatchesFilter);
+
+    bool MatchesFilter(M_HoaDonDauVao x)
+    {
+        if (_sourceFilter == SourceManual && !string.IsNullOrEmpty(x.nguonimport))
+            return false;
+        if (_sourceFilter != SourceAll && _sourceFilter != SourceManual && x.nguonimport != _sourceFilter)
+            return false;
+        if (string.IsNullOrWhiteSpace(_textFilter))
+            return true;
+
+        var text = _textFilter.Trim();
+        return new[]
+        {
+            x.sohoadonDientu, x.sohoadonNoibo, x.kyhieuhoadon,
+            x.tennguoiban, x.mstnguoiban, x.tennguoimua, x.mstnguoimua,
+            x.billno, LinkedBill(x), CusidtoCusCode(x.customerid), x.tenfile
+        }.Any(v => v != null && v.Contains(text, StringComparison.OrdinalIgnoreCase));
+    }
+
+    async Task Refresh()
+    {
+        try
+        {
+            _loading = true;
+            StateHasChanged();
+            if (!await ssv.CheckPermission(_usr, "View", "MBL"))
+            {
+                CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
+                return;
+            }
+            _items = await shipsv.GetListHoaDonDauVaoByDate(_fromDate, _toDate);
+            _billNumbers = await shipsv.GetBillNumbersByDate(_fromDate, _toDate);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // ===== Import XML =====
+    async Task ImportXmlAsync(InputFileChangeEventArgs e)
+    {
+        if (e.FileCount == 0)
+            return;
+        if (e.FileCount > MaxFilesPerImport)
+        {
+            CallSnackBar(Localizer["HDDVXml.Msg.TooManyFiles", MaxFilesPerImport], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _importing = true;
+        StateHasChanged();
+
+        int created = 0, duplicated = 0, failed = 0;
+        var errors = new List<string>();
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(MaxFilesPerImport))
+            {
+                var (status, message) = await ImportOneAsync(file);
+                switch (status)
+                {
+                    case ImportStatus.Created: created++; break;
+                    case ImportStatus.Duplicated: duplicated++; errors.Add($"{file.Name}: {message}"); break;
+                    default: failed++; errors.Add($"{file.Name}: {message}"); break;
+                }
+            }
+        }
+        finally
+        {
+            _importing = false;
+        }
+
+        foreach (var err in errors.Take(5))
+            CallSnackBar(err, MudBlazor.Severity.Warning);
+        CallSnackBar(Localizer["HDDVXml.Msg.Summary", created, duplicated, failed],
+            failed > 0 ? MudBlazor.Severity.Error : created > 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Info);
+
+        if (created > 0)
+            await Refresh();
+    }
+
+    enum ImportStatus { Created, Duplicated, Failed }
+
+    async Task<(ImportStatus Status, string Message)> ImportOneAsync(IBrowserFile file)
+    {
+        try
+        {
+            if (!file.Name.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                return (ImportStatus.Failed, Localizer["HDDVXml.Msg.InvalidFormat"]);
+            if (file.Size <= 0)
+                return (ImportStatus.Failed, Localizer["HDDVXml.Msg.EmptyFile"]);
+            if (file.Size > MaxXmlFileSize)
+                return (ImportStatus.Failed, Localizer["HDDVXml.Msg.FileTooLarge", MaxXmlFileSize / 1024 / 1024]);
+
+            string content;
+            await using (var stream = file.OpenReadStream(MaxXmlFileSize))
+            using (var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+                content = await reader.ReadToEndAsync();
+
+            var parsed = InvoiceXmlImportService.Parse(content);
+            var validation = parsed.ValidationErrors();
+            if (validation.Count > 0)
+                return (ImportStatus.Failed, string.Join(" ", validation.Select(x => Localizer[x].Value)));
+
+            var sellerTax = InvoiceXmlImportService.NormalizeTaxCode(parsed.SellerTaxCode);
+            var buyerTax = InvoiceXmlImportService.NormalizeTaxCode(parsed.BuyerTaxCode);
+
+            if (await shipsv.ExistsHoaDonDauVaoXml(parsed.XmlDocId, sellerTax, parsed.Serial, parsed.InvoiceNo))
+                return (ImportStatus.Duplicated, Localizer["HDDVXml.Msg.Duplicate", $"{parsed.Serial} - {parsed.InvoiceNo}"]);
+
+            // Đối tác là bên không phải công ty mình; không xác định được thì mặc định người bán (hóa đơn mua vào)
+            var sellerIsCompany = _companyTaxCodes.Contains(sellerTax);
+            var partnerIsBuyer = sellerIsCompany && !_companyTaxCodes.Contains(buyerTax);
+            var customerResult = partnerIsBuyer
+                ? await csv.GetOrCreateCustomerForInvoiceAsync(parsed.BuyerTaxCode, parsed.BuyerName, parsed.BuyerAddress, _usr)
+                : await csv.GetOrCreateCustomerForInvoiceAsync(parsed.SellerTaxCode, parsed.SellerName, parsed.SellerAddress, _usr);
+
+            if (!customerResult.Response.Flag || customerResult.Customer == null)
+                return (ImportStatus.Failed, Localizer[customerResult.Response.Message]);
+
+            if (!_customers.Any(x => x.Customer_ID == customerResult.Customer.Customer_ID))
+                _customers.Add(customerResult.Customer);
+            if (customerResult.IsCreated)
+                CallSnackBar(Localizer["New customer created: {0}", customerResult.Customer.COMPANY ?? string.Empty], MudBlazor.Severity.Info);
+
+            var shipment = await shipsv.FindShipmentByBillNo(parsed.BillNo);
+
+            var item = new M_HoaDonDauVao
+            {
+                mblid = shipment?.MblId ?? Guid.Empty,
+                hblid = shipment?.HblId ?? Guid.Empty,
+                customerid = customerResult.Customer.Customer_ID,
+                dongia = parsed.TotalBeforeTax,
+                soluong = 1,
+                thanhtien = parsed.TotalBeforeTax,
+                tiente = parsed.Currency,
+                tigia = parsed.ExchangeRate,
+                thue = parsed.VatRate,
+                thanhtiensauthue = parsed.TotalPayment,
+                sohoadonNoibo = parsed.InvoiceNo,
+                sohoadonDientu = parsed.InvoiceNo,
+                ngayphathanhhoadonDientu = parsed.InvoiceDate,
+                userupdate = _usr,
+                dateupdate = DateTime.Now.ToString(),
+                continued = true,
+                editable = true,
+                approve = false,
+
+                mausohoadon = parsed.TemplateNo,
+                kyhieuhoadon = parsed.Serial,
+                loaihoadon = parsed.InvoiceType,
+                hinhthucthanhtoan = parsed.PaymentMethod,
+                xmlDocId = parsed.XmlDocId,
+                tennguoiban = parsed.SellerName,
+                mstnguoiban = sellerTax,
+                diachinguoiban = parsed.SellerAddress,
+                tennguoimua = parsed.BuyerName,
+                mstnguoimua = buyerTax,
+                diachinguoimua = parsed.BuyerAddress,
+                tienthue = parsed.TotalTax,
+                chietkhau = parsed.TotalDiscount,
+                tienbangchu = parsed.TotalInWords,
+                billno = parsed.BillNo,
+                vesselvoyage = parsed.VesselVoyage,
+                pol = parsed.Pol,
+                pod = parsed.Pod,
+                ghichu = parsed.Note,
+                nguonimport = "XML",
+                tenfile = file.Name,
+                xmlcontent = content
+            };
+
+            var rs = await shipsv.CreateHoaDonDauVaoMBL(item);
+            return rs.Flag ? (ImportStatus.Created, rs.Message) : (ImportStatus.Failed, rs.Message);
+        }
+        catch (IOException ex)
+        {
+            return (ImportStatus.Failed, Localizer["HDDVXml.Msg.CannotRead", ex.Message]);
+        }
+        catch (Exception ex)
+        {
+            return (ImportStatus.Failed, ex.Message);
+        }
+    }
+
+    // ===== Chi tiết dòng hàng (parse lại từ XML gốc) =====
+    RenderFragment RenderDetail(M_HoaDonDauVao item) => __builder =>
+    {
+        var lines = InvoiceXmlImportService.ParseLines(item.xmlcontent);
+        <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+            <MudGrid Spacing="1" Class="mb-2">
+                <MudItem xs="12" md="4">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@Localizer["HDDVXml.Col.Seller"]</MudText>
+                    <MudText Typo="Typo.body2"><b>@item.tennguoiban</b> — @item.mstnguoiban</MudText>
+                    <MudText Typo="Typo.body2">@item.diachinguoiban</MudText>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@Localizer["HDDVXml.Col.Buyer"]</MudText>
+                    <MudText Typo="Typo.body2"><b>@item.tennguoimua</b> — @item.mstnguoimua</MudText>
+                    <MudText Typo="Typo.body2">@item.diachinguoimua</MudText>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@Localizer["HDDVXml.Detail.General"]</MudText>
+                    <MudText Typo="Typo.body2">@item.loaihoadon · @item.mausohoadon@item.kyhieuhoadon · @item.hinhthucthanhtoan</MudText>
+                    @if (!string.IsNullOrWhiteSpace(item.vesselvoyage) || !string.IsNullOrWhiteSpace(item.pol))
+                    {
+                        <MudText Typo="Typo.body2">@item.vesselvoyage · POL: @item.pol · POD: @item.pod</MudText>
+                    }
+                    <MudText Typo="Typo.body2"><i>@item.tienbangchu</i></MudText>
+                </MudItem>
+            </MudGrid>
+
+            @if (lines.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary">@Localizer["HDDVXml.Detail.NoLines"]</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Bordered="true" Striped="false" Style="overflow-x:auto">
+                    <thead>
+                        <tr>
+                            <th>@Localizer["no"]</th>
+                            <th>@Localizer["HDDVXml.Detail.Name"]</th>
+                            <th>@Localizer["HDDVXml.Detail.Unit"]</th>
+                            <th class="custom-right-align">@Localizer["Quantity"]</th>
+                            <th class="custom-right-align">@Localizer["Unit Price"]</th>
+                            <th class="custom-right-align">@Localizer["Total Price"]</th>
+                            <th>@Localizer["HDDVXml.Detail.TaxRate"]</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var line in lines)
+                        {
+                            if (line.IsNote)
+                            {
+                                <tr class="note-line">
+                                    <td>@line.No</td>
+                                    <td colspan="6">@line.Name</td>
+                                </tr>
+                            }
+                            else
+                            {
+                                <tr>
+                                    <td>@line.No</td>
+                                    <td>@line.Name</td>
+                                    <td>@line.Unit</td>
+                                    <td class="custom-right-align">@line.Quantity?.ToString("#,##0.##", _en)</td>
+                                    <td class="custom-right-align">@line.UnitPrice?.ToString("#,##0.##", _en)</td>
+                                    <td class="custom-right-align">@line.Amount?.ToString("#,##0.##", _en)</td>
+                                    <td>@line.TaxRate</td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudPaper>
+    };
+
+    // ===== Hành động =====
+    async Task LinkShipment(M_HoaDonDauVao item)
+    {
+        if (item.approve == true)
+        {
+            CallSnackBar("Hóa đơn approved!", MudBlazor.Severity.Warning);
+            return;
+        }
+        var options = new DialogOptions
+        {
+            FullWidth = true,
+            MaxWidth = MaxWidth.Small,
+            CloseOnEscapeKey = true,
+            DisableBackdropClick = true
+        };
+        var parameters = new DialogParameters<LinkShipmentDialog> { { x => x.BillNo, item.billno } };
+        var dialog = await DialogService.ShowAsync<LinkShipmentDialog>(Localizer["HDDVXml.LinkShipment"], parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not ShipmentBillRef selected)
+            return;
+
+        var old = JsonSerializer.Deserialize<M_HoaDonDauVao>(JsonSerializer.Serialize(item))!;
+        item.hblid = selected.HblId;
+        item.mblid = selected.MblId;
+        item.userupdate = _usr;
+        var rs = await shipsv.UpdateHoaDonDauVaoMBL(item, old);
+        CallSnackBar(Localizer[rs.Message], rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    async Task DeleteItem(M_HoaDonDauVao item)
+    {
+        if (item.approve == true)
+        {
+            CallSnackBar("Hóa đơn approved!", MudBlazor.Severity.Info);
+            return;
+        }
+        var confirm = await DialogService.ShowMessageBox(
+            "Warning",
+            "Deleting can not be undone!",
+            yesText: "Delete!", cancelText: "Cancel");
+        if (confirm != true)
+            return;
+
+        var rs = await shipsv.DeleteHoaDonDauVaoMBL(item);
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+    }
+
+    async Task CreateCongNo(M_HoaDonDauVao item)
+    {
+        if (item.approve == true)
+        {
+            CallSnackBar("Hóa đơn approved!", MudBlazor.Severity.Warning);
+            return;
+        }
+        var options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom",
+            FullWidth = true,
+            MaxWidth = MaxWidth.Small,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+        var parameters = new DialogParameters<DialogCreateCongNo> { { x => x.HDDV, item }, { x => x.isHDDR, false } };
+        var dialog = await DialogService.ShowAsync<DialogCreateCongNo>("Tạo công nợ", parameters, options);
+        await dialog.Result;
+    }
+
+    async Task UpdateApprove(M_HoaDonDauVao item)
+    {
+        if (!await ssv.CheckPermission(_usr, "Approve", "HBL"))
+        {
+            item.approve = !item.approve;
+            CallSnackBar("You have not access to Approve", MudBlazor.Severity.Warning);
+            return;
+        }
+        item.userupdate = _usr;
+        var rs = await shipsv.UpdateHoaDonDauVaoMBL_approve(item);
+        if (!rs.Flag) CallSnackBar(rs.Message, MudBlazor.Severity.Error);
+    }
+
+    // ===== Helpers =====
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == Guid.Empty)
+            return string.Empty;
+        var rs = _customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : (rs.shortname + " - " + rs.COMPANY);
+    }
+
+    string? LinkedBill(M_HoaDonDauVao x)
+    {
+        if (x.hblid != Guid.Empty && _billNumbers.TryGetValue(x.hblid, out var h))
+            return h;
+        if (x.mblid != Guid.Empty && _billNumbers.TryGetValue(x.mblid, out var m))
+            return m;
+        return null;
+    }
+
+    string RowClassFunc(M_HoaDonDauVao x, int _) => x.approve == true ? "custom-disable" : string.Empty;
+
+    void CallSnackBar(string message, MudBlazor.Severity severity)
+    {
+        Snackbar.Configuration.SnackbarVariant = Variant.Filled;
+        Snackbar.Configuration.MaxDisplayedSnackbars = 3;
+        Snackbar.Configuration.PositionClass = Defaults.Classes.Position.TopRight;
+        Snackbar.Add(message, severity);
+    }
+}

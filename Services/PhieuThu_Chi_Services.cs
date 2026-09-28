@@ -256,6 +256,10 @@ namespace NVOAMASIS.Services
                 if (IV.PhieuchiID == null || IV.PhieuchiID == Guid.Empty)
                 {
                     _context.ChangeTracker.Clear();
+                    IV.PhieuchiID = Guid.NewGuid();
+                    // Phiếu chi mới luôn chưa thanh toán.
+                    IV.dathanhtoan = false;
+                    IV.NgayThanhToan = null;
                     _context.Add(IV);
                     await _context.SaveChangesAsync();
                     return ["Create new Receipt Successfully", "1"];
@@ -265,6 +269,10 @@ namespace NVOAMASIS.Services
                     _context.ChangeTracker.Clear();
 
                     _context.Update(IV);
+                    // Trạng thái thanh toán chỉ đổi bằng webhook SePay hoặc checkbox trên lưới,
+                    // không để dialog sửa ghi đè giá trị cũ.
+                    _context.Entry(IV).Property(x => x.dathanhtoan).IsModified = false;
+                    _context.Entry(IV).Property(x => x.NgayThanhToan).IsModified = false;
                     await _context.SaveChangesAsync();
                     return ["Update Receipt Successfully", "1"];
                 }

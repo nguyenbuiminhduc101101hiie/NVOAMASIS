@@ -40,3 +40,37 @@ BEGIN
         ON [dbo].[BankTransaction] ([PhieuthuID]);
 END;
 GO
+
+-- 3) BankTransaction: gắn với hóa đơn (5.14 BKAV Statistics)
+IF COL_LENGTH(N'dbo.BankTransaction', N'HoaDonNoibo') IS NULL
+    ALTER TABLE [dbo].[BankTransaction] ADD [HoaDonNoibo] nvarchar(100) NULL;
+GO
+
+IF COL_LENGTH(N'dbo.BankTransaction', N'HoaDonCustomerId') IS NULL
+    ALTER TABLE [dbo].[BankTransaction] ADD [HoaDonCustomerId] uniqueidentifier NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_BankTransaction_HoaDon' AND object_id = OBJECT_ID(N'dbo.BankTransaction'))
+    CREATE INDEX [IX_BankTransaction_HoaDon]
+        ON [dbo].[BankTransaction] ([HoaDonNoibo], [HoaDonCustomerId]);
+GO
+
+-- 4) Phieuchi: cờ đã chuyển khoản + ngày, và BankTransaction.PhieuchiID
+IF COL_LENGTH(N'dbo.Phieuchi', N'dathanhtoan') IS NULL
+    ALTER TABLE [dbo].[Phieuchi]
+    ADD [dathanhtoan] bit NULL
+        CONSTRAINT [DF_Phieuchi_dathanhtoan] DEFAULT CAST(0 AS bit);
+GO
+
+IF COL_LENGTH(N'dbo.Phieuchi', N'NgayThanhToan') IS NULL
+    ALTER TABLE [dbo].[Phieuchi] ADD [NgayThanhToan] datetime2 NULL;
+GO
+
+IF COL_LENGTH(N'dbo.BankTransaction', N'PhieuchiID') IS NULL
+    ALTER TABLE [dbo].[BankTransaction] ADD [PhieuchiID] uniqueidentifier NULL;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_BankTransaction_PhieuchiID' AND object_id = OBJECT_ID(N'dbo.BankTransaction'))
+    CREATE INDEX [IX_BankTransaction_PhieuchiID]
+        ON [dbo].[BankTransaction] ([PhieuchiID]);
+GO

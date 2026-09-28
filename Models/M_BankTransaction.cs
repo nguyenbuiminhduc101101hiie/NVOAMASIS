@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace NVOAMASIS.Models
 {
@@ -19,6 +20,17 @@ namespace NVOAMASIS.Models
         public string? ReferenceCode { get; set; }
         public string? RawJson { get; set; }
         public Guid? PhieuthuID { get; set; }
+
+        /// <summary>Hóa đơn (5.14) được gắn: khóa nhóm = số nội bộ + khách hàng.</summary>
+        public string? HoaDonNoibo { get; set; }
+        public Guid? HoaDonCustomerId { get; set; }
+
+        /// <summary>Phiếu chi (10.2) được gắn — công ty chuyển khoản đi.</summary>
+        public Guid? PhieuchiID { get; set; }
+
+        /// <summary>Nhãn hiển thị "gắn với" (số phiếu thu / HĐ số điện tử), chỉ dùng cho UI.</summary>
+        [NotMapped]
+        public string? LinkedLabel { get; set; }
         public string MatchStatus { get; set; } = BankMatchStatus.Unmatched;
         public DateTime ReceivedAt { get; set; } = DateTime.Now;
     }
