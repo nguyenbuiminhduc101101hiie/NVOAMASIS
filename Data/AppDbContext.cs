@@ -4,6 +4,7 @@ using NVOAMASIS.Components.Accounting.Pages;
 using NVOAMASIS.Models;
 using NVOAMASIS.Models.Accounting;
 using NVOAMASIS.Models.Chat;
+using NVOAMASIS.Models.Hr;
 namespace NVOAMASIS.Data
 {
     public class AppDbContext (DbContextOptions <AppDbContext> options) : DbContext(options)
@@ -199,6 +200,21 @@ namespace NVOAMASIS.Data
         public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
         public DbSet<ChatParticipant> ChatParticipants => Set<ChatParticipant>();
         public DbSet<ChatMessageRecord> ChatMessages => Set<ChatMessageRecord>();
+
+        // Quản lý nhân sự (module 12) — script Scripts/CreateHrTables.sql
+        public DbSet<HrEmployee> HrEmployees => Set<HrEmployee>();
+        public DbSet<HrPosition> HrPositions => Set<HrPosition>();
+        public DbSet<HrContract> HrContracts => Set<HrContract>();
+        public DbSet<HrEmployeeHistory> HrEmployeeHistories => Set<HrEmployeeHistory>();
+        public DbSet<HrDocument> HrDocuments => Set<HrDocument>();
+        // Giai đoạn 2 — script Scripts/CreateHrLeaveTimesheetTables.sql
+        public DbSet<HrLeaveBalance> HrLeaveBalances => Set<HrLeaveBalance>();
+        public DbSet<HrHoliday> HrHolidays => Set<HrHoliday>();
+        public DbSet<HrSetting> HrSettings => Set<HrSetting>();
+        // Giai đoạn 3 — script Scripts/CreateHrPayrollTables.sql
+        public DbSet<HrPayrollParam> HrPayrollParams => Set<HrPayrollParam>();
+        public DbSet<HrPayrollPeriod> HrPayrollPeriods => Set<HrPayrollPeriod>();
+        public DbSet<HrPayslip> HrPayslips => Set<HrPayslip>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -674,6 +690,111 @@ namespace NVOAMASIS.Data
                 entity.Property(x => x.AttachmentName).HasMaxLength(260);
                 entity.Property(x => x.AttachmentContentType).HasMaxLength(150);
                 entity.HasIndex(x => new { x.ConversationId, x.CreatedAt });
+            });
+
+            // Quản lý nhân sự — script Scripts/CreateHrTables.sql
+            modelBuilder.Entity<HrEmployee>(entity =>
+            {
+                entity.ToTable("HrEmployee");
+                entity.HasIndex(x => x.EmployeeCode).IsUnique();
+                entity.HasIndex(x => x.UserId).IsUnique().HasFilter("[UserId] IS NOT NULL");
+                entity.HasIndex(x => x.DepartmentId);
+                entity.HasIndex(x => x.ManagerEmployeeId);
+                entity.HasIndex(x => x.Status);
+            });
+            modelBuilder.Entity<HrPosition>(entity =>
+            {
+                entity.ToTable("HrPosition");
+                entity.HasIndex(x => x.Code).IsUnique();
+            });
+            modelBuilder.Entity<HrContract>(entity =>
+            {
+                entity.ToTable("HrContract");
+                entity.Property(x => x.BaseSalary).HasColumnType("decimal(18,0)");
+                entity.Property(x => x.InsuranceSalary).HasColumnType("decimal(18,0)");
+                entity.Property(x => x.Allowance).HasColumnType("decimal(18,0)");
+                entity.HasIndex(x => x.ContractNo).IsUnique();
+                entity.HasIndex(x => new { x.EmployeeId, x.StartDate });
+                entity.HasIndex(x => x.EndDate);
+            });
+            modelBuilder.Entity<HrEmployeeHistory>(entity =>
+            {
+                entity.ToTable("HrEmployeeHistory");
+                entity.HasIndex(x => new { x.EmployeeId, x.CreatedAt });
+            });
+            modelBuilder.Entity<HrDocument>(entity =>
+            {
+                entity.ToTable("HrDocument");
+                entity.HasIndex(x => x.EmployeeId);
+            });
+            modelBuilder.Entity<HrLeaveBalance>(entity =>
+            {
+                entity.ToTable("HrLeaveBalance");
+                entity.Property(x => x.Entitled).HasColumnType("decimal(6,2)");
+                entity.Property(x => x.SeniorityBonus).HasColumnType("decimal(6,2)");
+                entity.Property(x => x.CarriedOver).HasColumnType("decimal(6,2)");
+                entity.Property(x => x.Adjustment).HasColumnType("decimal(6,2)");
+                entity.HasIndex(x => new { x.EmployeeId, x.Year }).IsUnique();
+                entity.Ignore(x => x.Total);
+            });
+            modelBuilder.Entity<HrHoliday>(entity =>
+            {
+                entity.ToTable("HrHoliday");
+                entity.HasIndex(x => x.Date).IsUnique();
+            });
+            modelBuilder.Entity<HrSetting>(entity =>
+            {
+                entity.ToTable("HrSetting");
+                entity.HasKey(x => x.Key);
+            });
+            modelBuilder.Entity<LeaveRequest>()
+                .HasIndex(x => x.AssignedApproverId);
+
+            // Giai đoạn 3 — bảng lương
+            modelBuilder.Entity<HrPayrollParam>(entity =>
+            {
+                entity.ToTable("HrPayrollParam");
+                entity.HasIndex(x => x.EffectiveFrom).IsUnique();
+                foreach (var p in new[] { nameof(HrPayrollParam.ReferenceWage), nameof(HrPayrollParam.MinWageRegion1),
+                             nameof(HrPayrollParam.MinWageRegion2), nameof(HrPayrollParam.MinWageRegion3),
+                             nameof(HrPayrollParam.MinWageRegion4), nameof(HrPayrollParam.SelfDeduction),
+                             nameof(HrPayrollParam.DependentDeduction), nameof(HrPayrollParam.FlatTaxThreshold) })
+                    entity.Property(p).HasColumnType("decimal(18,0)");
+                foreach (var p in new[] { nameof(HrPayrollParam.CapMultiplier), nameof(HrPayrollParam.EmpSocialRate),
+                             nameof(HrPayrollParam.EmpHealthRate), nameof(HrPayrollParam.EmpUnemploymentRate),
+                             nameof(HrPayrollParam.CoSocialRate), nameof(HrPayrollParam.CoHealthRate),
+                             nameof(HrPayrollParam.CoUnemploymentRate), nameof(HrPayrollParam.CoUnionFeeRate),
+                             nameof(HrPayrollParam.FlatTaxRate) })
+                    entity.Property(p).HasColumnType("decimal(6,2)");
+            });
+            modelBuilder.Entity<HrPayrollPeriod>(entity =>
+            {
+                entity.ToTable("HrPayrollPeriod");
+                entity.HasIndex(x => new { x.Year, x.Month }).IsUnique();
+                entity.Property(x => x.StandardDays).HasColumnType("decimal(6,2)");
+            });
+            modelBuilder.Entity<HrPayslip>(entity =>
+            {
+                entity.ToTable("HrPayslip");
+                entity.HasIndex(x => new { x.PeriodId, x.EmployeeId }).IsUnique();
+                entity.HasIndex(x => x.UserId);
+                entity.Ignore(x => x.EmpInsurance);
+                entity.Ignore(x => x.CoInsurance);
+                entity.Ignore(x => x.TotalDeduction);
+                entity.Ignore(x => x.EmployerCost);
+                foreach (var p in new[] { nameof(HrPayslip.StandardDays), nameof(HrPayslip.TimesheetPaidDays),
+                             nameof(HrPayslip.PaidDaysOverride), nameof(HrPayslip.PaidDays), nameof(HrPayslip.NonPaidDays) })
+                    entity.Property(p).HasColumnType("decimal(6,2)");
+                foreach (var p in new[] { nameof(HrPayslip.BaseSalary), nameof(HrPayslip.InsuranceSalary), nameof(HrPayslip.Allowance),
+                             nameof(HrPayslip.SalaryByDays), nameof(HrPayslip.AllowanceAmount), nameof(HrPayslip.Overtime),
+                             nameof(HrPayslip.Bonus), nameof(HrPayslip.OtherIncome), nameof(HrPayslip.NonTaxableIncome),
+                             nameof(HrPayslip.GrossIncome), nameof(HrPayslip.InsuranceBase), nameof(HrPayslip.EmpSocial),
+                             nameof(HrPayslip.EmpHealth), nameof(HrPayslip.EmpUnemployment), nameof(HrPayslip.CoSocial),
+                             nameof(HrPayslip.CoHealth), nameof(HrPayslip.CoUnemployment), nameof(HrPayslip.CoUnionFee),
+                             nameof(HrPayslip.FamilyDeduction), nameof(HrPayslip.TaxableIncome), nameof(HrPayslip.AssessableIncome),
+                             nameof(HrPayslip.PersonalIncomeTax), nameof(HrPayslip.Advance), nameof(HrPayslip.OtherDeduction),
+                             nameof(HrPayslip.NetPay) })
+                    entity.Property(p).HasColumnType("decimal(18,0)");
             });
         }
 

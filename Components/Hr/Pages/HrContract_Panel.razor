@@ -1,0 +1,249 @@
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrContractService ContractSvc
+
+<MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+    <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+               StartIcon="@Icons.Material.Filled.Add" OnClick="OpenNewAsync" Disabled="_busy || !_perm.Add">
+        @L("new")
+    </MudButton>
+    <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+               StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditAsync" Disabled="_selected is null || _busy || !_perm.Edit">
+        @L("edit")
+    </MudButton>
+    <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+               StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_selected is null || _busy || !_perm.Delete">
+        @L("delete")
+    </MudButton>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+               StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">
+        @L("reload")
+    </MudButton>
+
+    @if (ShowFilters)
+    {
+        <MudTextField T="string" @bind-Value="_filter.Search" Label="@L("hr_search_contract")"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true"
+                      OnKeyUp="OnSearchKeyUp" Style="max-width:280px" Class="ml-2" />
+        <MudSelect T="int?" Value="_filter.ContractType" ValueChanged="OnTypeChanged" Label="@L("hr_contract_type")"
+                   Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Style="max-width:220px">
+            @foreach (var t in HrContractType.All)
+            {
+                <MudSelectItem T="int?" Value="@((int?)t)">@L(HrContractType.Key(t))</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="int?" Value="_filter.StatusView" ValueChanged="OnStatusChanged" Label="@L("hr_status")"
+                   Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Style="max-width:180px">
+            <MudSelectItem T="int?" Value="@((int?)1)">@L("hr_contract_status_active")</MudSelectItem>
+            <MudSelectItem T="int?" Value="@((int?)3)">@L("hr_contract_status_expired")</MudSelectItem>
+            <MudSelectItem T="int?" Value="@((int?)2)">@L("hr_contract_status_terminated")</MudSelectItem>
+        </MudSelect>
+        <MudSelect T="int?" Value="_filter.ExpiringWithinDays" ValueChanged="OnExpiringChanged" Label="@L("hr_expiring_within")"
+                   Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Style="max-width:200px">
+            @foreach (var d in new[] { 15, 30, 60, 90 })
+            {
+                <MudSelectItem T="int?" Value="@((int?)d)">@d @L("hr_days")</MudSelectItem>
+            }
+        </MudSelect>
+    }
+    <MudSpacer />
+    <MudText Typo="Typo.body2">@string.Format(L("hr_total_rows"), _items.Count)</MudText>
+</MudStack>
+
+<MudDataGrid T="HrContractRow" Items="_items" Dense="true" Striped="true" Bordered="true" Hover="true"
+             RowClick="OnRowClick" RowClassFunc="RowClassFunc" Loading="_busy"
+             Height="@Height" FixedHeader="true">
+    <Columns>
+        @if (EmployeeId is null)
+        {
+            <PropertyColumn Property="x => x.EmployeeCode" Title="@L("hr_employee_code")" />
+            <PropertyColumn Property="x => x.EmployeeName" Title="@L("hr_full_name")" />
+            <PropertyColumn Property="x => x.DepartmentName" Title="@L("hr_department")" />
+        }
+        <PropertyColumn Property="x => x.ContractNo" Title="@L("hr_contract_no")" />
+        <TemplateColumn Title="@L("hr_contract_type")" SortBy="x => x.ContractType">
+            <CellTemplate>@L(HrContractType.Key(context.Item.ContractType))</CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.StartDate" Title="@L("hr_start_date")" Format="dd/MM/yyyy" />
+        <TemplateColumn Title="@L("hr_end_date")" SortBy="x => x.EndDate">
+            <CellTemplate>
+                @if (context.Item.EndDate is null)
+                {
+                    <span>@L("hr_indefinite")</span>
+                }
+                else
+                {
+                    <span>@D(context.Item.EndDate)</span>
+                    @if (context.Item.Status == HrContractStatus.Active && context.Item.DaysToEnd is int days && days <= 30)
+                    {
+                        <MudText Typo="Typo.caption" Color="@(days < 0 ? Color.Error : Color.Warning)">
+                            @(days < 0 ? string.Format(L("hr_overdue_days"), -days) : string.Format(L("hr_days_left"), days))
+                        </MudText>
+                    }
+                }
+            </CellTemplate>
+        </TemplateColumn>
+        @if (_salaryPerm.View)
+        {
+            <TemplateColumn Title="@L("hr_base_salary")" SortBy="x => x.BaseSalary">
+                <CellTemplate><div style="text-align:right">@N(context.Item.BaseSalary)</div></CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="@L("hr_insurance_salary")" SortBy="x => x.InsuranceSalary">
+                <CellTemplate><div style="text-align:right">@N(context.Item.InsuranceSalary)</div></CellTemplate>
+            </TemplateColumn>
+            <TemplateColumn Title="@L("hr_allowance")" SortBy="x => x.Allowance">
+                <CellTemplate><div style="text-align:right">@N(context.Item.Allowance)</div></CellTemplate>
+            </TemplateColumn>
+        }
+        <TemplateColumn Title="@L("hr_status")" SortBy="x => x.Status">
+            <CellTemplate>
+                @if (context.Item.Status == HrContractStatus.Terminated)
+                {
+                    <MudChip Size="Size.Small" Color="Color.Default">@L("hr_contract_status_terminated") @D(context.Item.TerminatedDate)</MudChip>
+                }
+                else if (context.Item.IsExpired)
+                {
+                    <MudChip Size="Size.Small" Color="Color.Error">@L("hr_contract_status_expired")</MudChip>
+                }
+                else
+                {
+                    <MudChip Size="Size.Small" Color="Color.Success">@L("hr_contract_status_active")</MudChip>
+                }
+            </CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.Note" Title="@L("hr_note")" />
+    </Columns>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2">@L("hr_no_items")</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudDataGridPager T="HrContractRow" PageSizeOptions="new int[] { 25, 50, 100 }" />
+    </PagerContent>
+</MudDataGrid>
+
+<style>
+    .hr-selected-row { background-color: #2196f3 !important; }
+    .hr-selected-row td { color: #fff !important; }
+</style>
+
+@code {
+    /// <summary>Có giá trị → chỉ hiện HĐ của 1 nhân viên (tab trong hồ sơ).</summary>
+    [Parameter] public Guid? EmployeeId { get; set; }
+    [Parameter] public bool ShowFilters { get; set; } = true;
+    [Parameter] public string Height { get; set; } = "calc(100vh - 260px)";
+
+    private bool _busy;
+    private HrPerm _perm = HrPerm.None;
+    private HrPerm _salaryPerm = HrPerm.None;
+    private readonly HrContractFilter _filter = new();
+    private List<HrContractRow> _items = new();
+    private HrContractRow? _selected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        var perms = await PermSvc.GetManyAsync(Usr, HrMenus.Contract, HrMenus.Salary);
+        _perm = perms[HrMenus.Contract];
+        _salaryPerm = perms[HrMenus.Salary];
+        _filter.EmployeeId = EmployeeId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!_perm.View)
+        {
+            NoPermission("View");
+            return;
+        }
+        try
+        {
+            _busy = true;
+            _items = await ContractSvc.GetListAsync(_filter, _salaryPerm.View);
+            if (_selected != null)
+                _selected = _items.FirstOrDefault(x => x.Id == _selected.Id);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadAsync();
+    }
+
+    private async Task OnTypeChanged(int? v) { _filter.ContractType = v; await LoadAsync(); }
+    private async Task OnStatusChanged(int? v) { _filter.StatusView = v; await LoadAsync(); }
+    private async Task OnExpiringChanged(int? v) { _filter.ExpiringWithinDays = v; await LoadAsync(); }
+
+    private void OnRowClick(DataGridRowClickEventArgs<HrContractRow> args) => _selected = args.Item;
+
+    private string RowClassFunc(HrContractRow row, int _) =>
+        _selected != null && _selected.Id == row.Id ? "hr-selected-row" : string.Empty;
+
+    private async Task OpenNewAsync()
+    {
+        if (!_perm.Add) { NoPermission("Add"); return; }
+        var model = new HrContract
+        {
+            EmployeeId = EmployeeId ?? Guid.Empty,
+            ContractNo = await ContractSvc.NextContractNoAsync(),
+            ContractType = HrContractType.Probation,
+            SignDate = DateTime.Today,
+            StartDate = DateTime.Today,
+            EndDate = DateTime.Today.AddMonths(2).AddDays(-1),
+            Status = HrContractStatus.Active
+        };
+        await OpenEditorAsync(model, false, L("hr_new_contract"));
+    }
+
+    private async Task OpenEditAsync()
+    {
+        if (_selected is null) return;
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var model = await ContractSvc.GetAsync(_selected.Id, _salaryPerm.View);
+        if (model is null) { Notify(L("hr_err_not_found"), Severity.Warning); return; }
+        await OpenEditorAsync(model, true, $"{L("hr_edit_contract")}: {model.ContractNo}");
+    }
+
+    private async Task OpenEditorAsync(HrContract model, bool isEdit, string title)
+    {
+        var dlg = DialogService.Show<HrContract_EditDialog>(title,
+            new DialogParameters
+            {
+                ["Model"] = model,
+                ["IsEdit"] = isEdit,
+                ["FixedEmployee"] = EmployeeId.HasValue,
+                ["CanViewSalary"] = _salaryPerm.View,
+                ["CanEditSalary"] = _salaryPerm.View && _salaryPerm.Edit
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true, CloseOnEscapeKey = false });
+        var rs = await dlg.Result;
+        if (rs.Canceled) return;
+        if (rs.Data is Guid id) _selected = new HrContractRow { Id = id };
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null) return;
+        if (!_perm.Delete) { NoPermission("Delete"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_delete_contract_confirm"), _selected.ContractNo),
+            yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await ContractSvc.DeleteAsync(_selected.Id);
+        Notify(rs);
+        if (rs.Success)
+        {
+            _selected = null;
+            await LoadAsync();
+        }
+    }
+}

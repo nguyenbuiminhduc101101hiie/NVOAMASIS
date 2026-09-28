@@ -23,6 +23,7 @@ using NVOAMASIS.Services;
 using NVOAMASIS.Services.Accounting;
 using NVOAMASIS.Services.Accounting.ExcelImport;
 using NVOAMASIS.Services.Chat;
+using NVOAMASIS.Services.Hr;
 using NVOAMASIS.Services.Localization;
 using NVOAMASIS.Services.MultiTenant;
 using Stimulsoft.Drawing;
@@ -199,8 +200,10 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
             ?? configuration.GetConnectionString("DefaultConnection");
     }
 
+    // SQL Server 2014 (compat 120) không có OPENJSON → EF 8 phải dịch list.Contains() thành IN (...).
     options.UseSqlServer(connectionString
-        ?? throw new InvalidOperationException("Sorry, your connection is not found"));
+        ?? throw new InvalidOperationException("Sorry, your connection is not found"),
+        sql => sql.UseCompatibilityLevel(120));
 }, contextLifetime: ServiceLifetime.Transient);
 
 builder.Services.AddSingleton<IDbContextFactory<AppDbContext>, TenantAwareDbContextFactory>();
@@ -277,6 +280,18 @@ builder.Services.AddScoped<InventoryExportService>();
 builder.Services.AddScoped<IClientIpService, ClientIpService>();
 builder.Services.AddScoped<IWordDocumentService, WordDocumentService>();
 builder.Services.AddScoped<LeaveRequestService>();
+// Module 12 - Quản lý nhân sự
+builder.Services.AddSingleton<HrFileStorage>();
+builder.Services.AddScoped<HrPermissionService>();
+builder.Services.AddScoped<HrEmployeeService>();
+builder.Services.AddScoped<HrContractService>();
+builder.Services.AddScoped<HrOrgService>();
+// Giai đoạn 2 - nghỉ phép, quỹ phép, bảng công, cài đặt
+builder.Services.AddScoped<HrSettingsService>();
+builder.Services.AddScoped<HrLeaveService>();
+builder.Services.AddScoped<HrTimesheetService>();
+// Giai đoạn 3 - bảng lương
+builder.Services.AddScoped<HrPayrollService>();
 builder.Services.AddScoped<ResxImportService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
@@ -350,7 +365,8 @@ builder.Services.AddScoped<
 builder.Services.AddDbContextFactory<AppDbContext>(options =>
 {
     options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection"));
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        sql => sql.UseCompatibilityLevel(120));
 });
 
 

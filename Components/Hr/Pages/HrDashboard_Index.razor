@@ -1,0 +1,205 @@
+@attribute [Authorize]
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrEmployeeService EmployeeSvc
+
+<PageTitle>@L("hr_dashboard")</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"12.1 {L("hr_dashboard")}")" Subtitle="@L("hr_dashboard_subtitle")">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="flex-wrap">
+                <MudSelect T="int" Value="_alertDays" ValueChanged="OnAlertDaysChanged" Label="@L("hr_alert_days")" Dense="true"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Style="width:160px">
+                    @foreach (var d in new[] { 15, 30, 60, 90 })
+                    {
+                        <MudSelectItem Value="@d">@d @L("hr_days")</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">
+                    @L("reload")
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    @if (_busy && _data is null)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_data is not null)
+    {
+        <MudGrid Spacing="2" Class="mt-1">
+            @StatCard(L("hr_total_working"), _data.Total, Icons.Material.Filled.Groups, Color.Primary)
+            @StatCard(L("hr_status_probation"), _data.Probation, Icons.Material.Filled.HourglassTop, Color.Warning)
+            @StatCard(L("hr_status_active"), _data.Active, Icons.Material.Filled.VerifiedUser, Color.Success)
+            @StatCard(L("hr_status_suspended"), _data.Suspended, Icons.Material.Filled.PauseCircle, Color.Info)
+            @StatCard(L("hr_joined_this_month"), _data.JoinedThisMonth, Icons.Material.Filled.PersonAdd, Color.Success)
+            @StatCard(L("hr_resigned_this_month"), _data.ResignedThisMonth, Icons.Material.Filled.PersonRemove, Color.Error)
+            @StatCard(L("hr_without_account"), _data.WithoutAccount, Icons.Material.Filled.NoAccounts, Color.Secondary)
+            @StatCard(L("hr_without_contract"), _data.WithoutContract, Icons.Material.Filled.Description, Color.Error)
+        </MudGrid>
+
+        <MudGrid Spacing="2" Class="mt-1">
+            <MudItem xs="12" md="4">
+                <MudPaper Class="pa-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@L("hr_contracts_expiring")</b> (@_data.ContractsExpiring.Count)</MudText>
+                    @AlertTable(_data.ContractsExpiring, true, L("hr_contract_no"))
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudPaper Class="pa-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@L("hr_probation_ending")</b> (@_data.ProbationEnding.Count)</MudText>
+                    @AlertTable(_data.ProbationEnding, true, null)
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudPaper Class="pa-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@L("hr_birthdays_this_month")</b> (@_data.Birthdays.Count)</MudText>
+                    @AlertTable(_data.Birthdays, false, L("hr_age"))
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudGrid Spacing="2" Class="mt-1">
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@L("hr_by_department")</b></MudText>
+                    @CountTable(_data.ByDepartment)
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-3" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@L("hr_by_branch")</b></MudText>
+                    @CountTable(_data.ByBranch)
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    }
+</div>
+
+@code {
+    private bool _busy;
+    private int _alertDays = 30;
+    private HrDashboardData? _data;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnAlertDaysChanged(int days)
+    {
+        _alertDays = days;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var perm = await PermSvc.GetAsync(Usr, HrMenus.Dashboard);
+        if (!perm.View)
+        {
+            NoPermission("View");
+            _data = null;
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            _data = await EmployeeSvc.GetDashboardAsync(_alertDays);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private RenderFragment StatCard(string title, int value, string icon, Color color) => __builder =>
+    {
+        <MudItem xs="6" sm="4" md="3">
+            <MudPaper Class="pa-3 d-flex align-center" Elevation="1">
+                <MudIcon Icon="@icon" Color="@color" Size="Size.Large" Class="mr-3" />
+                <div>
+                    <MudText Typo="Typo.h5"><b>@value</b></MudText>
+                    <MudText Typo="Typo.caption">@title</MudText>
+                </div>
+            </MudPaper>
+        </MudItem>
+    };
+
+    private RenderFragment AlertTable(List<HrAlertItem> items, bool showDaysLeft, string? extraTitle) => __builder =>
+    {
+        if (items.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Success">@L("hr_no_items")</MudText>
+            return;
+        }
+        <MudSimpleTable Dense="true" Hover="true" Style="max-height:360px; overflow-y:auto;">
+            <thead>
+                <tr>
+                    <th>@L("hr_employee")</th>
+                    <th>@L("hr_date")</th>
+                    @if (extraTitle != null)
+                    {
+                        <th>@extraTitle</th>
+                    }
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var a in items)
+                {
+                    <tr>
+                        <td>
+                            <div><b>@a.EmployeeCode</b> - @a.EmployeeName</div>
+                            <MudText Typo="Typo.caption">@a.DepartmentName</MudText>
+                        </td>
+                        <td style="white-space:nowrap">
+                            @D(a.Date)
+                            @if (showDaysLeft)
+                            {
+                                <br />
+                                <MudText Typo="Typo.caption" Color="@(a.Days < 0 ? Color.Error : a.Days <= 7 ? Color.Warning : Color.Default)">
+                                    @(a.Days < 0 ? string.Format(L("hr_overdue_days"), -a.Days) : string.Format(L("hr_days_left"), a.Days))
+                                </MudText>
+                            }
+                            else if (a.Days == 0)
+                            {
+                                <br />
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@L("hr_today")</MudText>
+                            }
+                        </td>
+                        @if (extraTitle != null)
+                        {
+                            <td>@a.Extra</td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    };
+
+    private RenderFragment CountTable(List<HrCountItem> items) => __builder =>
+    {
+        var total = Math.Max(1, items.Sum(x => x.Count));
+        <MudSimpleTable Dense="true" Hover="true">
+            <tbody>
+                @foreach (var i in items)
+                {
+                    <tr>
+                        <td style="width:40%">@(string.IsNullOrWhiteSpace(i.Label) ? L("hr_unassigned") : i.Label)</td>
+                        <td style="width:45%">
+                            <MudProgressLinear Color="Color.Primary" Value="@(i.Count * 100.0 / total)" Size="Size.Medium" />
+                        </td>
+                        <td style="text-align:right"><b>@i.Count</b></td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    };
+}

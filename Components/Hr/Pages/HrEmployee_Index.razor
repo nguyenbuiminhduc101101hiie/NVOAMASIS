@@ -1,0 +1,274 @@
+@attribute [Authorize]
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrEmployeeService EmployeeSvc
+@inject HrFileStorage FileStorage
+@inject IJSRuntime JS
+
+<PageTitle>@L("hr_employees")</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"12.2 {L("hr_employees")}")" Subtitle="@L("hr_employees_subtitle")">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add" OnClick="OpenNewAsync" Disabled="_busy || !_perm.Add">
+                    @L("new")
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Edit" OnClick="OpenEditAsync" Disabled="_selected is null || _busy || !_perm.Edit">
+                    @L("edit")
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.AssignmentInd" OnClick="OpenProfileAsync" Disabled="_selected is null || _busy">
+                    @L("hr_profile")
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Delete" OnClick="DeleteAsync" Disabled="_selected is null || _busy || !_perm.Delete">
+                    @L("delete")
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.GroupAdd" OnClick="OpenImportAsync" Disabled="_busy || !_perm.Add">
+                    @L("hr_import_from_users")
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FileDownload" OnClick="ExportAsync" Disabled="_busy || _items.Count == 0">
+                    @L("hr_export_excel")
+                </MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAsync" Disabled="_busy">
+                    @L("reload")
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <MudTextField T="string" @bind-Value="_filter.Search" Label="@L("hr_search_employee")"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true"
+                          OnKeyUp="OnSearchKeyUp" Style="max-width:320px" />
+            <MudSelect T="int?" Value="_filter.Status" ValueChanged="OnStatusChanged" Label="@L("hr_status")"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Style="max-width:180px">
+                @foreach (var s in HrEmployeeStatus.All)
+                {
+                    <MudSelectItem T="int?" Value="@((int?)s)">@L(HrEmployeeStatus.Key(s))</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="Guid?" Value="_filter.DepartmentId" ValueChanged="OnDepartmentChanged" Label="@L("hr_department")"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Style="max-width:240px">
+                @foreach (var d in _departments)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)d.Id)">@d.Display</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="string" Value="_filter.Branch" ValueChanged="OnBranchChanged" Label="@L("hr_branch")"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Style="max-width:140px">
+                @foreach (var b in HrEmployee_EditDialog.Branches)
+                {
+                    <MudSelectItem T="string" Value="@b">@b</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSwitch T="bool" Checked="_filter.IncludeResigned" CheckedChanged="OnIncludeResignedChanged"
+                       Color="Color.Primary" Label="@L("hr_include_resigned")" />
+            <MudSpacer />
+            <MudText Typo="Typo.body2">@string.Format(L("hr_total_rows"), _items.Count)</MudText>
+        </MudStack>
+
+        <MudDataGrid T="HrEmployeeRow"
+                     Items="_items"
+                     Dense="true" Striped="true" Bordered="true" Hover="true"
+                     RowClick="OnRowClick"
+                     RowClassFunc="RowClassFunc"
+                     Height="calc(100vh - 290px)"
+                     FixedHeader="true"
+                     Loading="_busy"
+                     SortMode="SortMode.Single">
+            <Columns>
+                <PropertyColumn Property="x => x.EmployeeCode" Title="@L("hr_employee_code")" />
+                <PropertyColumn Property="x => x.FullName" Title="@L("hr_full_name")" />
+                <TemplateColumn Title="@L("hr_gender")" Sortable="false">
+                    <CellTemplate>@L(HrGender.Key(context.Item.Gender))</CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.DateOfBirth" Title="@L("hr_dob")" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.Phone" Title="@L("hr_phone")" />
+                <PropertyColumn Property="x => x.DepartmentName" Title="@L("hr_department")" />
+                <PropertyColumn Property="x => x.PositionName" Title="@L("hr_position")" />
+                <PropertyColumn Property="x => x.Branch" Title="@L("hr_branch")" />
+                <PropertyColumn Property="x => x.ManagerName" Title="@L("hr_manager")" />
+                <PropertyColumn Property="x => x.UserName" Title="@L("hr_account")" />
+                <PropertyColumn Property="x => x.JoinDate" Title="@L("hr_join_date")" Format="dd/MM/yyyy" />
+                <TemplateColumn Title="@L("hr_status")" SortBy="x => x.Status">
+                    <CellTemplate>
+                        <MudChip Size="Size.Small" Color="@StatusColor(context.Item.Status)">
+                            @L(HrEmployeeStatus.Key(context.Item.Status))
+                        </MudChip>
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="HrEmployeeRow" PageSizeOptions="new int[] { 25, 50, 100, 500 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+<style>
+    .hr-selected-row {
+        background-color: #2196f3 !important;
+    }
+    .hr-selected-row td {
+        color: #fff !important;
+    }
+</style>
+
+@code {
+    private bool _busy;
+    private HrPerm _perm = HrPerm.None;
+    private readonly HrEmployeeFilter _filter = new();
+    private List<HrEmployeeRow> _items = new();
+    private List<HrLookupItem> _departments = new();
+    private HrEmployeeRow? _selected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _perm = await PermSvc.GetAsync(Usr, HrMenus.Employee);
+        if (!_perm.View)
+        {
+            NoPermission("View");
+            return;
+        }
+        _departments = await EmployeeSvc.GetDepartmentLookupAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!_perm.View)
+        {
+            NoPermission("View");
+            return;
+        }
+        try
+        {
+            _busy = true;
+            _items = await EmployeeSvc.GetListAsync(_filter);
+            if (_selected != null)
+                _selected = _items.FirstOrDefault(x => x.Id == _selected.Id);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task OnSearchKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await LoadAsync();
+    }
+
+    private async Task OnStatusChanged(int? v) { _filter.Status = v; await LoadAsync(); }
+    private async Task OnDepartmentChanged(Guid? v) { _filter.DepartmentId = v; await LoadAsync(); }
+    private async Task OnBranchChanged(string? v) { _filter.Branch = v; await LoadAsync(); }
+    private async Task OnIncludeResignedChanged(bool v) { _filter.IncludeResigned = v; await LoadAsync(); }
+
+    private void OnRowClick(DataGridRowClickEventArgs<HrEmployeeRow> args) => _selected = args.Item;
+
+    private string RowClassFunc(HrEmployeeRow row, int _) =>
+        _selected != null && _selected.Id == row.Id ? "hr-selected-row" : string.Empty;
+
+    private async Task OpenNewAsync()
+    {
+        if (!_perm.Add) { NoPermission("Add"); return; }
+        var model = new HrEmployee
+        {
+            EmployeeCode = await EmployeeSvc.NextEmployeeCodeAsync(),
+            Status = HrEmployeeStatus.Probation,
+            JoinDate = DateTime.Today
+        };
+        await OpenEditorAsync(model, false, L("hr_new_employee"));
+    }
+
+    private async Task OpenEditAsync()
+    {
+        if (_selected is null) return;
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var model = await EmployeeSvc.GetAsync(_selected.Id);
+        if (model is null) { Notify(L("hr_err_not_found"), Severity.Warning); return; }
+        await OpenEditorAsync(model, true, $"{L("hr_edit_employee")}: {model.EmployeeCode} - {model.FullName}");
+    }
+
+    private async Task OpenEditorAsync(HrEmployee model, bool isEdit, string title)
+    {
+        var dlg = DialogService.Show<HrEmployee_EditDialog>(title,
+            new DialogParameters { ["Model"] = model, ["IsEdit"] = isEdit },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = false, CloseButton = true });
+        var rs = await dlg.Result;
+        if (rs.Canceled) return;
+        if (rs.Data is Guid id)
+            _selected = new HrEmployeeRow { Id = id };
+        await LoadAsync();
+    }
+
+    private async Task OpenProfileAsync()
+    {
+        if (_selected is null) return;
+        var dlg = DialogService.Show<HrEmployee_ProfileDialog>($"{_selected.EmployeeCode} - {_selected.FullName}",
+            new DialogParameters { ["EmployeeId"] = _selected.Id },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true });
+        await dlg.Result;
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_selected is null) return;
+        if (!_perm.Delete) { NoPermission("Delete"); return; }
+
+        var confirm = await DialogService.ShowMessageBox(
+            L("hr_confirm"),
+            string.Format(L("hr_delete_employee_confirm"), $"{_selected.EmployeeCode} - {_selected.FullName}"),
+            yesText: L("delete"), cancelText: L("cancel"));
+        if (confirm != true) return;
+
+        _busy = true;
+        var rs = await EmployeeSvc.DeleteAsync(_selected.Id, FileStorage.GetTenantKey(CurrentUser));
+        _busy = false;
+        Notify(rs);
+        if (rs.Success)
+        {
+            _selected = null;
+            await LoadAsync();
+        }
+    }
+
+    private async Task OpenImportAsync()
+    {
+        if (!_perm.Add) { NoPermission("Add"); return; }
+        var dlg = DialogService.Show<HrImportUsers_Dialog>(L("hr_import_from_users"),
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+        var rs = await dlg.Result;
+        if (!rs.Canceled)
+            await LoadAsync();
+    }
+
+    private async Task ExportAsync()
+    {
+        try
+        {
+            var bytes = HrEmployeeService.ExportExcel(_items, L);
+            await JS.InvokeVoidAsync("downloadFileFromStream",
+                $"DanhSachNhanVien_{DateTime.Now:yyyyMMdd_HHmm}.xlsx", Convert.ToBase64String(bytes));
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_export")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+    }
+}

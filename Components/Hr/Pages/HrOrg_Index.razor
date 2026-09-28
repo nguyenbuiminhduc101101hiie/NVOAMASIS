@@ -1,0 +1,211 @@
+@attribute [Authorize]
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrOrgService OrgSvc
+
+<PageTitle>@L("hr_org")</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"12.4 {L("hr_org")}")" Subtitle="@L("hr_org_subtitle")" />
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3">
+            <MudTabPanel Text="@L("hr_departments")" Icon="@Icons.Material.Filled.AccountTree">
+                <MudStack Row="true" Spacing="1" Class="mb-2 flex-wrap">
+                    <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="NewDepartmentAsync" Disabled="_busy || !_perm.Add">@L("new")</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit"
+                               OnClick="EditDepartmentAsync" Disabled="_selDept is null || _busy || !_perm.Edit">@L("edit")</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete"
+                               OnClick="DeleteDepartmentAsync" Disabled="_selDept is null || _busy || !_perm.Delete">@L("delete")</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh"
+                               OnClick="LoadAsync" Disabled="_busy">@L("reload")</MudButton>
+                </MudStack>
+                <MudDataGrid T="HrOrgService.DepartmentRow" Items="_depts" Dense="true" Striped="true" Bordered="true" Hover="true"
+                             RowClick="@((DataGridRowClickEventArgs<HrOrgService.DepartmentRow> a) => _selDept = a.Item)"
+                             RowClassFunc="@((HrOrgService.DepartmentRow r, int _) => _selDept?.DepartmentId == r.DepartmentId ? "hr-selected-row" : string.Empty)"
+                             Loading="_busy" Height="calc(100vh - 320px)" FixedHeader="true">
+                    <Columns>
+                        <PropertyColumn Property="x => x.Code" Title="@L("hr_code")" />
+                        <PropertyColumn Property="x => x.Name" Title="@L("hr_name")" />
+                        <PropertyColumn Property="x => x.Remarks" Title="@L("hr_note")" />
+                        <PropertyColumn Property="x => x.EmployeeCount" Title="@L("hr_employee_count")" />
+                        <PropertyColumn Property="x => x.UserCount" Title="@L("hr_user_count")" />
+                    </Columns>
+                    <NoRecordsContent><MudText Typo="Typo.body2">@L("hr_no_items")</MudText></NoRecordsContent>
+                </MudDataGrid>
+            </MudTabPanel>
+
+            <MudTabPanel Text="@L("hr_positions")" Icon="@Icons.Material.Filled.MilitaryTech">
+                <MudStack Row="true" Spacing="1" Class="mb-2 flex-wrap">
+                    <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="NewPositionAsync" Disabled="_busy || !_perm.Add">@L("new")</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit"
+                               OnClick="EditPositionAsync" Disabled="_selPos is null || _busy || !_perm.Edit">@L("edit")</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete"
+                               OnClick="DeletePositionAsync" Disabled="_selPos is null || _busy || !_perm.Delete">@L("delete")</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh"
+                               OnClick="LoadAsync" Disabled="_busy">@L("reload")</MudButton>
+                </MudStack>
+                <MudDataGrid T="HrOrgService.PositionRow" Items="_positions" Dense="true" Striped="true" Bordered="true" Hover="true"
+                             RowClick="@((DataGridRowClickEventArgs<HrOrgService.PositionRow> a) => _selPos = a.Item)"
+                             RowClassFunc="@((HrOrgService.PositionRow r, int _) => _selPos?.Id == r.Id ? "hr-selected-row" : string.Empty)"
+                             Loading="_busy" Height="calc(100vh - 320px)" FixedHeader="true">
+                    <Columns>
+                        <PropertyColumn Property="x => x.SortOrder" Title="@L("hr_sort_order")" />
+                        <PropertyColumn Property="x => x.Code" Title="@L("hr_code")" />
+                        <PropertyColumn Property="x => x.Name" Title="@L("hr_name")" />
+                        <PropertyColumn Property="x => x.Description" Title="@L("hr_note")" />
+                        <PropertyColumn Property="x => x.EmployeeCount" Title="@L("hr_employee_count")" />
+                        <TemplateColumn Title="@L("hr_active")" SortBy="x => x.IsActive">
+                            <CellTemplate>
+                                <MudIcon Icon="@(context.Item.IsActive ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Block)"
+                                         Color="@(context.Item.IsActive ? Color.Success : Color.Default)" Size="Size.Small" />
+                            </CellTemplate>
+                        </TemplateColumn>
+                    </Columns>
+                    <NoRecordsContent><MudText Typo="Typo.body2">@L("hr_no_items")</MudText></NoRecordsContent>
+                </MudDataGrid>
+            </MudTabPanel>
+        </MudTabs>
+    </MudPaper>
+</div>
+
+<style>
+    .hr-selected-row { background-color: #2196f3 !important; }
+    .hr-selected-row td { color: #fff !important; }
+</style>
+
+@code {
+    private bool _busy;
+    private HrPerm _perm = HrPerm.None;
+    private List<HrOrgService.DepartmentRow> _depts = new();
+    private List<HrOrgService.PositionRow> _positions = new();
+    private HrOrgService.DepartmentRow? _selDept;
+    private HrOrgService.PositionRow? _selPos;
+
+    private static readonly DialogOptions SmallDialog = new()
+    {
+        MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true, CloseOnEscapeKey = true
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _perm = await PermSvc.GetAsync(Usr, HrMenus.Org);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!_perm.View)
+        {
+            NoPermission("View");
+            return;
+        }
+        try
+        {
+            _busy = true;
+            _depts = await OrgSvc.GetDepartmentsAsync();
+            _positions = await OrgSvc.GetPositionsAsync();
+            _selDept = _selDept is null ? null : _depts.FirstOrDefault(x => x.DepartmentId == _selDept.DepartmentId);
+            _selPos = _selPos is null ? null : _positions.FirstOrDefault(x => x.Id == _selPos.Id);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    // ───────────── Phòng ban ─────────────
+
+    private Task NewDepartmentAsync() => OpenDepartmentAsync(null);
+    private Task EditDepartmentAsync() => _selDept is null ? Task.CompletedTask : OpenDepartmentAsync(_selDept);
+
+    private async Task OpenDepartmentAsync(HrOrgService.DepartmentRow? row)
+    {
+        if (row is null && !_perm.Add) { NoPermission("Add"); return; }
+        if (row is not null && !_perm.Edit) { NoPermission("Edit"); return; }
+
+        var dlg = DialogService.Show<HrDepartment_EditDialog>(
+            row is null ? L("hr_new_department") : $"{L("hr_edit_department")}: {row.Code}",
+            new DialogParameters
+            {
+                ["Code"] = row?.Code ?? string.Empty,
+                ["Name"] = row?.Name ?? string.Empty,
+                ["Remarks"] = row?.Remarks,
+                ["CodeLocked"] = row is not null && row.UserCount > 0
+            }, SmallDialog);
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not HrDepartment_EditDialog.Result data) return;
+
+        var save = await OrgSvc.SaveDepartmentAsync(row?.DepartmentId ?? Guid.Empty, data.Code, data.Name, data.Remarks, Usr);
+        Notify(save);
+        if (save.Success) await LoadAsync();
+    }
+
+    private async Task DeleteDepartmentAsync()
+    {
+        if (_selDept is null) return;
+        if (!_perm.Delete) { NoPermission("Delete"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_delete_item_confirm"), $"{_selDept.Code} - {_selDept.Name}"),
+            yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await OrgSvc.DeleteDepartmentAsync(_selDept.DepartmentId);
+        Notify(rs);
+        if (rs.Success)
+        {
+            _selDept = null;
+            await LoadAsync();
+        }
+    }
+
+    // ───────────── Chức vụ ─────────────
+
+    private Task NewPositionAsync() => OpenPositionAsync(null);
+    private Task EditPositionAsync() => _selPos is null ? Task.CompletedTask : OpenPositionAsync(_selPos);
+
+    private async Task OpenPositionAsync(HrOrgService.PositionRow? row)
+    {
+        if (row is null && !_perm.Add) { NoPermission("Add"); return; }
+        if (row is not null && !_perm.Edit) { NoPermission("Edit"); return; }
+
+        var model = row is null
+            ? new HrPosition { IsActive = true, SortOrder = (_positions.Count == 0 ? 0 : _positions.Max(x => x.SortOrder)) + 10 }
+            : new HrPosition
+            {
+                Id = row.Id, Code = row.Code, Name = row.Name, SortOrder = row.SortOrder,
+                Description = row.Description, IsActive = row.IsActive
+            };
+
+        var dlg = DialogService.Show<HrPosition_EditDialog>(
+            row is null ? L("hr_new_position") : $"{L("hr_edit_position")}: {row.Code}",
+            new DialogParameters { ["Model"] = model }, SmallDialog);
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not HrPosition data) return;
+
+        var save = await OrgSvc.SavePositionAsync(data, Usr);
+        Notify(save);
+        if (save.Success) await LoadAsync();
+    }
+
+    private async Task DeletePositionAsync()
+    {
+        if (_selPos is null) return;
+        if (!_perm.Delete) { NoPermission("Delete"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_delete_item_confirm"), $"{_selPos.Code} - {_selPos.Name}"),
+            yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await OrgSvc.DeletePositionAsync(_selPos.Id);
+        Notify(rs);
+        if (rs.Success)
+        {
+            _selPos = null;
+            await LoadAsync();
+        }
+    }
+}

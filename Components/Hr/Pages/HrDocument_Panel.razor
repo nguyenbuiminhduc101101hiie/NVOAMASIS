@@ -1,0 +1,160 @@
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrEmployeeService EmployeeSvc
+@inject HrFileStorage FileStorage
+@inject IJSRuntime JS
+
+@if (_perm.Add)
+{
+    <MudPaper Class="pa-2 mb-2" Elevation="0" Outlined="true">
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="flex-wrap">
+            <MudSelect T="string" @bind-Value="_docType" Label="@L("hr_doc_type")" Dense="true"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:220px">
+                @foreach (var t in HrDocumentType.All)
+                {
+                    <MudSelectItem T="string" Value="@t">@L(HrDocumentType.Key(t))</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField T="string" @bind-Value="_title" Label="@L("hr_doc_title")" MaxLength="200"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:320px" />
+            <MudFileUpload T="IBrowserFile" FilesChanged="UploadAsync" Accept="@string.Join(",", HrFileStorage.AllowedExtensions)">
+                <ButtonTemplate Context="uploadId">
+                    <MudButton HtmlTag="label" for="@uploadId" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.CloudUpload" Disabled="_uploading">
+                        @(_uploading ? L("hr_uploading") : L("hr_upload"))
+                    </MudButton>
+                </ButtonTemplate>
+            </MudFileUpload>
+            <MudText Typo="Typo.caption">@string.Format(L("hr_doc_limit"), HrFileStorage.MaxFileBytes / 1024 / 1024)</MudText>
+        </MudStack>
+    </MudPaper>
+}
+
+<MudDataGrid T="HrDocument" Items="_items" Dense="true" Striped="true" Bordered="true" Hover="true"
+             Loading="_loading" Height="380px" FixedHeader="true">
+    <Columns>
+        <TemplateColumn Title="@L("hr_doc_type")">
+            <CellTemplate>@L(HrDocumentType.Key(context.Item.DocType))</CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.Title" Title="@L("hr_doc_title")" />
+        <PropertyColumn Property="x => x.FileName" Title="@L("hr_file_name")" />
+        <TemplateColumn Title="@L("hr_file_size")" SortBy="x => x.FileSize">
+            <CellTemplate>@FormatSize(context.Item.FileSize)</CellTemplate>
+        </TemplateColumn>
+        <PropertyColumn Property="x => x.UploadedAt" Title="@L("hr_uploaded_at")" Format="dd/MM/yyyy HH:mm" />
+        <PropertyColumn Property="x => x.UploadedBy" Title="@L("hr_by_user")" />
+        <TemplateColumn Title="" Sortable="false">
+            <CellTemplate>
+                <MudStack Row="true" Spacing="0">
+                    <MudTooltip Text="@L("hr_view")">
+                        <MudIconButton Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" Color="Color.Primary"
+                                       OnClick="@(() => OpenAsync(context.Item, true))" />
+                    </MudTooltip>
+                    <MudTooltip Text="@L("hr_download")">
+                        <MudIconButton Icon="@Icons.Material.Filled.Download" Size="Size.Small" Color="Color.Success"
+                                       OnClick="@(() => OpenAsync(context.Item, false))" />
+                    </MudTooltip>
+                    @if (_perm.Delete)
+                    {
+                        <MudTooltip Text="@L("delete")">
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                           OnClick="@(() => DeleteAsync(context.Item))" />
+                        </MudTooltip>
+                    }
+                </MudStack>
+            </CellTemplate>
+        </TemplateColumn>
+    </Columns>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2">@L("hr_no_items")</MudText>
+    </NoRecordsContent>
+</MudDataGrid>
+
+@code {
+    [Parameter] public Guid EmployeeId { get; set; }
+
+    private HrPerm _perm = HrPerm.None;
+    private bool _loading = true;
+    private bool _uploading;
+    private string _docType = HrDocumentType.Other;
+    private string? _title;
+    private List<HrDocument> _items = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _perm = await PermSvc.GetAsync(Usr, HrMenus.Employee);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _items = _perm.View ? await EmployeeSvc.GetDocumentsAsync(EmployeeId) : new();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task UploadAsync(IBrowserFile? file)
+    {
+        if (file is null) return;
+        if (!_perm.Add) { NoPermission("Add"); return; }
+        if (!HrFileStorage.IsAllowed(file.Name))
+        {
+            Notify(L("hr_doc_type_not_allowed"), Severity.Warning);
+            return;
+        }
+        if (file.Size > HrFileStorage.MaxFileBytes)
+        {
+            Notify(L("hr_doc_too_large"), Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _uploading = true;
+            await using var stream = file.OpenReadStream(HrFileStorage.MaxFileBytes);
+            var rs = await EmployeeSvc.AddDocumentAsync(EmployeeId, _docType, _title, file.Name, file.ContentType,
+                stream, FileStorage.GetTenantKey(CurrentUser), Usr);
+            Notify(rs);
+            if (rs.Success)
+            {
+                _title = null;
+                await LoadAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_save")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task OpenAsync(HrDocument doc, bool inline)
+    {
+        var url = $"/api/hr/documents/{doc.Id}" + (inline ? "?inline=true" : string.Empty);
+        await JS.InvokeVoidAsync("openUrlInNewTab", url);
+    }
+
+    private async Task DeleteAsync(HrDocument doc)
+    {
+        if (!_perm.Delete) { NoPermission("Delete"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_delete_doc_confirm"), doc.FileName),
+            yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await EmployeeSvc.DeleteDocumentAsync(doc.Id);
+        Notify(rs);
+        if (rs.Success) await LoadAsync();
+    }
+
+    private static string FormatSize(long bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / 1024d / 1024d:0.0} MB" : $"{Math.Max(1, bytes / 1024)} KB";
+}

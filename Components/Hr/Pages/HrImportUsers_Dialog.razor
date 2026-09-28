@@ -1,0 +1,77 @@
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrEmployeeService EmployeeSvc
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-2">@L("hr_import_hint")</MudText>
+        <MudTextField T="string" @bind-Value="_search" Label="@L("hr_search")" Immediate="true" Clearable="true"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search" Class="mb-2" />
+        <MudTable T="HrUserLookup" Items="Visible" Dense="true" Hover="true" MultiSelection="true"
+                  @bind-SelectedItems="_selected" Loading="_loading" FixedHeader="true" Height="420px">
+            <HeaderContent>
+                <MudTh>@L("hr_account")</MudTh>
+                <MudTh>@L("hr_full_name")</MudTh>
+                <MudTh>@L("hr_work_email")</MudTh>
+                <MudTh>@L("hr_department")</MudTh>
+                <MudTh>@L("hr_branch")</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Usr</MudTd>
+                <MudTd>@context.Name</MudTd>
+                <MudTd>@context.Email</MudTd>
+                <MudTd>@context.Department</MudTd>
+                <MudTd>@context.Branch</MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2">@L("hr_import_no_users")</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </DialogContent>
+    <DialogActions>
+        <MudText Typo="Typo.body2" Class="mr-auto ml-4">@string.Format(L("hr_selected_count"), _selected.Count)</MudText>
+        <MudButton Variant="Variant.Text" OnClick="@(() => MudDialog.Cancel())" Disabled="_saving">@L("cancel")</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ImportAsync" Disabled="_saving || _selected.Count == 0">
+            @L("hr_import_create")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+
+    private bool _loading = true;
+    private bool _saving;
+    private string? _search;
+    private List<HrUserLookup> _users = new();
+    private HashSet<HrUserLookup> _selected = new();
+
+    private IEnumerable<HrUserLookup> Visible => string.IsNullOrWhiteSpace(_search)
+        ? _users
+        : _users.Where(x => (x.Usr ?? "").Contains(_search, StringComparison.OrdinalIgnoreCase)
+                            || (x.Name ?? "").Contains(_search, StringComparison.OrdinalIgnoreCase)
+                            || (x.Department ?? "").Contains(_search, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        try
+        {
+            _users = await EmployeeSvc.GetUnlinkedUsersAsync();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task ImportAsync()
+    {
+        _saving = true;
+        var rs = await EmployeeSvc.CreateFromUsersAsync(_selected.Select(x => x.UsrId).ToList(), Usr);
+        _saving = false;
+        Notify(rs);
+        if (rs.Success)
+            MudDialog.Close(DialogResult.Ok(true));
+    }
+}

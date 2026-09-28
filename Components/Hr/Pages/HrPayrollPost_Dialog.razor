@@ -1,0 +1,128 @@
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrPayrollService PayrollSvc
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else
+        {
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="4">
+                    <MudDatePicker @bind-Date="_date" Label="@L("hr_pay_voucher_date")" DateFormat="dd/MM/yyyy" Editable="true"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudSelect T="string" @bind-Value="_tt" Label="@L("hr_pay_transaction_type")" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var t in _types)
+                        {
+                            <MudSelectItem T="string" Value="@t.Code">@t.Code - @t.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudAutocomplete T="HrLookupItem" @bind-Value="_company" Label="@L("hr_pay_company")" SearchFunc="SearchCompany"
+                                     ToStringFunc="@(x => x?.Name ?? string.Empty)" MaxItems="50" Clearable="true"
+                                     ResetValueOnEmptyText="true" CoerceText="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12">
+                    @if (_missing.Count > 0)
+                    {
+                        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2">
+                            @string.Format(L("hr_pay_missing_accounts_hint"), string.Join(", ", _missing))
+                        </MudAlert>
+                    }
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">@L("hr_pay_post_hint")</MudAlert>
+                    <MudSimpleTable Dense="true" Bordered="true" Striped="true">
+                        <thead>
+                            <tr>
+                                <th>@L("hr_pay_account")</th>
+                                <th>@L("hr_pay_line_desc")</th>
+                                <th style="text-align:right">@L("hr_pay_debit")</th>
+                                <th style="text-align:right">@L("hr_pay_credit")</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var l in _lines)
+                            {
+                                <tr style="@(l.AccountId is null ? "color:#d32f2f" : "")">
+                                    <td>@l.AccountCode</td>
+                                    <td>@l.Description</td>
+                                    <td style="text-align:right">@(l.Debit == 0 ? "" : N(l.Debit))</td>
+                                    <td style="text-align:right">@(l.Credit == 0 ? "" : N(l.Credit))</td>
+                                </tr>
+                            }
+                            <tr>
+                                <td colspan="2"><b>@L("hr_pay_total")</b></td>
+                                <td style="text-align:right"><b>@N(_lines.Sum(x => x.Debit))</b></td>
+                                <td style="text-align:right"><b>@N(_lines.Sum(x => x.Credit))</b></td>
+                            </tr>
+                        </tbody>
+                    </MudSimpleTable>
+                </MudItem>
+            </MudGrid>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="@(() => MudDialog.Cancel())" Disabled="_saving">@L("cancel")</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="PostAsync"
+                   Disabled="@(_saving || _loading || _missing.Count > 0 || _lines.Count == 0)">@L("hr_pay_post")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public HrPayrollPeriod Period { get; set; } = new();
+
+    private bool _loading = true, _saving;
+    private DateTime? _date;
+    private string? _tt;
+    private HrLookupItem? _company;
+    private List<M_TransactionTypes> _types = new();
+    private List<HrLookupItem> _companies = new();
+    private List<HrPostingLine> _lines = new();
+    private List<string> _missing = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        try
+        {
+            _date = new DateTime(Period.Year, Period.Month, 1).AddMonths(1).AddDays(-1);
+            var cfg = await PayrollSvc.GetConfigAsync();
+            _types = await PayrollSvc.GetTransactionTypesAsync();
+            _tt = _types.Any(t => t.Code == cfg.TransactionTypeCode) ? cfg.TransactionTypeCode : _types.FirstOrDefault()?.Code;
+            _companies = await PayrollSvc.GetCompaniesAsync();
+            (_lines, _missing) = await PayrollSvc.BuildPostingAsync(Period.Id);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task<IEnumerable<HrLookupItem>> SearchCompany(string value) =>
+        Task.FromResult(string.IsNullOrWhiteSpace(value)
+            ? _companies.Take(50)
+            : _companies.Where(c => c.Name.Contains(value, StringComparison.OrdinalIgnoreCase)));
+
+    private async Task PostAsync()
+    {
+        if (_date is null || string.IsNullOrWhiteSpace(_tt) || _company is null)
+        {
+            Notify(L("hr_err_form_invalid"), Severity.Warning);
+            return;
+        }
+        _saving = true;
+        var rs = await PayrollSvc.PostAsync(Period.Id, _date.Value, _company.Id, _tt, Usr);
+        _saving = false;
+        Notify(rs);
+        if (rs.Success) MudDialog.Close(DialogResult.Ok(true));
+    }
+}

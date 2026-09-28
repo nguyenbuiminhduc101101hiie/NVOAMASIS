@@ -1,0 +1,171 @@
+@attribute [Authorize]
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrLeaveService LeaveSvc
+@inject HrEmployeeService EmployeeSvc
+
+<PageTitle>@L("hr_leave_balance")</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"12.6 {L("hr_leave_balance")}")" Subtitle="@L("hr_leave_balance_subtitle")">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.PlaylistAdd"
+                           OnClick="@(() => GenerateAsync(false))" Disabled="_busy || !_perm.Edit">@L("hr_bal_generate")</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Calculate"
+                           OnClick="@(() => GenerateAsync(true))" Disabled="_busy || !_perm.Edit">@L("hr_bal_recalc")</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit"
+                           OnClick="EditAsync" Disabled="_selected is null || _busy || !_perm.Edit">@L("edit")</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="LoadAsync" Disabled="_busy">@L("reload")</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+            <MudSelect T="int" Value="_year" ValueChanged="@(async (int v) => { _year = v; await LoadAsync(); })" Label="@L("hr_year")"
+                       Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:110px">
+                @foreach (var y in Enumerable.Range(DateTime.Today.Year - 3, 5).Reverse())
+                {
+                    <MudSelectItem T="int" Value="@y">@y</MudSelectItem>
+                }
+            </MudSelect>
+            <MudSelect T="Guid?" Value="_dept" ValueChanged="@(async (Guid? v) => { _dept = v; await LoadAsync(); })" Label="@L("hr_department")"
+                       Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:240px">
+                @foreach (var d in _departments)
+                {
+                    <MudSelectItem T="Guid?" Value="@((Guid?)d.Id)">@d.Display</MudSelectItem>
+                }
+            </MudSelect>
+            <MudTextField T="string" @bind-Value="_search" Label="@L("hr_search")" Clearable="true"
+                          OnKeyUp="@(async (KeyboardEventArgs e) => { if (e.Key == "Enter") await LoadAsync(); })"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:240px" />
+            <MudSpacer />
+            <MudText Typo="Typo.caption">@L("hr_bal_estimated_hint")</MudText>
+        </MudStack>
+
+        <MudDataGrid T="HrLeaveBalanceRow" Items="_items" Dense="true" Striped="true" Bordered="true" Hover="true"
+                     RowClick="@((DataGridRowClickEventArgs<HrLeaveBalanceRow> a) => _selected = a.Item)"
+                     RowClassFunc="@((HrLeaveBalanceRow r, int _) => _selected?.EmployeeId == r.EmployeeId ? "hr-selected-row" : string.Empty)"
+                     Loading="_busy" Height="calc(100vh - 290px)" FixedHeader="true">
+            <Columns>
+                <PropertyColumn Property="x => x.EmployeeCode" Title="@L("hr_employee_code")" />
+                <PropertyColumn Property="x => x.FullName" Title="@L("hr_full_name")" />
+                <PropertyColumn Property="x => x.DepartmentName" Title="@L("hr_department")" />
+                <PropertyColumn Property="x => x.JoinDate" Title="@L("hr_join_date")" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.Entitled" Title="@L("hr_bal_entitled")" Format="0.##" />
+                <PropertyColumn Property="x => x.SeniorityBonus" Title="@L("hr_bal_seniority")" Format="0.##" />
+                <PropertyColumn Property="x => x.CarriedOver" Title="@L("hr_bal_carried")" Format="0.##" />
+                <PropertyColumn Property="x => x.Adjustment" Title="@L("hr_bal_adjustment")" Format="0.##" />
+                <PropertyColumn Property="x => x.Total" Title="@L("hr_bal_total")" Format="0.##" />
+                <PropertyColumn Property="x => x.Used" Title="@L("hr_bal_used")" Format="0.##" />
+                <PropertyColumn Property="x => x.Pending" Title="@L("hr_bal_pending")" Format="0.##" />
+                <TemplateColumn Title="@L("hr_bal_remaining")" SortBy="x => x.Remaining">
+                    <CellTemplate>
+                        <MudText Typo="Typo.body2" Color="@(context.Item.Remaining < 0 ? Color.Error : Color.Default)">
+                            <b>@context.Item.Remaining.ToString("0.##")</b>
+                        </MudText>
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="" Sortable="false">
+                    <CellTemplate>
+                        @if (!context.Item.HasRecord)
+                        {
+                            <MudTooltip Text="@L("hr_bal_estimated")">
+                                <MudIcon Icon="@Icons.Material.Filled.HourglassEmpty" Size="Size.Small" Color="Color.Warning" />
+                            </MudTooltip>
+                        }
+                        @if (!context.Item.UserId.HasValue)
+                        {
+                            <MudTooltip Text="@L("hr_without_account")">
+                                <MudIcon Icon="@Icons.Material.Filled.NoAccounts" Size="Size.Small" Color="Color.Secondary" />
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.Note" Title="@L("hr_note")" />
+            </Columns>
+            <PagerContent>
+                <MudDataGridPager T="HrLeaveBalanceRow" PageSizeOptions="new int[] { 50, 100, 500 }" />
+            </PagerContent>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+<style>
+    .hr-selected-row { background-color: #2196f3 !important; }
+    .hr-selected-row td { color: #fff !important; }
+</style>
+
+@code {
+    private bool _busy;
+    private HrPerm _perm = HrPerm.None;
+    private int _year = DateTime.Today.Year;
+    private Guid? _dept;
+    private string? _search;
+    private List<HrLookupItem> _departments = new();
+    private List<HrLeaveBalanceRow> _items = new();
+    private HrLeaveBalanceRow? _selected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _perm = await PermSvc.GetAsync(Usr, HrMenus.LeaveBalance);
+        if (!_perm.View)
+        {
+            NoPermission("View");
+            return;
+        }
+        _departments = await EmployeeSvc.GetDepartmentLookupAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!_perm.View) return;
+        try
+        {
+            _busy = true;
+            _items = await LeaveSvc.GetBalancesAsync(_year, _dept, _search);
+            _selected = _selected is null ? null : _items.FirstOrDefault(x => x.EmployeeId == _selected.EmployeeId);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task GenerateAsync(bool recalc)
+    {
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L(recalc ? "hr_bal_recalc_confirm" : "hr_bal_generate_confirm"), _year),
+            yesText: L("hr_confirm"), cancelText: L("cancel"));
+        if (ok != true) return;
+        _busy = true;
+        var rs = await LeaveSvc.GenerateAsync(_year, recalc, Usr);
+        _busy = false;
+        if (rs.Success && rs.Detail != null)
+        {
+            var parts = rs.Detail.Split('|');
+            Notify(string.Format(L(rs.MessageKey), parts[0], parts.Length > 1 ? parts[1] : "0"), Severity.Success);
+        }
+        else Notify(rs);
+        await LoadAsync();
+    }
+
+    private async Task EditAsync()
+    {
+        if (_selected is null) return;
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var dlg = DialogService.Show<HrLeaveBalance_EditDialog>(L("hr_bal_edit"),
+            new DialogParameters { ["Row"] = _selected },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var rs = await dlg.Result;
+        if (!rs.Canceled) await LoadAsync();
+    }
+}

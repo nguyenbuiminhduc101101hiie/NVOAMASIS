@@ -1,0 +1,528 @@
+@attribute [Authorize]
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrPayrollService PayrollSvc
+@inject IJSRuntime JS
+
+<PageTitle>@L("hr_payroll")</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"12.9 {L("hr_payroll")}")" Subtitle="@L("hr_payroll_subtitle")" />
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3">
+            @* ───────────── Kỳ lương ───────────── *@
+            @if (_perm.View)
+            {
+                <MudTabPanel Text="@L("hr_pay_tab_periods")" Icon="@Icons.Material.Filled.Payments">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                        <MudSelect T="int" Value="_year" ValueChanged="@(async (int y) => { _year = y; await LoadPeriodsAsync(); })"
+                                   Label="@L("hr_year")" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:110px">
+                            @foreach (var y in Enumerable.Range(DateTime.Today.Year - 3, 5).Reverse())
+                            {
+                                <MudSelectItem T="int" Value="@y">@y</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudSelect T="Guid?" Value="_periodId" ValueChanged="OnPeriodChanged" Label="@L("hr_pay_period")"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" Style="min-width:260px; max-width:320px">
+                            @foreach (var p in _periods)
+                            {
+                                <MudSelectItem T="Guid?" Value="@((Guid?)p.Id)">@p.Name · @L(HrPayrollStatus.Key(p.Status))</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                                   OnClick="NewPeriodAsync" Disabled="_busy || !_perm.Add">@L("hr_pay_new_period")</MudButton>
+                        @if (_period != null)
+                        {
+                            <MudChip Size="Size.Small" Color="@PeriodColor(_period.Status)">@L(HrPayrollStatus.Key(_period.Status))</MudChip>
+                            @if (_period.Status == HrPayrollStatus.Draft)
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Calculate"
+                                           OnClick="RecalcAsync" Disabled="_busy || !_perm.Edit">@L("hr_pay_recalc")</MudButton>
+                                <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit"
+                                           OnClick="EditSlipAsync" Disabled="_busy || _slip is null || !_perm.Edit">@L("hr_pay_edit_slip")</MudButton>
+                                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.Lock"
+                                           OnClick="@(() => LockAsync(true))" Disabled="_busy || !_perm.Approve">@L("hr_pay_lock")</MudButton>
+                                <MudButton Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" StartIcon="@Icons.Material.Filled.Delete"
+                                           OnClick="DeletePeriodAsync" Disabled="_busy || !_perm.Delete">@L("delete")</MudButton>
+                            }
+                            else if (_period.Status == HrPayrollStatus.Locked)
+                            {
+                                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.LockOpen"
+                                           OnClick="@(() => LockAsync(false))" Disabled="_busy || !_perm.Approve">@L("hr_pay_unlock")</MudButton>
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.AccountBalance"
+                                           OnClick="PostAsync" Disabled="_busy || !_perm.Approve">@L("hr_pay_post")</MudButton>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2">@L("hr_pay_voucher"): <b>@_period.VoucherNo</b></MudText>
+                                <MudButton Variant="Variant.Outlined" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.Undo"
+                                           OnClick="UnpostAsync" Disabled="_busy || !_perm.Approve">@L("hr_pay_unpost")</MudButton>
+                            }
+                            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Visibility"
+                                       OnClick="@(() => ViewSlipAsync(_slip, true))" Disabled="_slip is null">@L("hr_pay_view_slip")</MudButton>
+                            <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload"
+                                       OnClick="ExportAsync" Disabled="_busy || _slips.Count == 0">@L("hr_export_excel")</MudButton>
+                        }
+                    </MudStack>
+
+                    @if (_period != null)
+                    {
+                        <MudStack Row="true" Spacing="4" Class="mb-2 flex-wrap">
+                            @Stat(L("hr_employees"), _slips.Count.ToString())
+                            @Stat(L("hr_ts_standard_days"), _period.StandardDays.ToString("0.##"))
+                            @Stat(L("hr_pay_gross"), N(_slips.Sum(s => s.GrossIncome)))
+                            @Stat(L("hr_pay_emp_insurance"), N(_slips.Sum(s => s.EmpInsurance)))
+                            @Stat(L("hr_pay_pit"), N(_slips.Sum(s => s.PersonalIncomeTax)))
+                            @Stat(L("hr_pay_net"), N(_slips.Sum(s => s.NetPay)))
+                            @Stat(L("hr_pay_employer_cost"), N(_slips.Sum(s => s.EmployerCost)))
+                            @if (_slips.Any(s => !string.IsNullOrEmpty(s.Warnings)))
+                            {
+                                <MudChip Size="Size.Small" Color="Color.Warning" Icon="@Icons.Material.Filled.Warning">
+                                    @string.Format(L("hr_pay_warning_count"), _slips.Count(s => !string.IsNullOrEmpty(s.Warnings)))
+                                </MudChip>
+                            }
+                        </MudStack>
+
+                        <MudDataGrid T="HrPayslip" Items="_slips" Dense="true" Striped="true" Bordered="true" Hover="true"
+                                     RowClick="@((DataGridRowClickEventArgs<HrPayslip> a) => _slip = a.Item)"
+                                     RowClassFunc="@((HrPayslip r, int _) => _slip?.Id == r.Id ? "hr-selected-row" : string.Empty)"
+                                     Loading="_busy" Height="calc(100vh - 380px)" FixedHeader="true" HorizontalScrollbar="true">
+                            <Columns>
+                                <PropertyColumn Property="x => x.EmployeeCode" Title="@L("hr_employee_code")" />
+                                <PropertyColumn Property="x => x.FullName" Title="@L("hr_full_name")" />
+                                <PropertyColumn Property="x => x.DepartmentName" Title="@L("hr_department")" />
+                                <PropertyColumn Property="x => x.BaseSalary" Title="@L("hr_base_salary")" Format="N0" />
+                                <PropertyColumn Property="x => x.PaidDays" Title="@L("hr_pay_paid_days")" Format="0.##" />
+                                <PropertyColumn Property="x => x.GrossIncome" Title="@L("hr_pay_gross")" Format="N0" />
+                                <PropertyColumn Property="x => x.EmpInsurance" Title="@L("hr_pay_emp_insurance")" Format="N0" />
+                                <TemplateColumn Title="@L("hr_pay_pit")" SortBy="x => x.PersonalIncomeTax">
+                                    <CellTemplate>
+                                        <div style="text-align:right">@N(context.Item.PersonalIncomeTax)</div>
+                                        <MudText Typo="Typo.caption">@L(HrTaxMode.Key(context.Item.TaxMode))</MudText>
+                                    </CellTemplate>
+                                </TemplateColumn>
+                                <PropertyColumn Property="x => x.Advance" Title="@L("hr_pay_advance")" Format="N0" />
+                                <PropertyColumn Property="x => x.OtherDeduction" Title="@L("hr_pay_other_deduction")" Format="N0" />
+                                <TemplateColumn Title="@L("hr_pay_net")" SortBy="x => x.NetPay">
+                                    <CellTemplate>
+                                        <b style="@(context.Item.NetPay < 0 ? "color:#d32f2f" : "")">@N(context.Item.NetPay)</b>
+                                    </CellTemplate>
+                                </TemplateColumn>
+                                <PropertyColumn Property="x => x.EmployerCost" Title="@L("hr_pay_employer_cost")" Format="N0" />
+                                <TemplateColumn Title="" Sortable="false">
+                                    <CellTemplate>
+                                        @if (!string.IsNullOrEmpty(context.Item.Warnings))
+                                        {
+                                            <MudTooltip Text="@WarnText(context.Item.Warnings)">
+                                                <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning" Size="Size.Small" />
+                                            </MudTooltip>
+                                        }
+                                        @if (!string.IsNullOrEmpty(context.Item.Note))
+                                        {
+                                            <MudTooltip Text="@context.Item.Note">
+                                                <MudIcon Icon="@Icons.Material.Filled.StickyNote2" Color="Color.Info" Size="Size.Small" />
+                                            </MudTooltip>
+                                        }
+                                    </CellTemplate>
+                                </TemplateColumn>
+                            </Columns>
+                            <PagerContent>
+                                <MudDataGridPager T="HrPayslip" PageSizeOptions="new int[] { 50, 100, 500 }" />
+                            </PagerContent>
+                        </MudDataGrid>
+                    }
+                    else if (!_busy)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true">@L("hr_pay_no_period")</MudAlert>
+                    }
+                </MudTabPanel>
+            }
+
+            @* ───────────── Phiếu lương của tôi ───────────── *@
+            <MudTabPanel Text="@L("hr_pay_tab_my")" Icon="@Icons.Material.Filled.ReceiptLong">
+                <MudTable T="(HrPayrollPeriod Period, HrPayslip Slip)" Items="_mine" Dense="true" Hover="true" Bordered="true" Loading="_busy">
+                    <HeaderContent>
+                        <MudTh>@L("hr_pay_period")</MudTh>
+                        <MudTh>@L("hr_pay_paid_days")</MudTh>
+                        <MudTh>@L("hr_pay_gross")</MudTh>
+                        <MudTh>@L("hr_pay_total_deduction")</MudTh>
+                        <MudTh>@L("hr_pay_net")</MudTh>
+                        <MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@context.Period.Name</MudTd>
+                        <MudTd>@context.Slip.PaidDays.ToString("0.##") / @context.Slip.StandardDays.ToString("0.##")</MudTd>
+                        <MudTd Style="text-align:right">@N(context.Slip.GrossIncome)</MudTd>
+                        <MudTd Style="text-align:right">@N(context.Slip.TotalDeduction)</MudTd>
+                        <MudTd Style="text-align:right"><b>@N(context.Slip.NetPay)</b></MudTd>
+                        <MudTd>
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                       OnClick="@(() => ViewSlipAsync(context.Slip, false, context.Period.Name))">@L("hr_pay_view_slip")</MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent><MudText Typo="Typo.body2">@L("hr_pay_no_my_slips")</MudText></NoRecordsContent>
+                </MudTable>
+            </MudTabPanel>
+
+            @* ───────────── Tham số & tài khoản ───────────── *@
+            @if (_perm.View)
+            {
+                <MudTabPanel Text="@L("hr_pay_tab_params")" Icon="@Icons.Material.Filled.Tune">
+                    <MudText Typo="Typo.subtitle1" Class="mb-1"><b>@L("hr_pay_params_title")</b></MudText>
+                    <MudText Typo="Typo.caption" Class="mb-2 d-block">@L("hr_pay_params_hint")</MudText>
+                    <MudStack Row="true" Spacing="1" Class="mb-2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                                   OnClick="@(() => EditParamAsync(null))" Disabled="@(!_perm.Approve)">@L("new")</MudButton>
+                    </MudStack>
+                    <MudTable T="HrPayrollParam" Items="_params" Dense="true" Hover="true" Bordered="true" Class="mb-4">
+                        <HeaderContent>
+                            <MudTh>@L("hr_pay_effective_from")</MudTh>
+                            <MudTh>@L("hr_pay_reference_wage")</MudTh>
+                            <MudTh>@L("hr_pay_min_wage_1")</MudTh>
+                            <MudTh>@L("hr_pay_self_deduction")</MudTh>
+                            <MudTh>@L("hr_pay_dependent_deduction")</MudTh>
+                            <MudTh>@L("hr_pay_tax_brackets")</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@D(context.EffectiveFrom)</MudTd>
+                            <MudTd Style="text-align:right">@N(context.ReferenceWage)</MudTd>
+                            <MudTd Style="text-align:right">@N(context.MinWageRegion1)</MudTd>
+                            <MudTd Style="text-align:right">@N(context.SelfDeduction)</MudTd>
+                            <MudTd Style="text-align:right">@N(context.DependentDeduction)</MudTd>
+                            <MudTd><MudText Typo="Typo.caption">@context.TaxBrackets</MudText></MudTd>
+                            <MudTd Style="white-space:nowrap">
+                                @if (_perm.Approve)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary" OnClick="@(() => EditParamAsync(context))" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="@(() => DeleteParamAsync(context))" />
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+
+                    <MudText Typo="Typo.subtitle1" Class="mb-1"><b>@L("hr_pay_config_title")</b></MudText>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="4" md="3">
+                            <MudSelect T="int" @bind-Value="_cfg.Region" Label="@L("hr_pay_region")" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="@(!_perm.Approve)">
+                                @for (var r = 1; r <= 4; r++)
+                                {
+                                    var rr = r;
+                                    <MudSelectItem T="int" Value="@rr">@string.Format(L("hr_pay_region_n"), rr)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="4" md="3">
+                            <MudNumericField T="decimal" @bind-Value="_cfg.NoInsuranceUnpaidDays" Label="@L("hr_pay_no_insurance_days")" Min="0"
+                                             HelperText="@L("hr_pay_no_insurance_days_hint")" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="@(!_perm.Approve)" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4" md="3">
+                            <MudSwitch T="bool" @bind-Checked="_cfg.UnionFeeEnabled" Color="Color.Primary" Label="@L("hr_pay_union_fee_enabled")" Disabled="@(!_perm.Approve)" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4" md="3">
+                            <MudSelect T="string" @bind-Value="_cfg.TransactionTypeCode" Label="@L("hr_pay_transaction_type")" Clearable="true"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="@(!_perm.Approve)">
+                                @foreach (var t in _types)
+                                {
+                                    <MudSelectItem T="string" Value="@t.Code">@t.Code - @t.Name</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        @Acc(L("hr_pay_acc_expense"), () => _cfg.ExpenseAccount, v => _cfg.ExpenseAccount = v)
+                        @Acc(L("hr_pay_acc_payable"), () => _cfg.PayableAccount, v => _cfg.PayableAccount = v)
+                        @Acc(L("hr_pay_acc_social"), () => _cfg.SocialAccount, v => _cfg.SocialAccount = v)
+                        @Acc(L("hr_pay_acc_health"), () => _cfg.HealthAccount, v => _cfg.HealthAccount = v)
+                        @Acc(L("hr_pay_acc_unemployment"), () => _cfg.UnemploymentAccount, v => _cfg.UnemploymentAccount = v)
+                        @Acc(L("hr_pay_acc_union"), () => _cfg.UnionFeeAccount, v => _cfg.UnionFeeAccount = v)
+                        @Acc(L("hr_pay_acc_pit"), () => _cfg.PitAccount, v => _cfg.PitAccount = v)
+                        @Acc(L("hr_pay_acc_advance"), () => _cfg.AdvanceAccount, v => _cfg.AdvanceAccount = v)
+                        @Acc(L("hr_pay_acc_other"), () => _cfg.OtherDeductionAccount, v => _cfg.OtherDeductionAccount = v)
+                        <MudItem xs="12">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
+                                       OnClick="SaveConfigAsync" Disabled="@(!_perm.Approve)">@L("save")</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudTabPanel>
+            }
+        </MudTabs>
+    </MudPaper>
+</div>
+
+<style>
+    .hr-selected-row { background-color: #2196f3 !important; }
+    .hr-selected-row td { color: #fff !important; }
+</style>
+
+@code {
+    private bool _busy;
+    private HrPerm _perm = HrPerm.None;
+    private int _year = DateTime.Today.Year;
+    private List<HrPayrollPeriod> _periods = new();
+    private Guid? _periodId;
+    private HrPayrollPeriod? _period;
+    private List<HrPayslip> _slips = new();
+    private HrPayslip? _slip;
+    private List<(HrPayrollPeriod Period, HrPayslip Slip)> _mine = new();
+    private List<HrPayrollParam> _params = new();
+    private HrPayrollConfig _cfg = new();
+    private List<M_TransactionTypes> _types = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _perm = await PermSvc.GetAsync(Usr, HrMenus.Payroll);
+        try
+        {
+            if (CurrentUserId.HasValue)
+                _mine = await PayrollSvc.GetMyPayslipsAsync(CurrentUserId.Value);
+            if (_perm.View)
+            {
+                await LoadPeriodsAsync();
+                _params = await PayrollSvc.GetParamsAsync();
+                _cfg = await PayrollSvc.GetConfigAsync();
+                _types = await PayrollSvc.GetTransactionTypesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+    }
+
+    private async Task LoadPeriodsAsync()
+    {
+        _periods = await PayrollSvc.GetPeriodsAsync(_year);
+        var keep = _periodId.HasValue && _periods.Any(p => p.Id == _periodId) ? _periodId : _periods.FirstOrDefault()?.Id;
+        await OnPeriodChanged(keep);
+    }
+
+    private async Task OnPeriodChanged(Guid? id)
+    {
+        _periodId = id;
+        _slip = null;
+        await LoadSlipsAsync();
+    }
+
+    private async Task LoadSlipsAsync()
+    {
+        if (_periodId is null)
+        {
+            _period = null;
+            _slips = new();
+            return;
+        }
+        try
+        {
+            _busy = true;
+            _period = await PayrollSvc.GetPeriodAsync(_periodId.Value);
+            _slips = await PayrollSvc.GetPayslipsAsync(_periodId.Value);
+            _slip = _slip is null ? null : _slips.FirstOrDefault(s => s.Id == _slip.Id);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        var sel = _periodId;
+        _periods = await PayrollSvc.GetPeriodsAsync(_year);
+        _periodId = sel;
+        await LoadSlipsAsync();
+    }
+
+    // ───────────── Thao tác kỳ lương ─────────────
+
+    private async Task NewPeriodAsync()
+    {
+        if (!_perm.Add) { NoPermission("Add"); return; }
+        // Mặc định: tháng hiện tại nếu đã qua ngày 20, ngược lại tháng trước.
+        var def = DateTime.Today.Day > 20 ? DateTime.Today : DateTime.Today.AddMonths(-1);
+        var dlg = DialogService.Show<HrPayrollMonth_Dialog>(L("hr_pay_new_period"),
+            new DialogParameters { ["Year"] = def.Year, ["Month"] = def.Month },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        var res = await dlg.Result;
+        if (res.Canceled || res.Data is not DateTime target) return;
+
+        _busy = true;
+        var rs = await PayrollSvc.CreatePeriodAsync(target.Year, target.Month, Usr);
+        _busy = false;
+        if (rs.Success) Notify(L("hr_pay_period_created"), Severity.Success);
+        else Notify(rs);
+        if (rs.Success)
+        {
+            _year = target.Year;
+            _periods = await PayrollSvc.GetPeriodsAsync(_year);
+            await OnPeriodChanged(rs.Id);
+        }
+    }
+
+    private async Task RecalcAsync()
+    {
+        if (_period is null) return;
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"), L("hr_pay_recalc_confirm"),
+            yesText: L("hr_pay_recalc"), cancelText: L("cancel"));
+        if (ok != true) return;
+        _busy = true;
+        var rs = await PayrollSvc.CalculateAsync(_period.Id, Usr);
+        _busy = false;
+        Notify(rs);
+        await ReloadAsync();
+    }
+
+    private async Task LockAsync(bool locked)
+    {
+        if (_period is null) return;
+        if (!_perm.Approve) { NoPermission("Edit"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            L(locked ? "hr_pay_lock_confirm" : "hr_pay_unlock_confirm"),
+            yesText: L("hr_confirm"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await PayrollSvc.SetLockedAsync(_period.Id, locked, Usr);
+        Notify(rs);
+        await ReloadAsync();
+    }
+
+    private async Task DeletePeriodAsync()
+    {
+        if (_period is null) return;
+        if (!_perm.Delete) { NoPermission("Delete"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_delete_item_confirm"), _period.Name), yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await PayrollSvc.DeletePeriodAsync(_period.Id);
+        Notify(rs);
+        if (rs.Success)
+        {
+            _periodId = null;
+            await LoadPeriodsAsync();
+        }
+    }
+
+    private async Task PostAsync()
+    {
+        if (_period is null) return;
+        var dlg = DialogService.Show<HrPayrollPost_Dialog>($"{L("hr_pay_post")} · {_period.Name}",
+            new DialogParameters { ["Period"] = _period },
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true });
+        var rs = await dlg.Result;
+        if (!rs.Canceled) await ReloadAsync();
+    }
+
+    private async Task UnpostAsync()
+    {
+        if (_period is null) return;
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_pay_unpost_confirm"), _period.VoucherNo), yesText: L("hr_confirm"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await PayrollSvc.UnpostAsync(_period.Id);
+        Notify(rs);
+        await ReloadAsync();
+    }
+
+    private async Task EditSlipAsync()
+    {
+        if (_slip is null) return;
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var dlg = DialogService.Show<HrPayslip_EditDialog>(L("hr_pay_edit_slip"),
+            new DialogParameters { ["Slip"] = _slip },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var rs = await dlg.Result;
+        if (!rs.Canceled) await LoadSlipsAsync();
+    }
+
+    private async Task ViewSlipAsync(HrPayslip? s, bool employerPart, string? periodName = null)
+    {
+        if (s is null) return;
+        await DialogService.Show<HrPayslip_ViewDialog>(L("hr_pay_payslip"),
+            new DialogParameters { ["S"] = s, ["PeriodName"] = periodName ?? _period?.Name ?? "", ["ShowEmployerPart"] = employerPart },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true }).Result;
+    }
+
+    private async Task ExportAsync()
+    {
+        if (_period is null) return;
+        try
+        {
+            var bytes = HrPayrollService.ExportExcel(_period, _slips, L);
+            await JS.InvokeVoidAsync("downloadFileFromStream", $"BangLuong_{_period.Year}{_period.Month:D2}.xlsx", Convert.ToBase64String(bytes));
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_export")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+    }
+
+    // ───────────── Tham số ─────────────
+
+    private async Task EditParamAsync(HrPayrollParam? p)
+    {
+        if (!_perm.Approve) { NoPermission("Edit"); return; }
+        var src = p ?? _params.FirstOrDefault();
+        var model = src is null ? new HrPayrollParam { EffectiveFrom = new DateTime(DateTime.Today.Year, 1, 1) } : new HrPayrollParam
+        {
+            Id = p?.Id ?? Guid.Empty,
+            EffectiveFrom = p?.EffectiveFrom ?? DateTime.Today,
+            ReferenceWage = src.ReferenceWage, CapMultiplier = src.CapMultiplier,
+            MinWageRegion1 = src.MinWageRegion1, MinWageRegion2 = src.MinWageRegion2,
+            MinWageRegion3 = src.MinWageRegion3, MinWageRegion4 = src.MinWageRegion4,
+            EmpSocialRate = src.EmpSocialRate, EmpHealthRate = src.EmpHealthRate, EmpUnemploymentRate = src.EmpUnemploymentRate,
+            CoSocialRate = src.CoSocialRate, CoHealthRate = src.CoHealthRate, CoUnemploymentRate = src.CoUnemploymentRate,
+            CoUnionFeeRate = src.CoUnionFeeRate, SelfDeduction = src.SelfDeduction, DependentDeduction = src.DependentDeduction,
+            TaxBrackets = src.TaxBrackets, FlatTaxRate = src.FlatTaxRate, FlatTaxThreshold = src.FlatTaxThreshold,
+            Note = p?.Note
+        };
+        var dlg = DialogService.Show<HrPayrollParam_EditDialog>(p is null ? L("hr_pay_param_new") : L("hr_pay_param_edit"),
+            new DialogParameters { ["M"] = model },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+        var rs = await dlg.Result;
+        if (!rs.Canceled) _params = await PayrollSvc.GetParamsAsync();
+    }
+
+    private async Task DeleteParamAsync(HrPayrollParam p)
+    {
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_delete_item_confirm"), D(p.EffectiveFrom)), yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await PayrollSvc.DeleteParamAsync(p.Id);
+        Notify(rs);
+        if (rs.Success) _params = await PayrollSvc.GetParamsAsync();
+    }
+
+    private async Task SaveConfigAsync()
+    {
+        if (!_perm.Approve) { NoPermission("Edit"); return; }
+        var rs = await PayrollSvc.SaveConfigAsync(_cfg, Usr);
+        Notify(rs);
+    }
+
+    // ───────────── Hiển thị ─────────────
+
+    private string WarnText(string? warnings) =>
+        string.Join(" · ", (warnings ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries).Select(L));
+
+    private static Color PeriodColor(int s) => s switch
+    {
+        HrPayrollStatus.Draft => Color.Warning,
+        HrPayrollStatus.Locked => Color.Info,
+        _ => Color.Success
+    };
+
+    private RenderFragment Stat(string label, string value) => __builder =>
+    {
+        <div>
+            <MudText Typo="Typo.caption">@label</MudText>
+            <MudText Typo="Typo.subtitle1"><b>@value</b></MudText>
+        </div>
+    };
+
+    private RenderFragment Acc(string label, Func<string> get, Action<string> set) => __builder =>
+    {
+        <MudItem xs="6" sm="4" md="2">
+            <MudTextField T="string" Value="@get()" ValueChanged="@((string v) => set(v ?? string.Empty))" Label="@label" MaxLength="20"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="@(!_perm.Approve)" />
+        </MudItem>
+    };
+}

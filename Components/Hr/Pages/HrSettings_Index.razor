@@ -1,0 +1,196 @@
+@attribute [Authorize]
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrSettingsService SettingsSvc
+
+<PageTitle>@L("hr_settings")</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"12.8 {L("hr_settings")}")" Subtitle="@L("hr_settings_subtitle")" />
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        @if (!_perm.View)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true">@L("NoPermission_View")</MudAlert>
+        }
+        else
+        {
+            <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3">
+                <MudTabPanel Text="@L("hr_settings_tab_rules")" Icon="@Icons.Material.Filled.Tune">
+                    <MudGrid Spacing="3">
+                        <MudItem xs="12" md="6">
+                            <MudText Typo="Typo.subtitle1" Class="mb-1"><b>@L("hr_set_calendar")</b></MudText>
+                            <MudText Typo="Typo.body2">@L("hr_set_workdays")</MudText>
+                            <MudStack Row="true" Spacing="0" Class="flex-wrap">
+                                @foreach (var (dow, label) in DayLabels)
+                                {
+                                    var d = dow;
+                                    <MudCheckBox T="bool" Checked="@_s.WorkDays.Contains(d)" CheckedChanged="@((bool v) => ToggleDay(d, v))"
+                                                 Label="@label" Color="Color.Primary" Disabled="@(!_perm.Edit)" />
+                                }
+                            </MudStack>
+                            <MudSwitch T="bool" @bind-Checked="_s.SaturdayHalfDay" Color="Color.Primary" Disabled="@(!_perm.Edit)"
+                                       Label="@L("hr_set_saturday_half")" />
+                            <MudNumericField T="decimal" @bind-Value="_s.HoursPerDay" Label="@L("hr_set_hours_per_day")" Min="1" Max="24"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="@(!_perm.Edit)" Class="mt-2" Style="max-width:240px" />
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudText Typo="Typo.subtitle1" Class="mb-1"><b>@L("hr_set_leave_rules")</b></MudText>
+                            <MudNumericField T="decimal" @bind-Value="_s.AnnualLeaveBaseDays" Label="@L("hr_set_base_days")" Min="0" Step="0.5m"
+                                             HelperText="@L("hr_set_base_days_hint")" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="@(!_perm.Edit)" />
+                            <MudNumericField T="int" @bind-Value="_s.SeniorityStepYears" Label="@L("hr_set_seniority_step")" Min="0"
+                                             HelperText="@L("hr_set_seniority_step_hint")" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="@(!_perm.Edit)" />
+                            <MudNumericField T="decimal" @bind-Value="_s.MaxCarryOverDays" Label="@L("hr_set_max_carry")" Min="0" Step="0.5m"
+                                             HelperText="@L("hr_set_max_carry_hint")" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="@(!_perm.Edit)" />
+                            <MudSwitch T="bool" @bind-Checked="_s.AllowNegativeAnnualLeave" Color="Color.Primary" Disabled="@(!_perm.Edit)"
+                                       Label="@L("hr_set_allow_negative")" />
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudText Typo="Typo.subtitle1" Class="mb-1"><b>@L("hr_set_attendance")</b></MudText>
+                            <MudSelect T="string" @bind-Value="_s.AttendanceIpSource" Label="@L("hr_set_ip_source")"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="@(!_perm.Edit)">
+                                <MudSelectItem T="string" Value="@("client")">@L("hr_set_ip_client")</MudSelectItem>
+                                <MudSelectItem T="string" Value="@("server")">@L("hr_set_ip_server")</MudSelectItem>
+                            </MudSelect>
+                            <MudText Typo="Typo.caption">@L("hr_set_ip_hint")</MudText>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
+                                       OnClick="SaveAsync" Disabled="@(!_perm.Edit || _busy)">@L("save")</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudTabPanel>
+
+                <MudTabPanel Text="@L("hr_settings_tab_holidays")" Icon="@Icons.Material.Filled.Celebration">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                        <MudSelect T="int" Value="_year" ValueChanged="@(async (int v) => { _year = v; await LoadHolidaysAsync(); })"
+                                   Label="@L("hr_year")" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:110px">
+                            @foreach (var y in Enumerable.Range(DateTime.Today.Year - 2, 5).Reverse())
+                            {
+                                <MudSelectItem T="int" Value="@y">@y</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                                   OnClick="@(() => OpenHolidayAsync(null))" Disabled="@(!_perm.Edit)">@L("new")</MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small" StartIcon="@Icons.Material.Filled.EventAvailable"
+                                   OnClick="AddFixedAsync" Disabled="@(!_perm.Edit)">@L("hr_holiday_add_fixed")</MudButton>
+                    </MudStack>
+                    <MudText Typo="Typo.caption" Class="mb-2 d-block">@L("hr_holiday_hint")</MudText>
+                    <MudTable T="HrHoliday" Items="_holidays" Dense="true" Hover="true" Bordered="true" Striped="true">
+                        <HeaderContent>
+                            <MudTh>@L("hr_date")</MudTh>
+                            <MudTh>@L("hr_holiday_weekday")</MudTh>
+                            <MudTh>@L("hr_holiday_name")</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@D(context.Date)</MudTd>
+                            <MudTd>
+                                @context.Date.ToString("dddd", System.Globalization.CultureInfo.CurrentUICulture)
+                                @if (!_s.WorkDays.Contains(context.Date.DayOfWeek))
+                                {
+                                    <MudChip Size="Size.Small" Color="Color.Warning">@L("hr_holiday_on_dayoff")</MudChip>
+                                }
+                            </MudTd>
+                            <MudTd>@context.Name</MudTd>
+                            <MudTd Style="white-space:nowrap">
+                                @if (_perm.Edit)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary" OnClick="@(() => OpenHolidayAsync(context))" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="@(() => DeleteHolidayAsync(context))" />
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent><MudText Typo="Typo.body2">@L("hr_no_items")</MudText></NoRecordsContent>
+                    </MudTable>
+                </MudTabPanel>
+            </MudTabs>
+        }
+    </MudPaper>
+</div>
+
+@code {
+    private static readonly (DayOfWeek, string)[] DayLabels =
+    {
+        (DayOfWeek.Monday, "T2"), (DayOfWeek.Tuesday, "T3"), (DayOfWeek.Wednesday, "T4"), (DayOfWeek.Thursday, "T5"),
+        (DayOfWeek.Friday, "T6"), (DayOfWeek.Saturday, "T7"), (DayOfWeek.Sunday, "CN")
+    };
+
+    private bool _busy;
+    private HrPerm _perm = HrPerm.None;
+    private HrWorkSettings _s = new();
+    private int _year = DateTime.Today.Year;
+    private List<HrHoliday> _holidays = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _perm = await PermSvc.GetAsync(Usr, HrMenus.Settings);
+        if (!_perm.View) return;
+        _s = await SettingsSvc.GetAsync();
+        await LoadHolidaysAsync();
+    }
+
+    private void ToggleDay(DayOfWeek d, bool on)
+    {
+        if (on) _s.WorkDays.Add(d);
+        else _s.WorkDays.Remove(d);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        _busy = true;
+        var rs = await SettingsSvc.SaveAsync(_s, Usr);
+        _busy = false;
+        Notify(rs);
+    }
+
+    private async Task LoadHolidaysAsync()
+    {
+        try
+        {
+            _holidays = await SettingsSvc.GetHolidaysAsync(_year);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+    }
+
+    private async Task OpenHolidayAsync(HrHoliday? h)
+    {
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var dlg = DialogService.Show<HrHoliday_EditDialog>(h is null ? L("hr_holiday_new") : L("hr_holiday_edit"),
+            new DialogParameters
+            {
+                ["Date"] = (DateTime?)(h?.Date ?? new DateTime(_year, DateTime.Today.Month, 1)),
+                ["Name"] = h?.Name ?? string.Empty
+            },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseButton = true });
+        var rs = await dlg.Result;
+        if (rs.Canceled || rs.Data is not HrHoliday_EditDialog.Result data) return;
+        var save = await SettingsSvc.SaveHolidayAsync(h?.Id ?? Guid.Empty, data.Date, data.Name, Usr);
+        Notify(save);
+        if (save.Success) await LoadHolidaysAsync();
+    }
+
+    private async Task DeleteHolidayAsync(HrHoliday h)
+    {
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_delete_item_confirm"), $"{D(h.Date)} - {h.Name}"),
+            yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await SettingsSvc.DeleteHolidayAsync(h.Id);
+        Notify(rs);
+        if (rs.Success) await LoadHolidaysAsync();
+    }
+
+    private async Task AddFixedAsync()
+    {
+        if (!_perm.Edit) { NoPermission("Edit"); return; }
+        var rs = await SettingsSvc.AddFixedHolidaysAsync(_year, Usr);
+        Notify(rs);
+        await LoadHolidaysAsync();
+    }
+}

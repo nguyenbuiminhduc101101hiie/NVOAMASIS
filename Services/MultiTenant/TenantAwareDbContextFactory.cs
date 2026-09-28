@@ -15,7 +15,7 @@ public class TenantAwareDbContextFactory(
     {
         var connectionString = ResolveConnectionString();
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlServer(connectionString)
+            .UseSqlServer(connectionString, sql => sql.UseCompatibilityLevel(120))
             .Options;
         return new AppDbContext(options);
     }
