@@ -215,7 +215,13 @@ namespace NVOAMASIS.Services
 
             //var ip = GetClientIp();
             //var ip = _clientIpService.GetClientIp(_http.HttpContext!);
-            var ip= await _js.InvokeAsync<string>("getPublicIp");
+            // Nguồn IP: cấu hình tại 12.8 Cài đặt nhân sự (HrSetting.AttendanceIpSource).
+            //  - "client" (mặc định, như cũ): trình duyệt tự lấy IP public qua JS → người dùng có thể giả mạo.
+            //  - "server": lấy IP từ request tới server (header proxy / RemoteIpAddress); nếu không lấy được thì quay về JS.
+            var ipSource = (await NVOAMASIS.Services.Hr.HrSettingsService.GetAsync(_db)).AttendanceIpSource;
+            var ip = ipSource == "server" ? GetClientIp() : string.Empty;
+            if (string.IsNullOrWhiteSpace(ip))
+                ip = await _js.InvokeAsync<string>("getPublicIp");
             _Snackbar.Add($"IP Client : {ip}", MudBlazor.Severity.Info); 
 
             var cidrs = GetWhitelistedIpCidrs();

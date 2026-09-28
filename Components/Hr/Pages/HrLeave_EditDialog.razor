@@ -1,0 +1,176 @@
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrLeaveService LeaveSvc
+
+<MudDialog>
+    <DialogContent>
+        <MudForm @ref="_form">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" Value="Input.LeaveType" ValueChanged="OnTypeChanged" Label="@L("hr_leave_type")"
+                               Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @foreach (var t in HrLeaveType.All)
+                        {
+                            <MudSelectItem T="int" Value="@t">@L(HrLeaveType.Key(t))</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudSelect T="int" Value="Input.DurationType" ValueChanged="OnDurationChanged" Label="@L("hr_leave_duration")"
+                               Variant="Variant.Outlined" Margin="Margin.Dense">
+                        @if (Input.LeaveType != HrLeaveType.GoOut)
+                        {
+                            <MudSelectItem T="int" Value="@HrLeaveDuration.FullDay">@L(HrLeaveDuration.Key(HrLeaveDuration.FullDay))</MudSelectItem>
+                        }
+                        <MudSelectItem T="int" Value="@HrLeaveDuration.HalfDay">@L(HrLeaveDuration.Key(HrLeaveDuration.HalfDay))</MudSelectItem>
+                        <MudSelectItem T="int" Value="@HrLeaveDuration.Hours">@L(HrLeaveDuration.Key(HrLeaveDuration.Hours))</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+
+                <MudItem xs="12" sm="6">
+                    <MudDatePicker Date="Input.StartDate" DateChanged="OnStartChanged" DateFormat="dd/MM/yyyy" Editable="true"
+                                   Label="@(Input.DurationType == HrLeaveDuration.FullDay ? L("hr_start_date") : L("hr_date"))"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                @if (Input.DurationType == HrLeaveDuration.FullDay)
+                {
+                    <MudItem xs="12" sm="6">
+                        <MudDatePicker Date="Input.EndDate" DateChanged="OnEndChanged" DateFormat="dd/MM/yyyy" Editable="true"
+                                       Label="@L("hr_end_date")" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    </MudItem>
+                }
+                else if (Input.DurationType == HrLeaveDuration.HalfDay)
+                {
+                    <MudItem xs="12" sm="6">
+                        <MudRadioGroup T="bool" Value="Input.HalfMorning" ValueChanged="OnHalfChanged" Class="mt-2">
+                            <MudRadio T="bool" Value="true" Color="Color.Primary">@L("hr_morning")</MudRadio>
+                            <MudRadio T="bool" Value="false" Color="Color.Primary">@L("hr_afternoon")</MudRadio>
+                        </MudRadioGroup>
+                    </MudItem>
+                }
+                else
+                {
+                    <MudItem xs="6" sm="3">
+                        <MudTimePicker Time="Input.StartTime" TimeChanged="OnStartTimeChanged" Label="@L("hr_from_time")"
+                                       Editable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    </MudItem>
+                    <MudItem xs="6" sm="3">
+                        <MudTimePicker Time="Input.EndTime" TimeChanged="OnEndTimeChanged" Label="@L("hr_to_time")"
+                                       Editable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    </MudItem>
+                }
+
+                <MudItem xs="12">
+                    <MudTextField T="string" @bind-Value="Input.Reason" Label="@L("hr_leave_reason")" Lines="3" MaxLength="1000"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Required="true" RequiredError="@L("hr_err_leave_reason")" />
+                </MudItem>
+
+                <MudItem xs="12">
+                    @if (_calcError != null)
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true">@L(_calcError)</MudAlert>
+                    }
+                    else if (_qty.HasValue)
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true">
+                            @string.Format(L("hr_leave_calc_days"), _qty.Value.Days.ToString("0.##"))
+                            @if (_qty.Value.Hours.HasValue)
+                            {
+                                <span> (@string.Format(L("hr_leave_calc_hours"), _qty.Value.Hours.Value.ToString("0.##")))</span>
+                            }
+                            @if (Input.LeaveType == HrLeaveType.Annual && Balance != null)
+                            {
+                                <span> · @string.Format(L("hr_leave_available_after"), (Balance.Available + _ownPendingDays - _qty.Value.Days).ToString("0.##"))</span>
+                            }
+                        </MudAlert>
+                    }
+                </MudItem>
+            </MudGrid>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="@(() => MudDialog.Cancel())" Disabled="_saving">@L("cancel")</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync" Disabled="_saving">
+            @(Input.Id.HasValue ? L("save") : L("hr_leave_send"))
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public HrLeaveInput Input { get; set; } = new();
+    /// <summary>Quỹ phép năm của người gửi (để hiển thị số còn lại).</summary>
+    [Parameter] public HrLeaveBalanceRow? Balance { get; set; }
+    /// <summary>Số ngày của chính đơn đang sửa (đã nằm trong Pending).</summary>
+    [Parameter] public decimal OwnPendingDays { get; set; }
+
+    private MudForm? _form;
+    private bool _saving;
+    private HrLeaveQuantity? _qty;
+    private string? _calcError;
+    private decimal _ownPendingDays;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _ownPendingDays = OwnPendingDays;
+        await RecalcAsync();
+    }
+
+    private async Task RecalcAsync()
+    {
+        var (qty, err) = await LeaveSvc.CalculateAsync(Input);
+        _qty = qty;
+        _calcError = err;
+    }
+
+    private async Task OnTypeChanged(int v)
+    {
+        Input.LeaveType = v;
+        if (v == HrLeaveType.GoOut && Input.DurationType == HrLeaveDuration.FullDay)
+            Input.DurationType = HrLeaveDuration.Hours;
+        await RecalcAsync();
+    }
+
+    private async Task OnDurationChanged(int v) { Input.DurationType = v; await RecalcAsync(); }
+
+    private async Task OnStartChanged(DateTime? d)
+    {
+        if (d is null) return;
+        Input.StartDate = d.Value.Date;
+        if (Input.EndDate < Input.StartDate) Input.EndDate = Input.StartDate;
+        await RecalcAsync();
+    }
+
+    private async Task OnEndChanged(DateTime? d)
+    {
+        if (d is null) return;
+        Input.EndDate = d.Value.Date;
+        await RecalcAsync();
+    }
+
+    private async Task OnHalfChanged(bool v) { Input.HalfMorning = v; await RecalcAsync(); }
+    private async Task OnStartTimeChanged(TimeSpan? t) { Input.StartTime = t; await RecalcAsync(); }
+    private async Task OnEndTimeChanged(TimeSpan? t) { Input.EndTime = t; await RecalcAsync(); }
+
+    private async Task SaveAsync()
+    {
+        if (_form is null) return;
+        await _form.Validate();
+        if (!_form.IsValid) return;
+        if (CurrentUserId is null)
+        {
+            Notify(L("hr_err_no_user"), Severity.Error);
+            return;
+        }
+
+        _saving = true;
+        var rs = Input.Id.HasValue
+            ? await LeaveSvc.UpdateAsync(Input, CurrentUserId.Value)
+            : await LeaveSvc.SubmitAsync(Input, CurrentUserId.Value, Usr);
+        _saving = false;
+        Notify(rs);
+        if (rs.Success)
+            MudDialog.Close(DialogResult.Ok(rs.Id));
+    }
+}

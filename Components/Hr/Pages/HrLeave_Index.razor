@@ -1,0 +1,444 @@
+@attribute [Authorize]
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrLeaveService LeaveSvc
+@inject HrEmployeeService EmployeeSvc
+
+<PageTitle>@L("hr_leave")</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"12.5 {L("hr_leave")}")" Subtitle="@L("hr_leave_subtitle")" />
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3"
+                 @bind-ActivePanelIndex="_tabIndex">
+            @* ───────────── Đơn của tôi ───────────── *@
+            <MudTabPanel Text="@L("hr_leave_tab_my")" Icon="@Icons.Material.Filled.Person">
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                    <MudButton Variant="Variant.Filled" Color="Color.Secondary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Add" OnClick="NewAsync" Disabled="_busy || CurrentUserId is null">
+                        @L("hr_leave_new")
+                    </MudButton>
+                    <MudSelect T="int" Value="_myYear" ValueChanged="OnMyYearChanged" Label="@L("hr_year")" Dense="true"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:120px">
+                        @foreach (var y in Years)
+                        {
+                            <MudSelectItem T="int" Value="@y">@y</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadMyAsync" Disabled="_busy">@L("reload")</MudButton>
+                </MudStack>
+
+                @if (_myBalance != null)
+                {
+                    <MudPaper Class="pa-3 mb-2" Outlined="true">
+                        <MudStack Row="true" Spacing="4" Class="flex-wrap">
+                            @BalanceStat(L("hr_bal_total"), _myBalance.Total, Color.Default)
+                            @BalanceStat(L("hr_bal_used"), _myBalance.Used, Color.Info)
+                            @BalanceStat(L("hr_bal_pending"), _myBalance.Pending, Color.Warning)
+                            @BalanceStat(L("hr_bal_available"), _myBalance.Available, _myBalance.Available < 0 ? Color.Error : Color.Success)
+                        </MudStack>
+                        <MudText Typo="Typo.caption">
+                            @string.Format(L("hr_bal_breakdown"), N2(_myBalance.Entitled), N2(_myBalance.SeniorityBonus),
+                                N2(_myBalance.CarriedOver), N2(_myBalance.Adjustment))
+                        </MudText>
+                    </MudPaper>
+                }
+                else if (!_busy)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">@L("hr_leave_no_profile")</MudAlert>
+                }
+
+                @LeaveGrid(_my, mode: "my")
+            </MudTabPanel>
+
+            @* ───────────── Chờ tôi duyệt ───────────── *@
+            @if (_isApprover)
+            {
+                <MudTabPanel Text="@L("hr_leave_tab_approve")" Icon="@Icons.Material.Filled.AssignmentLate"
+                             BadgeData="@(_pending.Count > 0 ? _pending.Count.ToString() : null)" BadgeColor="Color.Warning">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadPendingAsync" Disabled="_busy">@L("reload")</MudButton>
+                        @if (_leavePerm.Approve)
+                        {
+                            <MudText Typo="Typo.caption">@L("hr_leave_hr_approver_hint")</MudText>
+                        }
+                    </MudStack>
+                    @LeaveGrid(_pending, mode: "approve")
+                </MudTabPanel>
+            }
+
+            @* ───────────── Tất cả đơn ───────────── *@
+            @if (_leavePerm.View)
+            {
+                <MudTabPanel Text="@L("hr_leave_tab_all")" Icon="@Icons.Material.Filled.ListAlt">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                        <MudSelect T="int?" Value="_filter.Year" ValueChanged="@(async (int? v) => { _filter.Year = v; await LoadAllAsync(); })"
+                                   Label="@L("hr_year")" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:110px">
+                            @foreach (var y in Years)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)y)">@y</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudSelect T="int?" Value="_filter.Month" ValueChanged="@(async (int? v) => { _filter.Month = v; await LoadAllAsync(); })"
+                                   Label="@L("hr_month")" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:110px">
+                            @for (var m = 1; m <= 12; m++)
+                            {
+                                var mm = m;
+                                <MudSelectItem T="int?" Value="@((int?)mm)">@mm</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudSelect T="int?" Value="_filter.Status" ValueChanged="@(async (int? v) => { _filter.Status = v; await LoadAllAsync(); })"
+                                   Label="@L("hr_status")" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:160px">
+                            @foreach (var st in HrLeaveStatus.All)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)st)">@L(HrLeaveStatus.Key(st))</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudSelect T="int?" Value="_filter.LeaveType" ValueChanged="@(async (int? v) => { _filter.LeaveType = v; await LoadAllAsync(); })"
+                                   Label="@L("hr_leave_type")" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:180px">
+                            @foreach (var t in HrLeaveType.All)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)t)">@L(HrLeaveType.Key(t))</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudSelect T="Guid?" Value="_filter.DepartmentId" ValueChanged="@(async (Guid? v) => { _filter.DepartmentId = v; await LoadAllAsync(); })"
+                                   Label="@L("hr_department")" Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:220px">
+                            @foreach (var d in _departments)
+                            {
+                                <MudSelectItem T="Guid?" Value="@((Guid?)d.Id)">@d.Display</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudTextField T="string" @bind-Value="_filter.Search" Label="@L("hr_search")" Clearable="true"
+                                      OnKeyUp="@(async (KeyboardEventArgs e) => { if (e.Key == "Enter") await LoadAllAsync(); })"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:220px" />
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Refresh" OnClick="LoadAllAsync" Disabled="_busy">@L("reload")</MudButton>
+                        <MudSpacer />
+                        <MudText Typo="Typo.body2">@string.Format(L("hr_total_rows"), _all.Count)</MudText>
+                    </MudStack>
+                    @LeaveGrid(_all, mode: "all")
+                </MudTabPanel>
+            }
+        </MudTabs>
+    </MudPaper>
+</div>
+
+@code {
+    /// <summary>"my" | "approve" | "all" — tab mở ban đầu (dùng khi mở từ icon trên thanh tiêu đề).</summary>
+    [Parameter] public string? InitialTab { get; set; }
+
+    private bool _busy;
+    private int _tabIndex;
+    private HrPerm _leavePerm = HrPerm.None;
+    private bool _isApprover;
+    private int _myYear = DateTime.Today.Year;
+    private HrLeaveBalanceRow? _myBalance;
+    private List<HrLeaveRow> _my = new();
+    private List<HrLeaveRow> _pending = new();
+    private List<HrLeaveRow> _all = new();
+    private List<HrLookupItem> _departments = new();
+    private readonly HrLeaveFilter _filter = new() { Year = DateTime.Today.Year, Month = DateTime.Today.Month };
+
+    private static IEnumerable<int> Years => Enumerable.Range(DateTime.Today.Year - 3, 5).Reverse();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _leavePerm = await PermSvc.GetAsync(Usr, HrLeaveService.LeaveMenu);
+        if (CurrentUserId.HasValue)
+            _isApprover = _leavePerm.Approve || await LeaveSvc.IsManagerApproverAsync(CurrentUserId.Value);
+
+        await LoadMyAsync();
+        if (_isApprover) await LoadPendingAsync();
+        if (_leavePerm.View)
+        {
+            _departments = await EmployeeSvc.GetDepartmentLookupAsync();
+            await LoadAllAsync();
+        }
+
+        // Thứ tự tab: 0 = của tôi, 1 = chờ duyệt (nếu có), tiếp theo = tất cả.
+        _tabIndex = InitialTab switch
+        {
+            "approve" when _isApprover => 1,
+            "all" when _leavePerm.View => _isApprover ? 2 : 1,
+            _ => 0
+        };
+    }
+
+    private async Task OnMyYearChanged(int y)
+    {
+        _myYear = y;
+        await LoadMyAsync();
+    }
+
+    private async Task LoadMyAsync()
+    {
+        if (CurrentUserId is null) return;
+        try
+        {
+            _busy = true;
+            _my = await LeaveSvc.GetMyAsync(CurrentUserId.Value, _myYear);
+            _myBalance = await LeaveSvc.GetMyBalanceAsync(CurrentUserId.Value, _myYear);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task LoadPendingAsync()
+    {
+        if (CurrentUserId is null) return;
+        try
+        {
+            _busy = true;
+            _pending = await LeaveSvc.GetPendingForAsync(CurrentUserId.Value, _leavePerm.Approve);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task LoadAllAsync()
+    {
+        if (!_leavePerm.View) return;
+        try
+        {
+            _busy = true;
+            _all = await LeaveSvc.GetAllAsync(_filter);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ReloadAllTabsAsync()
+    {
+        await LoadMyAsync();
+        if (_isApprover) await LoadPendingAsync();
+        if (_leavePerm.View) await LoadAllAsync();
+    }
+
+    // ───────────── Thao tác ─────────────
+
+    private async Task NewAsync()
+    {
+        var input = new HrLeaveInput();
+        await OpenEditorAsync(input, L("hr_leave_new"), 0);
+    }
+
+    private async Task EditAsync(HrLeaveRow r)
+    {
+        var input = new HrLeaveInput
+        {
+            Id = r.Id,
+            LeaveType = r.LeaveType,
+            DurationType = r.DurationType,
+            StartDate = r.StartDate,
+            EndDate = r.EndDate,
+            HalfMorning = r.StartTime is null || r.StartTime.Value < new TimeSpan(12, 0, 0),
+            StartTime = r.StartTime ?? new TimeSpan(8, 0, 0),
+            EndTime = r.EndTime ?? new TimeSpan(10, 0, 0),
+            Reason = r.Reason
+        };
+        var own = r.LeaveType == HrLeaveType.Annual && r.StartDate.Year == _myYear ? r.TotalDays : 0;
+        await OpenEditorAsync(input, L("hr_leave_edit"), own);
+    }
+
+    private async Task OpenEditorAsync(HrLeaveInput input, string title, decimal ownPending)
+    {
+        var bal = _myBalance != null && _myBalance.Year == input.StartDate.Year ? _myBalance : null;
+        var dlg = DialogService.Show<HrLeave_EditDialog>(title,
+            new DialogParameters { ["Input"] = input, ["Balance"] = bal, ["OwnPendingDays"] = ownPending },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true, CloseOnEscapeKey = false });
+        var rs = await dlg.Result;
+        if (!rs.Canceled) await ReloadAllTabsAsync();
+    }
+
+    private async Task DeleteAsync(HrLeaveRow r)
+    {
+        if (CurrentUserId is null) return;
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"), L("hr_leave_delete_confirm"),
+            yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await LeaveSvc.DeleteAsync(r.Id, CurrentUserId.Value);
+        Notify(rs);
+        if (rs.Success) await ReloadAllTabsAsync();
+    }
+
+    private async Task ApproveAsync(HrLeaveRow r)
+    {
+        if (CurrentUserId is null) return;
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_leave_approve_confirm"), r.UserName, Period(r)),
+            yesText: L("hr_approve"), cancelText: L("cancel"));
+        if (ok != true) return;
+        var rs = await LeaveSvc.ReviewAsync(r.Id, true, null, CurrentUserId.Value, _leavePerm.Approve);
+        Notify(rs);
+        await ReloadAllTabsAsync();
+    }
+
+    private async Task RejectAsync(HrLeaveRow r)
+    {
+        if (CurrentUserId is null) return;
+        var comment = await AskCommentAsync(L("hr_reject"), string.Format(L("hr_leave_reject_confirm"), r.UserName, Period(r)),
+            Color.Error, required: true);
+        if (comment is null) return;
+        var rs = await LeaveSvc.ReviewAsync(r.Id, false, comment, CurrentUserId.Value, _leavePerm.Approve);
+        Notify(rs);
+        await ReloadAllTabsAsync();
+    }
+
+    private async Task CancelApprovedAsync(HrLeaveRow r)
+    {
+        if (CurrentUserId is null) return;
+        var comment = await AskCommentAsync(L("hr_leave_cancel"), string.Format(L("hr_leave_cancel_confirm"), r.UserName, Period(r)),
+            Color.Warning, required: true);
+        if (comment is null) return;
+        var rs = await LeaveSvc.CancelApprovedAsync(r.Id, comment, CurrentUserId.Value, _leavePerm.Approve);
+        Notify(rs);
+        await ReloadAllTabsAsync();
+    }
+
+    private async Task<string?> AskCommentAsync(string confirmText, string message, Color color, bool required)
+    {
+        var dlg = DialogService.Show<HrComment_Dialog>(confirmText,
+            new DialogParameters
+            {
+                ["Message"] = message, ["ConfirmText"] = confirmText, ["ConfirmColor"] = color, ["Required"] = required
+            },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+        var rs = await dlg.Result;
+        return rs.Canceled ? null : rs.Data as string;
+    }
+
+    // ───────────── Hiển thị ─────────────
+
+    private static string N2(decimal v) => v.ToString("0.##");
+
+    private string Period(HrLeaveRow r) => r.DurationType switch
+    {
+        HrLeaveDuration.FullDay when r.EndDate.Date != r.StartDate.Date => $"{D(r.StartDate)} - {D(r.EndDate)}",
+        HrLeaveDuration.FullDay => D(r.StartDate),
+        HrLeaveDuration.HalfDay => $"{D(r.StartDate)} ({(r.StartTime is null || r.StartTime.Value.Hours < 12 ? L("hr_morning") : L("hr_afternoon"))})",
+        _ => $"{D(r.StartDate)} {r.StartTime:hh\\:mm}-{r.EndTime:hh\\:mm}"
+    };
+
+    private string Amount(HrLeaveRow r) =>
+        r.DurationType == HrLeaveDuration.Hours && r.TotalHours.HasValue
+            ? string.Format(L("hr_leave_calc_hours"), N2(r.TotalHours.Value))
+            : string.Format(L("hr_leave_calc_days"), N2(r.TotalDays));
+
+    private static Color LeaveStatusColor(int s) => s switch
+    {
+        HrLeaveStatus.Pending => Color.Warning,
+        HrLeaveStatus.Approved => Color.Success,
+        HrLeaveStatus.Rejected => Color.Error,
+        _ => Color.Default
+    };
+
+    private RenderFragment BalanceStat(string label, decimal value, Color color) => __builder =>
+    {
+        <div>
+            <MudText Typo="Typo.caption">@label</MudText>
+            <MudText Typo="Typo.h6" Color="@color"><b>@N2(value)</b></MudText>
+        </div>
+    };
+
+    private RenderFragment LeaveGrid(List<HrLeaveRow> items, string mode) => __builder =>
+    {
+        <MudTable T="HrLeaveRow" Items="items" Dense="true" Hover="true" Bordered="true" Striped="true"
+                  Loading="_busy" FixedHeader="true" Height="calc(100vh - 380px)">
+            <HeaderContent>
+                @if (mode != "my")
+                {
+                    <MudTh>@L("hr_employee")</MudTh>
+                }
+                <MudTh>@L("hr_leave_type")</MudTh>
+                <MudTh>@L("hr_leave_period")</MudTh>
+                <MudTh>@L("hr_leave_amount")</MudTh>
+                <MudTh>@L("hr_leave_reason")</MudTh>
+                @if (mode == "approve")
+                {
+                    <MudTh>@L("hr_bal_remaining")</MudTh>
+                }
+                <MudTh>@L("hr_status")</MudTh>
+                <MudTh>@L("hr_leave_approver")</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                @if (mode != "my")
+                {
+                    <MudTd>
+                        <div><b>@context.EmployeeCode</b> - @context.UserName</div>
+                        <MudText Typo="Typo.caption">@context.DepartmentName</MudText>
+                    </MudTd>
+                }
+                <MudTd>@L(HrLeaveType.Key(context.LeaveType))</MudTd>
+                <MudTd Style="white-space:nowrap">@Period(context)</MudTd>
+                <MudTd Style="white-space:nowrap">@Amount(context)</MudTd>
+                <MudTd>@context.Reason</MudTd>
+                @if (mode == "approve")
+                {
+                    <MudTd>
+                        @if (context.LeaveType == HrLeaveType.Annual && context.RemainingAnnual.HasValue)
+                        {
+                            <MudText Typo="Typo.body2" Color="@(context.RemainingAnnual.Value < context.TotalDays ? Color.Error : Color.Default)">
+                                @N2(context.RemainingAnnual.Value)
+                            </MudText>
+                        }
+                    </MudTd>
+                }
+                <MudTd>
+                    <MudChip Size="Size.Small" Color="@LeaveStatusColor(context.Status)">@L(HrLeaveStatus.Key(context.Status))</MudChip>
+                </MudTd>
+                <MudTd>
+                    @if (context.Status == HrLeaveStatus.Pending)
+                    {
+                        <MudText Typo="Typo.caption">@(context.AssignedApproverName ?? L("hr_leave_hr_pool"))</MudText>
+                    }
+                    else
+                    {
+                        <div>@context.ApproverName</div>
+                        <MudText Typo="Typo.caption">@context.ApproverComment</MudText>
+                    }
+                </MudTd>
+                <MudTd Style="white-space:nowrap">
+                    @if (mode == "my" && context.Status == HrLeaveStatus.Pending)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Primary" OnClick="@(() => EditAsync(context))" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="@(() => DeleteAsync(context))" />
+                    }
+                    @if (mode == "approve")
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success" OnClick="@(() => ApproveAsync(context))">@L("hr_approve")</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error" Class="ml-1" OnClick="@(() => RejectAsync(context))">@L("hr_reject")</MudButton>
+                    }
+                    @if (mode == "all" && _leavePerm.Approve && context.Status == HrLeaveStatus.Approved)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" OnClick="@(() => CancelApprovedAsync(context))">@L("hr_leave_cancel")</MudButton>
+                    }
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2">@L("hr_no_items")</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    };
+}

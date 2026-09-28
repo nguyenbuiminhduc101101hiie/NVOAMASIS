@@ -1,0 +1,138 @@
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrEmployeeService EmployeeSvc
+
+<MudDialog>
+    <DialogContent>
+        @if (_row is null)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else
+        {
+            <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3" Style="min-height:520px">
+                <MudTabPanel Text="@L("hr_tab_overview")" Icon="@Icons.Material.Filled.Person">
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" md="6">
+                            <MudSimpleTable Dense="true" Bordered="true">
+                                <tbody>
+                                    @Row(L("hr_employee_code"), _row.EmployeeCode)
+                                    @Row(L("hr_full_name"), _row.FullName)
+                                    @Row(L("hr_gender"), L(HrGender.Key(_e!.Gender)))
+                                    @Row(L("hr_dob"), D(_e.DateOfBirth))
+                                    @Row(L("hr_phone"), _e.Phone)
+                                    @Row(L("hr_personal_email"), _e.PersonalEmail)
+                                    @Row(L("hr_current_address"), _e.CurrentAddress)
+                                    @Row(L("hr_emergency_name"), JoinNonEmpty(_e.EmergencyContactName, _e.EmergencyContactPhone))
+                                    @Row(L("hr_id_card_no"), JoinNonEmpty(_e.IdCardNo, D(_e.IdCardIssueDate), _e.IdCardIssuePlace))
+                                    @Row(L("hr_tax_code"), _e.PersonalTaxCode)
+                                    @Row(L("hr_social_insurance_no"), _e.SocialInsuranceNo)
+                                </tbody>
+                            </MudSimpleTable>
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudSimpleTable Dense="true" Bordered="true">
+                                <tbody>
+                                    <tr>
+                                        <td style="width:40%"><b>@L("hr_status")</b></td>
+                                        <td>
+                                            <MudChip Size="Size.Small" Color="@StatusColor(_row.Status)">@L(HrEmployeeStatus.Key(_row.Status))</MudChip>
+                                        </td>
+                                    </tr>
+                                    @Row(L("hr_department"), _row.DepartmentName)
+                                    @Row(L("hr_position"), _row.PositionName)
+                                    @Row(L("hr_branch"), _row.Branch)
+                                    @Row(L("hr_manager"), _row.ManagerName)
+                                    @Row(L("hr_account"), _row.UserName)
+                                    @Row(L("hr_work_email"), _e.WorkEmail)
+                                    @Row(L("hr_join_date"), D(_e.JoinDate))
+                                    @Row(L("hr_probation_end"), D(_e.ProbationEndDate))
+                                    @Row(L("hr_official_date"), D(_e.OfficialDate))
+                                    @Row(L("hr_seniority"), Seniority())
+                                    @if (_e.Status == HrEmployeeStatus.Resigned)
+                                    {
+                                        @Row(L("hr_resign_date"), D(_e.ResignDate))
+                                        @Row(L("hr_resign_reason"), _e.ResignReason)
+                                    }
+                                    @Row(L("hr_bank_account"), JoinNonEmpty(_e.BankAccountNo, _e.BankName, _e.BankBranch))
+                                    @Row(L("hr_dependent_count"), _e.DependentCount.ToString())
+                                </tbody>
+                            </MudSimpleTable>
+                        </MudItem>
+                        @if (!string.IsNullOrWhiteSpace(_e.Note))
+                        {
+                            <MudItem xs="12">
+                                <MudAlert Severity="Severity.Normal" Dense="true">@_e.Note</MudAlert>
+                            </MudItem>
+                        }
+                    </MudGrid>
+                </MudTabPanel>
+                <MudTabPanel Text="@L("hr_tab_contracts")" Icon="@Icons.Material.Filled.Description">
+                    <HrContract_Panel EmployeeId="EmployeeId" ShowFilters="false" Height="440px" />
+                </MudTabPanel>
+                <MudTabPanel Text="@L("hr_tab_documents")" Icon="@Icons.Material.Filled.AttachFile">
+                    <HrDocument_Panel EmployeeId="EmployeeId" />
+                </MudTabPanel>
+                <MudTabPanel Text="@L("hr_tab_history")" Icon="@Icons.Material.Filled.History">
+                    <HrHistory_Panel EmployeeId="EmployeeId" />
+                </MudTabPanel>
+            </MudTabs>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@(() => MudDialog.Close(DialogResult.Ok(true)))">@L("hr_close")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public Guid EmployeeId { get; set; }
+
+    private HrEmployee? _e;
+    private HrEmployeeRow? _row;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        var perm = await PermSvc.GetAsync(Usr, HrMenus.Employee);
+        if (!perm.View)
+        {
+            NoPermission("View");
+            MudDialog.Cancel();
+            return;
+        }
+
+        _e = await EmployeeSvc.GetAsync(EmployeeId);
+        if (_e is null)
+        {
+            Notify(L("hr_err_not_found"), Severity.Warning);
+            MudDialog.Cancel();
+            return;
+        }
+        var rows = await EmployeeSvc.GetListAsync(new HrEmployeeFilter { Search = _e.EmployeeCode, IncludeResigned = true });
+        _row = rows.FirstOrDefault(x => x.Id == EmployeeId) ?? new HrEmployeeRow
+        {
+            Id = _e.Id, EmployeeCode = _e.EmployeeCode, FullName = _e.FullName, Status = _e.Status
+        };
+    }
+
+    private static string JoinNonEmpty(params string?[] parts) =>
+        string.Join(" - ", parts.Where(x => !string.IsNullOrWhiteSpace(x)));
+
+    private string Seniority()
+    {
+        if (_e?.JoinDate is null) return string.Empty;
+        var end = _e.Status == HrEmployeeStatus.Resigned && _e.ResignDate.HasValue ? _e.ResignDate.Value : DateTime.Today;
+        var months = (end.Year - _e.JoinDate.Value.Year) * 12 + end.Month - _e.JoinDate.Value.Month;
+        if (end.Day < _e.JoinDate.Value.Day) months--;
+        if (months < 0) months = 0;
+        return string.Format(L("hr_seniority_format"), months / 12, months % 12);
+    }
+
+    private RenderFragment Row(string label, string? value) => __builder =>
+    {
+        <tr>
+            <td style="width:40%"><b>@label</b></td>
+            <td>@value</td>
+        </tr>
+    };
+}

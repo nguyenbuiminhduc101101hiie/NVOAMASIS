@@ -1,0 +1,80 @@
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrPayrollService PayrollSvc
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.subtitle2" Class="mb-2">@Slip.EmployeeCode - @Slip.FullName · @Slip.DepartmentName</MudText>
+        <MudGrid Spacing="2">
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="decimal?" @bind-Value="_in.PaidDaysOverride" Label="@L("hr_pay_paid_days_override")" Min="0" Step="0.5m"
+                                 Format="0.##" HelperText="@string.Format(L("hr_pay_paid_days_hint"), Slip.TimesheetPaidDays.ToString("0.##"), Slip.StandardDays.ToString("0.##"))"
+                                 Clearable="true" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="int" @bind-Value="_in.TaxMode" Label="@L("hr_pay_tax_mode")" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    @foreach (var m in HrTaxMode.All)
+                    {
+                        <MudSelectItem T="int" Value="@m">@L(HrTaxMode.Key(m))</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            @Money(L("hr_pay_overtime"), () => _in.Overtime, v => _in.Overtime = v)
+            @Money(L("hr_pay_bonus"), () => _in.Bonus, v => _in.Bonus = v)
+            @Money(L("hr_pay_other_income"), () => _in.OtherIncome, v => _in.OtherIncome = v)
+            @Money(L("hr_pay_non_taxable"), () => _in.NonTaxableIncome, v => _in.NonTaxableIncome = v, L("hr_pay_non_taxable_hint"))
+            @Money(L("hr_pay_advance"), () => _in.Advance, v => _in.Advance = v)
+            @Money(L("hr_pay_other_deduction"), () => _in.OtherDeduction, v => _in.OtherDeduction = v)
+            <MudItem xs="12">
+                <MudTextField T="string" @bind-Value="_in.Note" Label="@L("hr_note")" Lines="2" MaxLength="1000"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="@(() => MudDialog.Cancel())" Disabled="_saving">@L("cancel")</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveAsync" Disabled="_saving">@L("hr_pay_save_recalc")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public HrPayslip Slip { get; set; } = new();
+
+    private HrPayslipInput _in = new();
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _in = new HrPayslipInput
+        {
+            Id = Slip.Id,
+            PaidDaysOverride = Slip.PaidDaysOverride,
+            Overtime = Slip.Overtime,
+            Bonus = Slip.Bonus,
+            OtherIncome = Slip.OtherIncome,
+            NonTaxableIncome = Slip.NonTaxableIncome,
+            Advance = Slip.Advance,
+            OtherDeduction = Slip.OtherDeduction,
+            TaxMode = Slip.TaxMode,
+            Note = Slip.Note
+        };
+    }
+
+    private RenderFragment Money(string label, Func<decimal> get, Action<decimal> set, string? hint = null) => __builder =>
+    {
+        <MudItem xs="12" sm="6">
+            <MudNumericField T="decimal" Value="@get()" ValueChanged="@((decimal v) => set(v))" Label="@label" Min="0"
+                             Format="N0" HideSpinButtons="true" HelperText="@hint" Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+    };
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        var rs = await PayrollSvc.UpdatePayslipAsync(_in, Usr);
+        _saving = false;
+        Notify(rs);
+        if (rs.Success) MudDialog.Close(DialogResult.Ok(true));
+    }
+}

@@ -26,6 +26,13 @@ namespace NVOAMASIS.Models
         // 1=Pending, 2=Approved, 3=Rejected
         public int Status { get; set; } = 1;
         
+        /// <summary>
+        /// Người được giao duyệt (quản lý trực tiếp theo HrEmployee.ManagerEmployeeId, lưu UserList.UsrId).
+        /// Null = không có quản lý → người có quyền Approve trên "LeaveRequests" duyệt.
+        /// Cột thêm bởi Scripts/CreateHrLeaveTimesheetTables.sql.
+        /// </summary>
+        public Guid? AssignedApproverId { get; set; }
+
         public Guid? ApproverId { get; set; }
         public DateTime? ApprovedDate { get; set; }
         

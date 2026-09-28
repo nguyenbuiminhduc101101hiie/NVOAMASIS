@@ -487,7 +487,7 @@ public class TenantDatabaseProvisioningService(
         CancellationToken cancellationToken)
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlServer(tenantConnectionString)
+            .UseSqlServer(tenantConnectionString, sql => sql.UseCompatibilityLevel(120))
             .Options;
 
         await using var db = new AppDbContext(options);

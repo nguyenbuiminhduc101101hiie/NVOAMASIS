@@ -22,6 +22,7 @@
 @inject NVOAMASIS.Services.Chat.ChatNotifier ChatNotifier
 @inject NVOAMASIS.Services.Chat.ChatIdentity ChatIdentity
 @inject NVOAMASIS.Services.Chat.ChatNavigator ChatNavigator
+@inject NVOAMASIS.Services.Hr.HrLeaveService HrLeaveSvc
 
 <MudThemeProvider />
 <MudDialogProvider />
@@ -170,6 +171,11 @@
                             {
                                 <MudIconButton Icon="@Icons.Material.Filled.EventNote" Color="Color.Inherit" @onclick="OpenLeaveRequestTab" Style="margin-right:20px" />
                             }
+                            @* Quản lý trực tiếp (HrEmployee.ManagerEmployeeId) cũng thấy nút duyệt nghỉ phép *@
+                            @if (_isLeaveApprover)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.AssignmentLate" Color="Color.Inherit" @onclick="OpenAdminLeaveRequest" Style="margin-right:20px" />
+                            }
                             <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_checkedInToday" OnClick="CheckIn" Style="margin-right:20px; min-width:140px">
                                 @(_checkedInToday ? Localizer["Đã chấm"] : Localizer["Chấm công"])
                             </MudButton>
@@ -177,7 +183,7 @@
                         else
                         {
                             @* <MudIconButton Icon="@Icons.Material.Filled.AssignmentTurnedIn" Color="Color.Inherit" @onclick="OpenAdminOutRequest" Style="margin-right:20px" /> *@
-                            @if (_canApproveLeaveRequests)
+                            @if (_isLeaveApprover)
                             {
                                 <MudIconButton Icon="@Icons.Material.Filled.AssignmentLate" Color="Color.Inherit" @onclick="OpenAdminLeaveRequest" Style="margin-right:20px" />
                             }
@@ -334,6 +340,8 @@
     // Permission variables
     private bool _canViewLeaveRequests = false;
     private bool _canApproveLeaveRequests = false;
+    /// <summary>Có quyền Approve LeaveRequests HOẶC là quản lý trực tiếp của ít nhất 1 nhân viên.</summary>
+    private bool _isLeaveApprover = false;
 
     // private ISnackbar? _checkInReminder;
     private MudBlazor.Snackbar? _checkInReminder;
@@ -364,6 +372,7 @@
                     _canViewLeaveRequests = await SharedService.CheckPermission(user.Usr, "view", "LeaveRequests");
                     _canApproveLeaveRequests = await SharedService.CheckPermission(user.Usr, "approve", "LeaveRequests");
                 }
+                _isLeaveApprover = _canApproveLeaveRequests || await HrLeaveSvc.IsManagerApproverAsync(user.UsrId);
             }
         }
         catch (Exception ex)
@@ -733,12 +742,20 @@
     private Task OpenAdminOutRequest(){
         _tabs?.OpenTab("outreq_approve", Localizer["Approve Out Requests"], RenderComponent(typeof(Components.OutRequests.OutRequestApprove))); 
         return Task.CompletedTask; }
+    // Giai đoạn 2 HR: dùng trang 12.5 Nghỉ phép (tính ngày công, quỹ phép, duyệt theo quản lý trực tiếp).
+    // Trang cũ Components/LeaveRequests/* vẫn giữ nguyên nhưng không còn được mở từ đây.
     private Task OpenLeaveRequestTab(){
-        _tabs?.OpenTab("leave_submit", "Đăng ký nghỉ phép", RenderComponent(typeof(Components.LeaveRequests.LeaveRequestSubmit)));
+        _tabs?.OpenTab("leave_submit", Localizer["hr_leave"], RenderHrLeave("my"));
         return Task.CompletedTask; }
     private Task OpenAdminLeaveRequest(){
-        _tabs?.OpenTab("leave_approve", "Duyệt nghỉ phép", RenderComponent(typeof(Components.LeaveRequests.LeaveRequestApprove))); 
+        _tabs?.OpenTab("leave_approve", Localizer["hr_leave_tab_approve"], RenderHrLeave("approve"));
         return Task.CompletedTask; }
+    private static RenderFragment RenderHrLeave(string initialTab) => builder =>
+    {
+        builder.OpenComponent<Components.Hr.Pages.HrLeave_Index>(0);
+        builder.AddAttribute(1, nameof(Components.Hr.Pages.HrLeave_Index.InitialTab), initialTab);
+        builder.CloseComponent();
+    };
     private async Task TogglePopover()
     {
         _open = !_open;
