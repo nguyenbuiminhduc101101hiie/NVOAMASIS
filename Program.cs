@@ -225,6 +225,7 @@ builder.Services.AddScoped<ProductPriceAttachmentService>();
 builder.Services.AddScoped<TabRequestService>();
 builder.Services.AddScoped<ContainerDepotLookupService>();
 builder.Services.AddScoped<InvoicePdfImportService>();
+builder.Services.AddScoped<InvoiceXmlImportService>();
 builder.Services.AddScoped<StockService>();
 builder.Services.AddScoped<ExcelImportCrudService>();
 builder.Services.AddScoped<PricingRateService>();

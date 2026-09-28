@@ -1805,6 +1805,116 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Cannot Delete HoaDonDauVao with error code: " + ex.Message);
             }
         }
+        private IQueryable<M_HoaDonDauVao> QueryHoaDonDauVaoByDate(DateTime? from, DateTime? to)
+        {
+            var query = _context.HoaDonDauVao.AsNoTracking().Where(x => x.continued == true);
+            if (from.HasValue)
+                query = query.Where(x => x.ngayphathanhhoadonDientu >= from.Value.Date);
+            if (to.HasValue)
+                query = query.Where(x => x.ngayphathanhhoadonDientu < to.Value.Date.AddDays(1));
+            return query;
+        }
+
+        public async Task<List<M_HoaDonDauVao>> GetListHoaDonDauVaoByDate(DateTime? from, DateTime? to)
+        {
+            _context.ChangeTracker.Clear();
+            return await QueryHoaDonDauVaoByDate(from, to).OrderByDescending(x => x.ngayphathanhhoadonDientu).ToListAsync();
+        }
+
+        /// <summary>Hóa đơn XML đã import chưa: trùng DLHDon@Id hoặc trùng MST người bán + ký hiệu + số HĐ.</summary>
+        public async Task<bool> ExistsHoaDonDauVaoXml(string? xmlDocId, string? mstNguoiBan, string? kyHieu, string? soHoaDon)
+        {
+            _context.ChangeTracker.Clear();
+            var query = _context.HoaDonDauVao.AsNoTracking().Where(x => x.continued == true);
+            if (!string.IsNullOrWhiteSpace(xmlDocId)
+                && await query.AnyAsync(x => x.xmlDocId == xmlDocId))
+                return true;
+
+            if (string.IsNullOrWhiteSpace(mstNguoiBan) || string.IsNullOrWhiteSpace(kyHieu) || string.IsNullOrWhiteSpace(soHoaDon))
+                return false;
+
+            return await query.AnyAsync(x => x.mstnguoiban == mstNguoiBan
+                                          && x.kyhieuhoadon == kyHieu
+                                          && x.sohoadonDientu == soHoaDon);
+        }
+
+        /// <summary>MST của công ty (dùng để xác định đối tác trên hóa đơn XML).</summary>
+        public async Task<List<string>> GetCompanyTaxCodes()
+        {
+            var company = await _context.CompanyInfomation.AsNoTracking().FirstOrDefaultAsync();
+            return new[] { company?.TaxCode, company?.TaxNumber_E_Invoice }
+                .Select(InvoiceXmlImportService.NormalizeTaxCode)
+                .Where(x => !string.IsNullOrEmpty(x))
+                .Distinct()
+                .ToList();
+        }
+
+        /// <summary>Tìm HBL trước, sau đó MBL khớp chính xác số vận đơn (có thể nhiều số cách nhau bởi dấu phẩy).</summary>
+        public async Task<ShipmentBillRef?> FindShipmentByBillNo(string? billNo)
+        {
+            if (string.IsNullOrWhiteSpace(billNo))
+                return null;
+
+            var tokens = Regex.Split(billNo, @"[,;\s]+").Where(x => x.Length > 0).ToList();
+            foreach (var token in tokens)
+            {
+                var hbl = await _context.HBL.AsNoTracking()
+                    .Where(x => x.Continued != false && x.hbl != null && x.hbl.Trim() == token)
+                    .Select(x => new { x.hblID, x.hbl })
+                    .FirstOrDefaultAsync();
+                if (hbl != null)
+                    return new ShipmentBillRef(hbl.hblID, Guid.Empty, "HBL: " + hbl.hbl);
+
+                var mbl = await _context.MBL.AsNoTracking()
+                    .Where(x => x.Continued != false && x.Mbl != null && x.Mbl.Trim() == token)
+                    .Select(x => new { x.MblID, x.Mbl })
+                    .FirstOrDefaultAsync();
+                if (mbl != null)
+                    return new ShipmentBillRef(Guid.Empty, mbl.MblID, "MBL: " + mbl.Mbl);
+            }
+            return null;
+        }
+
+        public async Task<List<ShipmentBillRef>> SearchShipmentsByBill(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return new List<ShipmentBillRef>();
+
+            text = text.Trim();
+            var hbls = await _context.HBL.AsNoTracking()
+                .Where(x => x.Continued != false && x.hbl != null && x.hbl.Contains(text))
+                .OrderBy(x => x.hbl)
+                .Select(x => new ShipmentBillRef(x.hblID, Guid.Empty, "HBL: " + x.hbl))
+                .Take(20)
+                .ToListAsync();
+            var mbls = await _context.MBL.AsNoTracking()
+                .Where(x => x.Continued != false && x.Mbl != null && x.Mbl.Contains(text))
+                .OrderBy(x => x.Mbl)
+                .Select(x => new ShipmentBillRef(Guid.Empty, x.MblID, "MBL: " + x.Mbl))
+                .Take(20)
+                .ToListAsync();
+            return hbls.Concat(mbls).ToList();
+        }
+
+        /// <summary>Tên hiển thị HBL/MBL đã gắn cho danh sách hóa đơn theo ngày.
+        /// Dùng JOIN thay vì list.Contains(): EF8 dịch Contains sang OPENJSON, DB compatibility level cũ không hỗ trợ.</summary>
+        public async Task<Dictionary<Guid, string>> GetBillNumbersByDate(DateTime? from, DateTime? to)
+        {
+            var invoices = QueryHoaDonDauVaoByDate(from, to);
+            var hbls = await (from d in invoices
+                              join h in _context.HBL.AsNoTracking() on d.hblid equals h.hblID
+                              select new { h.hblID, h.hbl }).Distinct().ToListAsync();
+            var mbls = await (from d in invoices
+                              join m in _context.MBL.AsNoTracking() on d.mblid equals m.MblID
+                              select new { m.MblID, m.Mbl }).Distinct().ToListAsync();
+
+            var result = new Dictionary<Guid, string>();
+            foreach (var x in hbls)
+                result[x.hblID] = "HBL: " + x.hbl;
+            foreach (var x in mbls)
+                result[x.MblID] = "MBL: " + x.Mbl;
+            return result;
+        }
         public async Task<List<M_CongNoHoaDonDauRa>> GetListCongNoHoaDonDauRaMBL(Guid? id)
         {
             try

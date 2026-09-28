@@ -24,5 +24,29 @@ namespace NVOAMASIS.Models
         public bool? approve { get; set; } = false;
         public bool? editable { get; set; } = true;
         public bool? continued { get; set; } = true;
+
+        // Thông tin từ XML hóa đơn điện tử (5.15)
+        public string? mausohoadon { get; set; }
+        public string? kyhieuhoadon { get; set; }
+        public string? loaihoadon { get; set; }
+        public string? hinhthucthanhtoan { get; set; }
+        public string? xmlDocId { get; set; }
+        public string? tennguoiban { get; set; }
+        public string? mstnguoiban { get; set; }
+        public string? diachinguoiban { get; set; }
+        public string? tennguoimua { get; set; }
+        public string? mstnguoimua { get; set; }
+        public string? diachinguoimua { get; set; }
+        public double? tienthue { get; set; }
+        public double? chietkhau { get; set; }
+        public string? tienbangchu { get; set; }
+        public string? billno { get; set; }
+        public string? vesselvoyage { get; set; }
+        public string? pol { get; set; }
+        public string? pod { get; set; }
+        public string? ghichu { get; set; }
+        public string? nguonimport { get; set; }
+        public string? tenfile { get; set; }
+        public string? xmlcontent { get; set; }
     }
 }
