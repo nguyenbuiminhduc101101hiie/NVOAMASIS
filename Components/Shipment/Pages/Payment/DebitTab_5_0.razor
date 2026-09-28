@@ -454,6 +454,16 @@
                                 Class="btn-compact" />
                             </MudTooltip>
 
+                            <MudTooltip Text="@Localizer["New In Cell"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.OpenInNew"
+                                Color="Color.Success"
+                                Size="Size.Small"
+                                OnClick="NewItemIncell"
+                                Variant="Variant.Filled"
+                                Disabled="@(!CanMutateDebitData)"
+                                Class="btn-compact" />
+                            </MudTooltip>
+
                             <MudTooltip Text="@Localizer["Add"]">
                                 <MudIconButton Icon="@Icons.Material.Filled.Add"
                                 Color="Color.Success"
@@ -528,7 +538,14 @@
                         {
                             <MudTextField T="string" Value="_hblContCount" Label="Số lượng cont" ReadOnly="true" />
                         }
-                        <MudTextField @bind-Value="context.Item.debitno" Immediate Label="Debit No." Required ReadOnly/>
+                        <MudStack Row AlignItems="AlignItems.Center" Spacing="0">
+                            <MudAutocomplete T="string" @bind-Value="context.Item.debitno" Label="Debit No." Required
+                                             SearchFunc="SearchDebitNo" CoerceText="false" CoerceValue="true" Clearable />
+                            <MudTooltip Text="Lấy số Debit mới">
+                                <MudIconButton Icon="@Icons.Material.Filled.Autorenew" Size="Size.Small" Color="Color.Primary"
+                                               OnClick="@(() => UpdateDebitNo(context.Item, DateTime.Now))" />
+                            </MudTooltip>
+                        </MudStack>
                         <MudDatePicker Label="@Localizer["Selected Date Get Debit No"]" DateChanged="((t)=>UpdateDebitNo(context.Item,(DateTime)t!))" 
                         ImmediateText DateFormat="MM/yyyy"  Disabled="!string.IsNullOrEmpty(context.Item.debitno)"/>
                     </EditTemplate>
@@ -779,6 +796,7 @@
     bool canUnlockDebit;
     List<ChargeModel> charges = new List<ChargeModel>();
     string type = "";
+    List<string> currs = new List<string>();
     List<M_HoaDonDauRa> ListdataHoaDon = new List<M_HoaDonDauRa>();
     protected override async Task OnInitializedAsync()
     {
@@ -803,6 +821,7 @@
                     return;
                 }
             }
+            currs = await Vcbsv.GetCur();
             Types = await shipsv.GetListTypeInDebitCredit();
             type = await shipsv.GetTypeByMBLID(isMBL ? MBLDetail!.MblID : HBLDetail!.mblid); // Sea Air Truck HQ
             charges = await supsv.GetListChargeDuty(isDuty);
@@ -980,9 +999,69 @@
         {
                 customerid = isMBL ? MBLDetail!.CustomerID : HBLDetail!.CustomerID
         };
+        // Dùng chung số Debit của lô + khách hàng (chưa in/duyệt), chưa có mới cấp số mới
+        item.debitno = DebitAddInCell.FindReusableDebitNo(Listdata, item.customerid)
+                       ?? await GenerateDebitNo(DateTime.Now);
         Listdata.Add(item);
         await mudTable.SetEditingItemAsync(Listdata.LastOrDefault()!);
     }
+    async Task NewItemIncell()
+    {
+        if (!EnsureCanMutateDebit()) return;
+        var maincus = isMBL ? MBLDetail!.CustomerID : HBLDetail!.CustomerID;
+        var df = new List<M_Debit>();
+
+        var takeTpldialog = DialogService.Show<TemplateDialog>("Lấy mẫu", new DialogParameters { ["IncludeCustomerId"] = false });
+        var takeTpl = await takeTpldialog.Result;
+        if (!takeTpl.Canceled && ((dynamic)takeTpl.Data).Result)
+        {
+            // Load template Debit của user, theo loại lô hàng (Sea/Air/Truck/HQ)
+            var allTpl = await supsv.GetAllDebitCreditAsync();
+            var defaults = allTpl
+                .Where(t => t.DebitCredit.Equals("Debit", StringComparison.OrdinalIgnoreCase) && t.UserCreate == usr && t.ShipmentType == type);
+            bool includeCustomerId = ((dynamic)takeTpl.Data).IncludeCustomerId;
+            if (includeCustomerId) // có thì lọc theo cus
+                defaults = defaults.Where(x => x.CustomerId == maincus);
+            df = defaults
+                .Select(t => new M_Debit
+                    {
+                        customerid = maincus,
+                        editable = true,
+                        tiente = t.Cur,
+                        type = !string.IsNullOrWhiteSpace(t.type) ? t.type! : Types.First(),
+                        soluong = 1,
+                        dongia = t.Amount,
+                        itemid = t.ItemId,
+                        thanhtien = 0,
+                        thue = 0,
+                        thanhtiensauthue = 0,
+                        userupdate = usr,
+                        dateupdate = DateTime.Now.ToString()
+                    })
+                .ToList();
+            if (isMBL)
+                df.ForEach(x => x.mblid = MBLDetail!.MblID);
+            else
+                df.ForEach(x => x.hblid = HBLDetail!.hblID);
+            var tigia = await Vcbsv.Getexchange_cur("VND");
+            df.ForEach(x => x.tigiadebit = x.tigiahoandondaura = tigia);
+            // Cả bộ mẫu dùng chung 1 số Debit (ưu tiên số chưa in/duyệt đã có của khách hàng)
+            if (df.Count > 0)
+            {
+                var sharedDebitNo = DebitAddInCell.FindReusableDebitNo(Listdata, maincus)
+                                    ?? await GenerateDebitNo(DateTime.Now);
+                df.ForEach(x => x.debitno = sharedDebitNo);
+            }
+        }
+        var parameters = new DialogParameters<DebitAddInCell> { { x => x.Debits, Listdata }, { x => x.Debitsdf, df }, { x=>x.currs, currs}, { x=>x.Type, type}, {x=>x.usr, usr}, {x=>x.isMBL,isMBL},
+            {x=>x.MBLDetail , MBLDetail}, {x=>x.HBLDetail , HBLDetail}, {x=>x.Customers , Customers}, {x=>x.Types,Types}, {x=>x.charges,charges}, {x=>x.maincus,maincus}};
+        // MaxWidth.False: dialog giãn gần hết chiều ngang màn hình để bảng hiển thị đủ cột
+        var options = new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.False, DisableBackdropClick = true, ClassBackground = "class-dialog-custom" };
+        var dialog = DialogService.Show<DebitAddInCell>($"Quản lý Debit - Customer: {CusidtoCusCode(maincus)}", parameters, options);
+        await dialog.Result;
+        await Refresh();
+    }
+
     async Task DeleteItem(M_Debit item)
     {
         if (!EnsureCanMutateDebit()) return;
@@ -1210,13 +1289,28 @@
         }
     }
     async Task UpdateDebitNo(M_Debit item, DateTime value)
+        => item.debitno = await GenerateDebitNo(value);
+
+    async Task<string> GenerateDebitNo(DateTime value)
     {
         var refno = await supsv.GetRefNoByFunc("Debit", value.Month, value.Year, usr);
-        var tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");                                                                                   
+        var tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");
         var rs = asv.GetUserDetail();
         var cn = rs.Branch;
         var flc = await shipsv.GetFLCByMBLID(isMBL ? MBLDetail!.MblID : HBLDetail!.mblid);
-        item.debitno = cn + tiepdaungu + type + flc + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D4") : "RefNoError!");
+        return cn + tiepdaungu + type + flc + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D4") : "RefNoError!");
+    }
+
+    private Task<IEnumerable<string>> SearchDebitNo(string? text)
+    {
+        var nos = Listdata
+            .Select(x => x.debitno)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(text))
+            nos = nos.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(nos);
     }
 
     private async Task<string?> ResolveBranchByCompanyAsync(string billType)

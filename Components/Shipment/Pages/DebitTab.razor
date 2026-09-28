@@ -364,7 +364,14 @@
                         {
                             <MudTextField T="string" Value="_hblContCount" Label="Số lượng cont" ReadOnly="true" />
                         }
-                        <MudTextField @bind-Value="context.Item.debitno" Immediate Label="Debit No." Required ReadOnly/>
+                        <MudStack Row AlignItems="AlignItems.Center" Spacing="0">
+                            <MudAutocomplete T="string" @bind-Value="context.Item.debitno" Label="Debit No." Required
+                                             SearchFunc="SearchDebitNo" CoerceText="false" CoerceValue="true" Clearable />
+                            <MudTooltip Text="Lấy số Debit mới">
+                                <MudIconButton Icon="@Icons.Material.Filled.Autorenew" Size="Size.Small" Color="Color.Primary"
+                                               OnClick="@(() => UpdateDebitNo(context.Item, DateTime.Now))" />
+                            </MudTooltip>
+                        </MudStack>
                         <MudDatePicker Label="@Localizer["Selected Date Get Debit No"]" DateChanged="((t)=>UpdateDebitNo(context.Item,(DateTime)t!))" 
                         ImmediateText DateFormat="MM/yyyy"  Disabled="!string.IsNullOrEmpty(context.Item.debitno)"/>
                     </EditTemplate>
@@ -1120,13 +1127,28 @@
     }
 
     async Task UpdateDebitNo(M_Debit item, DateTime value)
+        => item.debitno = await GenerateDebitNo(value);
+
+    async Task<string> GenerateDebitNo(DateTime value)
     {
         var refno = await supsv.GetRefNoByFunc("Debit", value.Month, value.Year, usr);
-        var tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");                                                                                   
+        var tiepdaungu = await supsv.GetTiepDauNguByFunc("JOB");
         var rs = asv.GetUserDetail();
         var cn = rs.Branch;
         var flc = await shipsv.GetFLCByMBLID(isMBL ? MBLDetail!.MblID : HBLDetail!.mblid);
-        item.debitno = cn + tiepdaungu + type + flc + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D4") : "RefNoError!");
+        return cn + tiepdaungu + type + flc + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D4") : "RefNoError!");
+    }
+
+    private Task<IEnumerable<string>> SearchDebitNo(string? text)
+    {
+        var nos = Listdata
+            .Select(x => x.debitno)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(text))
+            nos = nos.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(nos);
     }
 
     private void CalculateTotal(M_Debit item)
@@ -1456,13 +1478,19 @@
                 df.ForEach(x => x.hblid = HBLDetail!.hblID);
             var tigia = await GetTigiafromstring("VND");
             df.ForEach(x => x.tigiadebit = x.tigiahoandondaura = tigia);
-            foreach (var x in df)
-                await UpdateDebitNo(x, DateTime.Now);
+            // Cả bộ mẫu dùng chung 1 số Debit (ưu tiên số chưa in/duyệt đã có của khách hàng)
+            if (df.Count > 0)
+            {
+                var sharedDebitNo = DebitAddInCell.FindReusableDebitNo(Listdata, maincus)
+                                    ?? await GenerateDebitNo(DateTime.Now);
+                df.ForEach(x => x.debitno = sharedDebitNo);
+            }
             //Listdata.AddRange(df);
         }
         var parameters = new DialogParameters<DebitAddInCell> { { x => x.Debits, Listdata }, { x => x.Debitsdf, df }, { x=>x.currs, currs}, { x=>x.Type, type}, {x=>x.usr, usr}, {x=>x.isMBL,isMBL},
             {x=>x.MBLDetail , MBLDetail}, {x=>x.HBLDetail , HBLDetail}, {x=>x.Customers , Customers}, {x=>x.Types,Types}, {x=>x.charges,charges}, {x=>x.maincus,maincus}};
-        var options = new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.ExtraExtraLarge, DisableBackdropClick = true, ClassBackground = "class-dialog-custom" };
+        // MaxWidth.False: dialog giãn gần hết chiều ngang màn hình để bảng hiển thị đủ cột
+        var options = new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.False, DisableBackdropClick = true, ClassBackground = "class-dialog-custom" };
         var dialog = DialogService.Show<DebitAddInCell>($"Quản lý Debit - Customer: {CusidtoCusCode(maincus)}", parameters, options);
         var result = await dialog.Result;
         await Refresh();
