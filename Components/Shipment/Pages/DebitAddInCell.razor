@@ -8,14 +8,34 @@
 @inject AccountService asv
 @inject ShipmentService shipsv
 @inject ISnackbar Snackbar
+<style>
+    /* Cột tự giãn theo nội dung, không cắt chữ; màn hình hẹp thì scroll ngang */
+    .debit-addincell-table table { table-layout: auto; width: max-content; min-width: 100%; }
+    .debit-addincell-table th,
+    .debit-addincell-table td { white-space: nowrap; padding: 4px 6px !important; }
+    /* Độ rộng tối thiểu cho ô nhập khi đang sửa (theo thứ tự cột) */
+    .debit-addincell-table td:nth-child(2) { min-width: 210px; } /* Số Debit */
+    .debit-addincell-table td:nth-child(3),
+    .debit-addincell-table td:nth-child(4) { min-width: 230px; } /* Khách hàng, Tên phí */
+    .debit-addincell-table td:nth-child(5),
+    .debit-addincell-table td:nth-child(8),
+    .debit-addincell-table td:nth-child(11) { min-width: 120px; } /* Đơn giá, Thành tiền, Sau thuế */
+    .debit-addincell-table td:nth-child(6),
+    .debit-addincell-table td:nth-child(12),
+    .debit-addincell-table td:nth-child(13) { min-width: 100px; } /* Loại, Tỉ giá */
+    .debit-addincell-table td:nth-child(7),
+    .debit-addincell-table td:nth-child(9),
+    .debit-addincell-table td:nth-child(10) { min-width: 80px; } /* Số lượng, Loại tiền, Thuế */
+</style>
 <MudDialog>
     <DialogContent>
         <MudPaper Class="pa-4">
             <!-- Bảng hiển thị các dòng M_Debit -->
-            <MudTable Items="@rows" Hover="true" Dense="true" FixedHeader>
+            <MudTable Items="@rows" Hover="true" Dense="true" FixedHeader HorizontalScrollbar="true" Class="debit-addincell-table">
                 <HeaderContent>
                     <MudTh>Thao tác</MudTh>
                     <MudTh>Số Debit</MudTh>
+                    <MudTh>Khách hàng</MudTh>
                     <MudTh>Tên phí</MudTh>
                     <MudTh>Đơn giá</MudTh>
                     <MudTh>Loại</MudTh>
@@ -43,13 +63,31 @@
                     <MudTd>
                         @if (item.editable == true)
                         {
-                            <MudTextField T="string" @bind-Value="item.debitno"
-                                             Placeholder="Số Debit"
-                                            Immediate="true" ReadOnly/>
+                            <MudStack Row AlignItems="AlignItems.Center" Spacing="0">
+                                <MudAutocomplete T="string" @bind-Value="item.debitno"
+                                                 Placeholder="Số Debit" SearchFunc="SearchDebitNo"
+                                                 CoerceText="false" CoerceValue="true" Clearable />
+                                <MudTooltip Text="Lấy số Debit mới">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Autorenew" Size="Size.Small" Color="Color.Primary"
+                                                   OnClick="() => GetNewDebitNo(item)" />
+                                </MudTooltip>
+                            </MudStack>
                         }
                         else
                         {
                             @item.debitno
+                        }
+                    </MudTd>
+                    <MudTd>
+                        @if (item.editable == true)
+                        {
+                            <MudAutocomplete T="Guid" Value="item.customerid" ValueChanged="@(v => ChangeCustomer(item, v))"
+                                             Placeholder="Khách hàng" Required Lines="2"
+                                             SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" />
+                        }
+                        else
+                        {
+                            @CusidtoCusCode(item.customerid)
                         }
                     </MudTd>
                     <MudTd>
@@ -276,8 +314,64 @@
         newRow.userupdate = usr;
         newRow.dateupdate = DateTime.Now.ToString();
         newRow.tigiadebit = newRow.tigiahoandondaura = await GetTigia(newRow.tiente);
-        newRow.debitno = await UpdateDebitNo(newRow,DateTime.Now);
+        // Dùng chung số Debit của lô + khách hàng (dòng gần nhất chưa in/duyệt), chưa có mới cấp số mới
+        newRow.debitno = FindReusableDebitNo(rows, newRow.customerid)
+                         ?? await UpdateDebitNo(newRow, DateTime.Now);
         rows.Add(newRow);
+    }
+
+    /// <summary>
+    /// Tìm DebitNo có thể dùng chung cho khách hàng: dòng mới nhất có số, chưa in Debit và chưa duyệt.
+    /// </summary>
+    public static string? FindReusableDebitNo(IEnumerable<M_Debit> debits, Guid customerId)
+        => debits.LastOrDefault(x => x.customerid == customerId
+                                     && !string.IsNullOrWhiteSpace(x.debitno)
+                                     && x.daIndebit != true
+                                     && x.approve != true)?.debitno;
+
+    // Cấp số Debit mới cho riêng dòng này (tiêu 1 RefNo)
+    async Task GetNewDebitNo(M_Debit item)
+    {
+        item.debitno = await UpdateDebitNo(item, DateTime.Now);
+        CallSnackBar($"Đã lấy số Debit mới: {item.debitno}", MudBlazor.Severity.Info);
+    }
+
+    // Đổi khách hàng: dòng mới (chưa lưu) lấy lại số Debit dùng chung theo khách hàng mới
+    async Task ChangeCustomer(M_Debit item, Guid customerId)
+    {
+        if (item.customerid == customerId) return;
+        item.customerid = customerId;
+        if (item.debitId == Guid.Empty && customerId != Guid.Empty)
+            item.debitno = FindReusableDebitNo(rows.Where(x => x != item), customerId)
+                           ?? await UpdateDebitNo(item, DateTime.Now);
+    }
+
+    string CusidtoCusCode(Guid cusid)
+    {
+        if (cusid == Guid.Empty)
+            return string.Empty;
+        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs == null ? string.Empty : rs.shortname + "_" + rs.COMPANY;
+    }
+
+    private Task<IEnumerable<Guid>> SearchCustomer(string? text)
+    {
+        var cus = string.IsNullOrWhiteSpace(text)
+            ? Customers
+            : Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(cus.Select(x => x.Customer_ID));
+    }
+
+    private Task<IEnumerable<string>> SearchDebitNo(string? text)
+    {
+        var nos = rows.Concat(Debits)
+            .Select(x => x.debitno)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(text))
+            nos = nos.Where(x => x.Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(nos);
     }
 
     async Task BeginEdit(M_Debit row)
