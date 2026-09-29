@@ -120,6 +120,7 @@
                         @if (item.editable == true)
                         {
                             <MudAutocomplete @bind-Value="item.type" Required
+                                             @bind-Value:after="@(() => ApplyQuantityByType(item))"
                                              Placeholder="Loại"
                                              SearchFunc="SearchType" CoerceValue />
                         }
@@ -263,6 +264,8 @@
     [Parameter] public List<string> Types { get; set; } = new();
     [Parameter] public List<ChargeModel> charges { get; set; } = new();
     [Parameter] public Guid maincus { get; set; } = new();
+    /// <summary>Số Debit của dòng đang chọn ở màn hình gọi; có thì "Thêm dòng" dùng số này.</summary>
+    [Parameter] public string? DefaultDebitNo { get; set; }
     // Sao chép dữ liệu ra danh sách tạm để thao tác
     private List<M_Debit> rows = new();
 
@@ -280,11 +283,23 @@
         }).Where(x => x.approve == false).ToList());
         CallSnackBar($"Loaded {Debitsdf.Count} from Debit Template", MudBlazor.Severity.Success);
     }
+    // Container của lô (HBL/MBL) để gợi ý số lượng theo Type
+    private List<M_Container> _containers = new();
+    private bool _containersLoaded;
+
     protected async override Task OnParametersSetAsync()
     {
         Types = await shipsv.GetListTypeInDebitCredit();
         foreach (var i in Debitsdf)
             i.tigiadebit = i.tigiahoandondaura = await GetTigia(i.tiente);
+        if (!_containersLoaded)
+        {
+            _containers = await GetContainersForShipmentAsync();
+            _containersLoaded = true;
+            // Dòng lấy từ template: số lượng theo Type (CBM / loại cont / 1)
+            foreach (var i in Debitsdf)
+                ApplyQuantityByType(i);
+        }
     }
     async Task AddNew()
     {
@@ -314,8 +329,10 @@
         newRow.userupdate = usr;
         newRow.dateupdate = DateTime.Now.ToString();
         newRow.tigiadebit = newRow.tigiahoandondaura = await GetTigia(newRow.tiente);
+        ApplyQuantityByType(newRow);
         // Dùng chung số Debit của lô + khách hàng (dòng gần nhất chưa in/duyệt), chưa có mới cấp số mới
-        newRow.debitno = FindReusableDebitNo(rows, newRow.customerid)
+        newRow.debitno = DefaultDebitNo
+                         ?? FindReusableDebitNo(rows, newRow.customerid)
                          ?? await UpdateDebitNo(newRow, DateTime.Now);
         rows.Add(newRow);
     }
@@ -386,18 +403,6 @@
     }
     M_Debit detail_Debit = new();
 
-    async Task<Guid?> ResolveJobIdForDebitAsync()
-    {
-        if (isMBL)
-            return MBLDetail?.Jobid;
-        if (HBLDetail == null)
-            return null;
-        if (HBLDetail.Jobid.HasValue && HBLDetail.Jobid.Value != Guid.Empty)
-            return HBLDetail.Jobid;
-        var mbl = await shipsv.GetMBL_byHBLid(HBLDetail.mblid);
-        return mbl?.Jobid;
-    }
-
     async Task<List<M_Container>> GetContainersForShipmentAsync()
     {
         if (isMBL && MBLDetail != null)
@@ -423,39 +428,51 @@
         return sum;
     }
 
+    private static readonly System.Text.RegularExpressions.Regex ContainerSizeTokenRegex =
+        new(@"(20|40|45)[A-Za-z]{0,4}", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static string NormalizeAlnum(string? s)
+        => string.IsNullOrWhiteSpace(s) ? string.Empty : new string(s.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+
+    /// <summary>
+    /// Giống DebitTab: Type "CBM" -> tổng CBM container của lô; Type chứa cont size (20/40/45, vd CONT 20GP)
+    /// -> đếm số container cùng size/type; Type khác -> 1. Chỉ là gợi ý, người dùng vẫn sửa Số lượng được.
+    /// </summary>
+    private void ApplyQuantityByType(M_Debit item)
+    {
+        if (item == null || string.IsNullOrWhiteSpace(item.type))
+            return;
+
+        var typeText = item.type.Trim();
+        var normalizedType = NormalizeAlnum(typeText);
+
+        if (normalizedType.Contains("CBM"))
+        {
+            item.soluong = Math.Round(SumContainerCbm(_containers), 2);
+        }
+        else if (typeText.Contains("20") || typeText.Contains("40") || typeText.Contains("45"))
+        {
+            var tokenMatch = ContainerSizeTokenRegex.Match(normalizedType);
+            var digitPrefix = tokenMatch.Success
+                ? tokenMatch.Groups[1].Value
+                : typeText.Contains("20") ? "20" : typeText.Contains("40") ? "40" : "45";
+            var fullToken = tokenMatch.Success ? tokenMatch.Value : digitPrefix;
+
+            var exactCount = _containers.Count(c => NormalizeAlnum(c.CTN_SIZE_TYPE) == fullToken);
+            item.soluong = exactCount > 0
+                ? exactCount
+                : _containers.Count(c => NormalizeAlnum(c.CTN_SIZE_TYPE).Contains(digitPrefix));
+        }
+        else
+        {
+            item.soluong = 1;
+        }
+
+        CalculateTotal(item);
+    }
+
     async Task SaveRow(M_Debit item)
     {
-        var jobId = await ResolveJobIdForDebitAsync();
-        M_Job? job = null;
-        if (jobId.HasValue && jobId.Value != Guid.Empty)
-        {
-            var j = await shipsv.GetJob_byid(jobId);
-            if (j != null && j.JobID != Guid.Empty)
-                job = j;
-        }
-
-        var containers = await GetContainersForShipmentAsync();
-        var useContCount = job != null && string.Equals(job.FLC, "F", StringComparison.OrdinalIgnoreCase);
-        double factor = useContCount ? containers.Count : SumContainerCbm(containers);
-        var factorDesc = useContCount
-            ? $"số lượng container ({factor:0.##})"
-            : $"tổng CBM ({factor:0.##})";
-
-        if (job != null && factor > 0 && item.soluong.HasValue && item.soluong.Value > 0)
-        {
-            var msg = $"Có muốn nhân Số lượng theo {factorDesc}?\nHiện tại: Số lượng = {item.soluong:0.##}";
-            var wantMultiply = await DialogService.ShowMessageBox(
-                "Xác nhận",
-                msg,
-                yesText: "Có",
-                cancelText: "Không");
-            if (wantMultiply == true)
-            {
-                item.soluong = item.soluong.Value * factor;
-                CalculateTotal(item);
-            }
-        }
-
         var rs = item.debitId != Guid.Empty ? await shipsv.UpdateDebitMBL(item, detail_Debit) : await shipsv.CreateDebitMBL(item);
         CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         item.editable = false;

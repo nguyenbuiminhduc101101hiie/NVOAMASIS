@@ -1010,6 +1010,10 @@
         if (!EnsureCanMutateDebit()) return;
         var maincus = isMBL ? MBLDetail!.CustomerID : HBLDetail!.CustomerID;
         var df = new List<M_Debit>();
+        // Có chọn 1 dòng (còn trong danh sách hiện tại) thì dùng số Debit của dòng đó
+        var selectedDebitNo = detail != null && Listdata.Contains(detail) && !string.IsNullOrWhiteSpace(detail.debitno)
+            ? detail.debitno
+            : null;
 
         var takeTpldialog = DialogService.Show<TemplateDialog>("Lấy mẫu", new DialogParameters { ["IncludeCustomerId"] = false });
         var takeTpl = await takeTpldialog.Result;
@@ -1045,16 +1049,17 @@
                 df.ForEach(x => x.hblid = HBLDetail!.hblID);
             var tigia = await Vcbsv.Getexchange_cur("VND");
             df.ForEach(x => x.tigiadebit = x.tigiahoandondaura = tigia);
-            // Cả bộ mẫu dùng chung 1 số Debit (ưu tiên số chưa in/duyệt đã có của khách hàng)
+            // Cả bộ mẫu dùng chung 1 số Debit: số của dòng đang chọn > số chưa in/duyệt của khách hàng > số mới
             if (df.Count > 0)
             {
-                var sharedDebitNo = DebitAddInCell.FindReusableDebitNo(Listdata, maincus)
+                var sharedDebitNo = selectedDebitNo
+                                    ?? DebitAddInCell.FindReusableDebitNo(Listdata, maincus)
                                     ?? await GenerateDebitNo(DateTime.Now);
                 df.ForEach(x => x.debitno = sharedDebitNo);
             }
         }
         var parameters = new DialogParameters<DebitAddInCell> { { x => x.Debits, Listdata }, { x => x.Debitsdf, df }, { x=>x.currs, currs}, { x=>x.Type, type}, {x=>x.usr, usr}, {x=>x.isMBL,isMBL},
-            {x=>x.MBLDetail , MBLDetail}, {x=>x.HBLDetail , HBLDetail}, {x=>x.Customers , Customers}, {x=>x.Types,Types}, {x=>x.charges,charges}, {x=>x.maincus,maincus}};
+            {x=>x.MBLDetail , MBLDetail}, {x=>x.HBLDetail , HBLDetail}, {x=>x.Customers , Customers}, {x=>x.Types,Types}, {x=>x.charges,charges}, {x=>x.maincus,maincus}, {x=>x.DefaultDebitNo,selectedDebitNo}};
         // MaxWidth.False: dialog giãn gần hết chiều ngang màn hình để bảng hiển thị đủ cột
         var options = new DialogOptions { FullWidth = true, MaxWidth = MaxWidth.False, DisableBackdropClick = true, ClassBackground = "class-dialog-custom" };
         var dialog = DialogService.Show<DebitAddInCell>($"Quản lý Debit - Customer: {CusidtoCusCode(maincus)}", parameters, options);
