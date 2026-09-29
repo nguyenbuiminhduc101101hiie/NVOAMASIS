@@ -1,0 +1,661 @@
+@page "/accounting/ar-ap/debt-summary-book"
+@using ClosedXML.Excel
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using MudBlazor
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models
+@using NVOAMASIS.Resources
+@attribute [Authorize]
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+@*
+    10.14.4 Sổ công nợ tổng hợp — theo mẫu SO_TONG_HOP_CONG_NO.xlsx:
+    mỗi đối tượng (khách hàng / nhà cung cấp) 1 dòng: số dư đầu kỳ, phát sinh trong kỳ, số dư cuối kỳ,
+    mỗi phần gồm NT (nguyên tệ) / Nợ / Có. Nguồn: GeneralLedgerEntries (giống 10.14.2 SOA).
+    Dùng cho mọi TK công nợ 131.../331... (và các TK có bật "Yêu cầu đối tượng khách hàng").
+*@
+
+<PageTitle>Sổ công nợ tổng hợp</PageTitle>
+
+<div class="product-price-page dsb-page">
+    <PpScreenHeader Title="10.14.4 Sổ công nợ tổng hợp"
+                    Subtitle="Số dư đầu kỳ, phát sinh, số dư cuối kỳ theo từng khách hàng / nhà cung cấp">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">Xem</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FileDownload" OnClick="ExportAsync"
+                           Disabled="@(_busy || _rows.Count == 0)">Xuất Excel</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="6" sm="2">
+                <MudDatePicker Label="Từ ngày" Date="_fromDate" DateChanged="@(async (DateTime? d) => { _fromDate = d; await LoadAsync(); })" DateFormat="dd/MM/yyyy"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudDatePicker Label="Đến ngày" Date="_toDate" DateChanged="@(async (DateTime? d) => { _toDate = d; await LoadAsync(); })" DateFormat="dd/MM/yyyy"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudSelect T="string" Label="Tài khoản công nợ" Value="_accountCode" ValueChanged="@(async (string v) => { _accountCode = v; await LoadAsync(); })"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    @foreach (var a in _accounts)
+                    {
+                        <MudSelectItem T="string" Value="@a.Code">@a.Display</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="4" sm="1">
+                <MudSelect T="string" Label="Sổ" Value="_book" ValueChanged="@(async (string v) => { _book = v; await LoadAsync(); })" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("TAX")">TAX</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("MGMT")">MGMT</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("ALL")">ALL</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="4" sm="1">
+                <MudTextField T="string" Label="Loại NT" Value="_currency" ValueChanged="@(async (string v) => { _currency = v; await LoadAsync(); })" MaxLength="3"
+                              HelperText="Cột NT" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudTextField T="string" Label="Tìm KH" @bind-Value="_search" Immediate="true" Clearable="true"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="1" Style="white-space:nowrap">
+                <MudCheckBox T="bool" @bind-Checked="_hideZero" Label="Ẩn dòng 0" Color="Color.Primary" Dense="true" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+
+    <MudExpansionPanels Class="mb-2" Elevation="0">
+        <MudExpansionPanel>
+            <TitleContent>
+                <div class="d-flex align-center">
+                    <MudIcon Icon="@Icons.Material.Filled.HelpOutline" Color="Color.Info" Class="mr-2" />
+                    <MudText Typo="Typo.subtitle2"><b>Hướng dẫn: số liệu lấy từ đâu?</b></MudText>
+                </div>
+            </TitleContent>
+            <ChildContent>
+                <div class="dsb-guide">
+                    <p><b>1. Phần đầu báo cáo</b> (tên công ty, địa chỉ, MST): lấy từ <b>1.13 Thông tin công ty</b>
+                        (tên tiếng Việt, địa chỉ tiếng Việt, mã số thuế). Sửa ở 1.13 thì báo cáo đổi theo.</p>
+                    <p><b>2. Toàn bộ số liệu trong bảng</b>: lấy từ <b>Sổ cái</b> (xem ở <b>10.6.0 Bút toán sổ cái</b>),
+                        chỉ gồm các bút toán <b>đã ghi sổ</b>, có mã TK bắt đầu bằng TK đã chọn
+                        (chọn 131 = gồm 1311, 1312...; chọn 1311 = chỉ 1311). Nguồn đưa bút toán vào sổ cái:</p>
+                    <ul>
+                        <li><b>10.4.1 Phiếu kế toán</b> — phải bấm <b>Ghi sổ</b>. Phiếu nháp chưa được tính.
+                            Phiếu tạo từ hóa đơn BKAV (hạch toán tự động) và từ <b>12.9 Hạch toán lương</b> cũng là phiếu nháp ở 10.4.1 → cần ghi sổ.</li>
+                        <li><b>10.6.0</b> nhập bút toán tay, <b>10.6.4 / 10.6.1</b> import Excel, <b>10.4.7</b> ghi sổ khấu hao — vào sổ cái ngay.</li>
+                        <li><b>Không tính</b>: phiếu thu / chi 10.1, 10.2 chưa hạch toán qua 10.4.1; số dư import ở <b>10.9.2</b> (lưu bảng riêng).</li>
+                    </ul>
+                    <p><b>3. Mỗi dòng = 1 đối tượng</b>: theo ô <b>Khách hàng</b> trên dòng bút toán 131/331 của phiếu. Mã KH, tên KH lấy từ danh mục khách hàng.
+                        Bút toán không chọn khách hàng gom vào dòng <b>"(không có)"</b> — nên sửa phiếu để gắn đúng khách hàng.</p>
+                    <p><b>4. Cách tính các cột</b>:</p>
+                    <ul>
+                        <li><b>Số dư đầu kỳ</b> = tổng Nợ − tổng Có của các bút toán có <b>ngày hạch toán trước "Từ ngày"</b>
+                            (cộng dồn từ bút toán đầu tiên). Dương → cột Nợ, âm → cột Có.</li>
+                        <li><b>Phát sinh trong kỳ</b> = tổng Nợ, tổng Có từ "Từ ngày" đến "Đến ngày" (không bù trừ).</li>
+                        <li><b>Số dư cuối kỳ</b> = dư đầu kỳ + phát sinh Nợ − phát sinh Có. Dương → Nợ, âm → Có
+                            (vd khách trả trước / trả dư nằm bên Có của 131).</li>
+                        <li><b>NT</b> = số nguyên tệ (Nợ NT − Có NT) của các phiếu có loại tiền bằng ô <b>Loại NT</b>.
+                            Dương = dư Nợ, âm = dư Có. Phiếu VND không vào cột NT.</li>
+                        <li><b>Sổ</b>: TAX = bút toán đánh dấu sổ thuế, MGMT = sổ quản trị, ALL = tất cả.</li>
+                    </ul>
+                    <p><b>5. Không có dữ liệu / thiếu số?</b> Kiểm tra: phiếu đã <b>ghi sổ</b> chưa; dòng 131/331 đã chọn <b>khách hàng</b> chưa;
+                        <b>ngày hạch toán</b> có nằm trong khoảng ngày không; đúng <b>Sổ</b> (TAX/MGMT) chưa. Đối chiếu tổng với <b>10.6.2 Sổ chi tiết tài khoản</b> cùng TK, cùng kỳ.</p>
+                </div>
+            </ChildContent>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        @if (_busy)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+        }
+
+        <div class="dsb-head">
+            <div class="dsb-company">@_companyName</div>
+            <div class="dsb-sub">@_companyAddress</div>
+            @if (!string.IsNullOrWhiteSpace(_companyTaxCode))
+            {
+                <div class="dsb-sub">MST: @_companyTaxCode</div>
+            }
+            <div class="dsb-title">SỔ CÔNG NỢ TỔNG HỢP</div>
+            <div class="dsb-sub">Từ ngày: @D(_loadedFrom), đến ngày: @D(_loadedTo)</div>
+            <div class="dsb-sub"><b>@_loadedAccountLabel</b></div>
+            <div class="dsb-unit">Đơn vị tính: Đồng VN</div>
+        </div>
+
+        <div class="dsb-wrap">
+            <table class="dsb">
+                <thead>
+                    <tr>
+                        <th rowspan="2" class="c-stt">Số<br />TT</th>
+                        <th rowspan="2" class="c-code">Mã KH</th>
+                        <th rowspan="2" class="c-name">Tên KH</th>
+                        <th colspan="3">Số dư đầu kỳ</th>
+                        <th colspan="3">Số phát sinh trong kỳ</th>
+                        <th colspan="3">Số dư cuối kỳ</th>
+                    </tr>
+                    <tr>
+                        @for (var i = 0; i < 3; i++)
+                        {
+                            <th class="c-nt">@NtHeader</th>
+                            <th>Nợ</th>
+                            <th>Có</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var stt = 0; }
+                    @foreach (var r in VisibleRows)
+                    {
+                        stt++;
+                        <tr class="r-click" title="Bấm để xem sổ chi tiết công nợ (10.14.5)" @onclick="@(() => OpenDetailAsync(r))">
+                            <td class="c-stt">@stt</td>
+                            <td class="c-code">@r.Code</td>
+                            <td class="c-name" title="@r.Name">@r.Name</td>
+                            <td class="c-nt">@NT(r.OpeningFC)</td>
+                            <td>@M(r.OpeningDebit)</td>
+                            <td>@M(r.OpeningCredit)</td>
+                            <td class="c-nt">@NT(r.PeriodFC)</td>
+                            <td>@M(r.PeriodDebit)</td>
+                            <td>@M(r.PeriodCredit)</td>
+                            <td class="c-nt">@NT(r.ClosingFC)</td>
+                            <td>@M(r.ClosingDebit)</td>
+                            <td>@M(r.ClosingCredit)</td>
+                        </tr>
+                    }
+                    @if (!VisibleRows.Any())
+                    {
+                        <tr>
+                            <td colspan="12" class="c-empty">
+                                @(_loaded ? "Không có dữ liệu" : "Đang tải...")
+                                @foreach (var h in _emptyHints)
+                                {
+                                    <div class="c-hint">• @h</div>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                @if (VisibleRows.Any())
+                {
+                    var t = Total(VisibleRows);
+                    <tfoot>
+                        <tr>
+                            <td></td>
+                            <td></td>
+                            <td class="c-name">Tổng cộng (@_loadedAccount)</td>
+                            <td class="c-nt">@NT(t.OpeningFC, true)</td>
+                            <td>@M(t.OpeningDebit, true)</td>
+                            <td>@M(t.OpeningCredit, true)</td>
+                            <td class="c-nt">@NT(t.PeriodFC, true)</td>
+                            <td>@M(t.PeriodDebit, true)</td>
+                            <td>@M(t.PeriodCredit, true)</td>
+                            <td class="c-nt">@NT(t.ClosingFC, true)</td>
+                            <td>@M(t.ClosingDebit, true)</td>
+                            <td>@M(t.ClosingCredit, true)</td>
+                        </tr>
+                    </tfoot>
+                }
+            </table>
+        </div>
+        <MudText Typo="Typo.caption" Class="d-block mt-2">
+            Số dư mỗi đối tượng được bù trừ Nợ – Có rồi đưa vào cột Nợ (dư Nợ) hoặc Có (dư Có).
+            Cột NT chỉ cộng các bút toán có loại tiền @(string.IsNullOrWhiteSpace(_loadedCurrency) ? "ngoại tệ" : _loadedCurrency); NT dương = dư Nợ, âm = dư Có.
+            Nguồn: Sổ cái (10.6.0), giống 10.14.2 SOA.
+        </MudText>
+    </MudPaper>
+</div>
+
+<style>
+    .dsb-head { text-align: center; margin-bottom: 8px; }
+    .dsb-company { font-weight: 700; font-size: 15px; text-transform: uppercase; }
+    .dsb-title { font-weight: 700; font-size: 17px; margin-top: 8px; }
+    .dsb-sub { font-size: 13px; }
+    .dsb-unit { text-align: right; font-style: italic; font-size: 12px; }
+    .dsb-wrap { overflow: auto; max-height: calc(100vh - 430px); border: 1px solid #bdbdbd; }
+    .dsb { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 12px; }
+    .dsb th, .dsb td { border-right: 1px solid #d0d0d0; border-bottom: 1px solid #d0d0d0; padding: 3px 6px; white-space: nowrap; }
+    .dsb thead th { position: sticky; background: #e8eef7; text-align: center; font-weight: 700; z-index: 2; }
+    .dsb thead tr:first-child th { top: 0; }
+    .dsb thead tr:nth-child(2) th { top: 24px; }
+    .dsb td { text-align: right; }
+    .dsb td.c-stt, .dsb th.c-stt { text-align: center; width: 40px; }
+    .dsb td.c-code { text-align: left; }
+    .dsb td.c-name { text-align: left; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+    .dsb .c-nt { color: #1565c0; }
+    .dsb tbody tr.r-click { cursor: pointer; }
+    .dsb tbody tr.r-click:hover td { background: #f1f8ff; }
+    .dsb td.c-empty { text-align: center; color: #757575; padding: 16px; white-space: normal; }
+    .dsb .c-hint { color: #e65100; font-size: 12px; margin-top: 4px; }
+    .dsb-guide { font-size: 13px; line-height: 1.5; }
+    .dsb-guide p { margin: 4px 0; }
+    .dsb-guide ul { margin: 2px 0 6px 20px; }
+    .dsb tfoot td { position: sticky; bottom: 0; background: #fff8e1; font-weight: 700; border-top: 2px solid #9e9e9e; }
+</style>
+
+@code {
+    private const string PermissionMenuName = "GeneralLedgerEntries";
+    private const string NoObjectCode = "(không có)";
+
+    /// <summary>Mở tab mới (NavMenu truyền vào) — dùng để bấm 1 dòng mở 10.14.5 Sổ chi tiết công nợ.</summary>
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private bool _busy, _loaded, _hideZero = true;
+    private string _usr = string.Empty;
+    private DateTime? _fromDate = new DateTime(DateTime.Today.Year, 1, 1);
+    private DateTime? _toDate = DateTime.Today;
+    private string _accountCode = "131";
+    private string _book = "ALL";
+    private string _currency = "USD";
+    private string _search = string.Empty;
+
+    // Điều kiện của lần xem gần nhất (tiêu đề / xuất Excel dùng đúng số đã hiển thị)
+    private DateTime _loadedFrom, _loadedTo;
+    private string _loadedAccount = "131", _loadedAccountLabel = "", _loadedCurrency = "";
+
+    private string _companyName = "", _companyAddress = "", _companyTaxCode = "";
+    private List<AccountOption> _accounts = new();
+    private List<Row> _rows = new();
+    private List<string> _emptyHints = new();
+
+    private sealed record AccountOption(string Code, string Name)
+    {
+        public string Display => string.IsNullOrWhiteSpace(Name) ? Code : $"{Code} - {Name}";
+    }
+
+    private sealed class Row
+    {
+        public Guid? CustomerId { get; set; }
+        public string Code { get; set; } = "";
+        public string Name { get; set; } = "";
+        public decimal OpeningFC { get; set; }
+        public decimal OpeningDebit { get; set; }
+        public decimal OpeningCredit { get; set; }
+        public decimal PeriodFC { get; set; }
+        public decimal PeriodDebit { get; set; }
+        public decimal PeriodCredit { get; set; }
+        public decimal ClosingFC { get; set; }
+        public decimal ClosingDebit { get; set; }
+        public decimal ClosingCredit { get; set; }
+        public bool IsZero => OpeningDebit == 0 && OpeningCredit == 0 && PeriodDebit == 0 && PeriodCredit == 0
+                              && ClosingDebit == 0 && ClosingCredit == 0 && OpeningFC == 0 && PeriodFC == 0;
+    }
+
+    private IEnumerable<Row> VisibleRows => _rows.Where(r =>
+        (!_hideZero || !r.IsZero)
+        && (string.IsNullOrWhiteSpace(_search)
+            || r.Code.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+            || r.Name.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? string.Empty;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var c = await db.CompanyInfomation.AsNoTracking().FirstOrDefaultAsync();
+            _companyName = FirstNonEmpty(c?.NameTiengViet, c?.Name);
+            _companyAddress = FirstNonEmpty(c?.AddressTiengViet, c?.Address);
+            _companyTaxCode = c?.TaxCode?.Trim() ?? "";
+
+            // TK công nợ: 131*, 331* và các TK có bật "Yêu cầu đối tượng khách hàng / nhà cung cấp".
+            var catalog = (await db.DanhMucTaiKhoan.AsNoTracking()
+                    .Where(x => x.Taikhoan != null && x.Taikhoan != ""
+                                && (x.Taikhoan.StartsWith("131") || x.Taikhoan.StartsWith("331")
+                                    || x.RequiresCustomer == true || x.RequiresSupplier == true))
+                    .Select(x => new { x.Taikhoan, x.Tentaikhoan })
+                    .ToListAsync())
+                .Select(x => new AccountOption(x.Taikhoan!.Trim(), x.Tentaikhoan?.Trim() ?? ""))
+                .GroupBy(x => x.Code).Select(g => g.First())
+                .ToList();
+            foreach (var parent in new[] { ("131", "Phải thu của khách hàng"), ("331", "Phải trả cho người bán") })
+                if (catalog.All(a => a.Code != parent.Item1))
+                    catalog.Add(new AccountOption(parent.Item1, parent.Item2));
+            _accounts = catalog.OrderBy(a => a.Code, StringComparer.Ordinal).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(Root(ex).Message, MudBlazor.Severity.Error);
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!await ssv.CheckPermission(_usr, "View", PermissionMenuName))
+        {
+            Snackbar.Add("Bạn không có quyền xem sổ cái / công nợ.", MudBlazor.Severity.Warning);
+            _rows.Clear();
+            return;
+        }
+
+        var from = (_fromDate ?? new DateTime(DateTime.Today.Year, 1, 1)).Date;
+        var to = (_toDate ?? DateTime.Today).Date;
+        if (from > to) (from, to) = (to, from);
+        var toExclusive = to.AddDays(1);
+        var account = (_accountCode ?? "").Trim();
+        if (account.Length == 0) { Snackbar.Add("Chọn tài khoản công nợ.", MudBlazor.Severity.Warning); return; }
+        var cur = (_currency ?? "").Trim().ToUpperInvariant();
+
+        try
+        {
+            _busy = true;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var q = db.GeneralLedgerEntries.AsNoTracking()
+                .Where(x => x.AccountCode != null && x.AccountCode.Trim().StartsWith(account) && x.PostingDate < toExclusive);
+            if (_book == "TAX") q = q.Where(x => x.IsTaxBook == true);
+            else if (_book == "MGMT") q = q.Where(x => x.IsManagementBook == true);
+
+            var hasCur = cur.Length > 0 && cur != "VND";
+            var sums = await q
+                .GroupBy(x => x.CustomerId)
+                .Select(g => new
+                {
+                    CustomerId = g.Key,
+                    OpenD = g.Sum(x => x.PostingDate < from ? x.Debit : 0m),
+                    OpenC = g.Sum(x => x.PostingDate < from ? x.Credit : 0m),
+                    OpenFC = g.Sum(x => hasCur && x.PostingDate < from && x.CurrencyCode == cur ? x.DebitFC - x.CreditFC : 0m),
+                    PerD = g.Sum(x => x.PostingDate >= from ? x.Debit : 0m),
+                    PerC = g.Sum(x => x.PostingDate >= from ? x.Credit : 0m),
+                    PerFC = g.Sum(x => hasCur && x.PostingDate >= from && x.CurrencyCode == cur ? x.DebitFC - x.CreditFC : 0m)
+                })
+                .ToListAsync();
+
+            var ids = sums.Where(s => s.CustomerId.HasValue).Select(s => s.CustomerId!.Value).Distinct().ToList();
+            var customers = new Dictionary<Guid, (string Code, string Name)>();
+            foreach (var chunk in ids.Chunk(1000))
+            {
+                var part = await db.Customer.AsNoTracking()
+                    .Where(c => chunk.Contains(c.Customer_ID))
+                    .Select(c => new { c.Customer_ID, c.Customer_Code, c.MainCode, c.COMPANY, c.EnglishName, c.BIZName })
+                    .ToListAsync();
+                foreach (var c in part)
+                    customers[c.Customer_ID] = (FirstNonEmpty(c.Customer_Code, c.MainCode),
+                        FirstNonEmpty(c.COMPANY, c.EnglishName, c.BIZName));
+            }
+
+            _rows = sums.Select(s =>
+            {
+                var info = s.CustomerId.HasValue && customers.TryGetValue(s.CustomerId.Value, out var ci)
+                    ? ci
+                    : (Code: s.CustomerId.HasValue ? "" : NoObjectCode,
+                       Name: s.CustomerId.HasValue ? s.CustomerId.Value.ToString() : "Bút toán không gắn đối tượng");
+                var openNet = s.OpenD - s.OpenC;
+                var closeNet = openNet + s.PerD - s.PerC;
+                return new Row
+                {
+                    CustomerId = s.CustomerId,
+                    Code = info.Code,
+                    Name = info.Name,
+                    OpeningFC = s.OpenFC,
+                    OpeningDebit = openNet > 0 ? openNet : 0,
+                    OpeningCredit = openNet < 0 ? -openNet : 0,
+                    PeriodFC = s.PerFC,
+                    PeriodDebit = s.PerD,
+                    PeriodCredit = s.PerC,
+                    ClosingFC = s.OpenFC + s.PerFC,
+                    ClosingDebit = closeNet > 0 ? closeNet : 0,
+                    ClosingCredit = closeNet < 0 ? -closeNet : 0
+                };
+            })
+            .OrderBy(r => r.CustomerId.HasValue ? 0 : 1)
+            .ThenBy(r => r.Code, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+            _loaded = true;
+            _loadedFrom = from;
+            _loadedTo = to;
+            _loadedAccount = account;
+            _loadedCurrency = hasCur ? cur : "";
+            _loadedAccountLabel = _accounts.FirstOrDefault(a => a.Code == account)?.Display ?? account;
+            _emptyHints = _rows.Any(r => !r.IsZero)
+                ? new List<string>()
+                : await DiagnoseEmptyAsync(db, account, from, toExclusive);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(Root(ex).Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>Giải thích vì sao không có số liệu (chỉ chạy khi kết quả rỗng).</summary>
+    private async Task<List<string>> DiagnoseEmptyAsync(AppDbContext db, string account, DateTime from, DateTime toExclusive)
+    {
+        var hints = new List<string>();
+        var gl = db.GeneralLedgerEntries.AsNoTracking().Where(x => x.AccountCode != null && x.AccountCode.Trim().StartsWith(account));
+        var any = await gl.CountAsync();
+        if (any == 0)
+        {
+            hints.Add($"Sổ cái chưa có bút toán nào của TK {account} (ở mọi ngày).");
+            var total = await db.GeneralLedgerEntries.AsNoTracking().CountAsync();
+            if (total == 0)
+                hints.Add("Bảng sổ cái (GeneralLedgerEntries) đang trống hoàn toàn — chưa có phiếu nào được ghi sổ trong database này.");
+            else
+            {
+                var codes = await db.GeneralLedgerEntries.AsNoTracking()
+                    .Where(x => x.AccountCode != null && (x.AccountCode.Trim().StartsWith("13") || x.AccountCode.Trim().StartsWith("33")))
+                    .Select(x => x.AccountCode.Trim()).Distinct().OrderBy(x => x).Take(15).ToListAsync();
+                hints.Add($"Sổ cái có {total:N0} bút toán; TK công nợ đang có dữ liệu: {(codes.Count == 0 ? "không có TK 13x/33x nào" : string.Join(", ", codes))}.");
+            }
+        }
+        else
+        {
+            var later = await gl.CountAsync(x => x.PostingDate >= toExclusive);
+            if (later > 0) hints.Add($"Có {later} bút toán TK {account} nhưng ngày hạch toán sau {toExclusive.AddDays(-1):dd/MM/yyyy}.");
+            if (_book != "ALL")
+            {
+                var otherBook = await gl.CountAsync(x => x.PostingDate < toExclusive
+                    && (_book == "TAX" ? x.IsTaxBook != true : x.IsManagementBook != true));
+                if (otherBook > 0) hints.Add($"Có {otherBook} bút toán không thuộc sổ {_book} — thử chọn Sổ = ALL.");
+            }
+        }
+        var drafts = await (from l in db.AccountingVoucherLines.AsNoTracking()
+                            join v in db.AccountingVouchers.AsNoTracking() on l.VoucherId equals v.Id
+                            where l.AccountCode != null && l.AccountCode.Trim().StartsWith(account)
+                                  && v.Ghiso != true && v.Status != 3
+                                  && v.PostingDate < toExclusive
+                            select v.Id).Distinct().CountAsync();
+        if (drafts > 0) hints.Add($"Có {drafts} phiếu kế toán (10.4.1) có TK {account} còn ở trạng thái nháp, chưa ghi sổ → chưa được tính.");
+        var postedNoGl = await (from l in db.AccountingVoucherLines.AsNoTracking()
+                                join v in db.AccountingVouchers.AsNoTracking() on l.VoucherId equals v.Id
+                                where l.AccountCode != null && l.AccountCode.Trim().StartsWith(account)
+                                      && v.Ghiso == true && v.Status != 3 && v.PostingDate < toExclusive
+                                      && !db.GeneralLedgerEntries.Any(g => g.VoucherId == v.Id)
+                                select v.Id).Distinct().CountAsync();
+        if (postedNoGl > 0)
+            hints.Add($"Có {postedNoGl} phiếu kế toán TK {account} đánh dấu đã ghi sổ nhưng KHÔNG có dòng trong sổ cái (có thể import thẳng trạng thái) — mở phiếu ở 10.4.1, bỏ ghi sổ rồi ghi sổ lại.");
+        return hints;
+    }
+
+    private async Task OpenDetailAsync(Row r)
+    {
+        if (!OnTabRequest.HasDelegate || !r.CustomerId.HasValue) return;
+        var customerId = r.CustomerId.Value;
+        RenderFragment content = b =>
+        {
+            b.OpenComponent<DebtDetailBook_10_14_5>(0);
+            b.AddAttribute(1, nameof(DebtDetailBook_10_14_5.InitialAccountCode), _loadedAccount);
+            b.AddAttribute(2, nameof(DebtDetailBook_10_14_5.InitialFrom), (DateTime?)_loadedFrom);
+            b.AddAttribute(3, nameof(DebtDetailBook_10_14_5.InitialTo), (DateTime?)_loadedTo);
+            b.AddAttribute(4, nameof(DebtDetailBook_10_14_5.InitialBook), _book);
+            b.AddAttribute(5, nameof(DebtDetailBook_10_14_5.InitialCustomerId), (Guid?)customerId);
+            b.CloseComponent();
+        };
+        await OnTabRequest.InvokeAsync((
+            $"DebtDetailBook_{_loadedAccount}_{customerId}_{_loadedFrom:yyyyMMdd}_{_loadedTo:yyyyMMdd}",
+            $"10.14.5 Sổ chi tiết công nợ - {(string.IsNullOrWhiteSpace(r.Code) ? r.Name : r.Code)}",
+            content));
+    }
+
+    private static Row Total(IEnumerable<Row> rows)
+    {
+        var t = new Row();
+        foreach (var r in rows)
+        {
+            t.OpeningFC += r.OpeningFC; t.OpeningDebit += r.OpeningDebit; t.OpeningCredit += r.OpeningCredit;
+            t.PeriodFC += r.PeriodFC; t.PeriodDebit += r.PeriodDebit; t.PeriodCredit += r.PeriodCredit;
+            t.ClosingFC += r.ClosingFC; t.ClosingDebit += r.ClosingDebit; t.ClosingCredit += r.ClosingCredit;
+        }
+        return t;
+    }
+
+    // ───────────── Xuất Excel theo mẫu SO_TONG_HOP_CONG_NO.xlsx ─────────────
+
+    private async Task ExportAsync()
+    {
+        var rows = VisibleRows.ToList();
+        if (rows.Count == 0) return;
+        try
+        {
+            using var wb = new XLWorkbook();
+            var ws = wb.Worksheets.Add("SoCongNoTongHop");
+            ws.Style.Font.FontName = "Times New Roman";
+            ws.Style.Font.FontSize = 11;
+
+            void Title(int r, string text, bool bold, double size, XLAlignmentHorizontalValues align = XLAlignmentHorizontalValues.Center)
+            {
+                ws.Cell(r, 1).Value = text;
+                var rg = ws.Range(r, 1, r, 12);
+                rg.Merge();
+                rg.Style.Font.Bold = bold;
+                rg.Style.Font.FontSize = size;
+                rg.Style.Alignment.Horizontal = align;
+                rg.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+                rg.Style.Alignment.WrapText = true;
+            }
+
+            Title(1, _companyName.ToUpperInvariant(), true, 12, XLAlignmentHorizontalValues.Left);
+            Title(2, _companyAddress + (string.IsNullOrWhiteSpace(_companyTaxCode) ? "" : $"\nMST: {_companyTaxCode}"), false, 10,
+                XLAlignmentHorizontalValues.Left);
+            ws.Row(2).Height = 30;
+            Title(4, "SỔ CÔNG NỢ TỔNG HỢP", true, 14);
+            Title(5, $"Từ ngày: {_loadedFrom:dd/MM/yyyy}, đến ngày: {_loadedTo:dd/MM/yyyy}\n{_loadedAccountLabel}", false, 11);
+            ws.Row(5).Height = 30;
+            Title(6, "Đơn vị tính : Đồng VN", false, 10, XLAlignmentHorizontalValues.Right);
+            ws.Range(6, 1, 6, 12).Style.Font.Italic = true;
+
+            // Tiêu đề bảng 2 dòng (7–8)
+            void Head(int r1, int c1, int r2, int c2, string text)
+            {
+                ws.Cell(r1, c1).Value = text;
+                if (r1 != r2 || c1 != c2) ws.Range(r1, c1, r2, c2).Merge();
+            }
+            Head(7, 1, 8, 1, "Số\nTT");
+            Head(7, 2, 8, 2, "Mã KH");
+            Head(7, 3, 8, 3, "Tên KH");
+            Head(7, 4, 7, 6, "Số dư đầu kỳ");
+            Head(7, 7, 7, 9, "Số phát sinh trong kỳ");
+            Head(7, 10, 7, 12, "Số dư cuối kỳ");
+            var nt = string.IsNullOrWhiteSpace(_loadedCurrency) ? "NT" : $"NT ({_loadedCurrency})";
+            for (var g = 0; g < 3; g++)
+            {
+                ws.Cell(8, 4 + g * 3).Value = nt;
+                ws.Cell(8, 5 + g * 3).Value = "Nợ";
+                ws.Cell(8, 6 + g * 3).Value = "Có";
+            }
+            var head = ws.Range(7, 1, 8, 12);
+            head.Style.Font.Bold = true;
+            head.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            head.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            head.Style.Alignment.WrapText = true;
+            head.Style.Fill.BackgroundColor = XLColor.FromHtml("#E8EEF7");
+
+            const int first = 9;
+            var r = first;
+            var stt = 0;
+            foreach (var x in rows)
+            {
+                ws.Cell(r, 1).Value = ++stt;
+                ws.Cell(r, 2).Value = x.Code;
+                ws.Cell(r, 3).Value = x.Name;
+                decimal[] v =
+                {
+                    x.OpeningFC, x.OpeningDebit, x.OpeningCredit, x.PeriodFC, x.PeriodDebit, x.PeriodCredit,
+                    x.ClosingFC, x.ClosingDebit, x.ClosingCredit
+                };
+                for (var i = 0; i < v.Length; i++)
+                    if (v[i] != 0) ws.Cell(r, 4 + i).Value = v[i];
+                r++;
+            }
+            var last = r - 1;
+
+            ws.Cell(r, 3).Value = $"Tổng cộng ({_loadedAccount})";
+            for (var c = 4; c <= 12; c++)
+            {
+                var col = XLHelper.GetColumnLetterFromNumber(c);
+                ws.Cell(r, c).FormulaA1 = $"SUM({col}{first}:{col}{last})";
+            }
+            var total = ws.Range(r, 1, r, 12);
+            total.Style.Font.Bold = true;
+            total.Style.Fill.BackgroundColor = XLColor.FromHtml("#FFF8E1");
+
+            var body = ws.Range(first, 4, r, 12);
+            body.Style.NumberFormat.Format = "#,##0;-#,##0;;@";
+            foreach (var c in new[] { 4, 7, 10 })
+                ws.Range(first, c, r, c).Style.NumberFormat.Format = "#,##0.00;-#,##0.00;;@";
+            ws.Range(first, 1, r, 1).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            var table = ws.Range(7, 1, r, 12);
+            table.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            table.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+
+            ws.Column(1).Width = 6;
+            ws.Column(2).Width = 12;
+            ws.Column(3).Width = 45;
+            for (var c = 4; c <= 12; c++) ws.Column(c).Width = c is 4 or 7 or 10 ? 12 : 16;
+            ws.SheetView.FreezeRows(8);
+            ws.PageSetup.PageOrientation = XLPageOrientation.Landscape;
+            ws.PageSetup.FitToPages(1, 0);
+            ws.PageSetup.SetRowsToRepeatAtTop(7, 8);
+
+            using var ms = new MemoryStream();
+            wb.SaveAs(ms);
+            await JS.InvokeVoidAsync("downloadFileFromStream",
+                $"SO_TONG_HOP_CONG_NO_{_loadedAccount}_{_loadedFrom:yyyyMMdd}_{_loadedTo:yyyyMMdd}.xlsx",
+                Convert.ToBase64String(ms.ToArray()));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(Root(ex).Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    // ───────────── Tiện ích ─────────────
+
+    private string NtHeader => string.IsNullOrWhiteSpace(_loadedCurrency) ? "NT" : $"NT ({_loadedCurrency})";
+
+    private static string M(decimal v, bool showZero = false) => v == 0 && !showZero ? "" : v.ToString("N0");
+    private static string NT(decimal v, bool showZero = false) => v == 0 && !showZero ? "" : v.ToString("N2");
+    private static string D(DateTime d) => d == default ? "" : d.ToString("dd/MM/yyyy");
+
+    private static string FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim() ?? "";
+
+    private static Exception Root(Exception ex)
+    {
+        while (ex.InnerException is not null) ex = ex.InnerException;
+        return ex;
+    }
+}

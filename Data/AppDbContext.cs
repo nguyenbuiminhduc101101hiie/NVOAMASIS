@@ -216,6 +216,20 @@ namespace NVOAMASIS.Data
         public DbSet<HrPayrollPeriod> HrPayrollPeriods => Set<HrPayrollPeriod>();
         public DbSet<HrPayslip> HrPayslips => Set<HrPayslip>();
 
+        // Khóa sổ kỳ kế toán (10.8): chặn thêm / sửa / xóa chứng từ, sổ cái, phiếu thu / chi của kỳ đã khóa.
+        // Xem Services/Accounting/AccountingPeriodLock.cs.
+        public override int SaveChanges(bool acceptAllChangesOnSuccess)
+        {
+            NVOAMASIS.Services.Accounting.AccountingPeriodLock.CheckTrackedChanges(this);
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            await NVOAMASIS.Services.Accounting.AccountingPeriodLock.CheckTrackedChangesAsync(this, cancellationToken);
+            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

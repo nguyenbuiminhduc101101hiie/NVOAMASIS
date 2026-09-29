@@ -16,9 +16,12 @@ namespace NVOAMASIS.Services
         private readonly IClientIpService _clientIpService;
         private readonly ISnackbar _Snackbar;
         private readonly IJSRuntime _js;
+        private readonly NVOAMASIS.Services.Hr.HrAttendanceService _hrAttendance;
        
-        public AttendanceService(AppDbContext db, IHttpContextAccessor http, HttpClient http_ip, IClientIpService clientIpService, ISnackbar snackbar, IJSRuntime js)
+        public AttendanceService(AppDbContext db, IHttpContextAccessor http, HttpClient http_ip, IClientIpService clientIpService, ISnackbar snackbar, IJSRuntime js,
+            NVOAMASIS.Services.Hr.HrAttendanceService hrAttendance)
         {
+            _hrAttendance = hrAttendance;
             _db = db;
             _http = http;
             _http_ip = http_ip;
@@ -39,7 +42,12 @@ namespace NVOAMASIS.Services
         {
             var ctx = _http.HttpContext;
             if (ctx == null) return string.Empty;
+            return ExtractClientIp(ctx);
+        }
 
+        /// <summary>IP public của client (Forwarded / X-Forwarded-For / CF-Connecting-IP ... / RemoteIpAddress). Dùng chung cho web và mobile API.</summary>
+        public static string ExtractClientIp(HttpContext ctx)
+        {
             var candidates = new List<string>();
 
             // 1. Forwarded (RFC 7239)
@@ -188,33 +196,18 @@ namespace NVOAMASIS.Services
         }
 
 
+        /// <summary>
+        /// Chấm công trên web. Quy tắc (theo buổi / giờ vào – giờ ra, khung giờ, IP văn phòng) nằm ở
+        /// HrAttendanceService.PunchAsync — dùng chung với chấm công trên điện thoại.
+        /// </summary>
         public async Task<(bool Success, string Message, AttendanceLog? Log)> CheckInAsync(Guid userId)
         {
-            //var today = DateTime.Today;
-            //if (await HasCheckedInTodayAsync(userId))
-            //    return (false, "Đã chấm công hôm nay", null);
-            var now = DateTime.Now;
-            var today = DateTime.Today;
+            var today = await _hrAttendance.GetTodayAsync(userId);
+            if (!today.CanPunch)
+                return (false, today.CurrentSession == null && today.Mode == NVOAMASIS.Models.Hr.HrAttendanceModes.Session
+                    ? "Đã quá thời gian chấm công"
+                    : "Đã chấm công hôm nay", null);
 
-            var morningStart = today.AddHours(8);
-            var morningEnd = today.AddHours(9);
-            var afternoonStart = today.AddHours(13);
-            var afternoonEnd = today.AddHours(14);
-
-            string session = "";
-            if (now >= morningStart && now <= morningEnd)
-                session = "morning";
-            else if (now >= afternoonStart && now <= afternoonEnd)
-                session = "afternoon";
-
-            if (string.IsNullOrEmpty(session))
-                return (false, "Đã quá thời gian chấm công", null);
-
-            if (await HasCheckedInTodayAsync(userId, session))
-                return (false, "Đã chấm công hôm nay", null);
-
-            //var ip = GetClientIp();
-            //var ip = _clientIpService.GetClientIp(_http.HttpContext!);
             // Nguồn IP: cấu hình tại 12.8 Cài đặt nhân sự (HrSetting.AttendanceIpSource).
             //  - "client" (mặc định, như cũ): trình duyệt tự lấy IP public qua JS → người dùng có thể giả mạo.
             //  - "server": lấy IP từ request tới server (header proxy / RemoteIpAddress); nếu không lấy được thì quay về JS.
@@ -222,25 +215,14 @@ namespace NVOAMASIS.Services
             var ip = ipSource == "server" ? GetClientIp() : string.Empty;
             if (string.IsNullOrWhiteSpace(ip))
                 ip = await _js.InvokeAsync<string>("getPublicIp");
-            _Snackbar.Add($"IP Client : {ip}", MudBlazor.Severity.Info); 
+            _Snackbar.Add($"IP Client : {ip}", MudBlazor.Severity.Info);
 
-            var cidrs = GetWhitelistedIpCidrs();
-            var onsite = IpInCidrs(ip, cidrs);
-
-            var log = new AttendanceLog
+            var rs = await _hrAttendance.PunchAsync(userId, new NVOAMASIS.Models.Hr.HrPunchInput
             {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                CheckInTime = DateTime.UtcNow.AddHours(7),
-                IPAddress = ip,
-                IsOnsite = onsite,
-                SourceType = "WEB",
-                LocalDate = today,
-                Session = session,
-            };
-            _db.AttendanceLogs.Add(log);
-            await _db.SaveChangesAsync();
-            return (true, onsite ? "Chấm công tại văn phòng" : "Chấm công ngoài văn phòng", log);
+                Source = NVOAMASIS.Models.Hr.HrAttendanceSources.Web,
+                Ip = ip
+            });
+            return (rs.Success, rs.Message, null);
         }
 
         public async Task<int> GetTodayOnsiteCountAsync()

@@ -12,7 +12,7 @@ namespace NVOAMASIS.Services.Hr
     ///  - LeaveRequests đã duyệt (phép năm, ốm, việc riêng, không lương, xin ra ngoài),
     ///  - OutRequests đã duyệt (xin ra ngoài kiểu cũ),
     ///  - lịch làm việc + ngày lễ (HrSetting / HrHoliday).
-    /// Mỗi ngày chia 2 buổi, mỗi buổi 0,5 công.
+    /// Mỗi ngày chia 2 buổi, mỗi buổi 0,5 công. T7 chỉ làm sáng: 0,5 công, hoặc 1 công nếu bật SaturdayHalfDayFullCredit.
     /// </summary>
     public sealed class HrTimesheetService(IDbContextFactory<AppDbContext> dbFactory)
     {
@@ -22,22 +22,30 @@ namespace NVOAMASIS.Services.Hr
 
         private readonly record struct SegState(Seg Kind, int LeaveType = 0);
 
-        public async Task<HrTimesheet> BuildAsync(HrTimesheetFilter f)
+        public Task<HrTimesheet> BuildAsync(HrTimesheetFilter f)
+        {
+            var from = new DateTime(f.Year, f.Month, 1);
+            return BuildRangeAsync(from, from.AddMonths(1).AddDays(-1), f);
+        }
+
+        /// <summary>Bảng công cho khoảng ngày bất kỳ [from, to] (dùng cho bảng công tháng và chấm công theo ngày).</summary>
+        public async Task<HrTimesheet> BuildRangeAsync(DateTime from, DateTime to, HrTimesheetFilter f)
         {
             await using var db = await dbFactory.CreateDbContextAsync();
             var s = await HrSettingsService.GetAsync(db);
 
-            var from = new DateTime(f.Year, f.Month, 1);
-            var to = from.AddMonths(1).AddDays(-1);
-            var today = DateTime.Today;
+            from = from.Date;
+            to = to.Date;
+            var today = HrAttendanceCalc.VnNow().Date;
 
-            var sheet = new HrTimesheet { Year = f.Year, Month = f.Month };
+            var sheet = new HrTimesheet { Year = from.Year, Month = from.Month };
             sheet.Days = await HrSettingsService.BuildCalendarAsync(db, s, from, to);
 
             // Nhân viên có làm việc trong tháng
             var empQ = db.HrEmployees.AsNoTracking()
                 .Where(e => (e.JoinDate == null || e.JoinDate <= to)
                             && (e.Status != HrEmployeeStatus.Resigned || e.ResignDate == null || e.ResignDate >= from));
+            if (f.UserId.HasValue) empQ = empQ.Where(e => e.UserId == f.UserId);
             if (f.DepartmentId.HasValue) empQ = empQ.Where(e => e.DepartmentId == f.DepartmentId);
             if (!string.IsNullOrWhiteSpace(f.Branch)) empQ = empQ.Where(e => e.Branch == f.Branch);
             if (!string.IsNullOrWhiteSpace(f.Search))
@@ -122,6 +130,7 @@ namespace NVOAMASIS.Services.Hr
                 DepartmentName = e.Dept,
                 Branch = e.Branch,
                 HasAccount = e.UserId.HasValue,
+                UserId = e.UserId,
                 Cells = new HrTimesheetCell[days.Count]
             };
 
@@ -144,8 +153,8 @@ namespace NVOAMASIS.Services.Hr
                 }
                 if (day.Kind == HrDayKind.Holiday)
                 {
-                    row.Holiday += 1;
-                    row.Standard += 1;
+                    row.Holiday += day.Standard;
+                    row.Standard += day.Standard;
                     row.Cells[i] = new HrTimesheetCell { Code = "L", Tip = day.HolidayName };
                     continue;
                 }
@@ -184,23 +193,26 @@ namespace NVOAMASIS.Services.Hr
                     return date >= today.Date ? new SegState(Seg.Future) : new SegState(Seg.Absent);
                 }
 
+                var halfWork = day.Kind == HrDayKind.HalfWork;
                 var m = Resolve(true);
-                var a = day.Kind == HrDayKind.HalfWork ? new SegState(Seg.None) : Resolve(false);
+                var a = halfWork ? new SegState(Seg.None) : Resolve(false);
+                // Ngày thường: mỗi buổi 0,5 công. T7 chỉ làm sáng: buổi sáng = công của cả ngày (0,5 hoặc 1).
+                var w = halfWork ? day.Standard : day.Standard / 2;
 
                 foreach (var seg in new[] { m, a })
                 {
                     switch (seg.Kind)
                     {
-                        case Seg.Worked: row.Worked += 0.5m; break;
-                        case Seg.Remote: row.Worked += 0.5m; row.Remote += 0.5m; break;
-                        case Seg.Absent: row.Absent += 0.5m; break;
+                        case Seg.Worked: row.Worked += w; break;
+                        case Seg.Remote: row.Worked += w; row.Remote += w; break;
+                        case Seg.Absent: row.Absent += w; break;
                         case Seg.Leave:
                             switch (seg.LeaveType)
                             {
-                                case HrLeaveType.Annual: row.Annual += 0.5m; break;
-                                case HrLeaveType.Sick: row.Sick += 0.5m; break;
-                                case HrLeaveType.Personal: row.Personal += 0.5m; break;
-                                case HrLeaveType.Unpaid: row.Unpaid += 0.5m; break;
+                                case HrLeaveType.Annual: row.Annual += w; break;
+                                case HrLeaveType.Sick: row.Sick += w; break;
+                                case HrLeaveType.Personal: row.Personal += w; break;
+                                case HrLeaveType.Unpaid: row.Unpaid += w; break;
                             }
                             break;
                     }
@@ -236,10 +248,14 @@ namespace NVOAMASIS.Services.Hr
         {
             var cm = SegCode(m);
             if (halfDay)
-                return new HrTimesheetCell { Code = cm, Warn = m.Kind == Seg.Absent };
+                return new HrTimesheetCell { Code = cm, MorningCode = cm, Warn = m.Kind == Seg.Absent };
             var ca = SegCode(a);
             var code = cm == ca ? cm : $"{(cm == "" ? "·" : cm)}/{(ca == "" ? "·" : ca)}";
-            return new HrTimesheetCell { Code = code, Warn = m.Kind == Seg.Absent || a.Kind == Seg.Absent };
+            return new HrTimesheetCell
+            {
+                Code = code, MorningCode = cm, AfternoonCode = ca,
+                Warn = m.Kind == Seg.Absent || a.Kind == Seg.Absent
+            };
         }
 
         // ───────────── Xuất Excel ─────────────

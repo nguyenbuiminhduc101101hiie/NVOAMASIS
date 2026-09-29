@@ -1,3 +1,4 @@
+using NVOAMASIS.Services.Accounting;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -438,6 +439,13 @@ WHERE CompanyId = @CompanyId
 
     private async Task SaveAsync()
     {
+        // 10.4.2 mở bằng quyền Xem PhieuKeToan — nhập chứng từ cần quyền Thêm.
+        if (!await PermSvc.CanAsync(AuthenticationStateProvider, AccountingPermission.Add, "PhieuKeToan"))
+        {
+            Snackbar.Add(AccountingPermission.Denied(AccountingPermission.Add, "PhieuKeToan"), MudBlazor.Severity.Warning);
+            return;
+        }
+
         if (!Guid.TryParse(_companyIdText, out var companyId))
         {
             Snackbar.Add(Localizer["AvImp.InvalidCompanyId"], MudBlazor.Severity.Error);
@@ -498,6 +506,19 @@ WHERE CompanyId = @CompanyId
         _isSaving = true;
         using var scope = ScopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Khóa sổ kỳ kế toán (10.8) — kiểm tra trước khi mở transaction ghi SQL trực tiếp.
+        try
+        {
+            await AccountingPeriodLock.EnsureOpenAsync(db, selected.Select(v => (DateTime?)v.VoucherDate), "nhập chứng từ");
+        }
+        catch (AccountingPeriodClosedException ex)
+        {
+            _isSaving = false;
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Warning);
+            return;
+        }
+
         var connection = db.Database.GetDbConnection();
         await connection.OpenAsync();
         await using var transaction = await connection.BeginTransactionAsync();

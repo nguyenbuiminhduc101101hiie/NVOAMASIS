@@ -14,7 +14,9 @@
 @using MudBlazor
 @using NVOAMASIS.Resources
 @using Microsoft.Extensions.Localization
+@using NVOAMASIS.Services.Accounting
 @inject IServiceScopeFactory ScopeFactory
+@inject SharedServices PermSvc
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<SharedResource> Localizer
@@ -617,6 +619,13 @@ SELECT @Result;";
 
     private async Task ImportWithOptionalCustomerAsync()
     {
+        // 10.6.4 mở bằng quyền Xem GeneralLedgerEntries — ghi vào sổ cái cần quyền Thêm.
+        if (!await PermSvc.CanAsync(AuthenticationStateProvider, NVOAMASIS.Services.Accounting.AccountingPermission.Add, "GeneralLedgerEntries"))
+        {
+            Snackbar.Add(NVOAMASIS.Services.Accounting.AccountingPermission.Denied(NVOAMASIS.Services.Accounting.AccountingPermission.Add, "GeneralLedgerEntries"), MudBlazor.Severity.Warning);
+            return;
+        }
+
         if (!Guid.TryParse(_companyIdText, out var companyId) || companyId == Guid.Empty)
         {
             Snackbar.Add(Localizer["GleImp.InvalidCompanyId"], MudBlazor.Severity.Error);
@@ -651,6 +660,10 @@ SELECT @Result;";
         {
             using var scope = ScopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Khóa sổ kỳ kế toán (10.8) — kiểm tra trước khi mở transaction ghi SQL trực tiếp.
+            await NVOAMASIS.Services.Accounting.AccountingPeriodLock.EnsureOpenAsync(db,
+                selected.Select(v => (DateTime?)(_useVoucherDateAsPostingDate ? v.VoucherDate : (_postingDate ?? DateTime.Today)).Date),
+                "nhập bút toán sổ cái");
             var connection = db.Database.GetDbConnection();
             if (connection.State != ConnectionState.Open)
                 await connection.OpenAsync();

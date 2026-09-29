@@ -40,6 +40,8 @@ namespace NVOAMASIS.Services.Hr
                 if (days.Count > 0) s.WorkDays = days;
             }
             s.SaturdayHalfDay = Bool(map, HrSettingKeys.SaturdayHalfDay, s.SaturdayHalfDay);
+            s.SaturdayHalfDayFullCredit = Bool(map, HrSettingKeys.SaturdayHalfDayFullCredit, s.SaturdayHalfDayFullCredit);
+            s.FixedStandardDays = Math.Max(0, Dec(map, HrSettingKeys.FixedStandardDays, s.FixedStandardDays));
             s.HoursPerDay = Dec(map, HrSettingKeys.HoursPerDay, s.HoursPerDay);
             if (s.HoursPerDay <= 0) s.HoursPerDay = 8;
             s.AnnualLeaveBaseDays = Dec(map, HrSettingKeys.AnnualLeaveBaseDays, s.AnnualLeaveBaseDays);
@@ -48,8 +50,30 @@ namespace NVOAMASIS.Services.Hr
             s.AllowNegativeAnnualLeave = Bool(map, HrSettingKeys.AllowNegativeAnnualLeave, s.AllowNegativeAnnualLeave);
             if (map.TryGetValue(HrSettingKeys.AttendanceIpSource, out var ip) && ip is "client" or "server")
                 s.AttendanceIpSource = ip;
+
+            if (map.TryGetValue(HrSettingKeys.AttendanceMode, out var mode)
+                && mode is HrAttendanceModes.Session or HrAttendanceModes.InOut)
+                s.AttendanceMode = mode;
+            s.WorkStart = Time(map, HrSettingKeys.WorkStart, s.WorkStart);
+            s.LunchStart = Time(map, HrSettingKeys.LunchStart, s.LunchStart);
+            s.LunchEnd = Time(map, HrSettingKeys.LunchEnd, s.LunchEnd);
+            s.WorkEnd = Time(map, HrSettingKeys.WorkEnd, s.WorkEnd);
+            s.SaturdayEnd = Time(map, HrSettingKeys.SaturdayEnd, s.SaturdayEnd);
+            s.LateGraceMinutes = Math.Max(0, (int)Dec(map, HrSettingKeys.LateGraceMinutes, s.LateGraceMinutes));
+            s.OfficeLatitude = DecOrNull(map, HrSettingKeys.OfficeLatitude);
+            s.OfficeLongitude = DecOrNull(map, HrSettingKeys.OfficeLongitude);
+            s.OfficeRadiusM = Math.Max(10, (int)Dec(map, HrSettingKeys.OfficeRadiusM, s.OfficeRadiusM));
+            s.MobileRequireOnsite = Bool(map, HrSettingKeys.MobileRequireOnsite, s.MobileRequireOnsite);
             return s;
         }
+
+        private static TimeSpan Time(Dictionary<string, string?> m, string k, TimeSpan def) =>
+            m.TryGetValue(k, out var v) && TimeSpan.TryParseExact(v, @"hh\:mm", CultureInfo.InvariantCulture, out var t) ? t : def;
+
+        private static decimal? DecOrNull(Dictionary<string, string?> m, string k) =>
+            m.TryGetValue(k, out var v) && decimal.TryParse(v, NumberStyles.Number, CultureInfo.InvariantCulture, out var d) ? d : null;
+
+        private static string HhMm(TimeSpan t) => t.ToString(@"hh\:mm", CultureInfo.InvariantCulture);
 
         private static bool Bool(Dictionary<string, string?> m, string k, bool def) =>
             m.TryGetValue(k, out var v) && bool.TryParse(v, out var b) ? b : def;
@@ -61,6 +85,13 @@ namespace NVOAMASIS.Services.Hr
         {
             if (s.WorkDays.Count == 0) return HrResult.Fail("hr_err_workdays_required");
             if (s.HoursPerDay is <= 0 or > 24) return HrResult.Fail("hr_err_hours_per_day");
+            if (s.FixedStandardDays is < 0 or > 31) return HrResult.Fail("hr_err_fixed_standard_days");
+            if (!(s.WorkStart < s.LunchStart && s.LunchStart <= s.LunchEnd && s.LunchEnd < s.WorkEnd)
+                || s.SaturdayEnd <= s.WorkStart)
+                return HrResult.Fail("hr_err_work_hours");
+            if (s.OfficeLatitude.HasValue != s.OfficeLongitude.HasValue
+                || s.OfficeLatitude is < -90 or > 90 || s.OfficeLongitude is < -180 or > 180)
+                return HrResult.Fail("hr_err_office_location");
             if (s.AnnualLeaveBaseDays < 0 || s.MaxCarryOverDays < 0 || s.SeniorityStepYears < 0)
                 return HrResult.Fail("hr_err_negative_value");
 
@@ -68,12 +99,25 @@ namespace NVOAMASIS.Services.Hr
             {
                 [HrSettingKeys.WorkDays] = string.Join(",", s.WorkDays.Select(d => (int)d).OrderBy(x => x)),
                 [HrSettingKeys.SaturdayHalfDay] = s.SaturdayHalfDay.ToString().ToLowerInvariant(),
+                [HrSettingKeys.SaturdayHalfDayFullCredit] = (s.SaturdayHalfDay && s.SaturdayHalfDayFullCredit).ToString().ToLowerInvariant(),
+                [HrSettingKeys.FixedStandardDays] = s.FixedStandardDays.ToString(CultureInfo.InvariantCulture),
                 [HrSettingKeys.HoursPerDay] = s.HoursPerDay.ToString(CultureInfo.InvariantCulture),
                 [HrSettingKeys.AnnualLeaveBaseDays] = s.AnnualLeaveBaseDays.ToString(CultureInfo.InvariantCulture),
                 [HrSettingKeys.SeniorityStepYears] = s.SeniorityStepYears.ToString(CultureInfo.InvariantCulture),
                 [HrSettingKeys.MaxCarryOverDays] = s.MaxCarryOverDays.ToString(CultureInfo.InvariantCulture),
                 [HrSettingKeys.AllowNegativeAnnualLeave] = s.AllowNegativeAnnualLeave.ToString().ToLowerInvariant(),
-                [HrSettingKeys.AttendanceIpSource] = s.AttendanceIpSource == "server" ? "server" : "client"
+                [HrSettingKeys.AttendanceIpSource] = s.AttendanceIpSource == "server" ? "server" : "client",
+                [HrSettingKeys.AttendanceMode] = s.AttendanceMode == HrAttendanceModes.InOut ? HrAttendanceModes.InOut : HrAttendanceModes.Session,
+                [HrSettingKeys.WorkStart] = HhMm(s.WorkStart),
+                [HrSettingKeys.LunchStart] = HhMm(s.LunchStart),
+                [HrSettingKeys.LunchEnd] = HhMm(s.LunchEnd),
+                [HrSettingKeys.WorkEnd] = HhMm(s.WorkEnd),
+                [HrSettingKeys.SaturdayEnd] = HhMm(s.SaturdayEnd),
+                [HrSettingKeys.LateGraceMinutes] = Math.Max(0, s.LateGraceMinutes).ToString(CultureInfo.InvariantCulture),
+                [HrSettingKeys.OfficeLatitude] = s.OfficeLatitude?.ToString(CultureInfo.InvariantCulture) ?? "",
+                [HrSettingKeys.OfficeLongitude] = s.OfficeLongitude?.ToString(CultureInfo.InvariantCulture) ?? "",
+                [HrSettingKeys.OfficeRadiusM] = Math.Max(10, s.OfficeRadiusM).ToString(CultureInfo.InvariantCulture),
+                [HrSettingKeys.MobileRequireOnsite] = s.MobileRequireOnsite.ToString().ToLowerInvariant()
             };
 
             try
@@ -238,17 +282,28 @@ namespace NVOAMASIS.Services.Hr
         internal static HrTimesheetDay Classify(DateTime d, HrWorkSettings s, IReadOnlyDictionary<DateTime, string> holidays)
         {
             var day = new HrTimesheetDay { Date = d.Date };
+            var halfSaturday = d.DayOfWeek == DayOfWeek.Saturday && s.SaturdayHalfDay;
             if (!s.WorkDays.Contains(d.DayOfWeek))
+            {
                 day.Kind = HrDayKind.Off;
+                day.Weight = 0m;
+            }
             else if (holidays.TryGetValue(d.Date, out var name))
             {
                 day.Kind = HrDayKind.Holiday;
                 day.HolidayName = name;
+                day.Weight = halfSaturday ? s.SaturdayHalfDayWeight : 1m;
             }
-            else if (d.DayOfWeek == DayOfWeek.Saturday && s.SaturdayHalfDay)
+            else if (halfSaturday)
+            {
                 day.Kind = HrDayKind.HalfWork;
+                day.Weight = s.SaturdayHalfDayWeight;
+            }
             else
+            {
                 day.Kind = HrDayKind.Work;
+                day.Weight = 1m;
+            }
             return day;
         }
     }

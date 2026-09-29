@@ -39,6 +39,30 @@ namespace NVOAMASIS.Migrations
                     b.Property<bool>("IsOnsite")
                         .HasColumnType("bit");
 
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<int?>("DistanceM")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsManual")
+                        .HasColumnType("bit");
+
+                    b.Property<decimal?>("Latitude")
+                        .HasColumnType("decimal(9,6)");
+
+                    b.Property<decimal?>("Longitude")
+                        .HasColumnType("decimal(9,6)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("PunchType")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
                     b.Property<DateTime>("LocalDate")
                         .HasColumnType("datetime2");
 

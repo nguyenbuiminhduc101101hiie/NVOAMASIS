@@ -1,0 +1,185 @@
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrAttendanceService AttendanceSvc
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.subtitle2" Class="mb-2">
+            @Row.EmployeeCode - @Row.FullName · @Row.Date.ToString("dddd dd/MM/yyyy", System.Globalization.CultureInfo.CurrentUICulture)
+            @if (!string.IsNullOrEmpty(Row.Code))
+            {
+                <MudChip Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">@Row.Code</MudChip>
+            }
+        </MudText>
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else
+        {
+            <MudSimpleTable Dense="true" Hover="true" Bordered="true" Style="font-size:13px">
+                <thead>
+                    <tr>
+                        <th>@L("hr_att_time")</th>
+                        <th>@L("hr_att_type")</th>
+                        <th>@L("hr_att_session")</th>
+                        <th>@L("hr_att_source")</th>
+                        <th>@L("hr_att_place")</th>
+                        <th>@L("hr_note")</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (_punches.Count == 0)
+                    {
+                        <tr><td colspan="7"><MudText Typo="Typo.body2">@L("hr_att_no_punch")</MudText></td></tr>
+                    }
+                    @foreach (var p in _punches)
+                    {
+                        <tr>
+                            <td><b>@p.Time.ToString("HH:mm")</b></td>
+                            <td>@TypeText(p.PunchType)</td>
+                            <td>@(p.Session == HrAttendanceCalc.Morning ? L("hr_att_morning") : L("hr_att_afternoon"))</td>
+                            <td>@SourceText(p.Source)</td>
+                            <td>
+                                @if (p.IsOnsite)
+                                {
+                                    <MudChip Size="Size.Small" Color="Color.Success">@L("hr_att_onsite")</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip Size="Size.Small" Color="Color.Warning">@L("hr_att_remote")</MudChip>
+                                }
+                                <span style="color:#757575">@p.Ip @(p.DistanceM.HasValue ? $"· {p.DistanceM} m" : "")</span>
+                            </td>
+                            <td>@p.Note @(p.IsManual && !string.IsNullOrEmpty(p.CreatedBy) ? $"({p.CreatedBy})" : "")</td>
+                            <td>
+                                @if (CanEdit && p.IsManual)
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error"
+                                                   OnClick="@(() => DeleteAsync(p))" Disabled="_busy" />
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        }
+
+        @if (CanEdit)
+        {
+            <MudDivider Class="my-3" />
+            <MudText Typo="Typo.subtitle2" Class="mb-1"><b>@L("hr_att_manual")</b></MudText>
+            <MudTextField T="string" @bind-Value="_note" Label="@L("hr_att_manual_reason")" Required="true" MaxLength="500"
+                          HelperText="@L("hr_att_manual_reason_hint")" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            <MudStack Row="true" Spacing="1" Class="mt-2 flex-wrap">
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary" Disabled="_busy"
+                           OnClick="@(() => PresetAsync(HrManualPreset.FullDay))">@L("hr_att_preset_full")</MudButton>
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary" Disabled="_busy"
+                           OnClick="@(() => PresetAsync(HrManualPreset.Morning))">@L("hr_att_preset_morning")</MudButton>
+                @if (Row.DayKind != HrDayKind.HalfWork)
+                {
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary" Disabled="_busy"
+                               OnClick="@(() => PresetAsync(HrManualPreset.Afternoon))">@L("hr_att_preset_afternoon")</MudButton>
+                }
+            </MudStack>
+            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mt-2 flex-wrap">
+                <MudSelect T="string" @bind-Value="_type" Label="@L("hr_att_type")" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:140px">
+                    <MudSelectItem T="string" Value="@HrPunchTypes.In">@L("hr_att_in")</MudSelectItem>
+                    <MudSelectItem T="string" Value="@HrPunchTypes.Out">@L("hr_att_out")</MudSelectItem>
+                </MudSelect>
+                <MudTimePicker @bind-Time="_time" Label="@L("hr_att_time")" AmPm="false" Editable="true"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:130px" />
+                <MudCheckBox T="bool" @bind-Checked="_onsite" Label="@L("hr_att_onsite")" Color="Color.Primary" />
+                <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                           OnClick="AddAsync" Disabled="_busy">@L("hr_att_add_punch")</MudButton>
+            </MudStack>
+            <MudText Typo="Typo.caption" Class="d-block mt-2">@L("hr_att_manual_hint")</MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Close">@L("hr_close")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public HrAttendanceDayRow Row { get; set; } = new();
+    [Parameter] public bool CanEdit { get; set; }
+
+    private List<HrPunchView> _punches = new();
+    private bool _loading = true, _busy, _changed, _onsite = true;
+    private string? _note;
+    private string _type = HrPunchTypes.In;
+    private TimeSpan? _time = new(8, 0, 0);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        if (Row.UserId.HasValue) _punches = await AttendanceSvc.GetPunchesAsync(Row.UserId.Value, Row.Date);
+        _loading = false;
+    }
+
+    private async Task PresetAsync(HrManualPreset preset)
+    {
+        if (!Row.UserId.HasValue) return;
+        _busy = true;
+        var rs = await AttendanceSvc.AddManualPresetAsync(Row.UserId.Value, Row.Date, preset, _note, Usr);
+        _busy = false;
+        await AfterSaveAsync(rs);
+    }
+
+    private async Task AddAsync()
+    {
+        if (!Row.UserId.HasValue) return;
+        _busy = true;
+        var rs = await AttendanceSvc.AddManualAsync(new HrManualPunchInput
+        {
+            UserId = Row.UserId.Value, Date = Row.Date, Time = _time, PunchType = _type, IsOnsite = _onsite, Note = _note
+        }, Usr);
+        _busy = false;
+        await AfterSaveAsync(rs);
+    }
+
+    private async Task DeleteAsync(HrPunchView p)
+    {
+        var ok = await DialogService.ShowMessageBox(L("hr_confirm"),
+            string.Format(L("hr_delete_item_confirm"), $"{p.Time:HH:mm} {TypeText(p.PunchType)}"),
+            yesText: L("delete"), cancelText: L("cancel"));
+        if (ok != true) return;
+        _busy = true;
+        var rs = await AttendanceSvc.DeleteManualAsync(p.Id);
+        _busy = false;
+        await AfterSaveAsync(rs);
+    }
+
+    private async Task AfterSaveAsync(HrResult rs)
+    {
+        Notify(rs);
+        if (!rs.Success) return;
+        _changed = true;
+        await LoadAsync();
+    }
+
+    private void Close() => MudDialog.Close(DialogResult.Ok(_changed));
+
+    private string TypeText(string? t) => t switch
+    {
+        HrPunchTypes.In => L("hr_att_in"),
+        HrPunchTypes.Out => L("hr_att_out"),
+        _ => L("hr_att_by_session")
+    };
+
+    private string SourceText(string s) => s switch
+    {
+        HrAttendanceSources.Mobile => L("hr_att_src_mobile"),
+        HrAttendanceSources.Manual => L("hr_att_src_manual"),
+        _ => L("hr_att_src_web")
+    };
+}

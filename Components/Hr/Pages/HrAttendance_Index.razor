@@ -1,0 +1,310 @@
+@attribute [Authorize]
+@inherits NVOAMASIS.Components.Hr.HrPageBase
+@inject HrAttendanceService AttendanceSvc
+@inject HrEmployeeService EmployeeSvc
+@inject IJSRuntime JS
+
+<PageTitle>@L("hr_attendance")</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="@($"12.10 {L("hr_attendance")}")" Subtitle="@L("hr_attendance_subtitle")" />
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3">
+            @if (_perm.View)
+            {
+                <MudTabPanel Text="@L("hr_att_tab_daily")" Icon="@Icons.Material.Filled.Today">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                        <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" Size="Size.Small" OnClick="@(() => ShiftDayAsync(-1))" />
+                        <MudDatePicker Date="_date" DateChanged="@(async (DateTime? d) => { _date = d ?? DateTime.Today; await LoadDailyAsync(); })"
+                                       Label="@L("hr_date")" DateFormat="dd/MM/yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:150px" />
+                        <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Small" OnClick="@(() => ShiftDayAsync(1))" />
+                        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="TodayAsync">@L("hr_att_today")</MudButton>
+                        <MudSelect T="Guid?" @bind-Value="_filter.DepartmentId" Label="@L("hr_department")" Clearable="true"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:220px">
+                            @foreach (var d in _departments)
+                            {
+                                <MudSelectItem T="Guid?" Value="@((Guid?)d.Id)">@d.Display</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudSelect T="string" @bind-Value="_filter.Branch" Label="@L("hr_branch")" Clearable="true"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:120px">
+                            @foreach (var b in HrEmployee_EditDialog.Branches)
+                            {
+                                <MudSelectItem T="string" Value="@b">@b</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudTextField T="string" @bind-Value="_filter.Search" Label="@L("hr_search")" Clearable="true"
+                                      OnKeyUp="@(async (KeyboardEventArgs e) => { if (e.Key == "Enter") await LoadDailyAsync(); })"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:200px" />
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh"
+                                   OnClick="LoadDailyAsync" Disabled="_busy">@L("reload")</MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload"
+                                   OnClick="ExportDailyAsync" Disabled="_busy || _daily.Count == 0">@L("hr_export_excel")</MudButton>
+                    </MudStack>
+
+                    @if (_summary != null)
+                    {
+                        <MudStack Row="true" Spacing="1" Class="mb-2 flex-wrap">
+                            @Chip(null, L("hr_att_sum_total"), _summary.Total, Color.Default)
+                            @Chip(StatusGroup.Present, L("hr_att_sum_present"), _summary.Present, Color.Success)
+                            @Chip(StatusGroup.Late, L("hr_att_sum_late"), _summary.Late, Color.Warning)
+                            @Chip(StatusGroup.NotYet, L("hr_att_sum_not_yet"), _summary.NotYet, Color.Info)
+                            @Chip(StatusGroup.Leave, L("hr_att_sum_leave"), _summary.Leave, Color.Primary)
+                            @Chip(StatusGroup.Absent, L("hr_att_sum_absent"), _summary.Absent, Color.Error)
+                            @Chip(StatusGroup.MissingOut, L("hr_att_sum_missing_out"), _summary.MissingOut, Color.Error)
+                            @Chip(StatusGroup.Remote, L("hr_att_sum_remote"), _summary.Remote, Color.Secondary)
+                        </MudStack>
+                    }
+
+                    @if (_busy)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                    }
+                    <MudTable T="HrAttendanceDayRow" Items="FilteredDaily" Dense="true" Hover="true" Bordered="true" Striped="true"
+                              FixedHeader="true" Height="calc(100vh - 360px)" OnRowClick="@(e => OpenAsync(e.Item))" RowStyle="cursor:pointer">
+                        <HeaderContent>
+                            <MudTh>@L("hr_employee_code")</MudTh>
+                            <MudTh>@L("hr_full_name")</MudTh>
+                            <MudTh>@L("hr_department")</MudTh>
+                            <MudTh>@L("hr_att_code")</MudTh>
+                            <MudTh>@L("hr_att_first_in")</MudTh>
+                            <MudTh>@L("hr_att_last_out")</MudTh>
+                            <MudTh>@L("hr_att_late")</MudTh>
+                            <MudTh>@L("hr_att_early")</MudTh>
+                            <MudTh>@L("hr_att_status")</MudTh>
+                            <MudTh>@L("hr_att_source")</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.EmployeeCode</MudTd>
+                            <MudTd>@context.FullName</MudTd>
+                            <MudTd>@context.DepartmentName</MudTd>
+                            <MudTd Style="@(context.Warn ? "color:#d32f2f;font-weight:600" : "")">@context.Code</MudTd>
+                            <MudTd>@T(context.FirstIn)</MudTd>
+                            <MudTd>@T(context.LastOut)</MudTd>
+                            <MudTd Style="color:#e65100">@(context.LateMinutes > 0 ? $"{context.LateMinutes}'" : "")</MudTd>
+                            <MudTd Style="color:#e65100">@(context.EarlyMinutes > 0 ? $"{context.EarlyMinutes}'" : "")</MudTd>
+                            <MudTd><MudChip Size="Size.Small" Color="@StatusColor(context.Status)">@L(HrAttendanceService.StatusKey(context.Status))</MudChip></MudTd>
+                            <MudTd>
+                                @context.Sources
+                                @if (context.ManualCount > 0)
+                                {
+                                    <MudTooltip Text="@L("hr_att_src_manual")"><MudIcon Icon="@Icons.Material.Filled.EditNote" Size="Size.Small" Color="Color.Warning" /></MudTooltip>
+                                }
+                                @if (context.AnyRemote)
+                                {
+                                    <MudTooltip Text="@L("hr_att_remote")"><MudIcon Icon="@Icons.Material.Filled.Home" Size="Size.Small" Color="Color.Secondary" /></MudTooltip>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent><MudText Typo="Typo.body2">@L("hr_no_items")</MudText></NoRecordsContent>
+                    </MudTable>
+                    <MudText Typo="Typo.caption" Class="mt-2 d-block">@L(_perm.Edit ? "hr_att_click_hint_edit" : "hr_att_click_hint")</MudText>
+                </MudTabPanel>
+            }
+
+            <MudTabPanel Text="@L("hr_att_tab_mine")" Icon="@Icons.Material.Filled.Person">
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                    <MudSelect T="int" Value="_myMonth" ValueChanged="@(async (int v) => { _myMonth = v; await LoadMineAsync(); })"
+                               Label="@L("hr_month")" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:100px">
+                        @for (var m = 1; m <= 12; m++)
+                        {
+                            var mm = m;
+                            <MudSelectItem T="int" Value="@mm">@mm</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="int" Value="_myYear" ValueChanged="@(async (int v) => { _myYear = v; await LoadMineAsync(); })"
+                               Label="@L("hr_year")" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:110px">
+                        @foreach (var y in Enumerable.Range(DateTime.Today.Year - 2, 3).Reverse())
+                        {
+                            <MudSelectItem T="int" Value="@y">@y</MudSelectItem>
+                        }
+                    </MudSelect>
+                    @if (_mine.Count > 0)
+                    {
+                        <MudText Typo="Typo.body2">
+                            @string.Format(L("hr_att_mine_summary"),
+                                _mine.Count(x => x.LateMinutes > 0), _mine.Sum(x => x.LateMinutes),
+                                _mine.Count(x => x.EarlyMinutes > 0), _mine.Count(x => x.Status is HrAttendanceStatus.Absent or HrAttendanceStatus.MissingOut))
+                        </MudText>
+                    }
+                </MudStack>
+                @if (_mineNoProfile)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true">@L("hr_att_no_profile")</MudAlert>
+                }
+                else
+                {
+                    <MudTable T="HrAttendanceDayRow" Items="_mine" Dense="true" Hover="true" Bordered="true" Loading="_busyMine">
+                        <HeaderContent>
+                            <MudTh>@L("hr_date")</MudTh>
+                            <MudTh>@L("hr_att_code")</MudTh>
+                            <MudTh>@L("hr_att_first_in")</MudTh>
+                            <MudTh>@L("hr_att_last_out")</MudTh>
+                            <MudTh>@L("hr_att_late")</MudTh>
+                            <MudTh>@L("hr_att_early")</MudTh>
+                            <MudTh>@L("hr_att_status")</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd Style="@(context.DayKind is HrDayKind.Off or HrDayKind.Holiday ? "color:#9e9e9e" : "")">
+                                @context.Date.ToString("ddd dd/MM", System.Globalization.CultureInfo.CurrentUICulture)
+                            </MudTd>
+                            <MudTd Style="@(context.Warn ? "color:#d32f2f;font-weight:600" : "")">@context.Code</MudTd>
+                            <MudTd>@T(context.FirstIn)</MudTd>
+                            <MudTd>@T(context.LastOut)</MudTd>
+                            <MudTd Style="color:#e65100">@(context.LateMinutes > 0 ? $"{context.LateMinutes}'" : "")</MudTd>
+                            <MudTd Style="color:#e65100">@(context.EarlyMinutes > 0 ? $"{context.EarlyMinutes}'" : "")</MudTd>
+                            <MudTd>
+                                @if (context.Status is not (HrAttendanceStatus.Off or HrAttendanceStatus.NotEmployed))
+                                {
+                                    <MudChip Size="Size.Small" Color="@StatusColor(context.Status)">@L(HrAttendanceService.StatusKey(context.Status))</MudChip>
+                                }
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    <MudText Typo="Typo.caption" Class="mt-2 d-block">@L("hr_att_mine_hint")</MudText>
+                }
+            </MudTabPanel>
+        </MudTabs>
+    </MudPaper>
+</div>
+
+@code {
+    private enum StatusGroup { Present, Late, NotYet, Leave, Absent, MissingOut, Remote }
+
+    private bool _busy, _busyMine, _mineNoProfile;
+    private HrPerm _perm = HrPerm.None;
+    private readonly HrAttendanceFilter _filter = new();
+    private DateTime? _date = DateTime.Today;
+    private List<HrLookupItem> _departments = new();
+    private List<HrAttendanceDayRow> _daily = new();
+    private HrAttendanceDaySummary? _summary;
+    private StatusGroup? _group;
+
+    private int _myMonth = DateTime.Today.Month, _myYear = DateTime.Today.Year;
+    private List<HrAttendanceDayRow> _mine = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await InitUserAsync();
+        _perm = await PermSvc.GetAsync(Usr, HrMenus.Attendance);
+        if (_perm.View)
+        {
+            _departments = await EmployeeSvc.GetDepartmentLookupAsync();
+            await LoadDailyAsync();
+        }
+        await LoadMineAsync();
+    }
+
+    private IEnumerable<HrAttendanceDayRow> FilteredDaily => _group switch
+    {
+        null => _daily.Where(x => x.Status is not (HrAttendanceStatus.NotEmployed)),
+        StatusGroup.Present => _daily.Where(x => x.Status is HrAttendanceStatus.Present or HrAttendanceStatus.Late or HrAttendanceStatus.MissingOut),
+        StatusGroup.Late => _daily.Where(x => x.Status == HrAttendanceStatus.Late),
+        StatusGroup.NotYet => _daily.Where(x => x.Status == HrAttendanceStatus.NotYet),
+        StatusGroup.Leave => _daily.Where(x => x.Status == HrAttendanceStatus.Leave),
+        StatusGroup.Absent => _daily.Where(x => x.Status == HrAttendanceStatus.Absent),
+        StatusGroup.MissingOut => _daily.Where(x => x.Status == HrAttendanceStatus.MissingOut),
+        StatusGroup.Remote => _daily.Where(x => x.AnyRemote),
+        _ => _daily
+    };
+
+    private RenderFragment Chip(StatusGroup? g, string label, int count, Color color) => __builder =>
+    {
+        <MudChip Size="Size.Small" Color="@color" Variant="@(_group == g ? Variant.Filled : Variant.Outlined)"
+                 OnClick="@(() => { _group = _group == g ? null : g; })">@label: <b>&nbsp;@count</b></MudChip>
+    };
+
+    private async Task ShiftDayAsync(int d)
+    {
+        _date = (_date ?? DateTime.Today).AddDays(d);
+        await LoadDailyAsync();
+    }
+
+    private async Task TodayAsync()
+    {
+        _date = DateTime.Today;
+        await LoadDailyAsync();
+    }
+
+    private async Task LoadDailyAsync()
+    {
+        if (!_perm.View) return;
+        try
+        {
+            _busy = true;
+            _filter.From = _filter.To = (_date ?? DateTime.Today).Date;
+            _filter.UserId = null;
+            _daily = await AttendanceSvc.GetDaysAsync(_filter);
+            _summary = HrAttendanceDaySummary.From(_daily);
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task LoadMineAsync()
+    {
+        if (!CurrentUserId.HasValue) { _mineNoProfile = true; return; }
+        try
+        {
+            _busyMine = true;
+            var from = new DateTime(_myYear, _myMonth, 1);
+            _mine = await AttendanceSvc.GetDaysAsync(new HrAttendanceFilter
+            {
+                From = from, To = from.AddMonths(1).AddDays(-1), UserId = CurrentUserId
+            });
+            _mineNoProfile = _mine.Count == 0;
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_load")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+        finally
+        {
+            _busyMine = false;
+        }
+    }
+
+    private async Task OpenAsync(HrAttendanceDayRow row)
+    {
+        if (!row.UserId.HasValue) { Notify(L("hr_att_st_no_account"), Severity.Info); return; }
+        var dlg = DialogService.Show<HrAttendance_PunchDialog>(L("hr_att_punches"),
+            new DialogParameters { ["Row"] = row, ["CanEdit"] = _perm.Edit },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseButton = true });
+        var rs = await dlg.Result;
+        if (!rs.Canceled && rs.Data is true) await LoadDailyAsync();
+    }
+
+    private async Task ExportDailyAsync()
+    {
+        try
+        {
+            var d = (_date ?? DateTime.Today).Date;
+            var bytes = HrAttendanceService.ExportExcel(FilteredDaily.ToList(), d, d, L);
+            await JS.InvokeVoidAsync("downloadFileFromStream", $"ChamCong_{d:yyyyMMdd}.xlsx", Convert.ToBase64String(bytes));
+        }
+        catch (Exception ex)
+        {
+            Notify($"{L("hr_err_export")}: {ex.GetBaseException().Message}", Severity.Error);
+        }
+    }
+
+    private static string T(TimeSpan? t) => t.HasValue ? t.Value.ToString(@"hh\:mm") : "";
+
+    private static Color StatusColor(HrAttendanceStatus s) => s switch
+    {
+        HrAttendanceStatus.Present => Color.Success,
+        HrAttendanceStatus.Late => Color.Warning,
+        HrAttendanceStatus.MissingOut => Color.Error,
+        HrAttendanceStatus.NotYet => Color.Info,
+        HrAttendanceStatus.Leave => Color.Primary,
+        HrAttendanceStatus.Absent => Color.Error,
+        _ => Color.Default
+    };
+}

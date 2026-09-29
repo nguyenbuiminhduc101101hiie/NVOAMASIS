@@ -11,6 +11,7 @@
 @inject TabRequestService TabRequests
 @inject NotificationService _notificationService
 @inject AttendanceService AttendanceService
+@inject NVOAMASIS.Services.Hr.HrAttendanceService HrAttendanceService
 @inject SharedServices SharedService
 @using Microsoft.AspNetCore.SignalR.Client
 @inject SingletonSerivce singsv
@@ -91,7 +92,7 @@
 
             <MudIconButton Icon=@Icons.Material.Filled.Menu Color=Color.Inherit Edge=Edge.Start OnClick=DrawerToggle />
             @* <MudImage Src="Logo.png" Alt="AMASIS" Height="50" ObjectFit="ObjectFit.ScaleDown" Class="rounded-lg" /> *@
-            <MudText Typo=Typo.h5 Class="ml-3">AMASIS - NVOCC</MudText>
+            <MudText Typo=Typo.h5 Class="ml-3">@AppBrand</MudText>
             <MudSpacer />
 
             <div class="mud-toolbar mud-toolbar-dense">
@@ -176,8 +177,8 @@
                             {
                                 <MudIconButton Icon="@Icons.Material.Filled.AssignmentLate" Color="Color.Inherit" @onclick="OpenAdminLeaveRequest" Style="margin-right:20px" />
                             }
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_checkedInToday" OnClick="CheckIn" Style="margin-right:20px; min-width:140px">
-                                @(_checkedInToday ? Localizer["Đã chấm"] : Localizer["Chấm công"])
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_checkedInToday" OnClick="CheckIn" Style="margin-right:20px; min-width:140px" Title="@_checkInHint">
+                                @(string.IsNullOrEmpty(_checkInText) ? (_checkedInToday ? Localizer["Đã chấm"] : Localizer["Chấm công"]) : Localizer[_checkInText])
                             </MudButton>
                         }
                         else
@@ -187,8 +188,8 @@
                             {
                                 <MudIconButton Icon="@Icons.Material.Filled.AssignmentLate" Color="Color.Inherit" @onclick="OpenAdminLeaveRequest" Style="margin-right:20px" />
                             }
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_checkedInToday" OnClick="CheckIn" Style="margin-right:20px; min-width:140px">
-                                @(_checkedInToday ? Localizer["Đã chấm"] : Localizer["Chấm công"])
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_checkedInToday" OnClick="CheckIn" Style="margin-right:20px; min-width:140px" Title="@_checkInHint">
+                                @(string.IsNullOrEmpty(_checkInText) ? (_checkedInToday ? Localizer["Đã chấm"] : Localizer["Chấm công"]) : Localizer[_checkInText])
                             </MudButton>
                         }
 
@@ -330,7 +331,11 @@
         }
     }
     private int _unreadEmailCount = 0;
+    /// <summary>Tên phần mềm (appsettings.json → "AppBrand"): hiện trên thanh tiêu đề và đầu tên tab trình duyệt.</summary>
+    private static string AppBrand => NVOAMASIS.AppInfo.Brand;
     private bool _checkedInToday = false;
+    private string _checkInText = string.Empty;
+    private string _checkInHint = string.Empty;
     // Removed popup approach; using tab instead
     //private bool _openOutRequest = false;
     // Xác định admin dựa trên Department
@@ -399,6 +404,8 @@
             await ApplyStoredFontPreference();
             // Apply saved Shipment grid colors globally (CSS variables + localStorage).
             await JS.InvokeVoidAsync("nvoccLoadShipmentColorSettings");
+            // Tên tab trình duyệt: "AMASIS - NVOCC | <màn hình>"
+            await JS.InvokeVoidAsync("nvoccSetBrandTitle", AppBrand);
             await InvokeAsync(StateHasChanged);
         }
         catch
@@ -827,29 +834,19 @@
 
     private async Task LoadCheckInStatus()
     {
-        var now = DateTime.Now;
-        var today = DateTime.Today;
-
-        var morningStart = today.AddHours(8);
-        var morningEnd = today.AddHours(9);
-        var afternoonStart = today.AddHours(13);
-        var afternoonEnd = today.AddHours(14);
-
-        string session = "";
-        if (now >= morningStart && now <= morningEnd)
-            session = "morning";
-        else if (now >= afternoonStart && now <= afternoonEnd)
-            session = "afternoon";
-
         var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
         var usr = authState.User;
         var uidClaim = usr.Claims.FirstOrDefault(c => c.Type.EndsWith("/nameidentifier") || c.Type == "sub" || c.Type == "UsrId");
 
         if (uidClaim != null && Guid.TryParse(uidClaim.Value, out Guid uid))
         {
-            _checkedInToday = await AttendanceService.HasCheckedInTodayAsync(uid, session);
+            // Quy tắc chấm công (theo buổi / giờ vào – giờ ra) cấu hình tại 12.8 → HrAttendanceService.
+            var state = await HrAttendanceService.GetTodayAsync(uid);
+            _checkedInToday = !state.CanPunch;
+            _checkInText = state.ButtonText;
+            _checkInHint = state.Hint;
 
-            if (!string.IsNullOrEmpty(session) && !_checkedInToday)
+            if (state.Remind)
             {
                 if (_checkInReminder == null)
                 {
@@ -893,7 +890,6 @@
         }
         var rs = await AttendanceService.CheckInAsync(uid);
         Snackbar.Add(rs.Message, rs.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
-        if (rs.Success) _checkedInToday = true;
 
         await LoadCheckInStatus();
     }

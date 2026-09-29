@@ -57,6 +57,49 @@
             </PagerContent>
         </MudDataGrid>
     </MudPaper>
+
+    <MudPaper Class="product-price-card pa-3 mt-2" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-1">
+            <MudIcon Icon="@Icons.Material.Filled.History" Color="Color.Primary" />
+            <MudText Typo="Typo.subtitle2">
+                <b>Lịch sử khóa / mở kỳ</b>
+                @(_selected is null ? "(tất cả kỳ — chọn 1 kỳ ở bảng trên để lọc)" : $"— kỳ {_selected.PeriodMonth:D2}/{_selected.FiscalYear}")
+            </MudText>
+        </MudStack>
+        <MudText Typo="Typo.caption" Class="d-block mb-1">
+            Khóa, mở khóa, sửa hoặc xóa kỳ đang khóa cần quyền <b>Duyệt</b> trên mã quyền accounting_period (1.6 Phân quyền).
+            Mọi thay đổi kỳ kế toán được lưu tại đây và ở 1.3 Lịch sử.
+        </MudText>
+        <MudSimpleTable Dense="true" Hover="true" Bordered="true" Style="font-size:12px; max-height:260px; overflow:auto">
+            <thead>
+                <tr>
+                    <th>Thời gian</th>
+                    <th>Người thực hiện</th>
+                    <th>Kỳ</th>
+                    <th>Thao tác</th>
+                    <th>Trước</th>
+                    <th>Sau</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var h in VisibleHistory)
+                {
+                    <tr>
+                        <td style="white-space:nowrap">@h.Time.ToString("dd/MM/yyyy HH:mm:ss")</td>
+                        <td>@h.User</td>
+                        <td>@h.Period</td>
+                        <td style="@(h.Action.StartsWith("Mở khóa") ? "color:#c62828;font-weight:600" : h.Action.StartsWith("Khóa") ? "color:#2e7d32;font-weight:600" : "")">@h.Action</td>
+                        <td>@h.Before</td>
+                        <td>@h.After</td>
+                    </tr>
+                }
+                @if (!VisibleHistory.Any())
+                {
+                    <tr><td colspan="6" style="text-align:center;color:#757575">Chưa có lịch sử</td></tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    </MudPaper>
 </div>
 
 @code {
@@ -67,6 +110,23 @@
     private string _search = string.Empty;
     private List<M_AccountingPeriod> _items = new();
     private M_AccountingPeriod? _selected;
+    private List<HistoryRow> _history = new();
+
+    private const string HistoryEntity = "accounting_period";
+
+    private sealed record HistoryRow(DateTime Time, string User, Guid? PeriodId, string Period, string Action, string Before, string After);
+
+    private sealed record PeriodState(string Status, bool IsClosed, DateTime StartDate, DateTime EndDate)
+    {
+        public bool Locked => IsClosed || Status is "CLOSED" or "LOCKED";
+        public override string ToString() =>
+            $"{Status}{(IsClosed ? " + đã khóa sổ" : "")} ({StartDate:dd/MM/yyyy}–{EndDate:dd/MM/yyyy})";
+    }
+
+    private static PeriodState StateOf(M_AccountingPeriod p) => new(p.Status ?? "", p.IsClosed, p.StartDate, p.EndDate);
+
+    private IEnumerable<HistoryRow> VisibleHistory =>
+        _selected is null ? _history : _history.Where(h => h.PeriodId == _selected.PeriodId);
 
     private IEnumerable<M_AccountingPeriod> VisibleItems =>
         string.IsNullOrWhiteSpace(_search)
@@ -103,6 +163,7 @@
                 .ThenByDescending(x => x.PeriodMonth)
                 .ToListAsync();
             _selected = null;
+            await LoadHistoryAsync(db);
         }
         catch (Exception ex)
         {
@@ -112,6 +173,66 @@
         {
             _busy = false;
         }
+    }
+
+    private async Task LoadHistoryAsync(AppDbContext db)
+    {
+        var logs = await db.HistoryLogs.AsNoTracking()
+            .Where(h => h.EntityName == HistoryEntity)
+            .OrderByDescending(h => h.Timestamp)
+            .Take(500)
+            .ToListAsync();
+        _history = logs.Select(h =>
+        {
+            string before = "", after = "";
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(h.Changes ?? "{}");
+                if (doc.RootElement.TryGetProperty("before", out var b)) before = b.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("after", out var a)) after = a.GetString() ?? "";
+            }
+            catch
+            {
+                before = h.Changes ?? "";
+            }
+            return new HistoryRow(h.Timestamp ?? DateTime.MinValue, h.UserName ?? "", h.EntityId, h.No ?? "", h.Action ?? "", before, after);
+        }).ToList();
+    }
+
+    /// <summary>Ghi lịch sử thay đổi kỳ kế toán (bảng HistoryLogs — cũng xem được ở 1.3 Lịch sử).</summary>
+    private void AddHistory(AppDbContext db, Guid periodId, int year, int month, string action, PeriodState? before, PeriodState? after)
+    {
+        db.HistoryLogs.Add(new HistoryLog
+        {
+            Id = Guid.NewGuid(),
+            UserName = _usr,
+            Action = action,
+            EntityName = HistoryEntity,
+            EntityId = periodId,
+            No = $"{month:D2}/{year}",
+            Changes = System.Text.Json.JsonSerializer.Serialize(new { before = before?.ToString() ?? "", after = after?.ToString() ?? "" }),
+            Timestamp = DateTime.Now
+        });
+    }
+
+    private static string ActionFor(PeriodState? before, PeriodState? after)
+    {
+        if (before is null) return after is { Locked: true } ? "Thêm kỳ (đã khóa)" : "Thêm kỳ";
+        if (after is null) return before.Locked ? "Xóa kỳ đang khóa" : "Xóa kỳ";
+        if (!before.Locked && after.Locked) return "Khóa sổ";
+        if (before.Locked && !after.Locked) return "Mở khóa sổ";
+        return before.Locked ? "Sửa kỳ đang khóa" : "Sửa kỳ";
+    }
+
+    /// <summary>Khóa / mở khóa / sửa hoặc xóa kỳ đang khóa → cần quyền Duyệt (kế toán trưởng).</summary>
+    private async Task<bool> CanChangeLockAsync(PeriodState? before, PeriodState? after)
+    {
+        var touchesLock = (before?.Locked ?? false) || (after?.Locked ?? false);
+        if (!touchesLock) return true;
+        if (await ssv.CheckPermission(_usr, "Approve", PermissionMenuName)) return true;
+        CallSnack("Khóa / mở khóa sổ, hoặc sửa / xóa kỳ đang khóa cần quyền Duyệt trên mã quyền accounting_period " +
+                  "(thường chỉ cấp cho kế toán trưởng, tại 1.6 Phân quyền).", MudBlazor.Severity.Warning);
+        return false;
     }
 
     private void OnRowClick(DataGridRowClickEventArgs<M_AccountingPeriod> args)
@@ -216,10 +337,13 @@
 
             if (!isEdit)
             {
+                var afterNew = StateOf(data);
+                if (!await CanChangeLockAsync(null, afterNew)) return;
                 data.PeriodId = Guid.NewGuid();
                 data.CreatedAt = DateTime.UtcNow;
                 data.UpdatedAt = DateTime.UtcNow;
                 db.AccountingPeriods.Add(data);
+                AddHistory(db, data.PeriodId, data.FiscalYear, data.PeriodMonth, ActionFor(null, afterNew), null, afterNew);
             }
             else
             {
@@ -229,6 +353,12 @@
                     CallSnack(Localizer["Common.RowNotFound"], MudBlazor.Severity.Warning);
                     return;
                 }
+
+                var before = StateOf(entity);
+                var after = StateOf(data);
+                if (!await CanChangeLockAsync(before, after)) return;
+                if (before != after || entity.FiscalYear != data.FiscalYear || entity.PeriodMonth != data.PeriodMonth)
+                    AddHistory(db, entity.PeriodId, data.FiscalYear, data.PeriodMonth, ActionFor(before, after), before, after);
 
                 entity.FiscalYear = data.FiscalYear;
                 entity.PeriodMonth = data.PeriodMonth;
@@ -278,6 +408,9 @@
                 return;
             }
 
+            var beforeDel = StateOf(entity);
+            if (!await CanChangeLockAsync(beforeDel, null)) return;
+            AddHistory(db, entity.PeriodId, entity.FiscalYear, entity.PeriodMonth, ActionFor(beforeDel, null), beforeDel, null);
             db.AccountingPeriods.Remove(entity);
             await db.SaveChangesAsync();
             CallSnack(Localizer["Common.DeletedSuccessfully"], MudBlazor.Severity.Success);

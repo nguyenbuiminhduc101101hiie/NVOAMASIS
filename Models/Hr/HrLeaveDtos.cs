@@ -88,6 +88,8 @@ namespace NVOAMASIS.Models.Hr
     {
         public int Year { get; set; } = DateTime.Today.Year;
         public int Month { get; set; } = DateTime.Today.Month;
+        /// <summary>Chỉ 1 người (UserList.UsrId).</summary>
+        public Guid? UserId { get; set; }
         public Guid? DepartmentId { get; set; }
         public string? Branch { get; set; }
         public string? Search { get; set; }
@@ -101,8 +103,18 @@ namespace NVOAMASIS.Models.Hr
         public DateTime Date { get; set; }
         public HrDayKind Kind { get; set; }
         public string? HolidayName { get; set; }
-        /// <summary>Công chuẩn của ngày: 1 / 0,5 / 0.</summary>
-        public decimal Standard => Kind switch { HrDayKind.Work => 1m, HrDayKind.HalfWork => 0.5m, _ => 0m };
+        /// <summary>
+        /// Số công của ngày làm việc / ngày lễ (1; 0,5 cho T7 làm buổi sáng, hoặc 1 nếu bật "T7 sáng tính 1 công").
+        /// Gán trong HrSettingsService.Classify.
+        /// </summary>
+        public decimal Weight { get; set; } = 1m;
+        /// <summary>
+        /// Công chuẩn của ngày. Ngày lễ nằm trong công chuẩn vì được tính vào công hưởng lương (row.Paid);
+        /// nếu không, nhân viên vắng 1 ngày trong tháng có lễ vẫn được đủ lương.
+        /// </summary>
+        public decimal Standard => Kind == HrDayKind.Off ? 0m : Weight;
+        /// <summary>Số công của ngày khi tính đơn nghỉ (ngày lễ / ngày nghỉ không trừ phép).</summary>
+        public decimal LeaveDays => Kind is HrDayKind.Work or HrDayKind.HalfWork ? Weight : 0m;
     }
 
     public sealed class HrTimesheetCell
@@ -112,6 +124,9 @@ namespace NVOAMASIS.Models.Hr
         /// <summary>Giải thích (tooltip).</summary>
         public string? Tip { get; set; }
         public bool Warn { get; set; }
+        /// <summary>Ký hiệu buổi sáng / chiều (rỗng = chưa chấm / không làm).</summary>
+        public string MorningCode { get; set; } = string.Empty;
+        public string AfternoonCode { get; set; } = string.Empty;
     }
 
     public sealed class HrTimesheetRow
@@ -122,6 +137,8 @@ namespace NVOAMASIS.Models.Hr
         public string? DepartmentName { get; set; }
         public string? Branch { get; set; }
         public bool HasAccount { get; set; }
+        /// <summary>UserList.UsrId của nhân viên (null = chưa có tài khoản).</summary>
+        public Guid? UserId { get; set; }
         public HrTimesheetCell[] Cells { get; set; } = Array.Empty<HrTimesheetCell>();
 
         public decimal Standard { get; set; }

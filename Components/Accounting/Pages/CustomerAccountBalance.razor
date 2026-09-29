@@ -11,11 +11,13 @@
 @using NVOAMASIS.Models
 @using NVOAMASIS.Models.Accounting.ExcelImport
 @using NVOAMASIS.Services.Accounting.ExcelImport
+@using NVOAMASIS.Services.Accounting
 
 @using NVOAMASIS.Resources
 @using Microsoft.Extensions.Localization
 
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject SharedServices PermSvc
 @inject IAccountBalanceExcelImportService ImportService
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject ISnackbar Snackbar
@@ -1288,6 +1290,49 @@ FROM dbo.customer_account_balance
         return $"{column} {direction}";
     }
 
+    /// <summary>
+    /// Trước khi ghi: cần quyền (Thêm / Sửa / Xóa) trên mã quyền import_account_balance (cùng quyền với menu 10.9.2)
+    /// và kỳ (năm / tháng) chưa khóa sổ ở 10.8. Khi sửa / xóa 1 dòng có sẵn, kiểm tra cả kỳ cũ của dòng đó.
+    /// </summary>
+    private async Task<bool> AllowWriteAsync(string func, string what, Guid? existingId, (int Year, int Month) period)
+    {
+        const string menu = "import_account_balance";
+        if (!await PermSvc.CanAsync(AuthenticationStateProvider, func, menu))
+        {
+            Snackbar.Add(AccountingPermission.Denied(func, menu), MudBlazor.Severity.Warning);
+            return false;
+        }
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await AccountingPeriodLock.EnsureOpenAsync(db, period.Year, period.Month, what);
+
+            if (existingId.HasValue)
+            {
+                var connection = db.Database.GetDbConnection();
+                if (connection.State != ConnectionState.Open) await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT period_year, period_month FROM dbo.customer_account_balance WHERE id = @Id";
+                AddParameter(command, "@Id", existingId.Value, DbType.Guid);
+                await using var reader = await command.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var (oldYear, oldMonth) = (reader.GetInt32(0), reader.GetInt32(1));
+                    await reader.CloseAsync();
+                    if (oldYear != period.Year || oldMonth != period.Month)
+                        await AccountingPeriodLock.EnsureOpenAsync(db, oldYear, oldMonth, what);
+                }
+            }
+        }
+        catch (AccountingPeriodClosedException ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Warning);
+            return false;
+        }
+        return true;
+    }
+
     private async Task SaveBalanceAsync()
     {
         if (!_companyResolved || _saving)
@@ -1308,6 +1353,10 @@ FROM dbo.customer_account_balance
             Snackbar.Add(Localizer["CustomerAccountBalance.SaveOpeningBothSides"], MudBlazor.Severity.Warning);
             return;
         }
+
+        if (!await AllowWriteAsync(_editId.HasValue ? AccountingPermission.Edit : AccountingPermission.Add,
+                "lưu số dư khách hàng", _editId, (_editYear, _editMonth)))
+            return;
 
         _saving = true;
 
@@ -1473,6 +1522,9 @@ VALUES
         if (confirmed != true)
             return;
 
+        if (!await AllowWriteAsync(AccountingPermission.Delete, "xóa số dư khách hàng", row.Id, (row.PeriodYear, row.PeriodMonth)))
+            return;
+
         _saving = true;
 
         try
@@ -1538,6 +1590,9 @@ WHERE id = @Id
             cancelText: Localizer["CustomerAccountBalance.Cancel"]);
 
         if (confirmed != true)
+            return;
+
+        if (!await AllowWriteAsync(AccountingPermission.Edit, "đồng bộ số dư tài khoản", null, (_filterYear, _filterMonth.Value)))
             return;
 
         _saving = true;
@@ -2147,6 +2202,10 @@ VALUES
             cancelText: Localizer["CustomerAccountBalance.Cancel"]);
 
         if (confirmed != true)
+            return;
+
+        if (!await AllowWriteAsync(AccountingPermission.Add, "nhập số dư khách hàng", null,
+                (_importPreview.FiscalYear, _importPreview.PeriodNo)))
             return;
 
         _importing = true;

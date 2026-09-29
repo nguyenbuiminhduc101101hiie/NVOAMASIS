@@ -234,6 +234,8 @@ namespace NVOAMASIS.Services.Hr
                 var prm = await ParamForAsync(db, monthStart);
                 if (prm is null) return HrResult.Fail("hr_pay_err_no_param");
                 var cfg = await GetConfigAsync(db);
+                var work = await HrSettingsService.GetAsync(db);
+                var standardDays = work.FixedStandardDays > 0 ? work.FixedStandardDays : 0m;
 
                 var sheet = await timesheet.BuildAsync(new HrTimesheetFilter { Year = period.Year, Month = period.Month });
                 var rows = sheet.Rows.ToDictionary(r => r.EmployeeId);
@@ -287,17 +289,12 @@ namespace NVOAMASIS.Services.Hr
                     if (!p.TaxModeManual) p.TaxMode = HrPayrollCalculator.DefaultTaxMode(c?.ContractType);
 
                     var extra = new List<string>();
-                    p.StandardDays = sheet.StandardDays;
-                    if (row.HasAccount)
-                    {
-                        p.TimesheetPaidDays = row.Paid;
-                    }
-                    else
-                    {
-                        // Không có dữ liệu chấm công → mặc định đủ công chuẩn của người đó trong tháng.
-                        p.TimesheetPaidDays = row.Standard;
-                        extra.Add(HrPayrollCalculator.WarnNoTimesheet);
-                    }
+                    // Không có dữ liệu chấm công → mặc định đủ công chuẩn của người đó trong tháng.
+                    if (!row.HasAccount) extra.Add(HrPayrollCalculator.WarnNoTimesheet);
+                    var (std, paid) = HrPayrollCalculator.ResolveDays(standardDays, sheet.StandardDays, row.Standard,
+                        row.HasAccount ? row.Paid : row.Standard);
+                    p.StandardDays = std;
+                    p.TimesheetPaidDays = paid;
                     p.NonPaidDays = row.Unpaid + row.Absent + row.Sick;
                     if (monthNotFinished) extra.Add(HrPayrollCalculator.WarnMonthNotFinished);
 
@@ -310,7 +307,7 @@ namespace NVOAMASIS.Services.Hr
                 foreach (var old in existing.Where(x => !rows.ContainsKey(x.EmployeeId)))
                     db.HrPayslips.Remove(old);
 
-                period.StandardDays = sheet.StandardDays;
+                period.StandardDays = standardDays > 0 ? standardDays : sheet.StandardDays;
                 period.ParamId = prm.Id;
                 period.CalculatedAt = now;
                 period.CalculatedBy = actor;

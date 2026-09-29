@@ -1,3 +1,4 @@
+using NVOAMASIS.Services.Accounting;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -496,6 +497,13 @@ namespace NVOAMASIS.Components.Accounting.Pages
 
         private async Task ImportAsync()
         {
+            // 10.6.4 mở bằng quyền Xem GeneralLedgerEntries — ghi vào sổ cái cần quyền Thêm.
+            if (!await PermSvc.CanAsync(AuthenticationStateProvider, NVOAMASIS.Services.Accounting.AccountingPermission.Add, "GeneralLedgerEntries"))
+            {
+                Snackbar.Add(NVOAMASIS.Services.Accounting.AccountingPermission.Denied(NVOAMASIS.Services.Accounting.AccountingPermission.Add, "GeneralLedgerEntries"), MudBlazor.Severity.Warning);
+                return;
+            }
+
             if (!Guid.TryParse(_companyIdText, out var companyId))
             {
                 Snackbar.Add(Localizer["GleImp.InvalidCompanyId"], MudBlazor.Severity.Error);
@@ -534,6 +542,10 @@ namespace NVOAMASIS.Components.Accounting.Pages
             {
                 using var scope = ScopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                // Khóa sổ kỳ kế toán (10.8) — kiểm tra trước khi mở transaction ghi SQL trực tiếp.
+                await NVOAMASIS.Services.Accounting.AccountingPeriodLock.EnsureOpenAsync(db,
+                    selected.Select(v => (DateTime?)(_useVoucherDateAsPostingDate ? v.VoucherDate : (_postingDate ?? DateTime.Today)).Date),
+                    "nhập bút toán sổ cái");
                 var connection = db.Database.GetDbConnection();
                 if (connection.State != ConnectionState.Open)
                     await connection.OpenAsync();

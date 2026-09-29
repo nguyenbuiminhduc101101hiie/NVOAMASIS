@@ -47,7 +47,7 @@ namespace NVOAMASIS.Services.Hr
                     if (end < start) return (null, "hr_err_end_before_start");
                     if ((end - start).TotalDays > MaxRangeDays) return (null, "hr_err_leave_too_long");
                     var cal = await HrSettingsService.BuildCalendarAsync(db, s, start, end);
-                    var days = cal.Sum(d => d.Standard);
+                    var days = cal.Sum(d => d.LeaveDays);
                     if (days <= 0) return (null, "hr_err_leave_no_workday");
                     return (new HrLeaveQuantity(days, null), null);
                 }
@@ -56,7 +56,8 @@ namespace NVOAMASIS.Services.Hr
                     var day = (await HrSettingsService.BuildCalendarAsync(db, s, start, start))[0];
                     if (day.Kind is HrDayKind.Off or HrDayKind.Holiday) return (null, "hr_err_leave_no_workday");
                     if (day.Kind == HrDayKind.HalfWork && !input.HalfMorning) return (null, "hr_err_leave_saturday_afternoon");
-                    return (new HrLeaveQuantity(0.5m, null), null);
+                    // Nghỉ sáng T7 (ngày chỉ làm sáng) = nghỉ cả ngày đó → trừ đúng số công của ngày (0,5 hoặc 1).
+                    return (new HrLeaveQuantity(day.Kind == HrDayKind.HalfWork ? day.LeaveDays : 0.5m, null), null);
                 }
                 case HrLeaveDuration.Hours:
                 {
@@ -71,7 +72,10 @@ namespace NVOAMASIS.Services.Hr
                     if (lunchEnd > lunchStart) span -= lunchEnd - lunchStart;
                     var hours = Math.Round((decimal)span.TotalHours, 2);
                     if (hours <= 0) return (null, "hr_err_leave_time_range");
-                    var days = Math.Round(hours / s.HoursPerDay, 2);
+                    // T7 chỉ làm sáng (HoursPerDay/2 giờ) = day.Weight công → quy đổi theo tỷ lệ đó.
+                    var days = day.Kind == HrDayKind.HalfWork
+                        ? Math.Round(hours * 2 * day.Weight / s.HoursPerDay, 2)
+                        : Math.Round(hours / s.HoursPerDay, 2);
                     return (new HrLeaveQuantity(days, hours), null);
                 }
                 default:

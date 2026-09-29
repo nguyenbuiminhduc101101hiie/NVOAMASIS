@@ -134,6 +134,20 @@ namespace NVOAMASIS.Models.Hr
     {
         public const string WorkDays = "WorkDays";
         public const string SaturdayHalfDay = "SaturdayHalfDay";
+        public const string SaturdayHalfDayFullCredit = "SaturdayHalfDayFullCredit";
+        public const string FixedStandardDays = "FixedStandardDays";
+        // Chấm công hằng ngày
+        public const string AttendanceMode = "AttendanceMode";
+        public const string WorkStart = "WorkStart";
+        public const string LunchStart = "LunchStart";
+        public const string LunchEnd = "LunchEnd";
+        public const string WorkEnd = "WorkEnd";
+        public const string SaturdayEnd = "SaturdayEnd";
+        public const string LateGraceMinutes = "LateGraceMinutes";
+        public const string OfficeLatitude = "OfficeLatitude";
+        public const string OfficeLongitude = "OfficeLongitude";
+        public const string OfficeRadiusM = "OfficeRadiusM";
+        public const string MobileRequireOnsite = "MobileRequireOnsite";
         public const string HoursPerDay = "HoursPerDay";
         public const string AnnualLeaveBaseDays = "AnnualLeaveBaseDays";
         public const string SeniorityStepYears = "SeniorityStepYears";
@@ -152,6 +166,18 @@ namespace NVOAMASIS.Models.Hr
         };
         /// <summary>Thứ 7 chỉ làm buổi sáng (tính 0,5 công) — chỉ có tác dụng khi T7 nằm trong WorkDays.</summary>
         public bool SaturdayHalfDay { get; set; }
+        /// <summary>
+        /// Khi SaturdayHalfDay bật: buổi sáng T7 được tính 1 công (thay vì 0,5).
+        /// Dùng cho công ty làm T2 – sáng T7 và tính 26 công/tháng.
+        /// </summary>
+        public bool SaturdayHalfDayFullCredit { get; set; }
+        /// <summary>Số công của 1 ngày T7 làm buổi sáng.</summary>
+        public decimal SaturdayHalfDayWeight => SaturdayHalfDayFullCredit ? 1m : 0.5m;
+        /// <summary>
+        /// Công chuẩn cố định để tính lương (vd 24 hoặc 26). 0 = theo lịch thực tế của từng tháng.
+        /// Chỉ ảnh hưởng bảng lương; bảng công vẫn hiển thị theo lịch.
+        /// </summary>
+        public decimal FixedStandardDays { get; set; }
         public decimal HoursPerDay { get; set; } = 8;
         public decimal AnnualLeaveBaseDays { get; set; } = 12;
         public int SeniorityStepYears { get; set; } = 5;
@@ -159,5 +185,47 @@ namespace NVOAMASIS.Models.Hr
         public bool AllowNegativeAnnualLeave { get; set; }
         /// <summary>"client" (mặc định, như cũ) hoặc "server".</summary>
         public string AttendanceIpSource { get; set; } = "client";
+
+        // ───── Chấm công hằng ngày ─────
+        /// <summary>
+        /// "session" (mặc định, như cũ): mỗi buổi bấm 1 lần trong khung [giờ bắt đầu buổi, +1 giờ].
+        /// "inout": chấm giờ vào / giờ ra bất kỳ lúc nào trong ngày, tính đi muộn / về sớm.
+        /// </summary>
+        public string AttendanceMode { get; set; } = HrAttendanceModes.Session;
+        public TimeSpan WorkStart { get; set; } = new(8, 0, 0);
+        public TimeSpan LunchStart { get; set; } = new(12, 0, 0);
+        public TimeSpan LunchEnd { get; set; } = new(13, 0, 0);
+        public TimeSpan WorkEnd { get; set; } = new(17, 0, 0);
+        /// <summary>Giờ kết thúc T7 khi chỉ làm buổi sáng.</summary>
+        public TimeSpan SaturdayEnd { get; set; } = new(12, 0, 0);
+        /// <summary>Số phút cho phép đến muộn / về sớm mà không tính.</summary>
+        public int LateGraceMinutes { get; set; } = 5;
+        /// <summary>Tọa độ văn phòng để chấm công GPS trên điện thoại (null = không dùng GPS).</summary>
+        public decimal? OfficeLatitude { get; set; }
+        public decimal? OfficeLongitude { get; set; }
+        public int OfficeRadiusM { get; set; } = 200;
+        /// <summary>true = điện thoại chỉ chấm được khi ở văn phòng (WiFi văn phòng hoặc trong bán kính GPS).</summary>
+        public bool MobileRequireOnsite { get; set; }
+
+        public bool HasOfficeLocation => OfficeLatitude.HasValue && OfficeLongitude.HasValue;
+    }
+
+    public static class HrAttendanceModes
+    {
+        public const string Session = "session";
+        public const string InOut = "inout";
+    }
+
+    public static class HrPunchTypes
+    {
+        public const string In = "in";
+        public const string Out = "out";
+    }
+
+    public static class HrAttendanceSources
+    {
+        public const string Web = "WEB";
+        public const string Mobile = "MOBILE";
+        public const string Manual = "MANUAL";
     }
 }

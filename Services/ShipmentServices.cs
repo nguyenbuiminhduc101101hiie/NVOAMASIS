@@ -661,6 +661,27 @@ namespace NVOAMASIS.Services
             }
         }
 
+        /// <summary>
+        /// Số MBL tự động khi người dùng để trống: "MBL" + yyMM + 5 số thứ tự trong tháng (vd MBL260900001).
+        /// Số thứ tự = số lớn nhất đang có dạng MBL&lt;yyMM&gt;xxxxx trong bảng MBL + 1.
+        /// </summary>
+        public async Task<string> GenerateMblNoAsync(DateTime? at = null)
+        {
+            var prefix = "MBL" + (at ?? DateTime.Now).ToString("yyMM");
+            await using var db = await _dbFactory.CreateDbContextAsync();
+            var existing = await db.MBL.AsNoTracking()
+                .Where(x => x.Mbl != null && x.Mbl.StartsWith(prefix))
+                .Select(x => x.Mbl!)
+                .ToListAsync();
+            var max = 0;
+            foreach (var no in existing)
+            {
+                var tail = no.Trim().Substring(prefix.Length);
+                if (tail.Length > 0 && tail.All(char.IsDigit) && int.TryParse(tail, out var n) && n > max) max = n;
+            }
+            return prefix + (max + 1).ToString("D5");
+        }
+
         public async Task<BoolandMessReponse> CreateMBLDetail(M_MBL c)
         {
             try

@@ -1,5 +1,6 @@
 @using MudBlazor
 @inject IStringLocalizer<SharedResource> Localizer
+@inject IDialogService DialogService
 
 <style>
     .mbl-container {
@@ -97,6 +98,12 @@
     <MudDialog>
         <DialogContent>
             <MudForm @ref="_form">
+                @if (MissingFields.Count > 0)
+                {
+                    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-2">
+                        Chưa nhập: <b>@string.Join(", ", MissingFields)</b> — vẫn lưu được, nhớ bổ sung sau.
+                    </MudAlert>
+                }
                 <MudContainer Class="mbl-container mbl-compact">
                     <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mbl-header">
                         <div>
@@ -122,8 +129,8 @@
                             <MudItem xs="12" md="4">
                                 <MudTextField @bind-Value="Item.Mbl"
                                               Label="@Localizer["MBL"]"
-                                              Required="true"
-                                              RequiredError="@($"{Localizer["MBL"]} is required")"
+                                              Placeholder="Để trống = tự tạo khi lưu"
+                                              HelperText="@(string.IsNullOrWhiteSpace(Item.Mbl) ? "Để trống: tự tạo số MBL + yyMM + số thứ tự khi lưu" : null)"
                                               Margin="Margin.Dense" />
                             </MudItem>
 
@@ -142,7 +149,6 @@
                                 <MudAutocomplete T="Guid"
                                                  @bind-Value="Item.CustomerID"
                                                  Label="@Localizer["Main Customer"]"
-                                                 Required="true"
                                                  SearchFunc="SearchCustomer"
                                                  ToStringFunc="CusidtoCusCode"
                                                  MaxItems="100"
@@ -309,7 +315,7 @@
                                         <MudTextField @bind-Value="Item.Shipper"
                                                       Label="@Localizer["Shipper"]"
                                                       Lines="5"
-                                                      Required="true"
+                                                      HelperText="@(string.IsNullOrWhiteSpace(Item.Shipper) ? "Nên nhập" : null)"
                                                       Margin="Margin.Dense" />
                                     </MudStack>
                                 </div>
@@ -338,7 +344,7 @@
                                         <MudTextField @bind-Value="Item.Consignee"
                                                       Label="@Localizer["Consignee"]"
                                                       Lines="5"
-                                                      Required="true"
+                                                      HelperText="@(string.IsNullOrWhiteSpace(Item.Consignee) ? "Nên nhập" : null)"
                                                       Margin="Margin.Dense" />
                                     </MudStack>
                                 </div>
@@ -367,7 +373,7 @@
                                         <MudTextField @bind-Value="Item.Notify1"
                                                       Label="@Localizer["Notify"]"
                                                       Lines="5"
-                                                      Required="true"
+                                                      HelperText="@(string.IsNullOrWhiteSpace(Item.Notify1) ? "Nên nhập" : null)"
                                                       Margin="Margin.Dense" />
                                     </MudStack>
                                 </div>
@@ -434,14 +440,38 @@
 
     void Cancel() => MudDialog.Cancel();
 
+    /// <summary>Các ô nên có nhưng không bắt buộc: chỉ cảnh báo, người dùng vẫn lưu được.</summary>
+    private List<string> MissingFields
+    {
+        get
+        {
+            var list = new List<string>();
+            if (Item.CustomerID == Guid.Empty) list.Add(Localizer["Main Customer"]);
+            if (string.IsNullOrWhiteSpace(Item.Shipper)) list.Add(ShipperLabel);
+            if (string.IsNullOrWhiteSpace(Item.Consignee)) list.Add(ConsigneeLabel);
+            if (string.IsNullOrWhiteSpace(Item.Notify1)) list.Add(NotifyLabel);
+            return list;
+        }
+    }
+
     private async Task Submit()
     {
         if (_form == null)
             return;
 
-        await _form.Validate();
-        if (!_form.IsValid)
-            return;
+        // Còn thiếu thông tin → hỏi lại 1 lần, chọn "Vẫn lưu" là lưu (không chặn).
+        var missing = MissingFields;
+        if (missing.Count > 0)
+        {
+            var ok = await DialogService.ShowMessageBox(
+                "Thiếu thông tin",
+                (MarkupString)($"Chưa nhập: <b>{System.Net.WebUtility.HtmlEncode(string.Join(", ", missing))}</b>.<br/>Bạn vẫn muốn lưu MBL?" +
+                    (string.IsNullOrWhiteSpace(Item.Mbl) ? "<br/>Số MBL để trống sẽ được tự tạo." : "")),
+                yesText: "Vẫn lưu",
+                cancelText: "Quay lại nhập");
+            if (ok != true)
+                return;
+        }
 
         MudDialog.Close(Item);
     }

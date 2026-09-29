@@ -1595,6 +1595,291 @@ WHERE NOT EXISTS (
     WHERE t.ResourceKey = src.ResourceKey AND t.Culture = src.Culture
 );
 
+-- Bổ sung: sáng T7 tính 1 công, công chuẩn cố định
+;WITH src AS (
+    SELECT N'hr_set_saturday_full_credit' AS ResourceKey, N'en-US' AS Culture, N'Count Saturday morning as 1 full day' AS Value UNION ALL
+    SELECT N'hr_set_saturday_full_credit', N'vi-VN', N'Tính buổi sáng T7 là 1 công' UNION ALL
+    SELECT N'hr_set_saturday_full_credit', N'zh-CN', N'周六上午按 1 天计' UNION ALL
+    SELECT N'hr_set_saturday_full_credit_hint' AS ResourceKey, N'en-US' AS Culture, N'For Mon – Sat morning schedules paid on ~26 days/month. Saturday morning worked = 1 day, leave on Saturday morning = 1 day.' AS Value UNION ALL
+    SELECT N'hr_set_saturday_full_credit_hint', N'vi-VN', N'Dùng khi làm T2 – sáng T7, công chuẩn ~26 công/tháng. Đi làm sáng T7 = 1 công, nghỉ phép sáng T7 = trừ 1 ngày phép.' UNION ALL
+    SELECT N'hr_set_saturday_full_credit_hint', N'zh-CN', N'适用于周一至周六上午、每月约 26 个工日。周六上午出勤 = 1 天，周六上午请假 = 1 天。' UNION ALL
+    SELECT N'hr_set_fixed_standard' AS ResourceKey, N'en-US' AS Culture, N'Fixed standard days for payroll' AS Value UNION ALL
+    SELECT N'hr_set_fixed_standard', N'vi-VN', N'Công chuẩn cố định khi tính lương' UNION ALL
+    SELECT N'hr_set_fixed_standard', N'zh-CN', N'计薪固定标准工日' UNION ALL
+    SELECT N'hr_set_fixed_standard_hint' AS ResourceKey, N'en-US' AS Culture, N'0 = actual working days of each month. E.g. 24: full attendance = full salary, each missing day deducts Salary / 24.' AS Value UNION ALL
+    SELECT N'hr_set_fixed_standard_hint', N'vi-VN', N'0 = theo lịch thực tế từng tháng. Vd 24: đi làm đủ = đủ lương, mỗi ngày nghỉ không lương trừ Lương / 24.' UNION ALL
+    SELECT N'hr_set_fixed_standard_hint', N'zh-CN', N'0 = 按每月实际工作日。例如 24：全勤 = 全薪，每缺勤一天扣 工资 / 24。' UNION ALL
+    SELECT N'hr_err_fixed_standard_days' AS ResourceKey, N'en-US' AS Culture, N'Fixed standard days must be between 0 and 31' AS Value UNION ALL
+    SELECT N'hr_err_fixed_standard_days', N'vi-VN', N'Công chuẩn cố định phải từ 0 đến 31' UNION ALL
+    SELECT N'hr_err_fixed_standard_days', N'zh-CN', N'固定标准工日须在 0 到 31 之间'
+)
+MERGE dbo.LocalizationResources AS tgt
+USING src
+ON tgt.ResourceKey = src.ResourceKey AND tgt.Culture = src.Culture
+WHEN MATCHED THEN
+    UPDATE SET Value = src.Value
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (ResourceKey, Culture, Value)
+    VALUES (src.ResourceKey, src.Culture, src.Value);
+
+-- Bổ sung: chấm công hằng ngày (12.10)
+;WITH src AS (
+    SELECT N'hr_attendance' AS ResourceKey, N'en-US' AS Culture, N'Daily attendance' AS Value UNION ALL
+    SELECT N'hr_attendance', N'vi-VN', N'Chấm công hằng ngày' UNION ALL
+    SELECT N'hr_attendance', N'zh-CN', N'每日考勤' UNION ALL
+    SELECT N'hr_attendance_subtitle' AS ResourceKey, N'en-US' AS Culture, N'Check-in / check-out by day, late arrivals, HR corrections' AS Value UNION ALL
+    SELECT N'hr_attendance_subtitle', N'vi-VN', N'Giờ vào / ra từng ngày, đi muộn, HR chấm bù' UNION ALL
+    SELECT N'hr_attendance_subtitle', N'zh-CN', N'每日上下班打卡、迟到、人事补卡' UNION ALL
+    SELECT N'hr_att_tab_daily' AS ResourceKey, N'en-US' AS Culture, N'By day' AS Value UNION ALL
+    SELECT N'hr_att_tab_daily', N'vi-VN', N'Theo ngày' UNION ALL
+    SELECT N'hr_att_tab_daily', N'zh-CN', N'按日' UNION ALL
+    SELECT N'hr_att_tab_mine' AS ResourceKey, N'en-US' AS Culture, N'My attendance' AS Value UNION ALL
+    SELECT N'hr_att_tab_mine', N'vi-VN', N'Công của tôi' UNION ALL
+    SELECT N'hr_att_tab_mine', N'zh-CN', N'我的考勤' UNION ALL
+    SELECT N'hr_att_today' AS ResourceKey, N'en-US' AS Culture, N'Today' AS Value UNION ALL
+    SELECT N'hr_att_today', N'vi-VN', N'Hôm nay' UNION ALL
+    SELECT N'hr_att_today', N'zh-CN', N'今天' UNION ALL
+    SELECT N'hr_att_code' AS ResourceKey, N'en-US' AS Culture, N'Timesheet' AS Value UNION ALL
+    SELECT N'hr_att_code', N'vi-VN', N'Công' UNION ALL
+    SELECT N'hr_att_code', N'zh-CN', N'考勤' UNION ALL
+    SELECT N'hr_att_first_in' AS ResourceKey, N'en-US' AS Culture, N'In' AS Value UNION ALL
+    SELECT N'hr_att_first_in', N'vi-VN', N'Giờ vào' UNION ALL
+    SELECT N'hr_att_first_in', N'zh-CN', N'上班' UNION ALL
+    SELECT N'hr_att_last_out' AS ResourceKey, N'en-US' AS Culture, N'Out' AS Value UNION ALL
+    SELECT N'hr_att_last_out', N'vi-VN', N'Giờ ra' UNION ALL
+    SELECT N'hr_att_last_out', N'zh-CN', N'下班' UNION ALL
+    SELECT N'hr_att_late' AS ResourceKey, N'en-US' AS Culture, N'Late (min)' AS Value UNION ALL
+    SELECT N'hr_att_late', N'vi-VN', N'Muộn (phút)' UNION ALL
+    SELECT N'hr_att_late', N'zh-CN', N'迟到(分)' UNION ALL
+    SELECT N'hr_att_early' AS ResourceKey, N'en-US' AS Culture, N'Early leave (min)' AS Value UNION ALL
+    SELECT N'hr_att_early', N'vi-VN', N'Về sớm (phút)' UNION ALL
+    SELECT N'hr_att_early', N'zh-CN', N'早退(分)' UNION ALL
+    SELECT N'hr_att_status' AS ResourceKey, N'en-US' AS Culture, N'Status' AS Value UNION ALL
+    SELECT N'hr_att_status', N'vi-VN', N'Trạng thái' UNION ALL
+    SELECT N'hr_att_status', N'zh-CN', N'状态' UNION ALL
+    SELECT N'hr_att_source' AS ResourceKey, N'en-US' AS Culture, N'Source' AS Value UNION ALL
+    SELECT N'hr_att_source', N'vi-VN', N'Nguồn' UNION ALL
+    SELECT N'hr_att_source', N'zh-CN', N'来源' UNION ALL
+    SELECT N'hr_att_time' AS ResourceKey, N'en-US' AS Culture, N'Time' AS Value UNION ALL
+    SELECT N'hr_att_time', N'vi-VN', N'Giờ' UNION ALL
+    SELECT N'hr_att_time', N'zh-CN', N'时间' UNION ALL
+    SELECT N'hr_att_type' AS ResourceKey, N'en-US' AS Culture, N'Type' AS Value UNION ALL
+    SELECT N'hr_att_type', N'vi-VN', N'Loại' UNION ALL
+    SELECT N'hr_att_type', N'zh-CN', N'类型' UNION ALL
+    SELECT N'hr_att_session' AS ResourceKey, N'en-US' AS Culture, N'Session' AS Value UNION ALL
+    SELECT N'hr_att_session', N'vi-VN', N'Buổi' UNION ALL
+    SELECT N'hr_att_session', N'zh-CN', N'时段' UNION ALL
+    SELECT N'hr_att_place' AS ResourceKey, N'en-US' AS Culture, N'Location' AS Value UNION ALL
+    SELECT N'hr_att_place', N'vi-VN', N'Vị trí' UNION ALL
+    SELECT N'hr_att_place', N'zh-CN', N'位置' UNION ALL
+    SELECT N'hr_att_in' AS ResourceKey, N'en-US' AS Culture, N'Check-in' AS Value UNION ALL
+    SELECT N'hr_att_in', N'vi-VN', N'Vào' UNION ALL
+    SELECT N'hr_att_in', N'zh-CN', N'上班' UNION ALL
+    SELECT N'hr_att_out' AS ResourceKey, N'en-US' AS Culture, N'Check-out' AS Value UNION ALL
+    SELECT N'hr_att_out', N'vi-VN', N'Ra' UNION ALL
+    SELECT N'hr_att_out', N'zh-CN', N'下班' UNION ALL
+    SELECT N'hr_att_by_session' AS ResourceKey, N'en-US' AS Culture, N'By session' AS Value UNION ALL
+    SELECT N'hr_att_by_session', N'vi-VN', N'Theo buổi' UNION ALL
+    SELECT N'hr_att_by_session', N'zh-CN', N'按时段' UNION ALL
+    SELECT N'hr_att_morning' AS ResourceKey, N'en-US' AS Culture, N'Morning' AS Value UNION ALL
+    SELECT N'hr_att_morning', N'vi-VN', N'Sáng' UNION ALL
+    SELECT N'hr_att_morning', N'zh-CN', N'上午' UNION ALL
+    SELECT N'hr_att_afternoon' AS ResourceKey, N'en-US' AS Culture, N'Afternoon' AS Value UNION ALL
+    SELECT N'hr_att_afternoon', N'vi-VN', N'Chiều' UNION ALL
+    SELECT N'hr_att_afternoon', N'zh-CN', N'下午' UNION ALL
+    SELECT N'hr_att_onsite' AS ResourceKey, N'en-US' AS Culture, N'At office' AS Value UNION ALL
+    SELECT N'hr_att_onsite', N'vi-VN', N'Tại văn phòng' UNION ALL
+    SELECT N'hr_att_onsite', N'zh-CN', N'在办公室' UNION ALL
+    SELECT N'hr_att_remote' AS ResourceKey, N'en-US' AS Culture, N'Remote' AS Value UNION ALL
+    SELECT N'hr_att_remote', N'vi-VN', N'Từ xa' UNION ALL
+    SELECT N'hr_att_remote', N'zh-CN', N'远程' UNION ALL
+    SELECT N'hr_att_src_web' AS ResourceKey, N'en-US' AS Culture, N'Web' AS Value UNION ALL
+    SELECT N'hr_att_src_web', N'vi-VN', N'Web' UNION ALL
+    SELECT N'hr_att_src_web', N'zh-CN', N'网页' UNION ALL
+    SELECT N'hr_att_src_mobile' AS ResourceKey, N'en-US' AS Culture, N'Mobile' AS Value UNION ALL
+    SELECT N'hr_att_src_mobile', N'vi-VN', N'Điện thoại' UNION ALL
+    SELECT N'hr_att_src_mobile', N'zh-CN', N'手机' UNION ALL
+    SELECT N'hr_att_src_manual' AS ResourceKey, N'en-US' AS Culture, N'HR correction' AS Value UNION ALL
+    SELECT N'hr_att_src_manual', N'vi-VN', N'HR chấm bù' UNION ALL
+    SELECT N'hr_att_src_manual', N'zh-CN', N'人事补卡' UNION ALL
+    SELECT N'hr_att_punches' AS ResourceKey, N'en-US' AS Culture, N'Attendance records' AS Value UNION ALL
+    SELECT N'hr_att_punches', N'vi-VN', N'Các lần chấm công' UNION ALL
+    SELECT N'hr_att_punches', N'zh-CN', N'打卡记录' UNION ALL
+    SELECT N'hr_att_no_punch' AS ResourceKey, N'en-US' AS Culture, N'No records' AS Value UNION ALL
+    SELECT N'hr_att_no_punch', N'vi-VN', N'Chưa có lần chấm nào' UNION ALL
+    SELECT N'hr_att_no_punch', N'zh-CN', N'无打卡记录' UNION ALL
+    SELECT N'hr_att_manual' AS ResourceKey, N'en-US' AS Culture, N'HR correction' AS Value UNION ALL
+    SELECT N'hr_att_manual', N'vi-VN', N'HR chấm bù / sửa công' UNION ALL
+    SELECT N'hr_att_manual', N'zh-CN', N'人事补卡 / 修改' UNION ALL
+    SELECT N'hr_att_manual_reason' AS ResourceKey, N'en-US' AS Culture, N'Reason (required)' AS Value UNION ALL
+    SELECT N'hr_att_manual_reason', N'vi-VN', N'Lý do (bắt buộc)' UNION ALL
+    SELECT N'hr_att_manual_reason', N'zh-CN', N'原因（必填）' UNION ALL
+    SELECT N'hr_att_manual_reason_hint' AS ResourceKey, N'en-US' AS Culture, N'E.g. forgot to check in, business trip, device error' AS Value UNION ALL
+    SELECT N'hr_att_manual_reason_hint', N'vi-VN', N'Vd: quên chấm, đi công tác, lỗi mạng' UNION ALL
+    SELECT N'hr_att_manual_reason_hint', N'zh-CN', N'例如：忘记打卡、出差、设备故障' UNION ALL
+    SELECT N'hr_att_preset_full' AS ResourceKey, N'en-US' AS Culture, N'Full day' AS Value UNION ALL
+    SELECT N'hr_att_preset_full', N'vi-VN', N'Bù cả ngày' UNION ALL
+    SELECT N'hr_att_preset_full', N'zh-CN', N'补全天' UNION ALL
+    SELECT N'hr_att_preset_morning' AS ResourceKey, N'en-US' AS Culture, N'Morning' AS Value UNION ALL
+    SELECT N'hr_att_preset_morning', N'vi-VN', N'Bù buổi sáng' UNION ALL
+    SELECT N'hr_att_preset_morning', N'zh-CN', N'补上午' UNION ALL
+    SELECT N'hr_att_preset_afternoon' AS ResourceKey, N'en-US' AS Culture, N'Afternoon' AS Value UNION ALL
+    SELECT N'hr_att_preset_afternoon', N'vi-VN', N'Bù buổi chiều' UNION ALL
+    SELECT N'hr_att_preset_afternoon', N'zh-CN', N'补下午' UNION ALL
+    SELECT N'hr_att_add_punch' AS ResourceKey, N'en-US' AS Culture, N'Add' AS Value UNION ALL
+    SELECT N'hr_att_add_punch', N'vi-VN', N'Thêm lần chấm' UNION ALL
+    SELECT N'hr_att_add_punch', N'zh-CN', N'添加' UNION ALL
+    SELECT N'hr_att_manual_hint' AS ResourceKey, N'en-US' AS Culture, N'Corrections are saved with your name and reason. Only corrections can be deleted; employees'' own records are kept. Months with a locked payroll cannot be changed.' AS Value UNION ALL
+    SELECT N'hr_att_manual_hint', N'vi-VN', N'Lần chấm bù được lưu kèm tên người sửa và lý do. Chỉ xóa được lần chấm bù; lần chấm thật của nhân viên được giữ nguyên. Tháng đã chốt lương không sửa được.' UNION ALL
+    SELECT N'hr_att_manual_hint', N'zh-CN', N'补卡记录会保存修改人和原因。只能删除补卡记录；员工本人的打卡记录保留。已锁定工资的月份不能修改。' UNION ALL
+    SELECT N'hr_att_click_hint' AS ResourceKey, N'en-US' AS Culture, N'Click a row to see each check-in / check-out.' AS Value UNION ALL
+    SELECT N'hr_att_click_hint', N'vi-VN', N'Bấm vào 1 dòng để xem các lần chấm công.' UNION ALL
+    SELECT N'hr_att_click_hint', N'zh-CN', N'点击一行查看打卡记录。' UNION ALL
+    SELECT N'hr_att_click_hint_edit' AS ResourceKey, N'en-US' AS Culture, N'Click a row to see records and add corrections.' AS Value UNION ALL
+    SELECT N'hr_att_click_hint_edit', N'vi-VN', N'Bấm vào 1 dòng để xem các lần chấm và chấm bù.' UNION ALL
+    SELECT N'hr_att_click_hint_edit', N'zh-CN', N'点击一行查看记录并补卡。' UNION ALL
+    SELECT N'hr_att_mine_summary' AS ResourceKey, N'en-US' AS Culture, N'Late {0} times ({1} min) · Early leave {2} times · Absent / missing check-out {3} days' AS Value UNION ALL
+    SELECT N'hr_att_mine_summary', N'vi-VN', N'Đi muộn {0} lần ({1} phút) · Về sớm {2} lần · Vắng / quên chấm ra {3} ngày' UNION ALL
+    SELECT N'hr_att_mine_summary', N'zh-CN', N'迟到 {0} 次（{1} 分钟）· 早退 {2} 次 · 缺勤 / 漏打下班卡 {3} 天' UNION ALL
+    SELECT N'hr_att_mine_hint' AS ResourceKey, N'en-US' AS Culture, N'Wrong or missing record? Contact HR for a correction.' AS Value UNION ALL
+    SELECT N'hr_att_mine_hint', N'vi-VN', N'Thiếu hoặc sai công? Liên hệ HR để chấm bù.' UNION ALL
+    SELECT N'hr_att_mine_hint', N'zh-CN', N'记录缺失或有误？请联系人事补卡。' UNION ALL
+    SELECT N'hr_att_no_profile' AS ResourceKey, N'en-US' AS Culture, N'Your account is not linked to an employee profile.' AS Value UNION ALL
+    SELECT N'hr_att_no_profile', N'vi-VN', N'Tài khoản của bạn chưa gắn với hồ sơ nhân viên.' UNION ALL
+    SELECT N'hr_att_no_profile', N'zh-CN', N'您的账号尚未关联员工档案。' UNION ALL
+    SELECT N'hr_att_st_present' AS ResourceKey, N'en-US' AS Culture, N'Present' AS Value UNION ALL
+    SELECT N'hr_att_st_present', N'vi-VN', N'Có mặt' UNION ALL
+    SELECT N'hr_att_st_present', N'zh-CN', N'出勤' UNION ALL
+    SELECT N'hr_att_st_late' AS ResourceKey, N'en-US' AS Culture, N'Late' AS Value UNION ALL
+    SELECT N'hr_att_st_late', N'vi-VN', N'Đi muộn' UNION ALL
+    SELECT N'hr_att_st_late', N'zh-CN', N'迟到' UNION ALL
+    SELECT N'hr_att_st_missing_out' AS ResourceKey, N'en-US' AS Culture, N'No check-out' AS Value UNION ALL
+    SELECT N'hr_att_st_missing_out', N'vi-VN', N'Quên chấm ra' UNION ALL
+    SELECT N'hr_att_st_missing_out', N'zh-CN', N'漏打下班卡' UNION ALL
+    SELECT N'hr_att_st_not_yet' AS ResourceKey, N'en-US' AS Culture, N'Not yet' AS Value UNION ALL
+    SELECT N'hr_att_st_not_yet', N'vi-VN', N'Chưa chấm' UNION ALL
+    SELECT N'hr_att_st_not_yet', N'zh-CN', N'未打卡' UNION ALL
+    SELECT N'hr_att_st_leave' AS ResourceKey, N'en-US' AS Culture, N'On leave' AS Value UNION ALL
+    SELECT N'hr_att_st_leave', N'vi-VN', N'Nghỉ phép' UNION ALL
+    SELECT N'hr_att_st_leave', N'zh-CN', N'请假' UNION ALL
+    SELECT N'hr_att_st_absent' AS ResourceKey, N'en-US' AS Culture, N'Absent' AS Value UNION ALL
+    SELECT N'hr_att_st_absent', N'vi-VN', N'Vắng' UNION ALL
+    SELECT N'hr_att_st_absent', N'zh-CN', N'缺勤' UNION ALL
+    SELECT N'hr_att_st_off' AS ResourceKey, N'en-US' AS Culture, N'Day off' AS Value UNION ALL
+    SELECT N'hr_att_st_off', N'vi-VN', N'Ngày nghỉ' UNION ALL
+    SELECT N'hr_att_st_off', N'zh-CN', N'休息日' UNION ALL
+    SELECT N'hr_att_st_holiday' AS ResourceKey, N'en-US' AS Culture, N'Holiday' AS Value UNION ALL
+    SELECT N'hr_att_st_holiday', N'vi-VN', N'Nghỉ lễ' UNION ALL
+    SELECT N'hr_att_st_holiday', N'zh-CN', N'节假日' UNION ALL
+    SELECT N'hr_att_st_not_employed' AS ResourceKey, N'en-US' AS Culture, N'Not employed' AS Value UNION ALL
+    SELECT N'hr_att_st_not_employed', N'vi-VN', N'Chưa vào làm / đã nghỉ' UNION ALL
+    SELECT N'hr_att_st_not_employed', N'zh-CN', N'未在职' UNION ALL
+    SELECT N'hr_att_st_no_account' AS ResourceKey, N'en-US' AS Culture, N'No login account' AS Value UNION ALL
+    SELECT N'hr_att_st_no_account', N'vi-VN', N'Chưa có tài khoản' UNION ALL
+    SELECT N'hr_att_st_no_account', N'zh-CN', N'无账号' UNION ALL
+    SELECT N'hr_att_sum_total' AS ResourceKey, N'en-US' AS Culture, N'Employees' AS Value UNION ALL
+    SELECT N'hr_att_sum_total', N'vi-VN', N'Nhân viên' UNION ALL
+    SELECT N'hr_att_sum_total', N'zh-CN', N'员工' UNION ALL
+    SELECT N'hr_att_sum_present' AS ResourceKey, N'en-US' AS Culture, N'Present' AS Value UNION ALL
+    SELECT N'hr_att_sum_present', N'vi-VN', N'Có mặt' UNION ALL
+    SELECT N'hr_att_sum_present', N'zh-CN', N'出勤' UNION ALL
+    SELECT N'hr_att_sum_late' AS ResourceKey, N'en-US' AS Culture, N'Late' AS Value UNION ALL
+    SELECT N'hr_att_sum_late', N'vi-VN', N'Đi muộn' UNION ALL
+    SELECT N'hr_att_sum_late', N'zh-CN', N'迟到' UNION ALL
+    SELECT N'hr_att_sum_not_yet' AS ResourceKey, N'en-US' AS Culture, N'Not yet' AS Value UNION ALL
+    SELECT N'hr_att_sum_not_yet', N'vi-VN', N'Chưa chấm' UNION ALL
+    SELECT N'hr_att_sum_not_yet', N'zh-CN', N'未打卡' UNION ALL
+    SELECT N'hr_att_sum_leave' AS ResourceKey, N'en-US' AS Culture, N'Leave' AS Value UNION ALL
+    SELECT N'hr_att_sum_leave', N'vi-VN', N'Nghỉ phép' UNION ALL
+    SELECT N'hr_att_sum_leave', N'zh-CN', N'请假' UNION ALL
+    SELECT N'hr_att_sum_absent' AS ResourceKey, N'en-US' AS Culture, N'Absent' AS Value UNION ALL
+    SELECT N'hr_att_sum_absent', N'vi-VN', N'Vắng' UNION ALL
+    SELECT N'hr_att_sum_absent', N'zh-CN', N'缺勤' UNION ALL
+    SELECT N'hr_att_sum_missing_out' AS ResourceKey, N'en-US' AS Culture, N'No check-out' AS Value UNION ALL
+    SELECT N'hr_att_sum_missing_out', N'vi-VN', N'Quên chấm ra' UNION ALL
+    SELECT N'hr_att_sum_missing_out', N'zh-CN', N'漏打下班卡' UNION ALL
+    SELECT N'hr_att_sum_remote' AS ResourceKey, N'en-US' AS Culture, N'Remote' AS Value UNION ALL
+    SELECT N'hr_att_sum_remote', N'vi-VN', N'Từ xa' UNION ALL
+    SELECT N'hr_att_sum_remote', N'zh-CN', N'远程' UNION ALL
+    SELECT N'hr_att_err_note_required' AS ResourceKey, N'en-US' AS Culture, N'Please enter a reason' AS Value UNION ALL
+    SELECT N'hr_att_err_note_required', N'vi-VN', N'Vui lòng nhập lý do chấm bù' UNION ALL
+    SELECT N'hr_att_err_note_required', N'zh-CN', N'请输入补卡原因' UNION ALL
+    SELECT N'hr_att_err_time_required' AS ResourceKey, N'en-US' AS Culture, N'Please choose the date and time' AS Value UNION ALL
+    SELECT N'hr_att_err_time_required', N'vi-VN', N'Vui lòng chọn ngày và giờ' UNION ALL
+    SELECT N'hr_att_err_time_required', N'zh-CN', N'请选择日期和时间' UNION ALL
+    SELECT N'hr_att_err_future' AS ResourceKey, N'en-US' AS Culture, N'Cannot add a record in the future' AS Value UNION ALL
+    SELECT N'hr_att_err_future', N'vi-VN', N'Không chấm bù cho thời điểm trong tương lai' UNION ALL
+    SELECT N'hr_att_err_future', N'zh-CN', N'不能补未来的打卡' UNION ALL
+    SELECT N'hr_att_err_only_manual' AS ResourceKey, N'en-US' AS Culture, N'Only HR corrections can be deleted' AS Value UNION ALL
+    SELECT N'hr_att_err_only_manual', N'vi-VN', N'Chỉ xóa được lần chấm bù của HR' UNION ALL
+    SELECT N'hr_att_err_only_manual', N'zh-CN', N'只能删除人事补卡记录' UNION ALL
+    SELECT N'hr_att_err_period_locked' AS ResourceKey, N'en-US' AS Culture, N'Payroll for this month is locked. Unlock it before changing attendance.' AS Value UNION ALL
+    SELECT N'hr_att_err_period_locked', N'vi-VN', N'Tháng này đã chốt lương. Mở chốt bảng lương trước khi sửa công.' UNION ALL
+    SELECT N'hr_att_err_period_locked', N'zh-CN', N'本月工资已锁定，请先解锁再修改考勤。' UNION ALL
+    SELECT N'hr_set_att_mode' AS ResourceKey, N'en-US' AS Culture, N'Attendance mode' AS Value UNION ALL
+    SELECT N'hr_set_att_mode', N'vi-VN', N'Chế độ chấm công' UNION ALL
+    SELECT N'hr_set_att_mode', N'zh-CN', N'考勤模式' UNION ALL
+    SELECT N'hr_set_att_mode_session' AS ResourceKey, N'en-US' AS Culture, N'By session (morning 1h window, afternoon 1h window)' AS Value UNION ALL
+    SELECT N'hr_set_att_mode_session', N'vi-VN', N'Theo buổi (khung 1 giờ đầu buổi sáng / chiều)' UNION ALL
+    SELECT N'hr_set_att_mode_session', N'zh-CN', N'按时段（上午/下午开始后1小时内）' UNION ALL
+    SELECT N'hr_set_att_mode_inout' AS ResourceKey, N'en-US' AS Culture, N'Check-in / check-out at any time' AS Value UNION ALL
+    SELECT N'hr_set_att_mode_inout', N'vi-VN', N'Giờ vào – giờ ra (chấm bất kỳ lúc nào)' UNION ALL
+    SELECT N'hr_set_att_mode_inout', N'zh-CN', N'上下班打卡（任意时间）' UNION ALL
+    SELECT N'hr_set_att_mode_hint' AS ResourceKey, N'en-US' AS Culture, N'Check-in / check-out: 8:00 in + 17:00 out counts both sessions; late / early minutes are tracked.' AS Value UNION ALL
+    SELECT N'hr_set_att_mode_hint', N'vi-VN', N'Giờ vào – giờ ra: vào 8:00 + ra 17:00 = đủ 2 buổi; tính số phút đi muộn / về sớm.' UNION ALL
+    SELECT N'hr_set_att_mode_hint', N'zh-CN', N'上下班打卡：8:00上班 + 17:00下班 = 两个时段；统计迟到/早退分钟。' UNION ALL
+    SELECT N'hr_set_work_start' AS ResourceKey, N'en-US' AS Culture, N'Start' AS Value UNION ALL
+    SELECT N'hr_set_work_start', N'vi-VN', N'Giờ vào làm' UNION ALL
+    SELECT N'hr_set_work_start', N'zh-CN', N'上班时间' UNION ALL
+    SELECT N'hr_set_lunch_start' AS ResourceKey, N'en-US' AS Culture, N'Lunch start' AS Value UNION ALL
+    SELECT N'hr_set_lunch_start', N'vi-VN', N'Nghỉ trưa từ' UNION ALL
+    SELECT N'hr_set_lunch_start', N'zh-CN', N'午休开始' UNION ALL
+    SELECT N'hr_set_lunch_end' AS ResourceKey, N'en-US' AS Culture, N'Lunch end' AS Value UNION ALL
+    SELECT N'hr_set_lunch_end', N'vi-VN', N'Làm chiều từ' UNION ALL
+    SELECT N'hr_set_lunch_end', N'zh-CN', N'午休结束' UNION ALL
+    SELECT N'hr_set_work_end' AS ResourceKey, N'en-US' AS Culture, N'End' AS Value UNION ALL
+    SELECT N'hr_set_work_end', N'vi-VN', N'Giờ tan làm' UNION ALL
+    SELECT N'hr_set_work_end', N'zh-CN', N'下班时间' UNION ALL
+    SELECT N'hr_set_saturday_end' AS ResourceKey, N'en-US' AS Culture, N'Saturday end' AS Value UNION ALL
+    SELECT N'hr_set_saturday_end', N'vi-VN', N'Tan làm T7' UNION ALL
+    SELECT N'hr_set_saturday_end', N'zh-CN', N'周六下班' UNION ALL
+    SELECT N'hr_set_late_grace' AS ResourceKey, N'en-US' AS Culture, N'Grace (min)' AS Value UNION ALL
+    SELECT N'hr_set_late_grace', N'vi-VN', N'Cho phép muộn (phút)' UNION ALL
+    SELECT N'hr_set_late_grace', N'zh-CN', N'宽限(分)' UNION ALL
+    SELECT N'hr_set_mobile' AS ResourceKey, N'en-US' AS Culture, N'Mobile attendance' AS Value UNION ALL
+    SELECT N'hr_set_mobile', N'vi-VN', N'Chấm công trên điện thoại' UNION ALL
+    SELECT N'hr_set_mobile', N'zh-CN', N'手机打卡' UNION ALL
+    SELECT N'hr_set_office_lat' AS ResourceKey, N'en-US' AS Culture, N'Office latitude' AS Value UNION ALL
+    SELECT N'hr_set_office_lat', N'vi-VN', N'Vĩ độ văn phòng' UNION ALL
+    SELECT N'hr_set_office_lat', N'zh-CN', N'办公室纬度' UNION ALL
+    SELECT N'hr_set_office_lng' AS ResourceKey, N'en-US' AS Culture, N'Office longitude' AS Value UNION ALL
+    SELECT N'hr_set_office_lng', N'vi-VN', N'Kinh độ văn phòng' UNION ALL
+    SELECT N'hr_set_office_lng', N'zh-CN', N'办公室经度' UNION ALL
+    SELECT N'hr_set_office_radius' AS ResourceKey, N'en-US' AS Culture, N'Radius (m)' AS Value UNION ALL
+    SELECT N'hr_set_office_radius', N'vi-VN', N'Bán kính (m)' UNION ALL
+    SELECT N'hr_set_office_radius', N'zh-CN', N'半径(米)' UNION ALL
+    SELECT N'hr_set_office_hint' AS ResourceKey, N'en-US' AS Culture, N'Get coordinates from Google Maps (right-click the office). Phones on the office WiFi are also counted as at the office (IP list in company info). Leave empty to disable GPS.' AS Value UNION ALL
+    SELECT N'hr_set_office_hint', N'vi-VN', N'Lấy tọa độ từ Google Maps (bấm chuột phải vào văn phòng). Điện thoại dùng WiFi văn phòng cũng được tính là tại văn phòng (theo danh sách IP trong thông tin công ty). Để trống = không dùng GPS.' UNION ALL
+    SELECT N'hr_set_office_hint', N'zh-CN', N'在谷歌地图右键办公室获取坐标。连接办公室WiFi的手机也算在办公室（公司信息中的IP列表）。留空 = 不使用GPS。' UNION ALL
+    SELECT N'hr_set_mobile_require_onsite' AS ResourceKey, N'en-US' AS Culture, N'Phones can only check in at the office' AS Value UNION ALL
+    SELECT N'hr_set_mobile_require_onsite', N'vi-VN', N'Điện thoại chỉ chấm được khi ở văn phòng' UNION ALL
+    SELECT N'hr_set_mobile_require_onsite', N'zh-CN', N'手机只能在办公室打卡' UNION ALL
+    SELECT N'hr_err_work_hours' AS ResourceKey, N'en-US' AS Culture, N'Working hours are invalid (start < lunch start ≤ lunch end < end)' AS Value UNION ALL
+    SELECT N'hr_err_work_hours', N'vi-VN', N'Giờ làm không hợp lệ (vào < nghỉ trưa ≤ làm chiều < tan làm)' UNION ALL
+    SELECT N'hr_err_work_hours', N'zh-CN', N'工作时间无效' UNION ALL
+    SELECT N'hr_err_office_location' AS ResourceKey, N'en-US' AS Culture, N'Office coordinates are invalid (enter both latitude and longitude)' AS Value UNION ALL
+    SELECT N'hr_err_office_location', N'vi-VN', N'Tọa độ văn phòng không hợp lệ (nhập đủ vĩ độ và kinh độ)' UNION ALL
+    SELECT N'hr_err_office_location', N'zh-CN', N'办公室坐标无效（请同时填写纬度和经度）'
+)
+MERGE dbo.LocalizationResources AS tgt
+USING src
+ON tgt.ResourceKey = src.ResourceKey AND tgt.Culture = src.Culture
+WHEN MATCHED THEN
+    UPDATE SET Value = src.Value
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (ResourceKey, Culture, Value)
+    VALUES (src.ResourceKey, src.Culture, src.Value);
+
 COMMIT TRANSACTION;
 
 PRINT N'HR localization imported.';

@@ -30,6 +30,28 @@ namespace NVOAMASIS.Services.Hr
             _ => HrTaxMode.Flat
         };
 
+        /// <summary>
+        /// Quy đổi công từ bảng công sang (công chuẩn, công hưởng lương) dùng cho phiếu lương.
+        /// - fixedStandard = 0: công chuẩn = lịch thực tế của tháng, công hưởng lương = bảng công.
+        /// - fixedStandard &gt; 0 (vd 24):
+        ///   + Làm trọn tháng: công hưởng lương = chuẩn cố định − số công không hưởng lương
+        ///     → đi làm đủ thì đủ lương dù tháng có 22 hay 27 ngày làm việc; mỗi ngày thiếu trừ Lương / chuẩn cố định.
+        ///   + Vào làm / nghỉ việc giữa tháng: công hưởng lương = công thực tế (tối đa bằng chuẩn cố định).
+        /// </summary>
+        /// <param name="calendarStandard">Công chuẩn cả tháng theo lịch.</param>
+        /// <param name="employeeStandard">Công chuẩn theo lịch trong thời gian người đó làm việc (row.Standard).</param>
+        /// <param name="paid">Công hưởng lương theo bảng công.</param>
+        public static (decimal Standard, decimal Paid) ResolveDays(decimal fixedStandard, decimal calendarStandard,
+            decimal employeeStandard, decimal paid)
+        {
+            if (fixedStandard <= 0) return (calendarStandard, paid);
+            var fullMonth = employeeStandard >= calendarStandard;
+            var result = fullMonth
+                ? fixedStandard - Math.Max(0, calendarStandard - paid)
+                : paid;
+            return (fixedStandard, Math.Clamp(result, 0, fixedStandard));
+        }
+
         /// <summary>Có tham gia BH bắt buộc theo loại hợp đồng hay không.</summary>
         public static bool InsuredContract(int? contractType) =>
             contractType is HrContractType.FixedTerm or HrContractType.Indefinite;

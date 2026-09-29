@@ -153,6 +153,12 @@ public sealed class AccountBalanceExcelImportService : IAccountBalanceExcelImpor
         var accountType = ResolveAccountType(request.AccountType, totals);
 
         await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+        // Khóa sổ kỳ kế toán (10.8): không nhập số dư vào kỳ đã khóa.
+        await NVOAMASIS.Services.Accounting.AccountingPeriodLock.EnsureOpenAsync(db,
+            request.Preview.FiscalYear, request.Preview.PeriodNo,
+            $"nhập số dư tài khoản kỳ {request.Preview.PeriodNo:D2}/{request.Preview.FiscalYear}", cancellationToken);
+
         var connection = (SqlConnection)db.Database.GetDbConnection();
 
         if (connection.State != ConnectionState.Open)

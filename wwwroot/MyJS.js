@@ -237,3 +237,52 @@ window.JNLScrollToShipmentRow = function (jobId) {
         }
     }, 50);
 };
+
+// Tên tab trình duyệt luôn bắt đầu bằng tên phần mềm: "AMASIS - NVOCC | <tên màn hình>".
+// Mỗi màn hình tự đặt <PageTitle> (vd "Shipment"); đoạn này tự thêm tên phần mềm phía trước
+// mỗi khi tiêu đề đổi, nên không phải sửa từng màn hình.
+// - Tự chạy khi tải trang (không phụ thuộc MainLayout); tên lấy từ <meta name="app-brand"> trong App.razor.
+// - Sửa trực tiếp nút chữ bên trong <title> (không gán document.title) để Blazor vẫn cập nhật được tiêu đề.
+window.__nvoccApplyBrandTitle = () => {
+    const brand = window.__nvoccBrand;
+    if (!brand) return;
+    const sep = ' | ';
+    let el = document.head.querySelector('title');
+    if (!el) {
+        el = document.createElement('title');
+        document.head.appendChild(el);
+    }
+    let t = (el.textContent || '').trim();
+    if (t === brand || t.startsWith(brand + sep)) return;
+    // Bỏ các tên phần mềm cũ ở đầu (khi đổi tên lúc đang mở trang) để không bị "Mới | Cũ | Shipment"
+    for (const old of (window.__nvoccOldBrands || [])) {
+        if (t === old) t = '';
+        else if (t.startsWith(old + sep)) t = t.substring(old.length + sep.length);
+    }
+    const text = t ? brand + sep + t : brand;
+    const node = el.firstChild;
+    if (node && node.nodeType === Node.TEXT_NODE && el.childNodes.length === 1) node.nodeValue = text;
+    else el.textContent = text;
+};
+
+window.nvoccSetBrandTitle = (brand) => {
+    brand = (brand || '').trim();
+    if (!brand) return;
+    const prev = window.__nvoccBrand;
+    if (prev && prev !== brand) (window.__nvoccOldBrands = window.__nvoccOldBrands || []).push(prev);
+    window.__nvoccBrand = brand;
+    window.__nvoccApplyBrandTitle();
+    if (!window.__nvoccTitleObserver) {
+        window.__nvoccTitleObserver = new MutationObserver(() => window.__nvoccApplyBrandTitle());
+        window.__nvoccTitleObserver.observe(document.head, { subtree: true, childList: true, characterData: true });
+    }
+};
+
+(function () {
+    const start = () => {
+        const meta = document.querySelector('meta[name="app-brand"]');
+        window.nvoccSetBrandTitle((meta && meta.content) || 'AMASIS - NVOCC');
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+    else start();
+})();

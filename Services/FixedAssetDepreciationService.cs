@@ -79,6 +79,9 @@ public sealed class FixedAssetDepreciationService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
+        // Khóa sổ kỳ kế toán (10.8)
+        await AccountingPeriodLock.EnsureOpenAsync(db, fiscalYear, fiscalPeriod, $"lưu nháp khấu hao kỳ {fiscalPeriod:D2}/{fiscalYear}", cancellationToken);
+
         await using var transaction = await db.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
             cancellationToken);
@@ -277,6 +280,9 @@ public sealed class FixedAssetDepreciationService
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Khóa sổ kỳ kế toán (10.8)
+        await AccountingPeriodLock.EnsureOpenAsync(db, fiscalYear, fiscalPeriod, $"ghi sổ khấu hao kỳ {fiscalPeriod:D2}/{fiscalYear}", cancellationToken);
 
         await using var transaction = await db.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
@@ -511,6 +517,9 @@ public sealed class FixedAssetDepreciationService
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // Khóa sổ kỳ kế toán (10.8)
+        await AccountingPeriodLock.EnsureOpenAsync(db, fiscalYear, fiscalPeriod, $"xóa nháp khấu hao kỳ {fiscalPeriod:D2}/{fiscalYear}", cancellationToken);
 
         // Không dùng ids.Contains(...) trực tiếp trong EF query để tránh
         // EF sinh OPENJSON(... WITH ...) trên SQL Server compatibility cũ.

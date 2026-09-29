@@ -246,8 +246,11 @@ namespace NVOAMASIS.Models.Hr
         /// <summary>See = xem bảng lương mọi NV; Add = tạo kỳ; Edit = tính lại, sửa phiếu; Delete = xóa kỳ nháp;
         /// Approve = chốt / mở chốt / hạch toán / hủy hạch toán, sửa tham số lương.</summary>
         public const string Payroll = "HR_Payroll";
+        /// <summary>12.10 Chấm công hằng ngày: See = xem công theo ngày mọi NV; Edit = chấm bù / xóa chấm bù.
+        /// Mọi user xem được "Công của tôi".</summary>
+        public const string Attendance = "HR_Attendance";
 
-        public static readonly string[] All = { Dashboard, Employee, Contract, Org, Salary, LeaveBalance, Timesheet, Settings, Payroll };
+        public static readonly string[] All = { Dashboard, Employee, Contract, Org, Salary, LeaveBalance, Timesheet, Settings, Payroll, Attendance };
     }
 
     /// <summary>Loại thay đổi ghi vào HrEmployeeHistory.</summary>
