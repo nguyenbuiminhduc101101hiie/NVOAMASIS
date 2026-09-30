@@ -5,6 +5,7 @@ using NVOAMASIS.Models;
 using NVOAMASIS.Models.Accounting;
 using NVOAMASIS.Models.Chat;
 using NVOAMASIS.Models.Hr;
+using NVOAMASIS.Models.Kho;
 namespace NVOAMASIS.Data
 {
     public class AppDbContext (DbContextOptions <AppDbContext> options) : DbContext(options)
@@ -215,6 +216,12 @@ namespace NVOAMASIS.Data
         public DbSet<HrPayrollParam> HrPayrollParams => Set<HrPayrollParam>();
         public DbSet<HrPayrollPeriod> HrPayrollPeriods => Set<HrPayrollPeriod>();
         public DbSet<HrPayslip> HrPayslips => Set<HrPayslip>();
+
+        // Kho vật tư, hàng hóa TK 151–156 (10.18) — script Scripts/CreateKhoTables.sql
+        public DbSet<KhoVatTu> KhoVatTus => Set<KhoVatTu>();
+        public DbSet<KhoHang> KhoHangs => Set<KhoHang>();
+        public DbSet<PhieuKho> PhieuKhos => Set<PhieuKho>();
+        public DbSet<PhieuKhoChiTiet> PhieuKhoChiTiets => Set<PhieuKhoChiTiet>();
 
         // Khóa sổ kỳ kế toán (10.8): chặn thêm / sửa / xóa chứng từ, sổ cái, phiếu thu / chi của kỳ đã khóa.
         // Xem Services/Accounting/AccountingPeriodLock.cs.
@@ -799,8 +806,11 @@ namespace NVOAMASIS.Data
                 entity.Ignore(x => x.CoInsurance);
                 entity.Ignore(x => x.TotalDeduction);
                 entity.Ignore(x => x.EmployerCost);
+                entity.Ignore(x => x.HasPro);
                 foreach (var p in new[] { nameof(HrPayslip.StandardDays), nameof(HrPayslip.TimesheetPaidDays),
-                             nameof(HrPayslip.PaidDaysOverride), nameof(HrPayslip.PaidDays), nameof(HrPayslip.NonPaidDays) })
+                             nameof(HrPayslip.PaidDaysOverride), nameof(HrPayslip.PaidDays), nameof(HrPayslip.NonPaidDays),
+                             nameof(HrPayslip.ProCalendarDays), nameof(HrPayslip.ProTimesheetPaidDays),
+                             nameof(HrPayslip.ProPaidDaysOverride), nameof(HrPayslip.ProPaidDays) })
                     entity.Property(p).HasColumnType("decimal(6,2)");
                 foreach (var p in new[] { nameof(HrPayslip.BaseSalary), nameof(HrPayslip.InsuranceSalary), nameof(HrPayslip.Allowance),
                              nameof(HrPayslip.SalaryByDays), nameof(HrPayslip.AllowanceAmount), nameof(HrPayslip.Overtime),
@@ -810,8 +820,36 @@ namespace NVOAMASIS.Data
                              nameof(HrPayslip.CoHealth), nameof(HrPayslip.CoUnemployment), nameof(HrPayslip.CoUnionFee),
                              nameof(HrPayslip.FamilyDeduction), nameof(HrPayslip.TaxableIncome), nameof(HrPayslip.AssessableIncome),
                              nameof(HrPayslip.PersonalIncomeTax), nameof(HrPayslip.Advance), nameof(HrPayslip.OtherDeduction),
-                             nameof(HrPayslip.NetPay) })
+                             nameof(HrPayslip.NetPay), nameof(HrPayslip.GrossUp),
+                             nameof(HrPayslip.ProBaseSalary), nameof(HrPayslip.ProAllowance), nameof(HrPayslip.ProSalaryByDays),
+                             nameof(HrPayslip.ProAllowanceAmount), nameof(HrPayslip.ProGrossUp), nameof(HrPayslip.ProTax) })
                     entity.Property(p).HasColumnType("decimal(18,0)");
+            });
+
+            // Kho vật tư, hàng hóa (10.18)
+            modelBuilder.Entity<KhoVatTu>(entity =>
+            {
+                entity.HasIndex(x => x.Code).IsUnique();
+                entity.Property(x => x.MinQty).HasColumnType("decimal(18,4)");
+            });
+            modelBuilder.Entity<KhoHang>(entity =>
+            {
+                entity.HasIndex(x => x.Code).IsUnique();
+            });
+            modelBuilder.Entity<PhieuKho>(entity =>
+            {
+                entity.HasIndex(x => x.DocNo).IsUnique();
+                entity.HasIndex(x => new { x.DocDate, x.DocType });
+            });
+            modelBuilder.Entity<PhieuKhoChiTiet>(entity =>
+            {
+                entity.HasIndex(x => x.PhieuKhoId);
+                entity.HasIndex(x => x.VatTuId);
+                entity.Property(x => x.Quantity).HasColumnType("decimal(18,4)");
+                entity.Property(x => x.UnitCost).HasColumnType("decimal(18,4)");
+                entity.Property(x => x.Amount).HasColumnType("decimal(18,2)");
+                entity.Property(x => x.VatRate).HasColumnType("decimal(5,2)");
+                entity.Property(x => x.VatAmount).HasColumnType("decimal(18,2)");
             });
         }
 

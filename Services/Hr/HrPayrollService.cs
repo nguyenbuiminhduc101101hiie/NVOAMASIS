@@ -252,7 +252,18 @@ namespace NVOAMASIS.Services.Hr
                                         || (c.TerminatedDate != null && c.TerminatedDate >= monthStart)))
                         .ToListAsync())
                     .GroupBy(c => c.EmployeeId)
-                    .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.StartDate).First());
+                    .ToDictionary(g => g.Key, g => g.OrderByDescending(c => c.StartDate).ThenByDescending(c => c.CreatedAt).ToList());
+                // Bảng công theo từng khoảng ngày của HĐ trước (thử việc) — tính 1 lần cho mỗi khoảng.
+                var rangeSheets = new Dictionary<(DateTime, DateTime), Dictionary<Guid, HrTimesheetRow>>();
+                async Task<HrTimesheetRow?> RangeRowAsync(Guid employeeId, DateTime from, DateTime to)
+                {
+                    if (!rangeSheets.TryGetValue((from, to), out var map))
+                    {
+                        var part = await timesheet.BuildRangeAsync(from, to, new HrTimesheetFilter { Year = period.Year, Month = period.Month });
+                        rangeSheets[(from, to)] = map = part.Rows.ToDictionary(r => r.EmployeeId);
+                    }
+                    return map.TryGetValue(employeeId, out var r) ? r : null;
+                }
 
                 var existing = await db.HrPayslips.Where(x => x.PeriodId == periodId).ToListAsync();
                 var byEmp = existing.GroupBy(x => x.EmployeeId).ToDictionary(g => g.Key, g => g.First());
@@ -262,7 +273,12 @@ namespace NVOAMASIS.Services.Hr
                 foreach (var (empId, row) in rows)
                 {
                     if (!emps.TryGetValue(empId, out var e)) continue;
-                    contracts.TryGetValue(empId, out var c);
+                    contracts.TryGetValue(empId, out var list);
+                    var c = list?.FirstOrDefault();
+                    // HĐ trước trong cùng tháng: HĐ chính bắt đầu sau ngày 1 và còn 1 HĐ khác có hiệu lực trước đó trong tháng.
+                    var prev = c is not null && c.StartDate.Date > monthStart
+                        ? list!.Skip(1).FirstOrDefault(x => x.StartDate.Date < c.StartDate.Date)
+                        : null;
 
                     if (!byEmp.TryGetValue(empId, out var p))
                     {
@@ -286,9 +302,12 @@ namespace NVOAMASIS.Services.Hr
                     p.BaseSalary = c?.BaseSalary ?? 0;
                     p.InsuranceSalary = c?.InsuranceSalary;
                     p.Allowance = c?.Allowance ?? 0;
+                    p.IsNet = c?.IsNetSalary ?? false;
                     if (!p.TaxModeManual) p.TaxMode = HrPayrollCalculator.DefaultTaxMode(c?.ContractType);
 
                     var extra = new List<string>();
+                    if (prev is not null && list!.Count(x => x.StartDate.Date < c!.StartDate.Date) > 1)
+                        extra.Add(HrPayrollCalculator.WarnManyContracts);
                     // Không có dữ liệu chấm công → mặc định đủ công chuẩn của người đó trong tháng.
                     if (!row.HasAccount) extra.Add(HrPayrollCalculator.WarnNoTimesheet);
                     var (std, paid) = HrPayrollCalculator.ResolveDays(standardDays, sheet.StandardDays, row.Standard,
@@ -296,6 +315,47 @@ namespace NVOAMASIS.Services.Hr
                     p.StandardDays = std;
                     p.TimesheetPaidDays = paid;
                     p.NonPaidDays = row.Unpaid + row.Absent + row.Sick;
+
+                    // Tách phần HĐ trước (thử việc): công trong khoảng [đầu tháng hoặc ngày bắt đầu HĐ trước, ngày trước HĐ chính]
+                    DateTime proFrom = default, proTo = default;
+                    HrTimesheetRow? proRow = null;
+                    if (prev is not null)
+                    {
+                        proFrom = prev.StartDate.Date > monthStart ? prev.StartDate.Date : monthStart;
+                        proTo = c!.StartDate.Date.AddDays(-1);
+                        var prevEnd = prev.TerminatedDate ?? prev.EndDate;
+                        if (prevEnd.HasValue && prevEnd.Value.Date < proTo) proTo = prevEnd.Value.Date;
+                        proRow = proTo >= proFrom ? await RangeRowAsync(empId, proFrom, proTo) : null;
+                        // HĐ trước chỉ còn ngày nghỉ trong tháng (vd CN 01/11) → không cần tách.
+                        if (proRow is null || (proRow.Standard == 0 && proRow.Paid == 0)) prev = null;
+                    }
+                    if (prev is not null && proRow is not null)
+                    {
+                        var proPaidCal = row.HasAccount ? proRow.Paid : proRow.Standard;
+                        var (proPaid, mainPaid) = HrPayrollCalculator.SplitPaidDays(paid, proPaidCal);
+                        p.ProContractId = prev.Id;
+                        p.ProContractNo = prev.ContractNo;
+                        p.ProContractType = prev.ContractType;
+                        p.ProIsNet = prev.IsNetSalary;
+                        p.ProBaseSalary = prev.BaseSalary ?? 0;
+                        p.ProAllowance = prev.Allowance ?? 0;
+                        p.ProFrom = proFrom;
+                        p.ProTo = proTo;
+                        p.ProCalendarDays = proRow.Standard;
+                        p.ProTimesheetPaidDays = proPaid;
+                        p.TimesheetPaidDays = mainPaid;
+                    }
+                    else
+                    {
+                        p.ProContractId = null;
+                        p.ProContractNo = null;
+                        p.ProContractType = null;
+                        p.ProIsNet = false;
+                        p.ProBaseSalary = p.ProAllowance = 0;
+                        p.ProFrom = p.ProTo = null;
+                        p.ProCalendarDays = p.ProTimesheetPaidDays = 0;
+                        p.ProPaidDaysOverride = null;
+                    }
                     if (monthNotFinished) extra.Add(HrPayrollCalculator.WarnMonthNotFinished);
 
                     HrPayrollCalculator.Compute(p, prm, cfg, extra);
@@ -338,6 +398,7 @@ namespace NVOAMASIS.Services.Hr
         /// <summary>Sửa các khoản nhập tay của 1 phiếu (chỉ khi kỳ còn nháp) rồi tính lại phiếu đó.</summary>
         public async Task<HrResult> UpdatePayslipAsync(HrPayslipInput input, string actor)
         {
+            if (input.ProPaidDaysOverride < 0) return HrResult.Fail("hr_err_negative_value");
             if (input.Overtime < 0 || input.Bonus < 0 || input.OtherIncome < 0 || input.NonTaxableIncome < 0
                 || input.Advance < 0 || input.OtherDeduction < 0 || input.PaidDaysOverride < 0)
                 return HrResult.Fail("hr_err_negative_value");
@@ -356,6 +417,7 @@ namespace NVOAMASIS.Services.Hr
                 var cfg = await GetConfigAsync(db);
 
                 p.PaidDaysOverride = input.PaidDaysOverride;
+                p.ProPaidDaysOverride = p.HasPro ? input.ProPaidDaysOverride : null;
                 p.Overtime = input.Overtime;
                 p.Bonus = input.Bonus;
                 p.OtherIncome = input.OtherIncome;
@@ -369,7 +431,8 @@ namespace NVOAMASIS.Services.Hr
 
                 // Giữ các cảnh báo không phụ thuộc vào số liệu nhập tay.
                 var keep = (p.Warnings ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries)
-                    .Where(w => w is HrPayrollCalculator.WarnNoTimesheet or HrPayrollCalculator.WarnMonthNotFinished)
+                    .Where(w => w is HrPayrollCalculator.WarnNoTimesheet or HrPayrollCalculator.WarnMonthNotFinished
+                        or HrPayrollCalculator.WarnManyContracts)
                     .ToList();
                 HrPayrollCalculator.Compute(p, prm, cfg, keep);
                 p.UpdatedAt = DateTime.Now;
@@ -642,7 +705,13 @@ namespace NVOAMASIS.Services.Hr
                 ("hr_base_salary", s => s.BaseSalary, true),
                 ("hr_insurance_salary", s => s.InsuranceSalary, true),
                 ("hr_allowance", s => s.Allowance, true),
+                ("hr_pay_salary_kind", s => s.IsNet ? "NET" : "GROSS", false),
                 ("hr_ts_standard", s => s.StandardDays, false),
+                ("hr_pay_pro_contract", s => s.HasPro ? s.ProContractNo : null, false),
+                ("hr_pay_pro_base_salary", s => s.HasPro ? s.ProBaseSalary : null, true),
+                ("hr_pay_pro_paid_days", s => s.HasPro ? s.ProPaidDays : null, false),
+                ("hr_pay_pro_salary_by_days", s => s.HasPro ? s.ProSalaryByDays + s.ProAllowanceAmount : null, true),
+                ("hr_pay_pro_tax", s => s.HasPro ? s.ProTax : null, true),
                 ("hr_pay_paid_days", s => s.PaidDays, false),
                 ("hr_pay_salary_by_days", s => s.SalaryByDays, true),
                 ("hr_pay_allowance_amount", s => s.AllowanceAmount, true),
@@ -650,6 +719,7 @@ namespace NVOAMASIS.Services.Hr
                 ("hr_pay_bonus", s => s.Bonus, true),
                 ("hr_pay_other_income", s => s.OtherIncome, true),
                 ("hr_pay_non_taxable", s => s.NonTaxableIncome, true),
+                ("hr_pay_gross_up", s => s.GrossUp + s.ProGrossUp, true),
                 ("hr_pay_gross", s => s.GrossIncome, true),
                 ("hr_pay_insurance_base", s => s.InsuranceBase, true),
                 ("hr_pay_emp_social", s => s.EmpSocial, true),

@@ -1,0 +1,484 @@
+@page "/accounting/kho/phieu"
+@using ClosedXML.Excel
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models.Kho
+@using NVOAMASIS.Services.Kho
+@attribute [Authorize]
+@inject KhoService Kho
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+
+@*
+    10.18.2 Phiếu nhập kho / xuất kho / chuyển kho / tồn đầu kỳ.
+    Mã quyền KHO_Phieu: Xem; Thêm; Sửa (phiếu nháp); Xóa (phiếu nháp); Duyệt = Ghi sổ / Bỏ ghi sổ / Tính lại giá xuất.
+*@
+
+<PageTitle>Phiếu nhập, xuất kho</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="10.18.2 Phiếu nhập, xuất kho" Subtitle="Nhập kho, xuất kho, chuyển kho, tồn đầu kỳ — giá xuất bình quân tức thời">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.Login"
+                           OnClick="@(() => NewAsync(KhoDocTypes.In))" Disabled="@(!_canAdd)">Nhập kho</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Warning" Size="Size.Small" StartIcon="@Icons.Material.Filled.Logout"
+                           OnClick="@(() => NewAsync(KhoDocTypes.Out))" Disabled="@(!_canAdd)">Xuất kho</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.SwapHoriz"
+                           OnClick="@(() => NewAsync(KhoDocTypes.Transfer))" Disabled="@(!_canAdd)">Chuyển kho</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.PlaylistAdd"
+                           OnClick="@(() => NewAsync(KhoDocTypes.Opening))" Disabled="@(!_canAdd)">Tồn đầu kỳ</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="6" sm="2">
+                <MudDatePicker Label="Từ ngày" Date="_from" DateChanged="@(async (DateTime? d) => { _from = d; await LoadAsync(); })" DateFormat="dd/MM/yyyy"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudDatePicker Label="Đến ngày" Date="_to" DateChanged="@(async (DateTime? d) => { _to = d; await LoadAsync(); })" DateFormat="dd/MM/yyyy"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="string" Label="Loại phiếu" Value="_type" ValueChanged="@(async (string v) => { _type = v; await LoadAsync(); })"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("")">Tất cả</MudSelectItem>
+                    @foreach (var t in KhoDocTypes.All)
+                    {
+                        <MudSelectItem T="string" Value="@t">@KhoDocTypes.Label(t)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="Guid?" Label="Kho" Value="_wh" ValueChanged="@(async (Guid? v) => { _wh = v; await LoadAsync(); })"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true">
+                    @foreach (var w in _warehouses)
+                    {
+                        <MudSelectItem T="Guid?" Value="@((Guid?)w.Id)">@w.Code - @w.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="1">
+                <MudSelect T="int" Label="Trạng thái" Value="_status" ValueChanged="@(async (int v) => { _status = v; await LoadAsync(); })"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="int" Value="-1">Tất cả</MudSelectItem>
+                    <MudSelectItem T="int" Value="0">Nháp</MudSelectItem>
+                    <MudSelectItem T="int" Value="1">Đã ghi sổ</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudTextField T="string" @bind-Value="_search" Immediate="true" Placeholder="Tìm số phiếu, đối tượng, diễn giải..."
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+        </MudGrid>
+        <MudStack Row="true" Spacing="1" Class="mt-2 flex-wrap" AlignItems="AlignItems.Center">
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Visibility" Disabled="@(_sel is null)" OnClick="@(() => OpenAsync(_sel!))">
+                @(_sel is { Status: KhoStatus.Draft } && _canEdit ? "Sửa" : "Xem")
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete"
+                       Disabled="@(_sel is not { Status: KhoStatus.Draft } || !_canDelete)" OnClick="DeleteAsync">Xóa</MudButton>
+            <MudButton Variant="Variant.Filled" Size="Size.Small" Color="Color.Primary" StartIcon="@Icons.Material.Filled.CheckCircle"
+                       Disabled="@(_sel is not { Status: KhoStatus.Draft } || !_canApprove || _busy)" OnClick="PostAsync">Ghi sổ</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Tertiary" StartIcon="@Icons.Material.Filled.Undo"
+                       Disabled="@(_sel is not { Status: KhoStatus.Posted } || !_canApprove || _busy)" OnClick="UnpostAsync">Bỏ ghi sổ</MudButton>
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Print" Disabled="@(_sel is null)" OnClick="PrintAsync">In phiếu (Excel)</MudButton>
+            <MudSpacer />
+            <MudTooltip Text="Chạy lại tính giá xuất bình quân tức thời cho toàn bộ phiếu đã ghi sổ (chỉ sửa phiếu có giá thay đổi, kỳ chưa khóa).">
+                <MudButton Variant="Variant.Text" Size="Size.Small" StartIcon="@Icons.Material.Filled.Calculate" Disabled="@(!_canApprove || _busy)" OnClick="RecostAllAsync">
+                    Tính lại giá xuất
+                </MudButton>
+            </MudTooltip>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="product-price-card pa-1" Elevation="0">
+        <MudTable T="PhieuKho" Items="Filtered" Dense="true" Hover="true" FixedHeader="true" Height="calc(100vh - 380px)" Loading="_busy"
+                  OnRowClick="@(e => _sel = e.Item)" RowClassFunc="@((x, i) => x == _sel ? "kp-sel" : "")" RowsPerPage="100">
+            <HeaderContent>
+                <MudTh>Số phiếu</MudTh><MudTh>Ngày</MudTh><MudTh>Loại</MudTh><MudTh>Kho</MudTh><MudTh>Lý do</MudTh>
+                <MudTh>Đối tượng</MudTh><MudTh>Diễn giải</MudTh><MudTh Style="text-align:right">Số dòng</MudTh>
+                <MudTh Style="text-align:right">Giá trị</MudTh><MudTh Style="text-align:right">Thuế</MudTh><MudTh>Trạng thái</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd><MudLink OnClick="@(() => OpenAsync(context))"><b>@context.DocNo</b></MudLink></MudTd>
+                <MudTd>@context.DocDate.ToString("dd/MM/yyyy")</MudTd>
+                <MudTd><span class="kp-type kp-@context.DocType.ToLowerInvariant()">@KhoDocTypes.Label(context.DocType)</span></MudTd>
+                <MudTd>@WhName(context.WarehouseId)@(context.ToWarehouseId.HasValue ? $" → {WhName(context.ToWarehouseId.Value)}" : "")</MudTd>
+                <MudTd>@(KhoReasons.Find(context.Reason)?.Label) @(string.IsNullOrWhiteSpace(context.ContraAccount) ? "" : $"({context.ContraAccount})")</MudTd>
+                <MudTd>@context.PartnerName</MudTd>
+                <MudTd Style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="@context.Description">@context.Description</MudTd>
+                <MudTd Style="text-align:right">@Total(context).Lines</MudTd>
+                <MudTd Style="text-align:right">@KhoUi.Money(Total(context).Amount, true)</MudTd>
+                <MudTd Style="text-align:right">@KhoUi.Money(Total(context).Vat)</MudTd>
+                <MudTd>
+                    @if (context.Status == KhoStatus.Posted)
+                    {
+                        <MudChip Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">Đã ghi sổ</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip Size="Size.Small" Variant="Variant.Outlined">Nháp</MudChip>
+                    }
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Class="pa-4">@(_loaded ? "Không có phiếu nào trong khoảng ngày này." : "")</MudText>
+            </NoRecordsContent>
+            <PagerContent><MudTablePager RowsPerPageString="Số dòng:" PageSizeOptions="new[] { 50, 100, 500 }" /></PagerContent>
+        </MudTable>
+    </MudPaper>
+</div>
+
+<style>
+    .kp-sel td { background: #e3f2fd !important; }
+    .kp-type { font-size: 12px; padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
+    .kp-in { background: #e8f5e9; color: #2e7d32; }
+    .kp-out { background: #fff3e0; color: #e65100; }
+    .kp-transfer { background: #e3f2fd; color: #1565c0; }
+    .kp-open { background: #f3e5f5; color: #6a1b9a; }
+</style>
+
+@code {
+    private const string Menu = "KHO_Phieu";
+
+    private bool _busy, _loaded, _canAdd, _canEdit, _canDelete, _canApprove;
+    private string _usr = "";
+    private DateTime? _from = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _to = DateTime.Today;
+    private string _type = "";
+    private Guid? _wh;
+    private int _status = -1;
+    private string _search = "";
+
+    private List<PhieuKho> _docs = new();
+    private Dictionary<Guid, (decimal Amount, decimal Vat, int Lines)> _totals = new();
+    private List<KhoHang> _warehouses = new();
+    private PhieuKho? _sel;
+
+    private IEnumerable<PhieuKho> Filtered => string.IsNullOrWhiteSpace(_search)
+        ? _docs
+        : _docs.Where(d => d.DocNo.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+                           || (d.PartnerName ?? "").Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+                           || (d.Description ?? "").Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+                           || (d.InvoiceNo ?? "").Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private (decimal Amount, decimal Vat, int Lines) Total(PhieuKho d) => _totals.TryGetValue(d.Id, out var t) ? t : (0, 0, 0);
+    private string WhName(Guid id) => _warehouses.FirstOrDefault(w => w.Id == id)?.Code ?? "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? "";
+        if (!await ssv.CheckPermission(_usr, "View", Menu))
+        {
+            Snackbar.Add("Bạn không có quyền xem phiếu kho (mã quyền KHO_Phieu).", MudBlazor.Severity.Warning);
+            return;
+        }
+        _canAdd = await ssv.CheckPermission(_usr, "Add", Menu);
+        _canEdit = await ssv.CheckPermission(_usr, "Edit", Menu);
+        _canDelete = await ssv.CheckPermission(_usr, "Delete", Menu);
+        _canApprove = await ssv.CheckPermission(_usr, "Approve", Menu);
+        try
+        {
+            _warehouses = await Kho.GetWarehousesAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _busy = true;
+            var from = (_from ?? DateTime.Today.AddMonths(-1)).Date;
+            var to = (_to ?? DateTime.Today).Date;
+            if (from > to) (from, to) = (to, from);
+            _docs = await Kho.GetDocsAsync(from, to, string.IsNullOrEmpty(_type) ? null : _type, _wh, _status < 0 ? null : _status);
+            _totals = await Kho.GetDocTotalsAsync(_docs.Select(d => d.Id).ToList());
+            _sel = _sel is null ? null : _docs.FirstOrDefault(d => d.Id == _sel.Id);
+            _loaded = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task NewAsync(string type)
+    {
+        if (_warehouses.Count(w => w.IsActive) == 0)
+        {
+            Snackbar.Add("Chưa có kho nào — thêm kho ở 10.18.1 trước.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (type == KhoDocTypes.Transfer && _warehouses.Count(w => w.IsActive) < 2)
+        {
+            Snackbar.Add("Cần ít nhất 2 kho để chuyển kho.", MudBlazor.Severity.Warning);
+            return;
+        }
+        await ShowEditorAsync(null, type, readOnly: false);
+    }
+
+    private Task OpenAsync(PhieuKho d)
+    {
+        _sel = d;
+        return ShowEditorAsync(d.Id, d.DocType, readOnly: d.Status == KhoStatus.Posted || !_canEdit);
+    }
+
+    private async Task ShowEditorAsync(Guid? id, string type, bool readOnly)
+    {
+        var p = new DialogParameters
+        {
+            { nameof(KhoPhieu_EditDialog.DocId), id },
+            { nameof(KhoPhieu_EditDialog.DocType), type },
+            { nameof(KhoPhieu_EditDialog.ReadOnly), readOnly },
+            { nameof(KhoPhieu_EditDialog.CanPost), _canApprove },
+            { nameof(KhoPhieu_EditDialog.UserName), _usr }
+        };
+        var dlg = await DialogService.ShowAsync<KhoPhieu_EditDialog>(null, p,
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = false, DisableBackdropClick = true });
+        var result = await dlg.Result;
+        if (!result.Canceled && result.Data is true) await LoadAsync();
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (_sel is null) return;
+        var ok = await DialogService.ShowMessageBox("Xóa phiếu", $"Xóa phiếu nháp {_sel.DocNo}?", yesText: "Xóa", cancelText: "Hủy");
+        if (ok != true) return;
+        try
+        {
+            await Kho.DeleteDraftAsync(_sel.Id);
+            Snackbar.Add($"Đã xóa {_sel.DocNo}.", MudBlazor.Severity.Success);
+            _sel = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task PostAsync()
+    {
+        if (_sel is null) return;
+        try
+        {
+            _busy = true;
+            var r = await Kho.PostAsync(_sel.Id, _usr);
+            Snackbar.Add(PostMessage($"Đã ghi sổ {r.DocNo}", r), MudBlazor.Severity.Success, o => o.VisibleStateDuration = 8000);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error, o => o.VisibleStateDuration = 15000);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task UnpostAsync()
+    {
+        if (_sel is null) return;
+        var ok = await DialogService.ShowMessageBox("Bỏ ghi sổ",
+            $"Bỏ ghi sổ phiếu {_sel.DocNo}? Bút toán sổ cái của phiếu sẽ bị xóa; các phiếu xuất sau ngày {_sel.DocDate:dd/MM/yyyy} được tính lại giá.",
+            yesText: "Bỏ ghi sổ", cancelText: "Hủy");
+        if (ok != true) return;
+        try
+        {
+            _busy = true;
+            var r = await Kho.UnpostAsync(_sel.Id, _usr);
+            Snackbar.Add(PostMessage($"Đã bỏ ghi sổ {r.DocNo}", r), MudBlazor.Severity.Success, o => o.VisibleStateDuration = 8000);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error, o => o.VisibleStateDuration = 15000);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RecostAllAsync()
+    {
+        var ok = await DialogService.ShowMessageBox("Tính lại giá xuất",
+            "Chạy lại giá xuất bình quân tức thời cho toàn bộ phiếu đã ghi sổ? Phiếu nào giá thay đổi sẽ được cập nhật cả bút toán sổ cái.",
+            yesText: "Tính lại", cancelText: "Hủy");
+        if (ok != true) return;
+        try
+        {
+            _busy = true;
+            var r = await Kho.RecostAllAsync(_usr);
+            Snackbar.Add(r.RecostedDocs == 0 ? "Giá xuất đã đúng — không phiếu nào thay đổi." : PostMessage("Đã tính lại", r),
+                MudBlazor.Severity.Success, o => o.VisibleStateDuration = 8000);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error, o => o.VisibleStateDuration = 15000);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string PostMessage(string head, KhoPostResult r)
+    {
+        var msg = head + (r.VoucherNo is null ? "." : $" — chứng từ kế toán {r.VoucherNo}.");
+        if (r.RecostedDocs > 0)
+            msg += $" Tính lại giá xuất {r.RecostedDocs} phiếu: {string.Join(", ", r.RecostedDocNos.Take(5))}{(r.RecostedDocs > 5 ? "..." : "")}.";
+        return msg;
+    }
+
+    // ───── In phiếu theo mẫu 01-VT / 02-VT (Excel) ─────
+    private async Task PrintAsync()
+    {
+        if (_sel is null) return;
+        try
+        {
+            var loaded = await Kho.GetDocAsync(_sel.Id);
+            if (loaded is null) return;
+            var (doc, lines) = loaded.Value;
+            var items = (await Kho.GetItemsAsync()).ToDictionary(x => x.Id);
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var c = await db.CompanyInfomation.AsNoTracking().FirstOrDefaultAsync();
+            var company = new[] { c?.NameTiengViet, c?.Name }.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "";
+            var address = new[] { c?.AddressTiengViet, c?.Address }.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "";
+
+            var isIn = doc.DocType is KhoDocTypes.In or KhoDocTypes.Opening;
+            using var wb = new XLWorkbook();
+            var ws = wb.Worksheets.Add(doc.DocNo);
+            ws.Style.Font.FontName = "Times New Roman";
+            ws.Style.Font.FontSize = 11;
+            const int cols = 8;
+
+            void Merge(int r, int c1, int c2, string text, bool bold = false, double size = 11, bool italic = false,
+                XLAlignmentHorizontalValues align = XLAlignmentHorizontalValues.Left)
+            {
+                ws.Cell(r, c1).Value = text;
+                var rg = ws.Range(r, c1, r, c2);
+                rg.Merge();
+                rg.Style.Font.Bold = bold; rg.Style.Font.Italic = italic; rg.Style.Font.FontSize = size;
+                rg.Style.Alignment.Horizontal = align;
+            }
+
+            Merge(1, 1, 4, $"Đơn vị: {company}", true);
+            Merge(2, 1, 4, $"Địa chỉ: {address}");
+            var form = doc.DocType switch { KhoDocTypes.Out => "Mẫu số 02 - VT", KhoDocTypes.Transfer => "Phiếu chuyển kho", _ => "Mẫu số 01 - VT" };
+            Merge(1, 5, cols, form, true, 11, false, XLAlignmentHorizontalValues.Center);
+
+            var title = doc.DocType switch
+            {
+                KhoDocTypes.Out => "PHIẾU XUẤT KHO",
+                KhoDocTypes.Transfer => "PHIẾU CHUYỂN KHO",
+                KhoDocTypes.Opening => "PHIẾU NHẬP TỒN ĐẦU KỲ",
+                _ => "PHIẾU NHẬP KHO"
+            };
+            Merge(4, 1, cols, title, true, 16, false, XLAlignmentHorizontalValues.Center);
+            Merge(5, 1, cols, $"Ngày {doc.DocDate:dd} tháng {doc.DocDate:MM} năm {doc.DocDate:yyyy}", false, 11, true, XLAlignmentHorizontalValues.Center);
+            Merge(6, 1, cols, $"Số: {doc.DocNo}", false, 11, false, XLAlignmentHorizontalValues.Center);
+
+            var contra = string.IsNullOrWhiteSpace(doc.ContraAccount) ? "" : doc.ContraAccount;
+            var invAcc = string.Join(", ", lines.Select(l => l.InventoryAccount).Distinct());
+            var row = 7;
+            if (doc.DocType == KhoDocTypes.In) { Merge(row++, 5, cols, $"Nợ: {invAcc}"); Merge(row++, 5, cols, $"Có: {contra}"); }
+            else if (doc.DocType == KhoDocTypes.Out) { Merge(row++, 5, cols, $"Nợ: {contra}"); Merge(row++, 5, cols, $"Có: {invAcc}"); }
+
+            var who = doc.ContactName ?? "";
+            Merge(row++, 1, cols, (isIn ? "- Họ và tên người giao: " : "- Họ và tên người nhận hàng: ") + who + (string.IsNullOrWhiteSpace(doc.PartnerName) ? "" : $"   Đơn vị: {doc.PartnerName}"));
+            if (doc.DocType == KhoDocTypes.In && !string.IsNullOrWhiteSpace(doc.InvoiceNo))
+                Merge(row++, 1, cols, $"- Theo hóa đơn số {doc.InvoiceNo}" + (doc.InvoiceDate.HasValue ? $" ngày {doc.InvoiceDate:dd/MM/yyyy}" : ""));
+            var reason = KhoReasons.Find(doc.Reason)?.Label;
+            Merge(row++, 1, cols, $"- Lý do {(isIn ? "nhập" : "xuất")}: {doc.Description ?? reason ?? ""}");
+            Merge(row++, 1, cols, doc.DocType == KhoDocTypes.Transfer
+                ? $"- Xuất tại kho: {WhFull(doc.WarehouseId)}  →  Nhập tại kho: {(doc.ToWarehouseId.HasValue ? WhFull(doc.ToWarehouseId.Value) : "")}"
+                : $"- {(isIn ? "Nhập" : "Xuất")} tại kho: {WhFull(doc.WarehouseId)}");
+            row++;
+
+            string[] head = { "STT", "Tên, nhãn hiệu, quy cách vật tư, hàng hóa", "Mã số", "Đơn vị tính", "Số lượng", "Đơn giá", "Thành tiền", "Ghi chú" };
+            for (var i = 0; i < head.Length; i++) ws.Cell(row, i + 1).Value = head[i];
+            var h = ws.Range(row, 1, row, cols);
+            h.Style.Font.Bold = true; h.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center; h.Style.Alignment.WrapText = true;
+            h.Style.Fill.BackgroundColor = XLColor.FromHtml("#E8EEF7");
+            var first = row;
+            row++;
+            var n = 1;
+            foreach (var l in lines)
+            {
+                items.TryGetValue(l.VatTuId, out var it);
+                ws.Cell(row, 1).Value = n++;
+                ws.Cell(row, 2).Value = it?.Name ?? "";
+                ws.Cell(row, 3).Value = it?.Code ?? "";
+                ws.Cell(row, 4).Value = it?.Unit ?? "";
+                ws.Cell(row, 5).Value = l.Quantity;
+                if (doc.Status == KhoStatus.Posted || KhoDocTypes.UserPriced(doc.DocType))
+                {
+                    ws.Cell(row, 6).Value = l.UnitCost;
+                    ws.Cell(row, 7).Value = l.Amount;
+                }
+                ws.Cell(row, 8).Value = l.Note ?? "";
+                row++;
+            }
+            ws.Cell(row, 2).Value = "Cộng";
+            ws.Cell(row, 5).FormulaA1 = $"SUM(E{first + 1}:E{row - 1})";
+            ws.Cell(row, 7).FormulaA1 = $"SUM(G{first + 1}:G{row - 1})";
+            ws.Range(row, 1, row, cols).Style.Font.Bold = true;
+            var t = ws.Range(first, 1, row, cols);
+            t.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            t.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            ws.Range(first + 1, 5, row, 5).Style.NumberFormat.Format = "#,##0.####";
+            ws.Range(first + 1, 6, row, 7).Style.NumberFormat.Format = "#,##0";
+            ws.Range(first + 1, 1, row, 1).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            row++;
+            var vat = lines.Sum(l => l.VatAmount);
+            if (vat != 0) { Merge(row++, 1, cols, $"- Thuế GTGT: {vat:#,##0} — Tổng thanh toán: {lines.Sum(l => l.Amount) + vat:#,##0}"); }
+            if (doc.Status != KhoStatus.Posted && !KhoDocTypes.UserPriced(doc.DocType))
+                Merge(row++, 1, cols, "(Phiếu chưa ghi sổ — đơn giá xuất sẽ tính khi ghi sổ)", false, 10, true);
+            row++;
+            Merge(row, 6, cols, $"Ngày {doc.DocDate:dd} tháng {doc.DocDate:MM} năm {doc.DocDate:yyyy}", false, 11, true, XLAlignmentHorizontalValues.Center);
+            row++;
+            string[] signs = isIn
+                ? new[] { "Người lập phiếu", "Người giao hàng", "Thủ kho", "Kế toán trưởng" }
+                : new[] { "Người lập phiếu", "Người nhận hàng", "Thủ kho", "Kế toán trưởng" };
+            int[][] spans = { new[] { 1, 2 }, new[] { 3, 4 }, new[] { 5, 6 }, new[] { 7, 8 } };
+            for (var i = 0; i < 4; i++)
+            {
+                Merge(row, spans[i][0], spans[i][1], signs[i], true, 11, false, XLAlignmentHorizontalValues.Center);
+                Merge(row + 1, spans[i][0], spans[i][1], "(Ký, họ tên)", false, 10, true, XLAlignmentHorizontalValues.Center);
+            }
+
+            double[] widths = { 6, 40, 12, 10, 12, 14, 16, 18 };
+            for (var i = 0; i < widths.Length; i++) ws.Column(i + 1).Width = widths[i];
+            ws.PageSetup.PaperSize = XLPaperSize.A4Paper;
+            ws.PageSetup.FitToPages(1, 0);
+            await KhoUi.DownloadAsync(JS, wb, $"{doc.DocNo}.xlsx");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+    }
+
+    private string WhFull(Guid id) => _warehouses.FirstOrDefault(w => w.Id == id) is { } w ? $"{w.Code} - {w.Name}" + (string.IsNullOrWhiteSpace(w.Address) ? "" : $" ({w.Address})") : "";
+}

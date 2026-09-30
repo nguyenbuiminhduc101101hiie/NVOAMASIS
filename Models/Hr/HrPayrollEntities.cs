@@ -49,6 +49,32 @@ namespace NVOAMASIS.Models.Hr
         public decimal BaseSalary { get; set; }
         public decimal? InsuranceSalary { get; set; }
         public decimal Allowance { get; set; }
+        /// <summary>HĐ lương NET — Lương cơ bản / phụ cấp là số thực nhận, phần <see cref="GrossUp"/> do công ty chịu.</summary>
+        public bool IsNet { get; set; }
+
+        // Phần 2 — hợp đồng trước đó trong cùng tháng (thường là thử việc), vd thử việc đến 14/11, chính thức từ 15/11.
+        // Các trường không có tiền tố Pro* là của hợp đồng chính (hợp đồng mới nhất trong tháng).
+        public Guid? ProContractId { get; set; }
+        [MaxLength(50)] public string? ProContractNo { get; set; }
+        public int? ProContractType { get; set; }
+        public bool ProIsNet { get; set; }
+        public decimal ProBaseSalary { get; set; }
+        public decimal ProAllowance { get; set; }
+        public DateTime? ProFrom { get; set; }
+        public DateTime? ProTo { get; set; }
+        /// <summary>Công chuẩn theo lịch trong thời gian HĐ trước (dùng cho quy tắc 14 ngày đóng BH).</summary>
+        public decimal ProCalendarDays { get; set; }
+        public decimal ProTimesheetPaidDays { get; set; }
+        public decimal? ProPaidDaysOverride { get; set; }
+        public decimal ProPaidDays { get; set; }
+        public decimal ProSalaryByDays { get; set; }
+        public decimal ProAllowanceAmount { get; set; }
+        /// <summary>Tiền công ty chịu thay (thuế) khi HĐ trước là lương NET.</summary>
+        public decimal ProGrossUp { get; set; }
+        /// <summary>Thuế TNCN của phần HĐ trước (đã nằm trong <see cref="PersonalIncomeTax"/>).</summary>
+        public decimal ProTax { get; set; }
+        public int ProTaxMode { get; set; }
+        public bool HasPro => ProContractId.HasValue;
 
         // Ngày công
         public decimal StandardDays { get; set; }
@@ -68,6 +94,9 @@ namespace NVOAMASIS.Models.Hr
         public decimal OtherIncome { get; set; }
         /// <summary>Thu nhập không chịu thuế (vd phần phụ cấp ăn ca được miễn).</summary>
         public decimal NonTaxableIncome { get; set; }
+        /// <summary>Tiền công ty chịu thay (BH phần NLĐ + thuế TNCN) khi HĐ chính là lương NET — quy đổi net → gross.</summary>
+        public decimal GrossUp { get; set; }
+        /// <summary>Tổng thu nhập (gross) = phần HĐ trước + phần HĐ chính + các khoản + gross-up.</summary>
         public decimal GrossIncome { get; set; }
 
         // Bảo hiểm
@@ -252,6 +281,8 @@ namespace NVOAMASIS.Models.Hr
     {
         public Guid Id { get; set; }
         public decimal? PaidDaysOverride { get; set; }
+        /// <summary>Công hưởng lương phần HĐ trước (thử việc) nhập tay.</summary>
+        public decimal? ProPaidDaysOverride { get; set; }
         public decimal Overtime { get; set; }
         public decimal Bonus { get; set; }
         public decimal OtherIncome { get; set; }

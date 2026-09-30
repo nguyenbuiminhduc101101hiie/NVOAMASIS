@@ -1,0 +1,317 @@
+@page "/accounting/kho/so-chi-tiet"
+@using ClosedXML.Excel
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models.Kho
+@using NVOAMASIS.Services.Kho
+@attribute [Authorize]
+@inject KhoService Kho
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+@*
+    10.18.4 Sổ chi tiết vật liệu, dụng cụ, sản phẩm, hàng hóa (mẫu S10-DN) / thẻ kho: từng phiếu, tồn lũy kế SL + giá trị.
+    Mã quyền: KHO_BaoCao (Xem).
+*@
+
+<PageTitle>Sổ chi tiết vật tư</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="10.18.4 Sổ chi tiết vật tư, hàng hóa (thẻ kho)" Subtitle="Từng lần nhập, xuất và số tồn lũy kế">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="@(_busy || !_itemId.HasValue)">Xem</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload"
+                           OnClick="ExportAsync" Disabled="@(_busy || _card is null)">Xuất Excel</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="12" sm="4">
+                <MudAutocomplete T="Guid?" Label="Vật tư, hàng hóa *" Value="_itemId" ValueChanged="@(async (Guid? v) => { _itemId = v; await LoadAsync(); })"
+                                 SearchFunc="SearchItemAsync" ToStringFunc="ItemLabel" CoerceText="true" ResetValueOnEmptyText="true" Clearable="true"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" MaxItems="50" />
+            </MudItem>
+            <MudItem xs="12" sm="2">
+                <MudSelect T="Guid?" Label="Kho" Value="_wh" ValueChanged="@(async (Guid? v) => { _wh = v; await LoadAsync(); })" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Dense="true" Clearable="true" Placeholder="Tất cả kho">
+                    @foreach (var w in _warehouses)
+                    {
+                        <MudSelectItem T="Guid?" Value="@((Guid?)w.Id)">@w.Code - @w.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudDatePicker Label="Từ ngày" Date="_from" DateChanged="@(async (DateTime? d) => { _from = d; await LoadAsync(); })" DateFormat="dd/MM/yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudDatePicker Label="Đến ngày" Date="_to" DateChanged="@(async (DateTime? d) => { _to = d; await LoadAsync(); })" DateFormat="dd/MM/yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        @if (_busy)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+        }
+        @if (_card is null)
+        {
+            <MudText Class="pa-4" Color="Color.Secondary">Chọn vật tư để xem sổ chi tiết.</MudText>
+        }
+        else
+        {
+            <div class="tk-head">
+                <div class="tk-company">@_company</div>
+                <div class="tk-title">SỔ CHI TIẾT VẬT LIỆU, DỤNG CỤ, SẢN PHẨM, HÀNG HÓA</div>
+                <div>Từ ngày @_loadedFrom.ToString("dd/MM/yyyy") đến ngày @_loadedTo.ToString("dd/MM/yyyy") — @(_loadedWh ?? "Tất cả kho")</div>
+                <div>Tài khoản: <b>@_card.Account</b> &nbsp; Tên, quy cách: <b>@_card.Code - @_card.Name</b> &nbsp; Đơn vị tính: <b>@_card.Unit</b></div>
+            </div>
+            <div class="tk-wrap">
+                <table class="tk">
+                    <thead>
+                        <tr>
+                            <th colspan="2">Chứng từ</th><th rowspan="2" class="t">Diễn giải</th><th rowspan="2">Kho</th><th rowspan="2">TK đối ứng</th><th rowspan="2">Đơn giá</th>
+                            <th colspan="2">Nhập</th><th colspan="2">Xuất</th><th colspan="2">Tồn</th>
+                        </tr>
+                        <tr>
+                            <th>Số hiệu</th><th>Ngày</th><th>Số lượng</th><th>Thành tiền</th><th>Số lượng</th><th>Thành tiền</th><th>Số lượng</th><th>Thành tiền</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="open">
+                            <td></td><td></td><td class="t">Số dư đầu kỳ</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                            <td>@KhoUi.Qty(_card.OpenQty, true)</td><td>@KhoUi.Money(_card.OpenValue, true)</td>
+                        </tr>
+                        @foreach (var l in _card.Lines)
+                        {
+                            <tr>
+                                <td class="c">@l.DocNo</td><td class="c">@l.Date.ToString("dd/MM/yyyy")</td>
+                                <td class="t desc" title="@l.Description">@l.Description</td>
+                                <td class="c">@l.Warehouse</td><td class="c">@l.Contra</td><td>@KhoUi.Price(l.UnitCost)</td>
+                                <td>@KhoUi.Qty(l.InQty)</td><td>@KhoUi.Money(l.InValue)</td>
+                                <td>@KhoUi.Qty(l.OutQty)</td><td>@KhoUi.Money(l.OutValue)</td>
+                                <td class="@(l.BalQty < 0 ? "neg" : "")">@KhoUi.Qty(l.BalQty, true)</td><td>@KhoUi.Money(l.BalValue, true)</td>
+                            </tr>
+                        }
+                        @if (_card.Lines.Count == 0)
+                        {
+                            <tr><td colspan="12" class="empty">Không có phát sinh trong kỳ.</td></tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td></td><td></td><td class="t">Cộng phát sinh / tồn cuối kỳ</td><td></td><td></td><td></td>
+                            <td>@KhoUi.Qty(_card.InQty, true)</td><td>@KhoUi.Money(_card.InValue, true)</td>
+                            <td>@KhoUi.Qty(_card.OutQty, true)</td><td>@KhoUi.Money(_card.OutValue, true)</td>
+                            <td>@KhoUi.Qty(_card.CloseQty, true)</td><td>@KhoUi.Money(_card.CloseValue, true)</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        }
+    </MudPaper>
+</div>
+
+<style>
+    .tk-head { text-align: center; margin-bottom: 8px; font-size: 13px; }
+    .tk-company { font-weight: 700; text-transform: uppercase; }
+    .tk-title { font-weight: 700; font-size: 16px; margin-top: 6px; }
+    .tk-wrap { overflow: auto; max-height: calc(100vh - 360px); }
+    .tk { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+    .tk th, .tk td { border: 1px solid #c8c8c8; padding: 3px 6px; white-space: nowrap; }
+    .tk thead th { background: #e8eef7; text-align: center; font-weight: 700; position: sticky; top: 0; z-index: 1; }
+    .tk thead tr:nth-child(2) th { top: 24px; }
+    .tk td { text-align: right; }
+    .tk td.t { text-align: left; }
+    .tk td.c { text-align: center; }
+    .tk td.desc { max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+    .tk td.neg { color: #c62828; font-weight: 700; }
+    .tk tr.open td { font-style: italic; background: #fafafa; }
+    .tk tfoot td { font-weight: 700; background: #fff8e1; }
+    .tk td.empty { text-align: center; color: #757575; padding: 16px; }
+</style>
+
+@code {
+    private const string Menu = "KHO_BaoCao";
+
+    [Parameter] public Guid? InitialItemId { get; set; }
+    [Parameter] public Guid? InitialWarehouseId { get; set; }
+    [Parameter] public DateTime? InitialFrom { get; set; }
+    [Parameter] public DateTime? InitialTo { get; set; }
+
+    private bool _busy, _allowed;
+    private string _usr = "", _company = "";
+    private Guid? _itemId, _wh;
+    private DateTime? _from = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _to = DateTime.Today;
+    private DateTime _loadedFrom, _loadedTo;
+    private string? _loadedWh;
+    private List<KhoVatTu> _items = new();
+    private List<KhoHang> _warehouses = new();
+    private KhoCard? _card;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? "";
+        if (!await ssv.CheckPermission(_usr, "View", Menu))
+        {
+            Snackbar.Add("Bạn không có quyền xem báo cáo kho (mã quyền KHO_BaoCao).", MudBlazor.Severity.Warning);
+            return;
+        }
+        _allowed = true;
+        if (InitialItemId.HasValue) _itemId = InitialItemId;
+        if (InitialWarehouseId.HasValue) _wh = InitialWarehouseId;
+        if (InitialFrom.HasValue) _from = InitialFrom;
+        if (InitialTo.HasValue) _to = InitialTo;
+        try
+        {
+            _items = await Kho.GetItemsAsync();
+            _warehouses = await Kho.GetWarehousesAsync();
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var c = await db.CompanyInfomation.AsNoTracking().FirstOrDefaultAsync();
+            _company = new[] { c?.NameTiengViet, c?.Name }.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "";
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private string ItemLabel(Guid? id) => id.HasValue && _items.FirstOrDefault(x => x.Id == id) is { } x ? $"{x.Code} - {x.Name}" : "";
+
+    private Task<IEnumerable<Guid?>> SearchItemAsync(string text)
+    {
+        IEnumerable<KhoVatTu> q = _items;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var k = text.Trim();
+            q = q.Where(x => x.Code.Contains(k, StringComparison.OrdinalIgnoreCase) || x.Name.Contains(k, StringComparison.OrdinalIgnoreCase));
+        }
+        return Task.FromResult(q.Take(50).Select(x => (Guid?)x.Id));
+    }
+
+    private async Task LoadAsync()
+    {
+        if (!_allowed) return;
+        if (!_itemId.HasValue) { _card = null; return; }
+        try
+        {
+            _busy = true;
+            var from = (_from ?? DateTime.Today).Date;
+            var to = (_to ?? DateTime.Today).Date;
+            if (from > to) (from, to) = (to, from);
+            _card = await Kho.StockCardAsync(_itemId.Value, _wh, from, to);
+            _loadedFrom = from;
+            _loadedTo = to;
+            _loadedWh = _wh.HasValue ? _warehouses.FirstOrDefault(w => w.Id == _wh)?.Name : null;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ExportAsync()
+    {
+        if (_card is null) return;
+        try
+        {
+            using var wb = new XLWorkbook();
+            var ws = wb.Worksheets.Add("SoChiTiet");
+            ws.Style.Font.FontName = "Times New Roman";
+            ws.Style.Font.FontSize = 10;
+            const int cols = 12;
+            void Merge(int r, string text, bool bold, double size, XLAlignmentHorizontalValues align, bool italic = false)
+            {
+                ws.Cell(r, 1).Value = text;
+                var rg = ws.Range(r, 1, r, cols);
+                rg.Merge(); rg.Style.Font.Bold = bold; rg.Style.Font.Italic = italic; rg.Style.Font.FontSize = size; rg.Style.Alignment.Horizontal = align;
+            }
+            Merge(1, _company.ToUpperInvariant(), true, 11, XLAlignmentHorizontalValues.Left);
+            Merge(3, "SỔ CHI TIẾT VẬT LIỆU, DỤNG CỤ, SẢN PHẨM, HÀNG HÓA", true, 14, XLAlignmentHorizontalValues.Center);
+            Merge(4, $"Từ ngày {_loadedFrom:dd/MM/yyyy} đến ngày {_loadedTo:dd/MM/yyyy} — {_loadedWh ?? "Tất cả kho"}", false, 11, XLAlignmentHorizontalValues.Center, true);
+            Merge(5, $"Tài khoản: {_card.Account}    Tên, quy cách: {_card.Code} - {_card.Name}    Đơn vị tính: {_card.Unit}", false, 11, XLAlignmentHorizontalValues.Center);
+
+            int h1 = 7, h2 = 8;
+            void Head(int r1, int c1, int r2, int c2, string text) { ws.Cell(r1, c1).Value = text; if (r1 != r2 || c1 != c2) ws.Range(r1, c1, r2, c2).Merge(); }
+            Head(h1, 1, h1, 2, "Chứng từ"); ws.Cell(h2, 1).Value = "Số hiệu"; ws.Cell(h2, 2).Value = "Ngày";
+            Head(h1, 3, h2, 3, "Diễn giải"); Head(h1, 4, h2, 4, "Kho"); Head(h1, 5, h2, 5, "TK đối ứng"); Head(h1, 6, h2, 6, "Đơn giá");
+            Head(h1, 7, h1, 8, "Nhập"); Head(h1, 9, h1, 10, "Xuất"); Head(h1, 11, h1, 12, "Tồn");
+            for (var c = 7; c <= 12; c++) ws.Cell(h2, c).Value = c % 2 == 1 ? "Số lượng" : "Thành tiền";
+            var head = ws.Range(h1, 1, h2, cols);
+            head.Style.Font.Bold = true; head.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            head.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center; head.Style.Fill.BackgroundColor = XLColor.FromHtml("#E8EEF7");
+
+            var row = h2 + 1;
+            var r0 = row;
+            ws.Cell(row, 3).Value = "Số dư đầu kỳ";
+            ws.Cell(row, 11).Value = _card.OpenQty; ws.Cell(row, 12).Value = _card.OpenValue;
+            ws.Range(row, 1, row, cols).Style.Font.Italic = true;
+            row++;
+            var firstLine = row;
+            foreach (var l in _card.Lines)
+            {
+                ws.Cell(row, 1).Value = l.DocNo; ws.Cell(row, 2).Value = l.Date.ToString("dd/MM/yyyy"); ws.Cell(row, 3).Value = l.Description;
+                ws.Cell(row, 4).Value = l.Warehouse; ws.Cell(row, 5).Value = l.Contra;
+                if (l.UnitCost != 0) ws.Cell(row, 6).Value = l.UnitCost;
+                if (l.InQty != 0) ws.Cell(row, 7).Value = l.InQty;
+                if (l.InValue != 0) ws.Cell(row, 8).Value = l.InValue;
+                if (l.OutQty != 0) ws.Cell(row, 9).Value = l.OutQty;
+                if (l.OutValue != 0) ws.Cell(row, 10).Value = l.OutValue;
+                ws.Cell(row, 11).Value = l.BalQty; ws.Cell(row, 12).Value = l.BalValue;
+                row++;
+            }
+            ws.Cell(row, 3).Value = "Cộng phát sinh / tồn cuối kỳ";
+            if (_card.Lines.Count > 0)
+                foreach (var c in new[] { 7, 8, 9, 10 })
+                    ws.Cell(row, c).FormulaA1 = $"SUM({ws.Cell(firstLine, c).Address}:{ws.Cell(row - 1, c).Address})";
+            ws.Cell(row, 11).Value = _card.CloseQty; ws.Cell(row, 12).Value = _card.CloseValue;
+            ws.Range(row, 1, row, cols).Style.Font.Bold = true;
+            ws.Range(row, 1, row, cols).Style.Fill.BackgroundColor = XLColor.FromHtml("#FFF8E1");
+
+            var tb = ws.Range(h1, 1, row, cols);
+            tb.Style.Border.OutsideBorder = XLBorderStyleValues.Thin; tb.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            ws.Range(r0, 6, row, 6).Style.NumberFormat.Format = "#,##0.##";
+            foreach (var c in new[] { 7, 9, 11 }) ws.Range(r0, c, row, c).Style.NumberFormat.Format = "#,##0.####";
+            foreach (var c in new[] { 8, 10, 12 }) ws.Range(r0, c, row, c).Style.NumberFormat.Format = "#,##0;-#,##0;0";
+            ws.Range(r0, 1, row, 2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            ws.Range(r0, 4, row, 5).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            row += 2;
+            ws.Cell(row, 9).Value = "Ngày ..... tháng ..... năm ......";
+            ws.Range(row, 9, row, cols).Merge().Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            row++;
+            void Sign(int c1, int c2, string title)
+            {
+                ws.Cell(row, c1).Value = title; ws.Range(row, c1, row, c2).Merge().Style.Font.Bold = true;
+                ws.Cell(row + 1, c1).Value = "(Ký, họ tên)"; ws.Range(row + 1, c1, row + 1, c2).Merge().Style.Font.Italic = true;
+                ws.Range(row, c1, row + 1, c2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            Sign(1, 3, "Người ghi sổ"); Sign(5, 8, "Kế toán trưởng"); Sign(9, 12, "Giám đốc");
+
+            double[] widths = { 14, 11, 42, 10, 10, 12, 11, 14, 11, 14, 11, 14 };
+            for (var i = 0; i < widths.Length; i++) ws.Column(i + 1).Width = widths[i];
+            ws.SheetView.FreezeRows(h2);
+            ws.PageSetup.PageOrientation = XLPageOrientation.Landscape;
+            ws.PageSetup.FitToPages(1, 0);
+            await KhoUi.DownloadAsync(JS, wb, $"SO_CHI_TIET_{_card.Code}_{_loadedFrom:yyyyMMdd}_{_loadedTo:yyyyMMdd}.xlsx");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+    }
+}

@@ -1,0 +1,597 @@
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models.Kho
+@using NVOAMASIS.Services.Kho
+@inject KhoService Kho
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+
+@*
+    Lập / sửa / xem phiếu kho (10.18.2): tồn đầu kỳ, nhập kho, xuất kho, chuyển kho.
+    Kết quả trả về: true nếu đã lưu / ghi sổ.
+*@
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            @KhoDocTypes.Label(_doc.DocType) @(_isNew ? "(mới)" : _doc.DocNo)
+            @if (_doc.Status == KhoStatus.Posted)
+            {
+                <MudChip Size="Size.Small" Color="Color.Success" Class="ml-2">Đã ghi sổ @(_voucherNo is null ? "" : $"– CT {_voucherNo}")</MudChip>
+            }
+            else if (!_isNew)
+            {
+                <MudChip Size="Size.Small" Color="Color.Default" Class="ml-2">Nháp</MudChip>
+            }
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else
+        {
+            @if (RO)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mb-2">
+                    @(_doc.Status == KhoStatus.Posted ? "Phiếu đã ghi sổ — chỉ xem. Muốn sửa: đóng lại, bấm \"Bỏ ghi sổ\" (quyền Duyệt), rồi Sửa." : "Chỉ xem.")
+                </MudAlert>
+            }
+            <MudGrid Spacing="2">
+                <MudItem xs="6" sm="2">
+                    <MudTextField @bind-Value="_doc.DocNo" Label="Số phiếu" Placeholder="Tự động" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  ReadOnly="RO" MaxLength="30" HelperText="@(_isNew ? "Để trống = tự đánh số" : null)" />
+                </MudItem>
+                <MudItem xs="6" sm="2">
+                    <MudDatePicker Label="Ngày chứng từ *" Date="_docDate" DateChanged="OnDateChanged" DateFormat="dd/MM/yyyy"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="RO" />
+                </MudItem>
+                <MudItem xs="12" sm="3">
+                    <MudSelect T="Guid" Value="_doc.WarehouseId" ValueChanged="OnWarehouseChanged" Label="@(IsTransfer ? "Kho xuất *" : "Kho *")"
+                               Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" ReadOnly="RO">
+                        @foreach (var w in _warehouses.Where(w => w.IsActive || w.Id == _doc.WarehouseId))
+                        {
+                            <MudSelectItem T="Guid" Value="@w.Id">@w.Code - @w.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                @if (IsTransfer)
+                {
+                    <MudItem xs="12" sm="3">
+                        <MudSelect T="Guid?" @bind-Value="_doc.ToWarehouseId" Label="Kho nhận *" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" ReadOnly="RO">
+                            @foreach (var w in _warehouses.Where(w => (w.IsActive || w.Id == _doc.ToWarehouseId) && w.Id != _doc.WarehouseId))
+                            {
+                                <MudSelectItem T="Guid?" Value="@((Guid?)w.Id)">@w.Code - @w.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                }
+                @if (HasReason)
+                {
+                    <MudItem xs="12" sm="3">
+                        <MudSelect T="string" Value="_doc.Reason" ValueChanged="OnReasonChanged" Label="Lý do" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                   Dense="true" ReadOnly="RO" Clearable="true">
+                            @foreach (var r in KhoReasons.For(_doc.DocType))
+                            {
+                                <MudSelectItem T="string" Value="@r.Code">@r.Label (@r.ContraAccount)</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="6" sm="2">
+                        <MudAutocomplete T="string" @bind-Value="_doc.ContraAccount" Label="@(IsIn ? "TK Có (đối ứng) *" : "TK Nợ (đối ứng) *")"
+                                         SearchFunc="SearchAccountAsync" ToStringFunc="AccountLabel" CoerceValue="true" ResetValueOnEmptyText="true"
+                                         Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="RO" MaxItems="50" />
+                    </MudItem>
+                }
+                @if (!IsTransfer && !IsOpening)
+                {
+                    <MudItem xs="12" sm="4">
+                        <MudAutocomplete T="Guid?" Value="_doc.PartnerId" ValueChanged="OnPartnerChanged"
+                                         Label="@(IsIn ? "Nhà cung cấp" : "Khách hàng / đối tượng")" SearchFunc="SearchPartnerAsync" ToStringFunc="PartnerLabel"
+                                         Clearable="true" CoerceText="true" ResetValueOnEmptyText="true" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                         ReadOnly="RO" MaxItems="50" />
+                    </MudItem>
+                }
+                <MudItem xs="12" sm="3">
+                    <MudTextField @bind-Value="_doc.ContactName" Label="@(IsIn ? "Người giao hàng" : "Người nhận hàng")" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  ReadOnly="RO" MaxLength="150" />
+                </MudItem>
+                @if (IsIn)
+                {
+                    <MudItem xs="6" sm="2"><MudTextField @bind-Value="_doc.InvoiceNo" Label="Số hóa đơn" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="RO" MaxLength="50" /></MudItem>
+                    <MudItem xs="6" sm="2">
+                        <MudDatePicker Label="Ngày hóa đơn" @bind-Date="_doc.InvoiceDate" DateFormat="dd/MM/yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="RO" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="6" sm="2">
+                        <MudAutocomplete T="string" @bind-Value="_doc.VatAccount" Label="TK thuế GTGT" SearchFunc="SearchAccountAsync" ToStringFunc="AccountLabel"
+                                         CoerceValue="true" ResetValueOnEmptyText="true" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="RO" MaxItems="50" />
+                    </MudItem>
+                }
+                <MudItem xs="12" sm="@(IsIn ? 6 : 9)">
+                    <MudTextField @bind-Value="_doc.Description" Label="Diễn giải" Variant="Variant.Outlined" Margin="Margin.Dense" ReadOnly="RO" MaxLength="500" />
+                </MudItem>
+            </MudGrid>
+
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-3 mb-1 flex-wrap" Spacing="2">
+                <MudText Typo="Typo.subtitle2"><b>Dòng hàng</b></MudText>
+                @if (!RO)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddLine">Thêm dòng</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.UploadFile" OnClick="@(() => _showImport = !_showImport)">Nhập dòng từ Excel</MudButton>
+                }
+                @if (!UserPriced)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Info">
+                        Đơn giá xuất tính theo bình quân tức thời khi <b>Ghi sổ</b>. Số đang hiện là tạm tính theo tồn kho đến ngày chứng từ.
+                    </MudText>
+                }
+            </MudStack>
+            @if (_showImport && !RO)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mb-2">
+                    Dòng 1 là tiêu đề: <b>Mã</b>, <b>Số lượng</b>@(UserPriced ? ", Đơn giá (hoặc Thành tiền)" : "")@(IsIn ? ", % thuế" : ""), Ghi chú. Các dòng được thêm vào cuối phiếu.
+                    <div class="mt-1"><InputFile OnChange="ImportLinesAsync" accept=".xlsx,.xlsm" /></div>
+                </MudAlert>
+            }
+
+            <div class="kpe-wrap">
+                <table class="kpe">
+                    <thead>
+                        <tr>
+                            <th style="width:32px">#</th>
+                            <th style="min-width:260px">Vật tư, hàng hóa</th>
+                            <th>ĐVT</th>
+                            <th style="width:90px">TK kho</th>
+                            @if (!UserPriced)
+                            {
+                                <th class="num">Tồn hiện có</th>
+                            }
+                            <th class="num" style="width:110px">Số lượng</th>
+                            <th class="num" style="width:120px">Đơn giá</th>
+                            <th class="num" style="width:130px">Thành tiền</th>
+                            @if (IsIn)
+                            {
+                                <th class="num" style="width:70px">% thuế</th>
+                                <th class="num" style="width:110px">Tiền thuế</th>
+                            }
+                            @if (HasReason)
+                            {
+                                <th style="width:100px" title="Để trống = dùng TK đối ứng của phiếu">TK đối ứng riêng</th>
+                            }
+                            <th>Ghi chú</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @for (var i = 0; i < _lines.Count; i++)
+                        {
+                            var line = _lines[i];
+                            var idx = i;
+                            var item = ItemOf(line.VatTuId);
+                            <tr>
+                                <td class="c">@(idx + 1)</td>
+                                <td>
+                                    <MudAutocomplete T="Guid" Value="line.VatTuId" ValueChanged="@(v => OnItemChanged(line, v))" SearchFunc="SearchItemAsync"
+                                                     ToStringFunc="ItemLabel" CoerceText="true" ResetValueOnEmptyText="true" Dense="true" Margin="Margin.Dense"
+                                                     Variant="Variant.Text" ReadOnly="RO" MaxItems="50" Placeholder="Gõ mã hoặc tên..." />
+                                </td>
+                                <td class="c">@item?.Unit</td>
+                                <td>
+                                    <MudTextField @bind-Value="line.InventoryAccount" Variant="Variant.Text" Margin="Margin.Dense" ReadOnly="RO" MaxLength="20" />
+                                </td>
+                                @if (!UserPriced)
+                                {
+                                    <td class="num @(StockOf(line.VatTuId).Qty < line.Quantity ? "short" : "")" title="Đơn giá bình quân: @KhoUi.Price(StockOf(line.VatTuId).AvgCost)">
+                                        @KhoUi.Qty(StockOf(line.VatTuId).Qty, true)
+                                    </td>
+                                }
+                                <td>
+                                    <MudNumericField T="decimal" Value="line.Quantity" ValueChanged="@(v => { line.Quantity = v; Recalc(line); })" Min="0" HideSpinButtons="true"
+                                                     Variant="Variant.Text" Margin="Margin.Dense" ReadOnly="RO" Format="#,##0.####" Class="num-input" />
+                                </td>
+                                <td>
+                                    @if (UserPriced)
+                                    {
+                                        <MudNumericField T="decimal" Value="line.UnitCost" ValueChanged="@(v => { line.UnitCost = v; Recalc(line); })" Min="0" HideSpinButtons="true"
+                                                         Variant="Variant.Text" Margin="Margin.Dense" ReadOnly="RO" Format="#,##0.####" Class="num-input" />
+                                    }
+                                    else
+                                    {
+                                        <div class="num est">@KhoUi.Price(EstUnit(line))</div>
+                                    }
+                                </td>
+                                <td>
+                                    @if (UserPriced)
+                                    {
+                                        <MudNumericField T="decimal" Value="line.Amount" ValueChanged="@(v => OnAmountChanged(line, v))" Min="0" HideSpinButtons="true"
+                                                         Variant="Variant.Text" Margin="Margin.Dense" ReadOnly="RO" Format="#,##0" Class="num-input" />
+                                    }
+                                    else
+                                    {
+                                        <div class="num est">@KhoUi.Money(EstAmount(line))</div>
+                                    }
+                                </td>
+                                @if (IsIn)
+                                {
+                                    <td>
+                                        <MudNumericField T="decimal" Value="line.VatRate" ValueChanged="@(v => { line.VatRate = v; line.VatAmount = Math.Round(line.Amount * v / 100m, 0, MidpointRounding.AwayFromZero); })"
+                                                         Min="0" Max="100" HideSpinButtons="true" Variant="Variant.Text" Margin="Margin.Dense" ReadOnly="RO" Class="num-input" />
+                                    </td>
+                                    <td>
+                                        <MudNumericField T="decimal" @bind-Value="line.VatAmount" Min="0" HideSpinButtons="true" Variant="Variant.Text" Margin="Margin.Dense"
+                                                         ReadOnly="RO" Format="#,##0" Class="num-input" />
+                                    </td>
+                                }
+                                @if (HasReason)
+                                {
+                                    <td>
+                                        <MudTextField @bind-Value="line.ContraAccount" Variant="Variant.Text" Margin="Margin.Dense" ReadOnly="RO" MaxLength="20" Placeholder="@_doc.ContraAccount" />
+                                    </td>
+                                }
+                                <td><MudTextField @bind-Value="line.Note" Variant="Variant.Text" Margin="Margin.Dense" ReadOnly="RO" MaxLength="500" /></td>
+                                <td>
+                                    @if (!RO)
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" Color="Color.Error" OnClick="@(() => _lines.RemoveAt(idx))" />
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td></td>
+                            <td>Cộng (@_lines.Count(l => l.VatTuId != Guid.Empty) dòng)</td>
+                            <td></td><td></td>
+                            @if (!UserPriced) { <td></td> }
+                            <td class="num">@KhoUi.Qty(_lines.Sum(l => l.Quantity), true)</td>
+                            <td></td>
+                            <td class="num">@KhoUi.Money(UserPriced ? _lines.Sum(l => l.Amount) : _lines.Sum(EstAmount), true)</td>
+                            @if (IsIn)
+                            {
+                                <td></td>
+                                <td class="num">@KhoUi.Money(_lines.Sum(l => l.VatAmount), true)</td>
+                            }
+                            @if (HasReason) { <td></td> }
+                            <td colspan="2">@(IsIn && _lines.Sum(l => l.VatAmount) != 0 ? $"Tổng thanh toán: {KhoUi.Money(_lines.Sum(l => l.Amount + l.VatAmount), true)}" : "")</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            @if (!UserPriced && _lines.Any(l => l.VatTuId != Guid.Empty && StockOf(l.VatTuId).Qty < l.Quantity))
+            {
+                <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-2">
+                    Có dòng xuất nhiều hơn tồn kho đến ngày chứng từ (tô đỏ) — ghi sổ sẽ bị chặn. Lưu nháp vẫn được.
+                </MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => MudDialog.Close(DialogResult.Ok(_changed)))">Đóng</MudButton>
+        @if (!RO)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="@(() => SaveAsync(false))" Disabled="_saving">Lưu nháp</MudButton>
+            @if (CanPost)
+            {
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.CheckCircle" OnClick="@(() => SaveAsync(true))" Disabled="_saving">
+                    Lưu & ghi sổ
+                </MudButton>
+            }
+        }
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .kpe-wrap { overflow: auto; max-height: 48vh; border: 1px solid #e0e0e0; }
+    .kpe { border-collapse: collapse; width: 100%; font-size: 13px; }
+    .kpe th { position: sticky; top: 0; background: #e8eef7; z-index: 1; padding: 4px 6px; border: 1px solid #d5dbe5; white-space: nowrap; font-weight: 600; }
+    .kpe td { border: 1px solid #eceff4; padding: 0 4px; vertical-align: middle; }
+    .kpe td.c { text-align: center; }
+    .kpe th.num, .kpe td.num, .kpe div.num { text-align: right; white-space: nowrap; }
+    .kpe div.est { color: #1565c0; font-style: italic; padding-right: 4px; }
+    .kpe td.short { color: #c62828; font-weight: 700; }
+    .kpe tfoot td { font-weight: 700; background: #fff8e1; padding: 4px 6px; }
+    .kpe .num-input input { text-align: right; }
+    .kpe .mud-input-control { margin-top: 0 !important; }
+</style>
+
+@code {
+    [CascadingParameter] private MudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>Phiếu cần mở; null = lập mới.</summary>
+    [Parameter] public Guid? DocId { get; set; }
+    /// <summary>Loại phiếu khi lập mới (OPEN / IN / OUT / TRANSFER).</summary>
+    [Parameter] public string DocType { get; set; } = KhoDocTypes.In;
+    [Parameter] public bool ReadOnly { get; set; }
+    /// <summary>Có quyền Duyệt (ghi sổ).</summary>
+    [Parameter] public bool CanPost { get; set; }
+    [Parameter] public string UserName { get; set; } = "";
+
+    private bool _loading = true, _saving, _changed, _isNew, _showImport;
+    private PhieuKho _doc = new();
+    private DateTime? _docDate = DateTime.Today;
+    private string? _voucherNo;
+    private List<PhieuKhoChiTiet> _lines = new();
+    private List<KhoHang> _warehouses = new();
+    private List<KhoVatTu> _items = new();
+    private Dictionary<Guid, KhoVatTu> _itemById = new();
+    private Dictionary<string, string> _accounts = new();
+    private List<(Guid Id, string Code, string Name)> _partners = new();
+    private Dictionary<Guid, KhoStockHint> _stock = new();
+
+    /// <summary>Chỉ xem: được yêu cầu, hoặc phiếu đã ghi sổ.</summary>
+    private bool RO => ReadOnly || _doc.Status == KhoStatus.Posted;
+    private bool IsIn => _doc.DocType == KhoDocTypes.In;
+    private bool IsOpening => _doc.DocType == KhoDocTypes.Opening;
+    private bool IsTransfer => _doc.DocType == KhoDocTypes.Transfer;
+    private bool HasReason => _doc.DocType is KhoDocTypes.In or KhoDocTypes.Out;
+    private bool UserPriced => KhoDocTypes.UserPriced(_doc.DocType);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _warehouses = await Kho.GetWarehousesAsync();
+            _items = await Kho.GetItemsAsync();
+            _itemById = _items.ToDictionary(x => x.Id);
+            _accounts = await Kho.GetAccountsAsync();
+            await using (var db = await DbFactory.CreateDbContextAsync())
+            {
+                _partners = (await db.Customer.AsNoTracking()
+                        .Where(x => x.Customer_ID != Guid.Empty)
+                        .Select(x => new { x.Customer_ID, x.Customer_Code, x.MainCode, x.COMPANY, x.EnglishName, x.BIZName })
+                        .ToListAsync())
+                    .Select(x => (x.Customer_ID, First(x.Customer_Code, x.MainCode), First(x.COMPANY, x.EnglishName, x.BIZName)))
+                    .OrderBy(x => x.Item2, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            if (DocId.HasValue && await Kho.GetDocAsync(DocId.Value) is { } loaded)
+            {
+                _doc = loaded.Doc;
+                _lines = loaded.Lines;
+                _voucherNo = await Kho.GetVoucherNoAsync(_doc.VoucherId);
+            }
+            else
+            {
+                _isNew = true;
+                var reason = KhoReasons.For(DocType).FirstOrDefault();
+                _doc = new PhieuKho
+                {
+                    Id = Guid.Empty,
+                    DocType = DocType,
+                    DocDate = DateTime.Today,
+                    WarehouseId = _warehouses.FirstOrDefault(w => w.IsActive)?.Id ?? Guid.Empty,
+                    Reason = reason?.Code,
+                    ContraAccount = reason is null ? null : ResolveChild(reason.ContraAccount),
+                    VatAccount = DocType == KhoDocTypes.In ? ResolveChild("1331") : null
+                };
+                AddLine();
+            }
+            _docDate = _doc.DocDate;
+            await RefreshStockAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string First(params string?[] v) => v.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))?.Trim() ?? "";
+
+    /// <summary>TK chi tiết đầu tiên có trong danh mục (vd 1111 cho 111); không có thì giữ nguyên.</summary>
+    private string ResolveChild(string code)
+    {
+        if (_accounts.ContainsKey(code)) return code;
+        return _accounts.Keys.Where(k => k.StartsWith(code, StringComparison.Ordinal)).OrderBy(k => k.Length).ThenBy(k => k, StringComparer.Ordinal).FirstOrDefault()
+               ?? _accounts.Keys.Where(k => code.StartsWith(k, StringComparison.Ordinal)).OrderByDescending(k => k.Length).FirstOrDefault()
+               ?? code;
+    }
+
+    private KhoVatTu? ItemOf(Guid id) => _itemById.TryGetValue(id, out var x) ? x : null;
+    private string ItemLabel(Guid id) => ItemOf(id) is { } x ? $"{x.Code} - {x.Name}" : "";
+
+    private Task<IEnumerable<Guid>> SearchItemAsync(string text)
+    {
+        IEnumerable<KhoVatTu> q = _items.Where(x => x.IsActive);
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var k = text.Trim();
+            q = q.Where(x => x.Code.Contains(k, StringComparison.OrdinalIgnoreCase) || x.Name.Contains(k, StringComparison.OrdinalIgnoreCase));
+        }
+        return Task.FromResult(q.Take(50).Select(x => x.Id));
+    }
+
+    private string AccountLabel(string? code) =>
+        string.IsNullOrWhiteSpace(code) ? "" : _accounts.TryGetValue(code.Trim(), out var n) && n.Length > 0 ? $"{code} - {n}" : code;
+
+    private Task<IEnumerable<string>> SearchAccountAsync(string text)
+    {
+        IEnumerable<string> q = _accounts.Keys.OrderBy(k => k, StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var k = text.Trim();
+            q = q.Where(x => x.StartsWith(k, StringComparison.Ordinal) || (_accounts[x] ?? "").Contains(k, StringComparison.OrdinalIgnoreCase));
+        }
+        return Task.FromResult(q.Take(50));
+    }
+
+    private string PartnerLabel(Guid? id)
+    {
+        if (!id.HasValue) return "";
+        var p = _partners.FirstOrDefault(x => x.Id == id.Value);
+        return p.Id == Guid.Empty ? (_doc.PartnerName ?? "") : (string.IsNullOrWhiteSpace(p.Code) ? p.Name : $"{p.Code} - {p.Name}");
+    }
+
+    private Task<IEnumerable<Guid?>> SearchPartnerAsync(string text)
+    {
+        IEnumerable<(Guid Id, string Code, string Name)> q = _partners;
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var k = text.Trim();
+            q = q.Where(x => x.Code.Contains(k, StringComparison.OrdinalIgnoreCase) || x.Name.Contains(k, StringComparison.OrdinalIgnoreCase));
+        }
+        return Task.FromResult(q.Take(50).Select(x => (Guid?)x.Id));
+    }
+
+    private void OnPartnerChanged(Guid? id)
+    {
+        _doc.PartnerId = id;
+        _doc.PartnerName = id.HasValue ? _partners.FirstOrDefault(x => x.Id == id.Value).Name : null;
+    }
+
+    private void OnReasonChanged(string? code)
+    {
+        _doc.Reason = code;
+        if (KhoReasons.Find(code) is { } r) _doc.ContraAccount = ResolveChild(r.ContraAccount);
+    }
+
+    private async Task OnDateChanged(DateTime? d)
+    {
+        _docDate = d;
+        if (d.HasValue) _doc.DocDate = d.Value.Date;
+        await RefreshStockAsync();
+    }
+
+    private async Task OnWarehouseChanged(Guid id)
+    {
+        _doc.WarehouseId = id;
+        if (_doc.ToWarehouseId == id) _doc.ToWarehouseId = null;
+        await RefreshStockAsync();
+    }
+
+    private async Task OnItemChanged(PhieuKhoChiTiet line, Guid id)
+    {
+        line.VatTuId = id;
+        if (ItemOf(id) is { } it) line.InventoryAccount = it.InventoryAccount;
+        if (_lines.LastOrDefault() == line && id != Guid.Empty) AddLine();
+        await RefreshStockAsync();
+    }
+
+    private void AddLine() => _lines.Add(new PhieuKhoChiTiet { Id = Guid.NewGuid(), LineNo = _lines.Count + 1 });
+
+    private void Recalc(PhieuKhoChiTiet line)
+    {
+        if (!UserPriced) return;
+        line.Amount = Math.Round(line.Quantity * line.UnitCost, 0, MidpointRounding.AwayFromZero);
+        if (IsIn) line.VatAmount = Math.Round(line.Amount * line.VatRate / 100m, 0, MidpointRounding.AwayFromZero);
+    }
+
+    private void OnAmountChanged(PhieuKhoChiTiet line, decimal v)
+    {
+        line.Amount = v;
+        if (line.Quantity != 0) line.UnitCost = Math.Round(v / line.Quantity, 4, MidpointRounding.AwayFromZero);
+        if (IsIn) line.VatAmount = Math.Round(v * line.VatRate / 100m, 0, MidpointRounding.AwayFromZero);
+    }
+
+    private KhoStockHint StockOf(Guid itemId) => _stock.TryGetValue(itemId, out var s) ? s : new KhoStockHint(0, 0);
+
+    private decimal EstAmount(PhieuKhoChiTiet l)
+    {
+        if (l.VatTuId == Guid.Empty || l.Quantity <= 0) return 0;
+        if (_doc.Status == KhoStatus.Posted) return l.Amount;
+        var s = StockOf(l.VatTuId);
+        if (s.Qty <= 0) return 0;
+        return l.Quantity >= s.Qty ? s.Value : Math.Round(s.Value / s.Qty * l.Quantity, 0, MidpointRounding.AwayFromZero);
+    }
+
+    private decimal EstUnit(PhieuKhoChiTiet l) =>
+        _doc.Status == KhoStatus.Posted ? l.UnitCost : l.Quantity <= 0 ? StockOf(l.VatTuId).AvgCost : Math.Round(EstAmount(l) / l.Quantity, 2);
+
+    private async Task RefreshStockAsync()
+    {
+        if (UserPriced || _doc.WarehouseId == Guid.Empty) return;
+        var ids = _lines.Where(l => l.VatTuId != Guid.Empty).Select(l => l.VatTuId).Distinct().ToList();
+        if (ids.Count == 0) { _stock.Clear(); return; }
+        try
+        {
+            _stock = await Kho.StockAtAsync(_doc.DocDate, _doc.WarehouseId, ids, excludeDocId: _doc.Status == KhoStatus.Posted ? _doc.Id : null);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Warning);
+        }
+    }
+
+    private async Task ImportLinesAsync(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            await using var src = e.File.OpenReadStream(20 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await src.CopyToAsync(ms);
+            ms.Position = 0;
+            var rows = KhoUi.ReadLinesFromExcel(ms);
+            var byCode = _items.GroupBy(x => x.Code.Trim(), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+            var missing = rows.Where(r => !byCode.ContainsKey(r.Code)).Select(r => $"dòng {r.Row}: {r.Code}").ToList();
+            if (missing.Count > 0)
+            {
+                Snackbar.Add("Mã vật tư chưa có trong danh mục (10.18.1): " + string.Join(", ", missing.Take(10)) + (missing.Count > 10 ? "..." : ""),
+                    MudBlazor.Severity.Error, o => o.VisibleStateDuration = 15000);
+                return;
+            }
+            _lines.RemoveAll(l => l.VatTuId == Guid.Empty && l.Quantity == 0);
+            foreach (var r in rows)
+            {
+                var it = byCode[r.Code];
+                var line = new PhieuKhoChiTiet { Id = Guid.NewGuid(), LineNo = _lines.Count + 1, VatTuId = it.Id, InventoryAccount = it.InventoryAccount, Quantity = r.Quantity, Note = r.Note };
+                if (UserPriced)
+                {
+                    line.VatRate = IsIn ? r.VatRate ?? 0 : 0;
+                    if (r.Amount.HasValue) { OnAmountChanged(line, r.Amount.Value); }
+                    else { line.UnitCost = r.UnitCost ?? 0; Recalc(line); }
+                }
+                _lines.Add(line);
+            }
+            _showImport = false;
+            await RefreshStockAsync();
+            Snackbar.Add($"Đã thêm {rows.Count} dòng từ Excel.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task SaveAsync(bool post)
+    {
+        if (!_docDate.HasValue) { Snackbar.Add("Chưa nhập ngày chứng từ.", MudBlazor.Severity.Warning); return; }
+        try
+        {
+            _saving = true;
+            _doc.DocDate = _docDate.Value.Date;
+            var lines = _lines.Where(l => !(l.VatTuId == Guid.Empty && l.Quantity == 0 && l.Amount == 0)).ToList();
+            for (var i = 0; i < lines.Count; i++) lines[i].LineNo = i + 1;
+            var id = await Kho.SaveDraftAsync(_doc, lines, UserName);
+            _changed = true;
+            var saved = await Kho.GetDocAsync(id);
+            if (saved is { } s) { _doc = s.Doc; _lines = s.Lines; _isNew = false; }
+
+            if (post)
+            {
+                var r = await Kho.PostAsync(id, UserName);
+                var msg = $"Đã ghi sổ {r.DocNo}" + (r.GlLines > 0 ? $" — {r.GlLines} dòng sổ cái (CT {r.VoucherNo})." : " (không phát sinh bút toán).");
+                if (r.RecostedDocs > 0) msg += $" Đã tính lại giá xuất {r.RecostedDocs} phiếu: {string.Join(", ", r.RecostedDocNos.Take(5))}{(r.RecostedDocs > 5 ? "..." : "")}.";
+                Snackbar.Add(msg, MudBlazor.Severity.Success, o => o.VisibleStateDuration = 8000);
+                MudDialog.Close(DialogResult.Ok(true));
+                return;
+            }
+            Snackbar.Add($"Đã lưu nháp {_doc.DocNo}.", MudBlazor.Severity.Success);
+            AddLine();
+            await RefreshStockAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error, o => o.VisibleStateDuration = 15000);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

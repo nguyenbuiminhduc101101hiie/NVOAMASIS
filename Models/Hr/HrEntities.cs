@@ -110,6 +110,11 @@ namespace NVOAMASIS.Models.Hr
         public decimal? BaseSalary { get; set; }
         public decimal? InsuranceSalary { get; set; }
         public decimal? Allowance { get; set; }
+        /// <summary>
+        /// true = lương NET: Lương cơ bản + Phụ cấp là số người lao động thực nhận; công ty chịu BH phần NLĐ và thuế TNCN
+        /// (bảng lương tự quy đổi ra gross). false = lương GROSS (mặc định).
+        /// </summary>
+        public bool IsNetSalary { get; set; }
 
         /// <summary>1=Hiệu lực, 2=Đã chấm dứt. "Hết hạn" được tính theo EndDate.</summary>
         public int Status { get; set; } = HrContractStatus.Active;

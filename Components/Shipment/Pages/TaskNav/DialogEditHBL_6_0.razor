@@ -6,6 +6,10 @@
 @inject BookingService bksv
 @inject ISnackbar Snackbar
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject CustomerService csv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDialogService DialogService
 
 
 <style>
@@ -377,31 +381,38 @@
                         </MudItem>
 
                         <MudItem xs="12" md="3">
-                            <MudAutocomplete T="Guid"
-                                             @bind-Value="Item.CustomerID"
-                                             Label="@Localizer["Main Customer"]"
-                                             Required="true"
-                                             SearchFunc="SearchCustomer"
-                                             ToStringFunc="CusidtoCusCode"
-                                             MaxItems="100"
-                                             Clearable="true"
-                                             ResetValueOnEmptyText="false"
-                                             Margin="Margin.Dense" />
+                            <div class="d-flex align-center">
+                                <MudAutocomplete T="Guid"
+                                                 @bind-Value="Item.CustomerID"
+                                                 Label="@Localizer["Main Customer"]"
+                                                 Required="true"
+                                                 SearchFunc="SearchCustomer"
+                                                 ToStringFunc="CusidtoCusCode"
+                                                 MaxItems="100"
+                                                 Clearable="true"
+                                                 ResetValueOnEmptyText="false"
+                                                 Margin="Margin.Dense" />
+                                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Filled.Add" Color="Color.Primary" Title="New Customer"
+                                               OnClick="@(() => CreateNewCustomer("Customer"))" />
+                            </div>
                         </MudItem>
 
                         <MudItem xs="12" md="3">
-                            <MudAutocomplete @bind-Value="Item.AgentID"
-                                             Label="@Localizer["Agent"]"
-                                             Required="true"
-                                             SearchFunc="SearchAgent"
-                                             ToStringFunc="AgentidtoName"
-                                             Margin="Margin.Dense" />
+                            <div class="d-flex align-center">
+                                <MudAutocomplete @bind-Value="Item.AgentID"
+                                                 Label="@Localizer["Agent"]"
+                                                 Required="true"
+                                                 SearchFunc="SearchAgent"
+                                                 ToStringFunc="AgentidtoName"
+                                                 Margin="Margin.Dense" />
+                                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Filled.Add" Color="Color.Primary" Title="New Agent"
+                                               OnClick="@(() => CreateNewCustomer("Agent-Network"))" />
+                            </div>
                         </MudItem>
 
                         <MudItem xs="12" md="3">
                             <MudAutocomplete @bind-Value="Item.Air_wareHouse"
                                              Label="@Localizer["Warehouse"]"
-                                             Required="true"
                                              SearchFunc="SearchWHouse"
                                              CoerceValue="true"
                                              Margin="Margin.Dense" />
@@ -410,7 +421,6 @@
                         <MudItem xs="12" md="3">
                             <MudAutocomplete @bind-Value="Item.Air_type"
                                              Label="@Localizer["LoaiHang"]"
-                                             Required="true"
                                              SearchFunc="SearchCFS"
                                              CoerceValue="true"
                                              Margin="Margin.Dense" />
@@ -426,7 +436,7 @@
                         </MudItem>
 
                         <MudItem xs="12" md="3">
-                            <MudSelect @bind-Value="Item.SaleName" Label="@Localizer["Sale Name"]" Required="true" Margin="Margin.Dense">
+                            <MudSelect @bind-Value="Item.SaleName" Label="@Localizer["Sale Name"]" Margin="Margin.Dense">
                                 @foreach (var item in SaleNames)
                                 {
                                     <MudSelectItem Value="@item">@item</MudSelectItem>
@@ -435,7 +445,7 @@
                         </MudItem>
 
                         <MudItem xs="12" md="3">
-                            <MudSelect @bind-Value="Item.OPS" Label="@Localizer["OPS"]" Required="true" Margin="Margin.Dense">
+                            <MudSelect @bind-Value="Item.OPS" Label="@Localizer["OPS"]" Margin="Margin.Dense">
                                 @foreach (var item in ListUsers)
                                 {
                                     <MudSelectItem Value="@item">@item</MudSelectItem>
@@ -444,7 +454,7 @@
                         </MudItem>
 
                         <MudItem xs="12" md="3">
-                            <MudSelect @bind-Value="Item.DOC" Label="@Localizer["DOC"]" Required="true" Margin="Margin.Dense">
+                            <MudSelect @bind-Value="Item.DOC" Label="@Localizer["DOC"]" Margin="Margin.Dense">
                                 @foreach (var item in ListUsers)
                                 {
                                     <MudSelectItem Value="@item">@item</MudSelectItem>
@@ -542,7 +552,6 @@
                                 <MudTextField @bind-Value="Item.shipper"
                                               Label="@Localizer["Shipper"]"
                                               Lines="4"
-                                              Required="true"
                                               Margin="Margin.Dense" />
                             </div>
                         </MudItem>
@@ -974,6 +983,17 @@
             return;
         }
 
+        // Các trường không bắt buộc: thiếu thì chỉ cảnh báo, vẫn cho lưu
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(Item.Air_wareHouse)) missing.Add(Localizer["Warehouse"]);
+        if (string.IsNullOrWhiteSpace(Item.Air_type)) missing.Add(Localizer["LoaiHang"]);
+        if (string.IsNullOrWhiteSpace(Item.SaleName)) missing.Add(Localizer["Sale Name"]);
+        if (string.IsNullOrWhiteSpace(Item.OPS)) missing.Add(Localizer["OPS"]);
+        if (string.IsNullOrWhiteSpace(Item.DOC)) missing.Add(Localizer["DOC"]);
+        if (string.IsNullOrWhiteSpace(Item.shipper)) missing.Add(Localizer["Shipper"]);
+        if (missing.Count > 0)
+            Snackbar.Add($"Chưa nhập: {string.Join(", ", missing)}", MudBlazor.Severity.Warning);
+
         RecalcCombine();
         MudDialog.Close(Item);
     }
@@ -990,6 +1010,59 @@
         if (!date.HasValue)
             return;
         await UpdateHBLNoAsync(Item, date.Value);
+    }
+
+    /// <summary>Mở dialog tạo mới M_Customer với MainCode điền sẵn ("Customer" / "Agent-Network"), lưu xong gán vào HBL đang edit.</summary>
+    private async Task CreateNewCustomer(string mainCode)
+    {
+        try
+        {
+            var usr = (await asv.GetAuth()).User.Identity!.Name!;
+            if (!await ssv.CheckPermission(usr, "Add", "System-Customer"))
+            {
+                Snackbar.Add(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
+                return;
+            }
+            var cusnew = new M_Customer { MainCode = mainCode };
+            var cuscode = await csv.GetCustomerCode();
+            if (!cuscode.Item1.Flag)
+                Snackbar.Add(cuscode.Item1.Message, MudBlazor.Severity.Error);
+            else
+                cusnew.Customer_Code = cuscode.Item2.CustomerCode_Ref;
+
+            var options = new DialogOptions
+            {
+                ClassBackground = "class-dialog-custom class-dialog-customer-wide",
+                FullWidth = true,
+                MaxWidth = MaxWidth.False,
+                CloseOnEscapeKey = false,
+                DisableBackdropClick = true
+            };
+            var parameters = new DialogParameters<NVOAMASIS.Components.CUSTOMER.Pages.Edit> { { x => x.customer, cusnew }, { x => x.EditOrNot, false } };
+            var dialog = await DialogService.ShowAsync<NVOAMASIS.Components.CUSTOMER.Pages.Edit>(Localizer["Customer_CreateTitle"], parameters, options);
+            var result = await dialog.Result;
+            if (result.Canceled)
+                return;
+
+            var data = (M_Customer)result.Data;
+            var rs = await csv.UpdateOrCreate(data, null!, "");
+            Snackbar.Add(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (!rs.Flag)
+                return;
+
+            Customers ??= new List<M_Customer>();
+            if (!Customers.Any(x => x.Customer_ID == data.Customer_ID))
+                Customers.Add(data);
+            if (mainCode == "Customer")
+                Item.CustomerID = data.Customer_ID;
+            else
+                Item.AgentID = data.Customer_ID;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(string.Format(Localizer["Error_Message"], ex.Message), MudBlazor.Severity.Error);
+        }
     }
 
     string CusidtoCusCode(Guid cusid)

@@ -66,6 +66,7 @@ namespace NVOAMASIS.Services.Hr
                     DepartmentName = x.DeptName,
                     ContractNo = x.c.ContractNo,
                     ContractType = x.c.ContractType,
+                    IsNetSalary = x.c.IsNetSalary,
                     SignDate = x.c.SignDate,
                     StartDate = x.c.StartDate,
                     EndDate = x.c.EndDate,
@@ -184,6 +185,7 @@ namespace NVOAMASIS.Services.Hr
                         entity.BaseSalary = model.BaseSalary;
                         entity.InsuranceSalary = model.InsuranceSalary;
                         entity.Allowance = model.Allowance;
+                        entity.IsNetSalary = model.IsNetSalary;
                     }
                     entity.UpdatedAt = now;
                     entity.UpdatedBy = actor;

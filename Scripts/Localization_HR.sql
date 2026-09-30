@@ -1880,6 +1880,69 @@ WHEN NOT MATCHED BY TARGET THEN
     INSERT (ResourceKey, Culture, Value)
     VALUES (src.ResourceKey, src.Culture, src.Value);
 
+-- Bổ sung: lương NET / GROSS, tháng có cả thử việc và chính thức (12.3, 12.9)
+;WITH src AS (
+    SELECT N'hr_net_salary' AS ResourceKey, N'en-US' AS Culture, N'Net salary (amounts are take-home)' AS Value UNION ALL
+    SELECT N'hr_net_salary', N'vi-VN', N'Lương NET (lương cơ bản, phụ cấp là số thực nhận)' UNION ALL
+    SELECT N'hr_net_salary', N'zh-CN', N'净工资（基本工资、津贴为实得金额）' UNION ALL
+    SELECT N'hr_net_salary_hint' AS ResourceKey, N'en-US' AS Culture, N'Company pays employee insurance and PIT on top; payroll converts net to gross automatically.' AS Value UNION ALL
+    SELECT N'hr_net_salary_hint', N'vi-VN', N'Công ty chịu BH phần người lao động và thuế TNCN; bảng lương tự quy đổi NET → GROSS.' UNION ALL
+    SELECT N'hr_net_salary_hint', N'zh-CN', N'公司承担员工保险和个税；工资表自动由净额换算为税前。' UNION ALL
+    SELECT N'hr_gross_salary_hint' AS ResourceKey, N'en-US' AS Culture, N'Gross salary: insurance and PIT are deducted from the amounts above.' AS Value UNION ALL
+    SELECT N'hr_gross_salary_hint', N'vi-VN', N'Lương GROSS: BH và thuế TNCN trừ vào số tiền trên.' UNION ALL
+    SELECT N'hr_gross_salary_hint', N'zh-CN', N'税前工资：保险和个税从上述金额中扣除。' UNION ALL
+    SELECT N'hr_pay_salary_kind' AS ResourceKey, N'en-US' AS Culture, N'Net/Gross' AS Value UNION ALL
+    SELECT N'hr_pay_salary_kind', N'vi-VN', N'NET/GROSS' UNION ALL
+    SELECT N'hr_pay_salary_kind', N'zh-CN', N'净/税前' UNION ALL
+    SELECT N'hr_pay_pro_short' AS ResourceKey, N'en-US' AS Culture, N'Probation / prev. contract' AS Value UNION ALL
+    SELECT N'hr_pay_pro_short', N'vi-VN', N'Thử việc / HĐ trước' UNION ALL
+    SELECT N'hr_pay_pro_short', N'zh-CN', N'试用/前合同' UNION ALL
+    SELECT N'hr_pay_main_short' AS ResourceKey, N'en-US' AS Culture, N'Main contract' AS Value UNION ALL
+    SELECT N'hr_pay_main_short', N'vi-VN', N'HĐ chính thức' UNION ALL
+    SELECT N'hr_pay_main_short', N'zh-CN', N'正式合同' UNION ALL
+    SELECT N'hr_pay_pro_contract' AS ResourceKey, N'en-US' AS Culture, N'Prev. contract (probation)' AS Value UNION ALL
+    SELECT N'hr_pay_pro_contract', N'vi-VN', N'HĐ trước trong tháng (thử việc)' UNION ALL
+    SELECT N'hr_pay_pro_contract', N'zh-CN', N'本月前一合同（试用）' UNION ALL
+    SELECT N'hr_pay_pro_base_salary' AS ResourceKey, N'en-US' AS Culture, N'Probation salary' AS Value UNION ALL
+    SELECT N'hr_pay_pro_base_salary', N'vi-VN', N'Lương thử việc' UNION ALL
+    SELECT N'hr_pay_pro_base_salary', N'zh-CN', N'试用工资' UNION ALL
+    SELECT N'hr_pay_pro_paid_days' AS ResourceKey, N'en-US' AS Culture, N'Probation paid days' AS Value UNION ALL
+    SELECT N'hr_pay_pro_paid_days', N'vi-VN', N'Công thử việc' UNION ALL
+    SELECT N'hr_pay_pro_paid_days', N'zh-CN', N'试用计薪天数' UNION ALL
+    SELECT N'hr_pay_pro_salary_by_days' AS ResourceKey, N'en-US' AS Culture, N'Probation salary + allowance by days' AS Value UNION ALL
+    SELECT N'hr_pay_pro_salary_by_days', N'vi-VN', N'Lương + phụ cấp thử việc theo công' UNION ALL
+    SELECT N'hr_pay_pro_salary_by_days', N'zh-CN', N'试用期按天工资+津贴' UNION ALL
+    SELECT N'hr_pay_pro_tax' AS ResourceKey, N'en-US' AS Culture, N'PIT on probation part' AS Value UNION ALL
+    SELECT N'hr_pay_pro_tax', N'vi-VN', N'Thuế TNCN phần thử việc' UNION ALL
+    SELECT N'hr_pay_pro_tax', N'zh-CN', N'试用部分个税' UNION ALL
+    SELECT N'hr_pay_gross_up' AS ResourceKey, N'en-US' AS Culture, N'Gross-up (paid by company)' AS Value UNION ALL
+    SELECT N'hr_pay_gross_up', N'vi-VN', N'Gross-up (công ty chịu thay BH, thuế)' UNION ALL
+    SELECT N'hr_pay_gross_up', N'zh-CN', N'税费补贴（公司承担）' UNION ALL
+    SELECT N'hr_pay_net_note' AS ResourceKey, N'en-US' AS Culture, N'NET salary: the employee receives the agreed amount; insurance and PIT shown are borne by the company (gross-up).' AS Value UNION ALL
+    SELECT N'hr_pay_net_note', N'vi-VN', N'Lương NET: người lao động nhận đúng số thỏa thuận; BH và thuế ở trên do công ty chịu (dòng Gross-up).' UNION ALL
+    SELECT N'hr_pay_net_note', N'zh-CN', N'净工资：员工按约定金额领取；上述保险和个税由公司承担（税费补贴）。' UNION ALL
+    SELECT N'hr_pay_net_input_hint' AS ResourceKey, N'en-US' AS Culture, N'NET contract: overtime, bonus and other income entered here are take-home amounts; tax on them is also grossed up.' AS Value UNION ALL
+    SELECT N'hr_pay_net_input_hint', N'vi-VN', N'HĐ lương NET: làm thêm, thưởng, thu nhập khác nhập ở đây là số thực nhận — thuế của các khoản này cũng được quy đổi (công ty chịu).' UNION ALL
+    SELECT N'hr_pay_net_input_hint', N'zh-CN', N'净工资合同：此处加班、奖金、其他收入为实得金额，其税费也由公司承担。' UNION ALL
+    SELECT N'hr_pay_warn_no_insurance_probation' AS ResourceKey, N'en-US' AS Culture, N'Probation/unpaid days in the month reach the threshold — insurance starts next month' AS Value UNION ALL
+    SELECT N'hr_pay_warn_no_insurance_probation', N'vi-VN', N'Số ngày thử việc + nghỉ không lương trong tháng từ 14 ngày — chưa đóng BH tháng này (đóng từ tháng sau)' UNION ALL
+    SELECT N'hr_pay_warn_no_insurance_probation', N'zh-CN', N'试用+无薪天数达14天——本月不缴保险，下月开始' UNION ALL
+    SELECT N'hr_pay_warn_many_contracts' AS ResourceKey, N'en-US' AS Culture, N'More than 2 contracts in the month — only the latest 2 are used' AS Value UNION ALL
+    SELECT N'hr_pay_warn_many_contracts', N'vi-VN', N'Trong tháng có hơn 2 hợp đồng — chỉ tính 2 hợp đồng gần nhất' UNION ALL
+    SELECT N'hr_pay_warn_many_contracts', N'zh-CN', N'本月合同超过2份——仅计算最近2份' UNION ALL
+    SELECT N'hr_pay_warn_net_no_insurance_salary' AS ResourceKey, N'en-US' AS Culture, N'NET contract without insurance salary — insurance is calculated on the net salary' AS Value UNION ALL
+    SELECT N'hr_pay_warn_net_no_insurance_salary', N'vi-VN', N'HĐ lương NET chưa nhập lương đóng BH — BH đang tính trên lương NET (nên nhập lương đóng BH)' UNION ALL
+    SELECT N'hr_pay_warn_net_no_insurance_salary', N'zh-CN', N'净工资合同未填写社保工资——保险按净工资计算'
+)
+MERGE dbo.LocalizationResources AS tgt
+USING src
+ON tgt.ResourceKey = src.ResourceKey AND tgt.Culture = src.Culture
+WHEN MATCHED THEN
+    UPDATE SET Value = src.Value
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (ResourceKey, Culture, Value)
+    VALUES (src.ResourceKey, src.Culture, src.Value);
+
 COMMIT TRANSACTION;
 
 PRINT N'HR localization imported.';

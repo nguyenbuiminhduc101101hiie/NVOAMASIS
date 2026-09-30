@@ -1,0 +1,423 @@
+@page "/accounting/kho/danh-muc"
+@using ClosedXML.Excel
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Models.Kho
+@using NVOAMASIS.Services.Kho
+@attribute [Authorize]
+@inject KhoService Kho
+@inject SharedServices ssv
+@inject AccountService asv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IJSRuntime JS
+
+@*
+    10.18.1 Danh mục vật tư, hàng hóa (TK 151–156) và danh mục kho.
+    Mã quyền: KHO_DanhMuc (Xem / Thêm / Sửa / Xóa).
+*@
+
+<PageTitle>Danh mục vật tư, kho</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="10.18.1 Danh mục vật tư, hàng hóa & kho"
+                    Subtitle="Nguyên vật liệu, CCDC, thành phẩm, hàng hóa — TK 151, 152, 153, 154, 155, 156" />
+
+    <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-2" @bind-ActivePanelIndex="_tab">
+        <MudTabPanel Text="Vật tư, hàng hóa" Icon="@Icons.Material.Filled.Inventory2">
+            <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+                <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="flex-wrap">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="NewItem" Disabled="@(!_canAdd)">Thêm vật tư</MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Download"
+                               OnClick="DownloadTemplateAsync">Tải file mẫu</MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.UploadFile"
+                               Disabled="@(!_canAdd || _busy)" OnClick="@(() => _showImport = !_showImport)">Nhập từ Excel</MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload"
+                               OnClick="ExportItemsAsync" Disabled="@(_items.Count == 0)">Xuất Excel</MudButton>
+                    <MudSpacer />
+                    <MudTextField T="string" @bind-Value="_search" Immediate="true" Placeholder="Tìm mã, tên, nhóm..."
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width:280px" />
+                    <MudSelect T="string" @bind-Value="_accountFilter" Label="TK kho" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Style="max-width:200px">
+                        <MudSelectItem T="string" Value="@("")">Tất cả</MudSelectItem>
+                        @foreach (var r in KhoAccounts.Roots)
+                        {
+                            <MudSelectItem T="string" Value="@r">@r - @KhoAccounts.RootName(r)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSwitch T="bool" @bind-Checked="_showInactive" Color="Color.Primary" Label="Hiện mã ngừng dùng" />
+                </MudStack>
+
+                @if (_showImport)
+                {
+                    <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mt-2">
+                        File Excel: dòng 1 là tiêu đề — <b>Mã</b>, <b>Tên</b>, <b>ĐVT</b>, <b>TK kho</b> (151–156, vd 1521, 1531, 1561), Nhóm, Tồn tối thiểu, Ghi chú.
+                        Mã đã có thì cập nhật, mã mới thì thêm. Có lỗi ở dòng nào thì không nhập dòng nào.
+                        <div class="mt-2"><InputFile OnChange="ImportItemsAsync" accept=".xlsx,.xlsm" disabled="@_busy" /></div>
+                    </MudAlert>
+                }
+            </MudPaper>
+
+            @if (_editItem is not null)
+            {
+                <MudPaper Class="product-price-card pa-3 mb-2" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@(_editItemIsNew ? "Thêm vật tư" : $"Sửa vật tư {_editItem.Code}")</b></MudText>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="2"><MudTextField @bind-Value="_editItem.Code" Label="Mã *" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="50" /></MudItem>
+                        <MudItem xs="12" sm="4"><MudTextField @bind-Value="_editItem.Name" Label="Tên *" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="250" /></MudItem>
+                        <MudItem xs="6" sm="1"><MudTextField @bind-Value="_editItem.Unit" Label="ĐVT" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="30" /></MudItem>
+                        <MudItem xs="6" sm="3">
+                            <MudAutocomplete T="string" @bind-Value="_editItem.InventoryAccount" Label="TK kho *" SearchFunc="SearchInventoryAccountAsync"
+                                             ToStringFunc="AccountLabel" CoerceValue="true" CoerceText="false" ResetValueOnEmptyText="true"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense" MaxItems="50" />
+                        </MudItem>
+                        <MudItem xs="6" sm="2"><MudTextField @bind-Value="_editItem.Category" Label="Nhóm" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="100" /></MudItem>
+                        <MudItem xs="6" sm="2"><MudNumericField T="decimal?" @bind-Value="_editItem.MinQty" Label="Tồn tối thiểu" Min="0" HideSpinButtons="true" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+                        <MudItem xs="12" sm="6"><MudTextField @bind-Value="_editItem.Note" Label="Ghi chú" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="500" /></MudItem>
+                        <MudItem xs="6" sm="2" Class="d-flex align-center"><MudCheckBox T="bool" @bind-Checked="_editItem.IsActive" Label="Đang dùng" Color="Color.Primary" /></MudItem>
+                        <MudItem xs="12" sm="2" Class="d-flex align-center justify-end gap-2">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="SaveItemAsync" Disabled="_busy">Lưu</MudButton>
+                            <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => _editItem = null)">Hủy</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+
+            <MudPaper Class="product-price-card pa-1" Elevation="0">
+                <MudTable T="KhoVatTu" Items="FilteredItems" Dense="true" Hover="true" Striped="true" FixedHeader="true" Height="calc(100vh - 360px)"
+                          Loading="_busy" RowsPerPage="100">
+                    <HeaderContent>
+                        <MudTh>Mã</MudTh><MudTh>Tên</MudTh><MudTh>ĐVT</MudTh><MudTh>TK kho</MudTh><MudTh>Nhóm</MudTh>
+                        <MudTh Style="text-align:right">Tồn tối thiểu</MudTh><MudTh>Ghi chú</MudTh><MudTh>Đang dùng</MudTh><MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd><b>@context.Code</b></MudTd>
+                        <MudTd>@context.Name</MudTd>
+                        <MudTd>@context.Unit</MudTd>
+                        <MudTd title="@AccountName(context.InventoryAccount)">@context.InventoryAccount</MudTd>
+                        <MudTd>@context.Category</MudTd>
+                        <MudTd Style="text-align:right">@context.MinQty?.ToString("#,##0.####")</MudTd>
+                        <MudTd>@context.Note</MudTd>
+                        <MudTd>@(context.IsActive ? "✓" : "")</MudTd>
+                        <MudTd Style="white-space:nowrap">
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Disabled="@(!_canEdit)" OnClick="@(() => EditItem(context))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" Disabled="@(!_canDelete)" OnClick="@(() => DeleteItemAsync(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Class="pa-4">Chưa có vật tư nào. Bấm "Thêm vật tư" hoặc "Nhập từ Excel".</MudText>
+                    </NoRecordsContent>
+                    <PagerContent><MudTablePager RowsPerPageString="Số dòng:" PageSizeOptions="new[] { 50, 100, 500 }" /></PagerContent>
+                </MudTable>
+            </MudPaper>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Kho" Icon="@Icons.Material.Filled.Warehouse">
+            <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                           OnClick="NewWarehouse" Disabled="@(!_canAdd)">Thêm kho</MudButton>
+            </MudPaper>
+
+            @if (_editWh is not null)
+            {
+                <MudPaper Class="product-price-card pa-3 mb-2" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-2"><b>@(_editWhIsNew ? "Thêm kho" : $"Sửa kho {_editWh.Code}")</b></MudText>
+                    <MudGrid Spacing="2">
+                        <MudItem xs="12" sm="2"><MudTextField @bind-Value="_editWh.Code" Label="Mã kho *" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="50" /></MudItem>
+                        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_editWh.Name" Label="Tên kho *" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="250" /></MudItem>
+                        <MudItem xs="12" sm="3"><MudTextField @bind-Value="_editWh.Address" Label="Địa chỉ" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="500" /></MudItem>
+                        <MudItem xs="12" sm="2"><MudTextField @bind-Value="_editWh.Keeper" Label="Thủ kho" Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="150" /></MudItem>
+                        <MudItem xs="6" sm="1" Class="d-flex align-center"><MudCheckBox T="bool" @bind-Checked="_editWh.IsActive" Label="Đang dùng" Color="Color.Primary" /></MudItem>
+                        <MudItem xs="6" sm="1" Class="d-flex align-center gap-1">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" OnClick="SaveWarehouseAsync" Disabled="_busy">Lưu</MudButton>
+                            <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => _editWh = null)">Hủy</MudButton>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            }
+
+            <MudPaper Class="product-price-card pa-1" Elevation="0">
+                <MudTable T="KhoHang" Items="_warehouses" Dense="true" Hover="true" Striped="true" Loading="_busy">
+                    <HeaderContent>
+                        <MudTh>Mã kho</MudTh><MudTh>Tên kho</MudTh><MudTh>Địa chỉ</MudTh><MudTh>Thủ kho</MudTh><MudTh>Đang dùng</MudTh><MudTh></MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd><b>@context.Code</b></MudTd>
+                        <MudTd>@context.Name</MudTd>
+                        <MudTd>@context.Address</MudTd>
+                        <MudTd>@context.Keeper</MudTd>
+                        <MudTd>@(context.IsActive ? "✓" : "")</MudTd>
+                        <MudTd Style="white-space:nowrap">
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Disabled="@(!_canEdit)" OnClick="@(() => EditWarehouse(context))" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" Disabled="@(!_canDelete)" OnClick="@(() => DeleteWarehouseAsync(context))" />
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Class="pa-4">Chưa có kho nào. Bấm "Thêm kho".</MudText>
+                    </NoRecordsContent>
+                </MudTable>
+            </MudPaper>
+        </MudTabPanel>
+    </MudTabs>
+</div>
+
+@code {
+    private const string Menu = "KHO_DanhMuc";
+
+    private int _tab;
+    private bool _busy, _showInactive, _showImport;
+    private bool _canAdd, _canEdit, _canDelete;
+    private string _usr = "";
+    private string _search = "";
+    private string _accountFilter = "";
+
+    private List<KhoVatTu> _items = new();
+    private List<KhoHang> _warehouses = new();
+    private Dictionary<string, string> _accounts = new();
+
+    private KhoVatTu? _editItem;
+    private bool _editItemIsNew;
+    private KhoHang? _editWh;
+    private bool _editWhIsNew;
+
+    private IEnumerable<KhoVatTu> FilteredItems => _items
+        .Where(x => _showInactive || x.IsActive)
+        .Where(x => string.IsNullOrEmpty(_accountFilter) || x.InventoryAccount.StartsWith(_accountFilter, StringComparison.Ordinal))
+        .Where(x => string.IsNullOrWhiteSpace(_search)
+                    || x.Code.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || x.Name.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || (x.Category ?? "").Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? "";
+        if (!await ssv.CheckPermission(_usr, "View", Menu))
+        {
+            Snackbar.Add("Bạn không có quyền xem danh mục kho (mã quyền KHO_DanhMuc).", MudBlazor.Severity.Warning);
+            return;
+        }
+        _canAdd = await ssv.CheckPermission(_usr, "Add", Menu);
+        _canEdit = await ssv.CheckPermission(_usr, "Edit", Menu);
+        _canDelete = await ssv.CheckPermission(_usr, "Delete", Menu);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _busy = true;
+            _items = await Kho.GetItemsAsync();
+            _warehouses = await Kho.GetWarehousesAsync();
+            _accounts = await Kho.GetAccountsAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private string AccountName(string? code) =>
+        code is not null && _accounts.TryGetValue(code.Trim(), out var n) ? n : KhoAccounts.RootName(KhoAccounts.Root(code));
+
+    private string AccountLabel(string? code) =>
+        string.IsNullOrWhiteSpace(code) ? "" : $"{code} - {AccountName(code)}".TrimEnd(' ', '-');
+
+    private Task<IEnumerable<string>> SearchInventoryAccountAsync(string text)
+    {
+        var list = _accounts.Keys.Where(KhoAccounts.IsInventory).ToList();
+        foreach (var r in KhoAccounts.Roots) if (!list.Contains(r)) list.Add(r);
+        IEnumerable<string> q = list.OrderBy(x => x, StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var k = text.Trim();
+            q = q.Where(x => x.StartsWith(k, StringComparison.Ordinal) || AccountName(x).Contains(k, StringComparison.OrdinalIgnoreCase));
+            if (KhoAccounts.IsInventory(k) && !q.Contains(k)) q = q.Prepend(k);
+        }
+        return Task.FromResult(q);
+    }
+
+    // ───── Vật tư ─────
+    private void NewItem()
+    {
+        _editItemIsNew = true;
+        _editItem = new KhoVatTu { Id = Guid.NewGuid(), InventoryAccount = _accountFilter.Length > 0 ? DefaultChild(_accountFilter) : DefaultChild("156"), IsActive = true };
+    }
+
+    private string DefaultChild(string root)
+    {
+        var child = _accounts.Keys.Where(k => k.StartsWith(root, StringComparison.Ordinal) && k.Length > root.Length).OrderBy(k => k, StringComparer.Ordinal).FirstOrDefault();
+        return child ?? root;
+    }
+
+    private void EditItem(KhoVatTu x)
+    {
+        _editItemIsNew = false;
+        _editItem = new KhoVatTu
+        {
+            Id = x.Id, Code = x.Code, Name = x.Name, Unit = x.Unit, InventoryAccount = x.InventoryAccount, Category = x.Category,
+            MinQty = x.MinQty, Note = x.Note, IsActive = x.IsActive
+        };
+    }
+
+    private async Task SaveItemAsync()
+    {
+        if (_editItem is null) return;
+        if (!(_editItemIsNew ? _canAdd : _canEdit)) { Snackbar.Add("Bạn không có quyền.", MudBlazor.Severity.Warning); return; }
+        try
+        {
+            _busy = true;
+            await Kho.SaveItemAsync(_editItem, _usr);
+            Snackbar.Add($"Đã lưu vật tư {_editItem.Code}.", MudBlazor.Severity.Success);
+            _editItem = null;
+            _items = await Kho.GetItemsAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteItemAsync(KhoVatTu x)
+    {
+        var ok = await DialogService.ShowMessageBox("Xóa vật tư", $"Xóa vật tư {x.Code} - {x.Name}?", yesText: "Xóa", cancelText: "Hủy");
+        if (ok != true) return;
+        try
+        {
+            await Kho.DeleteItemAsync(x.Id);
+            _items.Remove(x);
+            Snackbar.Add($"Đã xóa {x.Code}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+    }
+
+    private async Task ImportItemsAsync(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            _busy = true;
+            await using var src = e.File.OpenReadStream(20 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await src.CopyToAsync(ms);
+            ms.Position = 0;
+            var rows = KhoUi.ReadItemsFromExcel(ms);
+            if (rows.Count == 0) { Snackbar.Add("File không có dòng dữ liệu nào (cần cột Mã, Tên, TK kho).", MudBlazor.Severity.Warning); return; }
+            var (added, updated) = await Kho.ImportItemsAsync(rows, _usr);
+            Snackbar.Add($"Đã nhập {rows.Count} dòng: thêm {added}, cập nhật {updated}.", MudBlazor.Severity.Success);
+            _showImport = false;
+            _items = await Kho.GetItemsAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error, o => o.VisibleStateDuration = 15000);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DownloadTemplateAsync()
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add("VatTu");
+        string[] head = { "Mã", "Tên", "ĐVT", "TK kho", "Nhóm", "Tồn tối thiểu", "Ghi chú" };
+        for (var i = 0; i < head.Length; i++) ws.Cell(1, i + 1).Value = head[i];
+        object[][] sample =
+        {
+            new object[] { "VT001", "Giấy A4", "ram", "1531", "Văn phòng phẩm", 10, "" },
+            new object[] { "VT002", "Pallet gỗ", "cái", "1521", "Vật liệu đóng gói", 20, "" },
+            new object[] { "HH001", "Thùng carton 60x40", "cái", "1561", "Hàng hóa", "", "" }
+        };
+        for (var r = 0; r < sample.Length; r++)
+            for (var c = 0; c < sample[r].Length; c++)
+                ws.Cell(r + 2, c + 1).Value = XLCellValue.FromObject(sample[r][c]);
+        ws.Row(1).Style.Font.Bold = true;
+        ws.Row(1).Style.Fill.BackgroundColor = XLColor.FromHtml("#E8EEF7");
+        ws.Columns().AdjustToContents();
+        await KhoUi.DownloadAsync(JS, wb, "MAU_DANH_MUC_VAT_TU.xlsx");
+    }
+
+    private async Task ExportItemsAsync()
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add("VatTu");
+        string[] head = { "Mã", "Tên", "ĐVT", "TK kho", "Nhóm", "Tồn tối thiểu", "Ghi chú", "Đang dùng" };
+        for (var i = 0; i < head.Length; i++) ws.Cell(1, i + 1).Value = head[i];
+        var r = 2;
+        foreach (var x in FilteredItems)
+        {
+            ws.Cell(r, 1).Value = x.Code; ws.Cell(r, 2).Value = x.Name; ws.Cell(r, 3).Value = x.Unit;
+            ws.Cell(r, 4).Value = x.InventoryAccount; ws.Cell(r, 5).Value = x.Category;
+            if (x.MinQty.HasValue) ws.Cell(r, 6).Value = x.MinQty.Value;
+            ws.Cell(r, 7).Value = x.Note; ws.Cell(r, 8).Value = x.IsActive ? "x" : "";
+            r++;
+        }
+        ws.Row(1).Style.Font.Bold = true;
+        ws.Columns().AdjustToContents();
+        await KhoUi.DownloadAsync(JS, wb, $"DANH_MUC_VAT_TU_{DateTime.Now:yyyyMMdd}.xlsx");
+    }
+
+    // ───── Kho ─────
+    private void NewWarehouse()
+    {
+        _editWhIsNew = true;
+        _editWh = new KhoHang { Id = Guid.NewGuid(), IsActive = true };
+    }
+
+    private void EditWarehouse(KhoHang x)
+    {
+        _editWhIsNew = false;
+        _editWh = new KhoHang { Id = x.Id, Code = x.Code, Name = x.Name, Address = x.Address, Keeper = x.Keeper, IsActive = x.IsActive };
+    }
+
+    private async Task SaveWarehouseAsync()
+    {
+        if (_editWh is null) return;
+        if (!(_editWhIsNew ? _canAdd : _canEdit)) { Snackbar.Add("Bạn không có quyền.", MudBlazor.Severity.Warning); return; }
+        try
+        {
+            _busy = true;
+            await Kho.SaveWarehouseAsync(_editWh, _usr);
+            Snackbar.Add($"Đã lưu kho {_editWh.Code}.", MudBlazor.Severity.Success);
+            _editWh = null;
+            _warehouses = await Kho.GetWarehousesAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteWarehouseAsync(KhoHang x)
+    {
+        var ok = await DialogService.ShowMessageBox("Xóa kho", $"Xóa kho {x.Code} - {x.Name}?", yesText: "Xóa", cancelText: "Hủy");
+        if (ok != true) return;
+        try
+        {
+            await Kho.DeleteWarehouseAsync(x.Id);
+            _warehouses.Remove(x);
+            Snackbar.Add($"Đã xóa kho {x.Code}.", MudBlazor.Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+    }
+}

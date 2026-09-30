@@ -52,6 +52,7 @@ namespace NVOAMASIS.Models.Hr
         public decimal? BaseSalary { get; set; }
         public decimal? InsuranceSalary { get; set; }
         public decimal? Allowance { get; set; }
+        public bool IsNetSalary { get; set; }
         public int Status { get; set; }
         public DateTime? TerminatedDate { get; set; }
         public string? Note { get; set; }

@@ -1,0 +1,419 @@
+@page "/accounting/kho/nhap-xuat-ton"
+@using ClosedXML.Excel
+@using Microsoft.EntityFrameworkCore
+@using NVOAMASIS.Data
+@using NVOAMASIS.Models.Kho
+@using NVOAMASIS.Services.Kho
+@attribute [Authorize]
+@inject KhoService Kho
+@inject SharedServices ssv
+@inject AccountService asv
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+
+@*
+    10.18.3 Bảng tổng hợp nhập - xuất - tồn (mẫu S11-DN): theo vật tư, nhóm theo TK kho 151–156, có đối chiếu sổ cái.
+    Mã quyền: KHO_BaoCao (Xem).
+*@
+
+<PageTitle>Tổng hợp nhập xuất tồn</PageTitle>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="10.18.3 Tổng hợp nhập - xuất - tồn kho" Subtitle="Số lượng và giá trị theo từng vật tư, hàng hóa — TK 151 đến 156">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Search" OnClick="LoadAsync" Disabled="_busy">Xem</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Success" Size="Size.Small" StartIcon="@Icons.Material.Filled.FileDownload"
+                           OnClick="ExportAsync" Disabled="@(_busy || Rows.Count == 0)">Xuất Excel</MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card pa-3 mb-2" Elevation="0">
+        <MudGrid Spacing="2" AlignItems="Center">
+            <MudItem xs="6" sm="2">
+                <MudDatePicker Label="Từ ngày" Date="_from" DateChanged="@(async (DateTime? d) => { _from = d; await LoadAsync(); })" DateFormat="dd/MM/yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudDatePicker Label="Đến ngày" Date="_to" DateChanged="@(async (DateTime? d) => { _to = d; await LoadAsync(); })" DateFormat="dd/MM/yyyy" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="Guid?" Label="Kho" Value="_wh" ValueChanged="@(async (Guid? v) => { _wh = v; await LoadAsync(); })" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Clearable="true"
+                           Placeholder="Tất cả kho">
+                    @foreach (var w in _warehouses)
+                    {
+                        <MudSelectItem T="Guid?" Value="@((Guid?)w.Id)">@w.Code - @w.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudSelect T="string" Label="Tài khoản" Value="_account" ValueChanged="@(async (string v) => { _account = v; await LoadAsync(); })" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true">
+                    <MudSelectItem T="string" Value="@("")">151 → 156 (tất cả)</MudSelectItem>
+                    @foreach (var r in KhoAccounts.Roots)
+                    {
+                        <MudSelectItem T="string" Value="@r">@r - @KhoAccounts.RootName(r)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="8" sm="2">
+                <MudTextField T="string" @bind-Value="_search" Immediate="true" Placeholder="Tìm mã, tên, nhóm..." Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" />
+            </MudItem>
+            <MudItem xs="4" sm="2">
+                <MudCheckBox T="bool" @bind-Checked="_hideZero" Label="Ẩn dòng bằng 0" Color="Color.Primary" Dense="true" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudExpansionPanels Class="mb-2" Elevation="0" MultiExpansion="true">
+        <MudExpansionPanel>
+            <TitleContent>
+                <div class="d-flex align-center">
+                    <MudIcon Icon="@Icons.Material.Filled.HelpOutline" Color="Color.Info" Class="mr-2" />
+                    <MudText Typo="Typo.subtitle2"><b>Hướng dẫn: số liệu lấy từ đâu?</b></MudText>
+                </div>
+            </TitleContent>
+            <ChildContent>
+                <div class="nxt-guide">
+                    <p>Nguồn: các phiếu <b>đã ghi sổ</b> ở <b>10.18.2</b> (phiếu nháp chưa tính). Mỗi dòng là 1 vật tư theo TK kho ghi trên dòng phiếu.</p>
+                    <ul>
+                        <li><b>Tồn đầu kỳ</b> = nhập − xuất trước "Từ ngày" + phiếu <b>Tồn đầu kỳ</b> (kể cả phiếu tồn đầu nằm trong kỳ).</li>
+                        <li><b>Nhập / Xuất trong kỳ</b>: phiếu nhập kho / xuất kho trong khoảng ngày. Giá trị xuất = giá <b>bình quân tức thời</b> tính khi ghi sổ.</li>
+                        <li><b>Chuyển kho</b>: xem 1 kho → chuyển đi tính là xuất, chuyển đến tính là nhập; xem tất cả kho → không tính (nội bộ).</li>
+                        <li><b>Tồn cuối kỳ</b> = tồn đầu + nhập − xuất. Tô cam khi thấp hơn <b>tồn tối thiểu</b> khai ở 10.18.1.</li>
+                        <li>Bấm vào 1 dòng để mở <b>10.18.4 Sổ chi tiết vật tư</b> của vật tư đó.</li>
+                        <li><b>Đối chiếu sổ cái</b>: giá trị tồn cuối theo kho so với số dư Nợ − Có của TK trong sổ cái (10.6) đến "Đến ngày".
+                            Phiếu tồn đầu kỳ không ghi sổ cái (số dư đầu TK nhập ở 10.9) nên được trừ ra. Chênh lệch ≠ 0 thường do bút toán TK 15x nhập tay ở 10.4.1,
+                            từ hóa đơn / chứng từ khác, hoặc phiếu kho chưa ghi sổ.</li>
+                    </ul>
+                </div>
+            </ChildContent>
+        </MudExpansionPanel>
+        <MudExpansionPanel>
+            <TitleContent>
+                <div class="d-flex align-center">
+                    <MudIcon Icon="@Icons.Material.Filled.FactCheck" Color="@(_checks.Any(c => c.Difference != 0) ? Color.Warning : Color.Success)" Class="mr-2" />
+                    <MudText Typo="Typo.subtitle2"><b>Đối chiếu với sổ cái đến @D(_loadedTo)</b>
+                        @(_checks.Count == 0 ? "" : _checks.Any(c => c.Difference != 0) ? $" — lệch {_checks.Count(c => c.Difference != 0)} TK" : " — khớp")</MudText>
+                </div>
+            </TitleContent>
+            <ChildContent>
+                <table class="nxt" style="max-width:900px">
+                    <thead>
+                        <tr><th>TK</th><th>Tên TK</th><th>Tồn kho (10.18)</th><th>Trong đó: tồn đầu nhập tay</th><th>Sổ cái Nợ − Có</th><th>Trong đó: từ phiếu kho</th><th>Chênh lệch</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in _checks)
+                        {
+                            <tr class="@(c.Difference != 0 ? "diff" : "")">
+                                <td class="t">@c.Account</td><td class="t">@c.AccountName</td>
+                                <td>@KhoUi.Money(c.StockValue, true)</td><td>@KhoUi.Money(c.OpeningDocs, true)</td>
+                                <td>@KhoUi.Money(c.GlBalance, true)</td><td>@KhoUi.Money(c.GlFromStock, true)</td>
+                                <td><b>@KhoUi.Money(c.Difference, true)</b></td>
+                            </tr>
+                        }
+                        @if (_checks.Count == 0)
+                        {
+                            <tr><td colspan="7" class="t">Chưa có dữ liệu.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </ChildContent>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+
+    <MudPaper Class="product-price-card pa-3" Elevation="0">
+        @if (_busy)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+        }
+        <div class="nxt-head">
+            <div class="nxt-company">@_company</div>
+            <div class="nxt-title">BẢNG TỔNG HỢP CHI TIẾT VẬT LIỆU, DỤNG CỤ, SẢN PHẨM, HÀNG HÓA</div>
+            <div>Từ ngày @D(_loadedFrom) đến ngày @D(_loadedTo) — @(_loadedWh ?? "Tất cả kho") — TK @(string.IsNullOrEmpty(_loadedAccount) ? "151 → 156" : _loadedAccount)</div>
+        </div>
+        <div class="nxt-wrap">
+            <table class="nxt">
+                <thead>
+                    <tr>
+                        <th rowspan="2">STT</th><th rowspan="2">Mã</th><th rowspan="2" class="t">Tên vật tư, hàng hóa</th><th rowspan="2">ĐVT</th>
+                        <th colspan="2">Tồn đầu kỳ</th><th colspan="2">Nhập trong kỳ</th><th colspan="2">Xuất trong kỳ</th><th colspan="2">Tồn cuối kỳ</th>
+                    </tr>
+                    <tr>
+                        <th>Số lượng</th><th>Giá trị</th><th>Số lượng</th><th>Giá trị</th><th>Số lượng</th><th>Giá trị</th><th>Số lượng</th><th>Giá trị</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var stt = 0; }
+                    @foreach (var g in Rows.GroupBy(r => r.Account))
+                    {
+                        var sub = Sum(g);
+                        <tr class="grp">
+                            <td></td><td colspan="3" class="t">TK @g.Key — @AccountName(g.Key)</td>
+                            <td></td><td>@KhoUi.Money(sub.OpenValue, true)</td><td></td><td>@KhoUi.Money(sub.InValue, true)</td>
+                            <td></td><td>@KhoUi.Money(sub.OutValue, true)</td><td></td><td>@KhoUi.Money(sub.CloseValue, true)</td>
+                        </tr>
+                        @foreach (var r in g)
+                        {
+                            stt++;
+                            <tr class="row @(r.BelowMin ? "low" : "") @(r.CloseQty < 0 ? "neg" : "")" @onclick="@(() => OpenCardAsync(r))" title="Bấm để xem sổ chi tiết">
+                                <td class="c">@stt</td><td class="t">@r.Code</td><td class="t">@r.Name</td><td class="c">@r.Unit</td>
+                                <td>@KhoUi.Qty(r.OpenQty)</td><td>@KhoUi.Money(r.OpenValue)</td>
+                                <td>@KhoUi.Qty(r.InQty)</td><td>@KhoUi.Money(r.InValue)</td>
+                                <td>@KhoUi.Qty(r.OutQty)</td><td>@KhoUi.Money(r.OutValue)</td>
+                                <td><b>@KhoUi.Qty(r.CloseQty, true)</b></td><td><b>@KhoUi.Money(r.CloseValue, true)</b></td>
+                            </tr>
+                        }
+                    }
+                    @if (Rows.Count == 0)
+                    {
+                        <tr><td colspan="12" class="empty">@(_loaded ? "Không có dữ liệu — chưa có phiếu kho nào đã ghi sổ trong phạm vi này." : "Đang tải...")</td></tr>
+                    }
+                </tbody>
+                @if (Rows.Count > 0)
+                {
+                    var t = Sum(Rows);
+                    <tfoot>
+                        <tr>
+                            <td></td><td colspan="3" class="t">Cộng</td>
+                            <td></td><td>@KhoUi.Money(t.OpenValue, true)</td><td></td><td>@KhoUi.Money(t.InValue, true)</td>
+                            <td></td><td>@KhoUi.Money(t.OutValue, true)</td><td></td><td>@KhoUi.Money(t.CloseValue, true)</td>
+                        </tr>
+                    </tfoot>
+                }
+            </table>
+        </div>
+    </MudPaper>
+</div>
+
+<style>
+    .nxt-head { text-align: center; margin-bottom: 8px; font-size: 13px; }
+    .nxt-company { font-weight: 700; text-transform: uppercase; }
+    .nxt-title { font-weight: 700; font-size: 16px; margin-top: 6px; }
+    .nxt-wrap { overflow: auto; max-height: calc(100vh - 380px); }
+    .nxt { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+    .nxt th, .nxt td { border: 1px solid #c8c8c8; padding: 3px 6px; white-space: nowrap; }
+    .nxt thead th { background: #e8eef7; text-align: center; font-weight: 700; position: sticky; top: 0; z-index: 1; }
+    .nxt thead tr:nth-child(2) th { top: 24px; }
+    .nxt td { text-align: right; }
+    .nxt td.t, .nxt th.t { text-align: left; }
+    .nxt td.c { text-align: center; }
+    .nxt tr.grp td { background: #f1f8e9; font-weight: 700; }
+    .nxt tr.row { cursor: pointer; }
+    .nxt tr.row:hover td { background: #e3f2fd; }
+    .nxt tr.low td { background: #fff3e0; }
+    .nxt tr.neg td { color: #c62828; }
+    .nxt tr.diff td { color: #c62828; }
+    .nxt tfoot td { font-weight: 700; background: #fff8e1; }
+    .nxt td.empty { text-align: center; color: #757575; padding: 16px; }
+    .nxt-guide { font-size: 13px; line-height: 1.5; }
+    .nxt-guide ul { margin: 2px 0 6px 20px; }
+</style>
+
+@code {
+    private const string Menu = "KHO_BaoCao";
+
+    [Parameter] public EventCallback<(string Key, string Title, RenderFragment Content)> OnTabRequest { get; set; }
+
+    private bool _busy, _loaded, _hideZero = true;
+    private string _usr = "", _company = "", _search = "", _account = "";
+    private DateTime? _from = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _to = DateTime.Today;
+    private Guid? _wh;
+    private DateTime _loadedFrom, _loadedTo;
+    private Guid? _loadedWhId;
+    private string? _loadedWh;
+    private string _loadedAccount = "";
+
+    private List<KhoHang> _warehouses = new();
+    private Dictionary<string, string> _accounts = new();
+    private List<KhoNxtRow> _rows = new();
+    private List<KhoGlCheck> _checks = new();
+
+    private List<KhoNxtRow> Rows => _rows
+        .Where(r => !_hideZero || !r.IsZero || r.CloseQty != 0)
+        .Where(r => string.IsNullOrWhiteSpace(_search)
+                    || r.Code.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || r.Name.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || r.Category.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await asv.GetAuth();
+        _usr = auth.User.Identity?.Name ?? "";
+        if (!await ssv.CheckPermission(_usr, "View", Menu))
+        {
+            Snackbar.Add("Bạn không có quyền xem báo cáo kho (mã quyền KHO_BaoCao).", MudBlazor.Severity.Warning);
+            return;
+        }
+        try
+        {
+            _warehouses = await Kho.GetWarehousesAsync();
+            _accounts = await Kho.GetAccountsAsync();
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var c = await db.CompanyInfomation.AsNoTracking().FirstOrDefaultAsync();
+            _company = new[] { c?.NameTiengViet, c?.Name }.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "";
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+            return;
+        }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            _busy = true;
+            var from = (_from ?? DateTime.Today).Date;
+            var to = (_to ?? DateTime.Today).Date;
+            if (from > to) (from, to) = (to, from);
+            _rows = await Kho.SummaryAsync(from, to, _wh, string.IsNullOrEmpty(_account) ? null : _account);
+            _checks = (await Kho.ReconcileAsync(to))
+                .Where(c => string.IsNullOrEmpty(_account) || c.Account.StartsWith(_account, StringComparison.Ordinal))
+                .ToList();
+            _loadedFrom = from;
+            _loadedTo = to;
+            _loadedWhId = _wh;
+            _loadedWh = _wh.HasValue ? _warehouses.FirstOrDefault(w => w.Id == _wh)?.Name : null;
+            _loadedAccount = _account;
+            _loaded = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private string AccountName(string code) =>
+        _accounts.TryGetValue(code, out var n) && n.Length > 0 ? n : KhoAccounts.RootName(KhoAccounts.Root(code));
+
+    private static KhoNxtRow Sum(IEnumerable<KhoNxtRow> rows)
+    {
+        var t = new KhoNxtRow();
+        foreach (var r in rows)
+        {
+            t.OpenQty += r.OpenQty; t.OpenValue += r.OpenValue; t.InQty += r.InQty; t.InValue += r.InValue;
+            t.OutQty += r.OutQty; t.OutValue += r.OutValue;
+        }
+        return t;
+    }
+
+    private static string D(DateTime d) => d == default ? "" : d.ToString("dd/MM/yyyy");
+
+    private async Task OpenCardAsync(KhoNxtRow r)
+    {
+        if (!OnTabRequest.HasDelegate) return;
+        RenderFragment content = b =>
+        {
+            b.OpenComponent<KhoTheKho_10_18_4>(0);
+            b.AddAttribute(1, nameof(KhoTheKho_10_18_4.InitialItemId), (Guid?)r.ItemId);
+            b.AddAttribute(2, nameof(KhoTheKho_10_18_4.InitialWarehouseId), _loadedWhId);
+            b.AddAttribute(3, nameof(KhoTheKho_10_18_4.InitialFrom), (DateTime?)_loadedFrom);
+            b.AddAttribute(4, nameof(KhoTheKho_10_18_4.InitialTo), (DateTime?)_loadedTo);
+            b.CloseComponent();
+        };
+        await OnTabRequest.InvokeAsync(($"KhoTheKho_{r.ItemId}_{_loadedWhId}_{_loadedFrom:yyyyMMdd}_{_loadedTo:yyyyMMdd}", $"10.18.4 Sổ chi tiết - {r.Code}", content));
+    }
+
+    private async Task ExportAsync()
+    {
+        var rows = Rows;
+        if (rows.Count == 0) return;
+        try
+        {
+            using var wb = new XLWorkbook();
+            var ws = wb.Worksheets.Add("NXT");
+            ws.Style.Font.FontName = "Times New Roman";
+            ws.Style.Font.FontSize = 10;
+            const int cols = 12;
+            void Merge(int r, string text, bool bold, double size, XLAlignmentHorizontalValues align, bool italic = false)
+            {
+                ws.Cell(r, 1).Value = text;
+                var rg = ws.Range(r, 1, r, cols);
+                rg.Merge(); rg.Style.Font.Bold = bold; rg.Style.Font.Italic = italic; rg.Style.Font.FontSize = size; rg.Style.Alignment.Horizontal = align;
+            }
+            Merge(1, _company.ToUpperInvariant(), true, 11, XLAlignmentHorizontalValues.Left);
+            Merge(3, "BẢNG TỔNG HỢP CHI TIẾT VẬT LIỆU, DỤNG CỤ, SẢN PHẨM, HÀNG HÓA", true, 14, XLAlignmentHorizontalValues.Center);
+            Merge(4, $"Từ ngày {D(_loadedFrom)} đến ngày {D(_loadedTo)} — {_loadedWh ?? "Tất cả kho"} — TK {(string.IsNullOrEmpty(_loadedAccount) ? "151 → 156" : _loadedAccount)}",
+                false, 11, XLAlignmentHorizontalValues.Center, true);
+
+            int h1 = 6, h2 = 7;
+            void Head(int r1, int c1, int r2, int c2, string text) { ws.Cell(r1, c1).Value = text; if (r1 != r2 || c1 != c2) ws.Range(r1, c1, r2, c2).Merge(); }
+            Head(h1, 1, h2, 1, "STT"); Head(h1, 2, h2, 2, "Mã"); Head(h1, 3, h2, 3, "Tên vật tư, hàng hóa"); Head(h1, 4, h2, 4, "ĐVT");
+            Head(h1, 5, h1, 6, "Tồn đầu kỳ"); Head(h1, 7, h1, 8, "Nhập trong kỳ"); Head(h1, 9, h1, 10, "Xuất trong kỳ"); Head(h1, 11, h1, 12, "Tồn cuối kỳ");
+            for (var c = 5; c <= 12; c++) ws.Cell(h2, c).Value = c % 2 == 1 ? "Số lượng" : "Giá trị";
+            var head = ws.Range(h1, 1, h2, cols);
+            head.Style.Font.Bold = true; head.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            head.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center; head.Style.Fill.BackgroundColor = XLColor.FromHtml("#E8EEF7");
+
+            var r0 = h2 + 1;
+            var row = r0;
+            var stt = 0;
+            var groupRows = new List<int>();
+            foreach (var g in rows.GroupBy(x => x.Account))
+            {
+                var gr = row++;
+                groupRows.Add(gr);
+                ws.Cell(gr, 2).Value = $"TK {g.Key} — {AccountName(g.Key)}";
+                ws.Range(gr, 2, gr, 4).Merge();
+                var first = row;
+                foreach (var r in g)
+                {
+                    ws.Cell(row, 1).Value = ++stt; ws.Cell(row, 2).Value = r.Code; ws.Cell(row, 3).Value = r.Name; ws.Cell(row, 4).Value = r.Unit;
+                    decimal[] v = { r.OpenQty, r.OpenValue, r.InQty, r.InValue, r.OutQty, r.OutValue, r.CloseQty, r.CloseValue };
+                    for (var i = 0; i < v.Length; i++) if (v[i] != 0 || i >= 6) ws.Cell(row, 5 + i).Value = v[i];
+                    if (r.BelowMin) ws.Range(row, 1, row, cols).Style.Fill.BackgroundColor = XLColor.FromHtml("#FFF3E0");
+                    row++;
+                }
+                foreach (var c in new[] { 6, 8, 10, 12 })
+                    ws.Cell(gr, c).FormulaA1 = $"SUM({ws.Cell(first, c).Address}:{ws.Cell(row - 1, c).Address})";
+                ws.Range(gr, 1, gr, cols).Style.Font.Bold = true;
+                ws.Range(gr, 1, gr, cols).Style.Fill.BackgroundColor = XLColor.FromHtml("#F1F8E9");
+            }
+            ws.Cell(row, 2).Value = "Cộng";
+            foreach (var c in new[] { 6, 8, 10, 12 })
+                ws.Cell(row, c).FormulaA1 = string.Join("+", groupRows.Select(g => ws.Cell(g, c).Address.ToString()));
+            ws.Range(row, 1, row, cols).Style.Font.Bold = true;
+            ws.Range(row, 1, row, cols).Style.Fill.BackgroundColor = XLColor.FromHtml("#FFF8E1");
+
+            var tb = ws.Range(h1, 1, row, cols);
+            tb.Style.Border.OutsideBorder = XLBorderStyleValues.Thin; tb.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            foreach (var c in new[] { 5, 7, 9, 11 }) ws.Range(r0, c, row, c).Style.NumberFormat.Format = "#,##0.####;-#,##0.####;\"\"";
+            foreach (var c in new[] { 6, 8, 10, 12 }) ws.Range(r0, c, row, c).Style.NumberFormat.Format = "#,##0;-#,##0;\"\"";
+            ws.Range(r0, 1, row, 1).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            ws.Range(r0, 4, row, 4).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            row += 2;
+            ws.Cell(row, 9).Value = "Ngày ..... tháng ..... năm ......";
+            ws.Range(row, 9, row, cols).Merge().Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            row++;
+            void Sign(int c1, int c2, string title)
+            {
+                ws.Cell(row, c1).Value = title; ws.Range(row, c1, row, c2).Merge().Style.Font.Bold = true;
+                ws.Cell(row + 1, c1).Value = "(Ký, họ tên)"; ws.Range(row + 1, c1, row + 1, c2).Merge().Style.Font.Italic = true;
+                ws.Range(row, c1, row + 1, c2).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            Sign(1, 4, "Người lập biểu"); Sign(5, 8, "Kế toán trưởng"); Sign(9, 12, "Giám đốc");
+
+            double[] widths = { 6, 14, 40, 8, 12, 15, 12, 15, 12, 15, 12, 15 };
+            for (var i = 0; i < widths.Length; i++) ws.Column(i + 1).Width = widths[i];
+            ws.SheetView.FreezeRows(h2);
+            ws.PageSetup.PageOrientation = XLPageOrientation.Landscape;
+            ws.PageSetup.FitToPages(1, 0);
+            await KhoUi.DownloadAsync(JS, wb, $"TONG_HOP_NXT_{_loadedFrom:yyyyMMdd}_{_loadedTo:yyyyMMdd}.xlsx");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(KhoUi.Error(ex), MudBlazor.Severity.Error);
+        }
+    }
+}
