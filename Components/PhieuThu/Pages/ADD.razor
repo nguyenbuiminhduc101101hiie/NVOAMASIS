@@ -245,6 +245,7 @@
 
                                     <MudItem xs="6">
                                         <MudAutocomplete @bind-Value="_Phieuthu_Detail.PTTT"
+                                                         @bind-Value:after="OnPTTTChanged"
                                                          Label="@Localizer["PTTT"]"
                                                          Class="custom-label"
                                                          CoerceValue
@@ -471,6 +472,14 @@
         {
             _Phieuthu_Detail.Ruthangtaibai = true;
             _Phieuthu_Detail.Sodudauky = true;
+
+            // Mặc định thu chuyển khoản: Nợ 1121 / Có 1311
+            if (string.IsNullOrWhiteSpace(_Phieuthu_Detail.PTTT))
+                _Phieuthu_Detail.PTTT = PTTT_CK;
+            if (string.IsNullOrWhiteSpace(_Phieuthu_Detail.TKNo))
+                _Phieuthu_Detail.TKNo = _Phieuthu_Detail.PTTT == PTTT_TM ? TK_TIEN_MAT : TK_NGAN_HANG;
+            if (string.IsNullOrWhiteSpace(_Phieuthu_Detail.TKCo))
+                _Phieuthu_Detail.TKCo = TK_PHAI_THU_KH;
         }
 
         if (Status == "Duplicate")
@@ -617,11 +626,33 @@
         }
     }
 
+    const string PTTT_CK = "CK";
+    const string PTTT_TM = "TM";
+    const string TK_TIEN_MAT = "1111";
+    const string TK_NGAN_HANG = "1121";
+    const string TK_PHAI_THU_KH = "1311";
+
+    // Đổi PTTT thì tự đổi TK Nợ: TM -> 1111, CK -> 1121 (chỉ khi TK Nợ đang trống hoặc là TK mặc định)
+    private void OnPTTTChanged()
+    {
+        var tkNo = _Phieuthu_Detail.TKNo;
+        if (!string.IsNullOrWhiteSpace(tkNo) && tkNo != TK_TIEN_MAT && tkNo != TK_NGAN_HANG)
+            return;
+
+        if (string.Equals(_Phieuthu_Detail.PTTT, PTTT_TM, StringComparison.OrdinalIgnoreCase))
+            _Phieuthu_Detail.TKNo = TK_TIEN_MAT;
+        else if (string.Equals(_Phieuthu_Detail.PTTT, PTTT_CK, StringComparison.OrdinalIgnoreCase))
+            _Phieuthu_Detail.TKNo = TK_NGAN_HANG;
+    }
+
     private async Task<IEnumerable<string?>> SearchPTTT(string? text)
     {
         try
         {
-            var items = Phieuthus.Select(x => x.PTTT).Distinct();
+            var items = new string?[] { PTTT_CK, PTTT_TM }
+                .Concat(Phieuthus.Select(x => x.PTTT))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct();
             if (string.IsNullOrEmpty(text))
             {
                 return items;
@@ -816,9 +847,13 @@
             CallSnackBar("Các phí đang chọn không cùng tiền tệ hoặc tỷ giá. Vui lòng chọn lại.", MudBlazor.Severity.Warning);
     }
 
+    // Giá trị tự sinh lần trước — chỉ ghi đè khi ô đang trống hoặc vẫn là giá trị tự sinh (không đè nội dung người dùng tự gõ)
+    string? _autoNoidung, _autoBillNo, _autoSohoadon;
+
     private void ApplySelectedDebitTotals()
     {
         _Phieuthu_Detail.Sotien = selectedDebits.Sum(x => x.thanhtien ?? 0);
+        ApplyBillAndInvoiceInfo();
         var first = selectedDebits.FirstOrDefault();
         if (first is null)
             return;
@@ -829,6 +864,34 @@
         if (customerIds.Count == 1)
             _Phieuthu_Detail.Customer_Id = customerIds[0];
     }
+
+    private void ApplyBillAndInvoiceInfo()
+    {
+        var billNos = string.Join(", ", selectedDebits
+            .Select(x => GetHblNo(x.hblid))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct());
+        var invoiceNos = string.Join(", ", selectedDebits
+            .Select(x => x.sohoadondaura?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct());
+
+        var noidung = "THU TIEN";
+        if (billNos.Length > 0) noidung += " BILL " + billNos;
+        if (invoiceNos.Length > 0) noidung += " HD " + invoiceNos;
+
+        if (CanOverwrite(_Phieuthu_Detail.Noidung, _autoNoidung, "THU TIEN"))
+            _Phieuthu_Detail.Noidung = _autoNoidung = noidung;
+        if (CanOverwrite(_Phieuthu_Detail.BillNo, _autoBillNo))
+            _Phieuthu_Detail.BillNo = _autoBillNo = billNos;
+        if (CanOverwrite(_Phieuthu_Detail.Sohoadon, _autoSohoadon))
+            _Phieuthu_Detail.Sohoadon = _autoSohoadon = invoiceNos;
+    }
+
+    private static bool CanOverwrite(string? current, string? lastAuto, string? placeholder = null) =>
+        string.IsNullOrWhiteSpace(current)
+        || current == lastAuto
+        || (placeholder != null && current.Trim().TrimEnd('.').Equals(placeholder, StringComparison.OrdinalIgnoreCase));
 
     private bool ValidateSelectedDebitRates()
     {

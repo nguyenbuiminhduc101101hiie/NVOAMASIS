@@ -627,7 +627,12 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["In_Word"].Value = ConvertToWords(sotien, "VND");
 
                 report.Dictionary.Variables["lido"].Value = "Lí do nộp:";
-                report.Dictionary.Variables["Tenphieu"].Value = "PHIẾU THU";
+                // Thu tiền mặt (Nợ 111x) in PHIẾU THU, thu chuyển khoản (CK / Nợ 112x) in ỦY NHIỆM THU
+                var firstPT = list_PT.FirstOrDefault();
+                var tkNo = firstPT?.TKNo?.Trim() ?? string.Empty;
+                var isChuyenKhoan = !tkNo.StartsWith("111")
+                    && (tkNo.StartsWith("112") || string.Equals(firstPT?.PTTT?.Trim(), "CK", StringComparison.OrdinalIgnoreCase));
+                report.Dictionary.Variables["Tenphieu"].Value = isChuyenKhoan ? "ỦY NHIỆM THU" : "PHIẾU THU";
                 report.Dictionary.Variables["nguoinhan_noptien"].Value = "Người Nộp Tiền";
                 StimulsoftLicenseHelper.PrepareAndRender(report);
                 using (var ms = new MemoryStream())

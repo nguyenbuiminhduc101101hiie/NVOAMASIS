@@ -524,6 +524,16 @@
                                 Class="btn-compact" />
                             </MudTooltip>
 
+                            <MudTooltip Text="@Localizer["Copy to Credit"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.MoveDown"
+                                Color="Color.Warning"
+                                Size="Size.Small"
+                                OnClick="CopyDebitToCredit"
+                                Variant="Variant.Filled"
+                                Disabled="@(IsDebitParentMissing || _copyingToCredit)"
+                                Class="btn-compact" />
+                            </MudTooltip>
+
                         </MudStack>
                     </HeaderTemplate>
                     <CellTemplate>
@@ -1955,6 +1965,81 @@
         finally
         {
             _copyingDebitRow = false;
+            StateHasChanged();
+        }
+    }
+
+    private bool _copyingToCredit;
+    private async Task CopyDebitToCredit()
+    {
+        var item = mudTable?.SelectedItem ?? detail;
+        if (item == null || item.debitId == Guid.Empty)
+        {
+            CallSnackBar("Vui lòng chọn 1 dòng Debit để copy sang Credit.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!isMBL && HBLDetail?.creditCompleted == true)
+        {
+            CallSnackBar("Credit đã xác nhận hoàn thành. Bỏ xác nhận Credit để thao tác.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBox(
+            Localizer["Copy to Credit"],
+            $"Copy dòng Debit \"{Charidtocharge(item.itemid)}\" sang Credit?",
+            yesText: "OK", cancelText: "Cancel");
+        if (confirm != true) return;
+
+        try
+        {
+            _copyingToCredit = true;
+            StateHasChanged();
+
+            var newCredit = new M_Credit
+            {
+                creditid = Guid.Empty,
+                mblid = item.mblid,
+                hblid = item.hblid,
+                Quanly_tauid = item.Quanly_tauid,
+                Quanly_contid = item.Quanly_contid,
+                quotationid = item.quotationid,
+                customerid = item.customerid,
+                itemid = item.itemid,
+                dongia = item.dongia,
+                soluong = item.soluong,
+                thanhtien = item.thanhtien,
+                tiente = item.tiente,
+                thue = item.thue,
+                thanhtiensauthue = item.thanhtiensauthue,
+                chiho = item.thuho,
+                tigiacredit = item.tigiadebit,
+                tigiahoadondauvao = item.tigiahoandondaura,
+                type = item.type,
+                ghichu_credit = item.ghichu,
+                ContainerNo = item.ContainerNo,
+                continued = true,
+                editable = true,
+                approve = false,
+                DNTT = false,
+                DNTU = false,
+                Copied = false,
+                dathanhtoan = false,
+                sodntt = null,
+                userupdate = usr,
+                dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", new CultureInfo("en-US"))
+            };
+
+            var rs = await shipsv.CreateCreditMBL(newCredit);
+            CallSnackBar(rs.Flag ? "Đã copy Debit sang Credit. Mở/Reload tab Credit để xem." : rs.Message,
+                rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar("Throw exception: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _copyingToCredit = false;
             StateHasChanged();
         }
     }
