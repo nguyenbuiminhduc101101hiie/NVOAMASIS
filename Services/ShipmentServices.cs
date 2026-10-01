@@ -3662,7 +3662,7 @@ namespace NVOAMASIS.Services
                 string rpt;
 
                 cur_type = "VND";
-                rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Mau2.mrt");
+                rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Mau1.mrt");
 
                 StiBlazorHelper.Initialize(JSRuntime);
                 report = StimulsoftLicenseHelper.CreateReport();
