@@ -986,6 +986,23 @@ namespace NVOAMASIS.Services
                 return new List<string>();
             }
         }
+        public async Task<List<M_Container>> GetListContainerHBLAsync(Guid? id)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+
+                var rs = await _context.Container
+                    .Where(x => x.hblid == id && x.CONTINUED == true)
+                    .ToListAsync();
+
+                return rs;
+            }
+            catch (Exception ex)
+            {
+                return new List<M_Container>();
+            }
+        }
         public List<M_Container> GetListContainerHBL(Guid? id)
         {
             try
@@ -997,6 +1014,99 @@ namespace NVOAMASIS.Services
             catch (Exception ex)
             {
                 return new List<M_Container>();
+            }
+        }
+
+        /// <summary>
+        /// Link container của MBL xuống HBL: cont chưa có trong HBL (theo số cont) thì tạo mới,
+        /// cont đã có thì cập nhật thông tin vỏ cont (giữ nguyên số kiện/trọng lượng/mô tả hàng của HBL).
+        /// hblIds = null → áp dụng cho tất cả HBL thuộc MBL.
+        /// </summary>
+        public async Task<BoolandMessReponse> LinkMblContainersToHblAsync(Guid mblId, IEnumerable<Guid>? hblIds = null)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var mblConts = await _context.Container
+                    .Where(x => x.mblid == mblId && x.CONTINUED == true && x.CONTAINER_NO != null && x.CONTAINER_NO != "")
+                    .ToListAsync();
+                if (mblConts.Count == 0)
+                    return new BoolandMessReponse(false, "MBL chưa có container (có số cont) để link.");
+
+                var targetHblIds = hblIds?.Distinct().ToList()
+                    ?? await _context.HBL.Where(x => x.mblid == mblId).Select(x => x.hblID).ToListAsync();
+                if (targetHblIds.Count == 0)
+                    return new BoolandMessReponse(false, "MBL chưa có HBL để link container.");
+
+                var hblConts = await _context.Container
+                    .Where(x => x.hblid != null && targetHblIds.Contains(x.hblid.Value) && x.CONTINUED == true)
+                    .ToListAsync();
+
+                string usr = asv.GetAuth().Result.User.Identity!.Name!;
+                var now = DateTime.Now;
+                int created = 0, updated = 0, skippedApproved = 0;
+
+                foreach (var hblId in targetHblIds)
+                {
+                    foreach (var src in mblConts)
+                    {
+                        var contNo = src.CONTAINER_NO!.Trim();
+                        var existing = hblConts.FirstOrDefault(x => x.hblid == hblId
+                            && string.Equals(x.CONTAINER_NO?.Trim(), contNo, StringComparison.OrdinalIgnoreCase));
+
+                        if (existing == null)
+                        {
+                            var copy = src.DeepCopy();
+                            copy.CTN_ID = Guid.NewGuid();
+                            copy.mblid = null; // tránh hiện trùng ở danh sách cont của MBL
+                            copy.hblid = hblId;
+                            copy.CONTAINER_NO = contNo;
+                            copy.APPROVE = false;
+                            copy.CONTINUED = true;
+                            copy.EDITABLE = true;
+                            copy.USERID = usr;
+                            copy.UPDATETIME = now;
+                            _context.Container.Add(copy);
+                            hblConts.Add(copy);
+                            created++;
+                        }
+                        else if (existing.APPROVE == true)
+                        {
+                            skippedApproved++;
+                        }
+                        else
+                        {
+                            existing.CTN_SIZE_TYPE = src.CTN_SIZE_TYPE;
+                            existing.Seal = src.Seal;
+                            existing.NVOCC_Status = src.NVOCC_Status;
+                            existing.Status_Cont = src.Status_Cont;
+                            existing.In_Depot = src.In_Depot;
+                            existing.In_Port = src.In_Port;
+                            existing.Decommision = src.Decommision;
+                            existing.Empty_pickup_date = src.Empty_pickup_date;
+                            existing.Full_Discharge_Date = src.Full_Discharge_Date;
+                            existing.Full_Delivery_Date = src.Full_Delivery_Date;
+                            existing.Empty_Return_Date = src.Empty_Return_Date;
+                            existing.Storage_In_Date = src.Storage_In_Date;
+                            existing.Storage_Out_Date = src.Storage_Out_Date;
+                            existing.USERID = usr;
+                            existing.UPDATETIME = now;
+                            updated++;
+                        }
+                    }
+                }
+
+                await _context.SaveChangesAsync();
+                await HistoryLogService.LogAsync(usr, "Link Container MBL -> HBL", "Shipment", mblId, "",
+                    new { HblIds = targetHblIds, Created = created, Updated = updated, SkippedApproved = skippedApproved });
+
+                var msg = $"Link container: thêm mới {created}, cập nhật {updated}";
+                if (skippedApproved > 0) msg += $", bỏ qua {skippedApproved} cont đã approve";
+                return new BoolandMessReponse(true, msg + $" ({targetHblIds.Count} HBL).");
+            }
+            catch (Exception ex)
+            {
+                return new BoolandMessReponse(false, "Cannot link Container with error code: " + ex.Message);
             }
         }
         public async Task<List<M_Credit>> GetListCreditMBL(Guid? id)
@@ -3533,7 +3643,284 @@ namespace NVOAMASIS.Services
                 return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
             }
         }
+        string GetLastValue(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "";
 
+            return value
+                .Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.RemoveEmptyEntries)
+                .Last()
+                .Trim();
+        }
+        public async Task<BoolandMessReponse> ExportDebitMau1(M_Debit detail,int? mau)
+        {
+            string cur_type="";
+            try
+            {
+                var report = new StiReport();
+                string rpt;
+
+                cur_type = "VND";
+                rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Mau2.mrt");
+
+                StiBlazorHelper.Initialize(JSRuntime);
+                report = StimulsoftLicenseHelper.CreateReport();
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
+                report.Load(rpt);
+                report.Culture = "en-US";
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
+                var fcl = await GetFLCByMBLID(hblinfo.mblid); //
+
+                var list_debit = await GetListDebit_Debitno(detail.debitno);
+
+                double? total_payment = 0;
+                double? total_amount_notvat = 0;
+
+                double? total_amount_Tax = 0;
+                foreach (var item_debit in list_debit)
+                {
+                    if (item_debit.tiente == "VND")
+                    {
+                        total_payment += item_debit.thanhtiensauthue;
+                        total_amount_notvat += item_debit.dongia * item_debit.soluong;
+                        total_amount_Tax += (item_debit.dongia * item_debit.soluong) * (item_debit.thue / 100);
+                    }
+                    else
+                    {
+                        total_payment += item_debit.thanhtiensauthue * item_debit.tigiadebit;
+                        total_amount_notvat += (item_debit.dongia * item_debit.soluong) * item_debit.tigiadebit;
+                        total_amount_Tax += ((item_debit.dongia * item_debit.soluong) * (item_debit.thue / 100)) * item_debit.tigiadebit;
+                    }
+                }
+
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0");
+                report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["qty"].Value = hblinfo.say;
+               
+                report.Dictionary.Variables["volume"].Value =
+                GetLastValue(hblinfo.NoOfPackages)
+                + " / " +
+                GetLastValue(hblinfo.gross)
+                + " / " +
+                GetLastValue(hblinfo.cbm);
+    
+                report.Dictionary.Variables["DatetimeNow"].Value = DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
+                report.Dictionary.Variables["eta"].Value = hblinfo.ETA.HasValue ? hblinfo.ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
+                report.Dictionary.Variables["etd"].Value = hblinfo.ETD.HasValue ? hblinfo.ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
+                total_payment = Math.Round(total_payment ?? 0, 2);
+                report.Dictionary.Variables["In_Word"].Value = ConvertToWords(total_payment, cur_type);
+                report.Dictionary.Variables["Cur_type"].Value = cur_type;
+                report.Dictionary.Variables["DatetimeNow"].Value = DateTime.Now.ToString("dd-MMM-yyyy");
+                var mblinfo = await GetMBL_byHBLid(hblinfo.mblid);
+                var infojob = await GetJob_byid(mblinfo.Jobid);
+                report.Dictionary.Variables["Refno"].Value = infojob.JobNo.ToString();
+                report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
+                report.Dictionary.Variables["debitno"].Value = detail.debitno;
+                StimulsoftLicenseHelper.PrepareAndRender(report);
+                using (var ms = new MemoryStream())
+                {
+                    report.ExportDocument(StiExportFormat.Pdf, ms);
+                    var pdfData = ms.ToArray();
+                    await JSRuntime.InvokeVoidAsync("openReportInNewTab", pdfData);
+                }
+                return new BoolandMessReponse(true, "Export successfully!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
+            }
+        }
+
+        public async Task<BoolandMessReponse> ExportDebitMau2(M_Debit detail, int? mau)
+        {
+            string cur_type = "";
+            try
+            {
+                var report = new StiReport();
+                string rpt;
+
+                cur_type = "VND";
+                rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Mau2.mrt");
+
+                StiBlazorHelper.Initialize(JSRuntime);
+                report = StimulsoftLicenseHelper.CreateReport();
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
+                report.Load(rpt);
+                report.Culture = "en-US";
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
+                var fcl = await GetFLCByMBLID(hblinfo.mblid); //
+
+                var list_debit = await GetListDebit_Debitno(detail.debitno);
+
+                double? total_payment = 0;
+                double? total_amount_notvat = 0;
+
+                double? total_amount_Tax = 0;
+                foreach (var item_debit in list_debit)
+                {
+                    if (item_debit.tiente == "VND")
+                    {
+                        total_payment += item_debit.thanhtiensauthue;
+                        total_amount_notvat += item_debit.dongia * item_debit.soluong;
+                        total_amount_Tax += (item_debit.dongia * item_debit.soluong) * (item_debit.thue / 100);
+                    }
+                    else
+                    {
+                        total_payment += item_debit.thanhtiensauthue * item_debit.tigiadebit;
+                        total_amount_notvat += (item_debit.dongia * item_debit.soluong) * item_debit.tigiadebit;
+                        total_amount_Tax += ((item_debit.dongia * item_debit.soluong) * (item_debit.thue / 100)) * item_debit.tigiadebit;
+                    }
+                }
+
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0" );
+                report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["qty"].Value = hblinfo.say;
+
+                report.Dictionary.Variables["volume"].Value =
+                GetLastValue(hblinfo.NoOfPackages)
+                + " / " +
+                GetLastValue(hblinfo.gross)
+                + " / " +
+                GetLastValue(hblinfo.cbm);
+
+                report.Dictionary.Variables["DatetimeNow"].Value = DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
+                report.Dictionary.Variables["eta"].Value = hblinfo.ETA.HasValue ? hblinfo.ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
+                report.Dictionary.Variables["etd"].Value = hblinfo.ETD.HasValue ? hblinfo.ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
+                total_payment = Math.Round(total_payment ?? 0, 2);
+                report.Dictionary.Variables["In_Word"].Value = ConvertToWords(total_payment, cur_type);
+                report.Dictionary.Variables["Cur_type"].Value = cur_type;
+                report.Dictionary.Variables["DatetimeNow"].Value = DateTime.Now.ToString("dd-MMM-yyyy");
+                var mblinfo = await GetMBL_byHBLid(hblinfo.mblid);
+                var infojob = await GetJob_byid(mblinfo.Jobid);
+                report.Dictionary.Variables["Refno"].Value = infojob.JobNo.ToString();
+                report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
+                report.Dictionary.Variables["debitno"].Value = detail.debitno;
+                StimulsoftLicenseHelper.PrepareAndRender(report);
+                using (var ms = new MemoryStream())
+                {
+                    report.ExportDocument(StiExportFormat.Pdf, ms);
+                    var pdfData = ms.ToArray();
+                    await JSRuntime.InvokeVoidAsync("openReportInNewTab", pdfData);
+                }
+                return new BoolandMessReponse(true, "Export successfully!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
+            }
+        }
+        public async Task<BoolandMessReponse> ExportDebitMau3(M_Debit detail, int? mau)
+        {
+            string cur_type = "";
+            try
+            {
+                var report = new StiReport();
+                string rpt;
+
+                cur_type = "USD";
+                rpt = Path.Combine(_env.WebRootPath, "Reports", "ReportDebitNote_Mau3.mrt");
+
+                StiBlazorHelper.Initialize(JSRuntime);
+                report = StimulsoftLicenseHelper.CreateReport();
+                var connectionString = ResolveReportConnectionString();
+                var companyLogo = await GetCompanyLogoAsync();
+
+                report.Load(rpt);
+                report.Culture = "en-US";
+                ApplyReportConnectionString(report, connectionString);
+                ApplyCompanyLogoToReport(report, companyLogo, showLogo: true);
+                var hblinfo = await GetHBL_byHBLid(detail.hblid); // lay ra say volume
+                List<M_Container> containerinfo = await GetListContainerHBLAsync(detail.hblid);
+                string chuoikienkgcbm = "";
+                double? total_kien = 0;
+                double? total_kg = 0;
+                double? total_cbm = 0;
+
+                foreach (var item_cont in containerinfo)
+                {
+                    total_kien += item_cont.GrossWeight;
+                    total_kg += item_cont.NETWEIGHT;
+                    total_cbm += double.TryParse(item_cont.cbm, out var cbm) ? cbm : 0;
+                }
+                chuoikienkgcbm = total_kien + "(kgs) / " + total_kg + "(kgs) / " + total_cbm + "(cbm) / ";
+                report.Dictionary.Variables["sokienkgcbm"].Value = chuoikienkgcbm;
+                var fcl = await GetFLCByMBLID(hblinfo.mblid); //
+
+                var list_debit = await GetListDebit_Debitno(detail.debitno);
+
+                double? total_payment = 0;
+                double? total_amount_notvat = 0;
+
+                double? total_amount_Tax = 0;
+                foreach (var item_debit in list_debit)
+                {
+                    if(item_debit.tiente == "USD")
+                        {
+                        total_payment += item_debit.thanhtiensauthue;
+                        total_amount_notvat += item_debit.dongia * item_debit.soluong;
+                        total_amount_Tax += (item_debit.dongia * item_debit.soluong) * (item_debit.thue / 100);
+                    }
+                        else
+                    {
+                        total_payment += item_debit.thanhtiensauthue / item_debit.tigiadebit;
+                        total_amount_notvat += (item_debit.dongia * item_debit.soluong) / item_debit.tigiadebit;
+                        total_amount_Tax += ((item_debit.dongia * item_debit.soluong) * (item_debit.thue / 100)) / item_debit.tigiadebit;
+
+                    }
+                }
+
+                report.Dictionary.Variables["Total_shipment"].Value = (total_payment ?? 0).ToString("#,##0");
+                report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
+                report.Dictionary.Variables["qty"].Value = hblinfo.say;
+
+                report.Dictionary.Variables["volume"].Value =
+                GetLastValue(hblinfo.NoOfPackages)
+                + " / " +
+                GetLastValue(hblinfo.gross)
+                + " / " +
+                GetLastValue(hblinfo.cbm);
+
+                report.Dictionary.Variables["DatetimeNow"].Value = DateTime.Now.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
+                report.Dictionary.Variables["eta"].Value = hblinfo.ETA.HasValue ? hblinfo.ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
+                report.Dictionary.Variables["etd"].Value = hblinfo.ETD.HasValue ? hblinfo.ETA.Value.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture) : "";
+                total_payment = Math.Round(total_payment ?? 0, 2);
+                report.Dictionary.Variables["In_Word"].Value = ConvertToWords(total_payment, cur_type);
+                report.Dictionary.Variables["Cur_type"].Value = cur_type;
+                report.Dictionary.Variables["DatetimeNow"].Value = DateTime.Now.ToString("dd-MMM-yyyy");
+                var mblinfo = await GetMBL_byHBLid(hblinfo.mblid);
+                var infojob = await GetJob_byid(mblinfo.Jobid);
+                report.Dictionary.Variables["Refno"].Value = infojob.JobNo.ToString();
+                report.Dictionary.Variables["HBLID"].Value = detail.hblid.ToString();
+                report.Dictionary.Variables["debitno"].Value = detail.debitno;
+                StimulsoftLicenseHelper.PrepareAndRender(report);
+                using (var ms = new MemoryStream())
+                {
+                    report.ExportDocument(StiExportFormat.Pdf, ms);
+                    var pdfData = ms.ToArray();
+                    await JSRuntime.InvokeVoidAsync("openReportInNewTab", pdfData);
+                }
+                return new BoolandMessReponse(true, "Export successfully!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+                return new BoolandMessReponse(false, "Export failed!, Error code: " + ex.Message);
+            }
+        }
         public async Task<BoolandMessReponse> ExportDebitTruck(M_Debit detail, string cur_type, bool isMBL, string billType = "PASL", string branches = "")
         {
             try
@@ -4016,14 +4403,15 @@ namespace NVOAMASIS.Services
                 report.Dictionary.Variables["total_amount_notvat"].Value = (total_amount_notvat ?? 0).ToString("#,##0.##");
                 report.Dictionary.Variables["total_amount_Tax"].Value = (total_amount_Tax ?? 0).ToString("#,##0.##");
 
-                if (fcl == "F")
-                {
-                    report.Dictionary.Variables["volume"].Value = hblinfo.say;
-                }
-                else
-                {
-                    report.Dictionary.Variables["volume"].Value = hblinfo.NoOfPackages + " / " + hblinfo.gross + " / " + " / " + hblinfo.cbm;
-                }
+                report.Dictionary.Variables["volume"].Value = hblinfo.say;
+                //if (fcl == "F")
+                //{
+                //    report.Dictionary.Variables["volume"].Value = hblinfo.say;
+                //}
+                //else
+                //{
+                //    report.Dictionary.Variables["volume"].Value = hblinfo.NoOfPackages + " / " + hblinfo.gross + " / " + " / " + hblinfo.cbm;
+                //}
 
                 total_payment = Math.Round(total_payment ?? 0, 2);
                 report.Dictionary.Variables["In_Word"].Value = ConvertToWords(total_payment, cur_type);

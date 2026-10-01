@@ -105,25 +105,24 @@ namespace NVOAMASIS.Services
             {
                 return 1;
             }
+
             string ngayht = DateTime.Now.ToString("dd-MMM-yyyy").ToUpper();
             string currency = cur.ToUpper();
 
             try
             {
-                if (cur == "VND")
+                // Nếu VND -> lấy tỷ giá USD
+                if (currency == "VND")
                 {
-                    return 1;
+                    currency = "USD";
                 }
-                else
-                {
-                    double? rs = await _context.Currency
-                                            .Where(x => x.ngay == ngayht && x.Currency == currency)
-                                            .Select(x => x.Exchange)
-                                            .FirstOrDefaultAsync();
 
-                    return rs;
-                }
-                    
+                double? rs = await _context.Currency
+                    .Where(x => x.ngay == ngayht && x.Currency == currency)
+                    .Select(x => x.Exchange)
+                    .FirstOrDefaultAsync();
+
+                return rs ?? 1;
             }
             catch (Exception ex)
             {
@@ -131,6 +130,7 @@ namespace NVOAMASIS.Services
                 return 1;
             }
         }
+        
 
         public async Task<List<string?>> GetCur()
         {

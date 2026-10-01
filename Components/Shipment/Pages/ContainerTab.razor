@@ -195,6 +195,16 @@
                                    Class="btn-compact" />
                 </MudTooltip>
 
+                <MudTooltip Text="@(isMBL ? "Link Cont → HBL (copy container của MBL xuống tất cả HBL)" : "Lấy Cont từ MBL")">
+                    <MudIconButton Icon="@Icons.Material.Filled.Link"
+                                   Color="Color.Warning"
+                                   Size="Size.Small"
+                                   OnClick="LinkContainersAsync"
+                                   Variant="Variant.Filled"
+                                   Disabled="@(IsParentMissing() || _linking)"
+                                   Class="btn-compact" />
+                </MudTooltip>
+
                 <MudTooltip Text="@Localizer["Help"]">
                     <a href="HDSDhtml/Huong_dan_Tab_Container.0_Shipment.html" target="_blank">
                         <MudIconButton Icon="@Icons.Material.Filled.Info"
@@ -508,6 +518,78 @@
             : await shipsv.CreateContainerMBL(item);
         CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         await Refresh();
+    }
+
+    bool _linking;
+
+    // MBL: copy cont của MBL xuống tất cả HBL thuộc MBL. HBL: lấy cont của MBL cha về HBL đang chọn.
+    async Task LinkContainersAsync()
+    {
+        if (IsParentMissing())
+        {
+            CallSnackBar("Vui lòng chọn 1 dòng MBL hoặc HBL.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Add", isMBL ? "MBL" : "HBL"))
+        {
+            CallSnackBar("You have not access to add", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var mblId = isMBL ? MBLDetail!.MblID : HBLDetail!.mblid;
+        if (mblId == Guid.Empty)
+        {
+            CallSnackBar("HBL chưa thuộc MBL nào.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var mblConts = shipsv.GetListContainerMBL(mblId)
+            .Where(x => !string.IsNullOrWhiteSpace(x.CONTAINER_NO)).ToList();
+        if (mblConts.Count == 0)
+        {
+            CallSnackBar("MBL chưa có container (có số cont) để link.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        string message;
+        if (isMBL)
+        {
+            var hbls = await shipsv.GetListHBL(mblId);
+            if (hbls.Count == 0)
+            {
+                CallSnackBar("MBL chưa có HBL để link container.", MudBlazor.Severity.Warning);
+                return;
+            }
+            message = $"Link {mblConts.Count} container của MBL {MBLDetail!.Mbl} xuống {hbls.Count} HBL ({string.Join(", ", hbls.Select(x => x.hbl))})?";
+        }
+        else
+        {
+            message = $"Lấy {mblConts.Count} container từ MBL về HBL {HBLDetail!.hbl}?";
+        }
+        message += "\nCont đã có trong HBL (cùng số cont) chỉ cập nhật thông tin vỏ cont, giữ nguyên số kiện/trọng lượng/mô tả hàng.";
+
+        var confirm = await DialogService.ShowMessageBox("Link Container", message, yesText: "OK", cancelText: "Cancel");
+        if (confirm != true) return;
+
+        try
+        {
+            _linking = true;
+            StateHasChanged();
+            var rs = isMBL
+                ? await shipsv.LinkMblContainersToHblAsync(mblId)
+                : await shipsv.LinkMblContainersToHblAsync(mblId, new[] { HBLDetail!.hblID });
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (rs.Flag)
+            {
+                Conts = shipsv.GetListContainerAll();
+                await Refresh();
+            }
+        }
+        finally
+        {
+            _linking = false;
+            StateHasChanged();
+        }
     }
 
     private int selectedRowNumber = -1;

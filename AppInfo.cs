@@ -8,7 +8,7 @@ namespace NVOAMASIS
     /// </summary>
     public static class AppInfo
     {
-        public const string DefaultBrand = "AMASIS - NVOCC";
+        public const string DefaultBrand = "AMSS";
 
         public static string Brand { get; set; } = DefaultBrand;
     }
