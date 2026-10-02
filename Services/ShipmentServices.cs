@@ -5285,10 +5285,32 @@ namespace NVOAMASIS.Services
                 chuoicont += c.CTN_SIZE_TYPE + ";";
 
             }
-            rs = "SAY: " + DemContSay(chuoicont).ToUpper() + " Container(s) ONLY".ToUpper();
+            rs = "SAY: " + DemContSo(chuoicont) + " Container(s) ONLY".ToUpper();
 
             return rs;
 
+        }
+        // Đếm cont theo loại, dạng số: "02 x 40'HC & 01 x 20'DC"
+        public string DemContSo(string chuoi)
+        {
+            var counts = new Dictionary<string, int>();
+            foreach (string i in (chuoi ?? "").Split(';'))
+            {
+                string containerType = i.Trim().ToUpper();
+                if (containerType == "") continue;
+                counts[containerType] = counts.TryGetValue(containerType, out var n) ? n + 1 : 1;
+            }
+
+            return string.Join(" & ", counts.Select(kv => kv.Value.ToString("00") + " x " + FormatContType(kv.Key)));
+        }
+
+        // "40HC" -> "40'HC"
+        private string FormatContType(string type)
+        {
+            int k = 0;
+            while (k < type.Length && char.IsDigit(type[k])) k++;
+            if (k == 0 || k == type.Length) return type;
+            return type.Substring(0, k) + "'" + type.Substring(k);
         }
         public string DemContSay(string chuoi)
         {
