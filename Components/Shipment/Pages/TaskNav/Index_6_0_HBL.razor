@@ -17,6 +17,7 @@
 @using System.Text.Json;
 @inject IJSRuntime JSRuntime
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject Microsoft.EntityFrameworkCore.IDbContextFactory<NVOAMASIS.Data.AppDbContext> HblDbFactory
 <MudTabs SliderColor="Color.Primary">
     <MudTabPanel Text="@($"HBL [{(hbldetail != null ? hbldetail.hbl : null)}]")" Class="custom-tab">
         <MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-hbl-bg"
@@ -131,6 +132,10 @@
                                        DateFormat="dd/MM/yyyy" />
                     </EditTemplate>
                 </PropertyColumn>
+                @if (IsMulti)
+                {
+                    <PropertyColumn Property="x => JobMblLabel(x)" Title="Job / MBL" Filterable="true" />
+                }
                 <PropertyColumn Property="x => x.release" Title="@Localizer["Release"]" Required="false" Filterable="false">
                     <EditTemplate>
                         <MudCheckBox @bind-Checked="context.Item.release" Label="@Localizer["Release"]" Disabled="@(currentUserRole != "ACCOUNT")" />
@@ -365,6 +370,76 @@
 @code {
 
     [Parameter] public M_MBL? MBLDetail { get; set; } = default!;
+    // ---------- Chế độ "Chỉ HBL": một bảng HBL cho nhiều Job (không cần chọn MBL) ----------
+    /// <summary>Danh sách Job cần hiện HBL. Khác null = chế độ nhiều Job (MBLDetail bỏ trống).</summary>
+    [Parameter] public List<Guid>? JobIds { get; set; }
+    bool IsMulti => JobIds != null;
+    static bool IsVietnameseUi => System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("vi", StringComparison.OrdinalIgnoreCase);
+    M_MBL? _selMbl;
+    /// <summary>MBL đang dùng: MBLDetail (chế độ thường) hoặc MBL của HBL đang chọn (chế độ nhiều Job).</summary>
+    M_MBL? CurMbl => MBLDetail ?? _selMbl;
+    Dictionary<Guid, M_MBL> _mblById = new();
+    Dictionary<Guid, M_Job> _jobById = new();
+    string? _loadedJobKey;
+
+    string JobKey(IEnumerable<Guid>? ids) => ids == null ? "" : string.Join(",", ids);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (IsMulti && _loadedJobKey != null && _loadedJobKey != JobKey(JobIds))
+            await Refresh();
+    }
+
+    async Task<List<M_HBL>> LoadMultiAsync()
+    {
+        var jobIds = (JobIds ?? new List<Guid>()).Distinct().ToList();
+        _loadedJobKey = JobKey(JobIds);
+        _mblById = new(); _jobById = new();
+        if (jobIds.Count == 0) return new List<M_HBL>();
+        await using var ctx = await HblDbFactory.CreateDbContextAsync();
+        var jobs = new List<M_Job>(); var mbls = new List<M_MBL>(); var hbls = new List<M_HBL>();
+        foreach (var chunk in jobIds.Chunk(1000))
+        {
+            var ids = chunk.ToList();
+            jobs.AddRange(await ctx.Job.AsNoTracking().Where(x => ids.Contains(x.JobID)).ToListAsync());
+            mbls.AddRange(await ctx.MBL.AsNoTracking().Where(x => x.Jobid != null && ids.Contains(x.Jobid.Value)).ToListAsync());
+        }
+        foreach (var chunk in mbls.Select(x => x.MblID).Distinct().Chunk(1000))
+        {
+            var ids = chunk.ToList();
+            hbls.AddRange(await ctx.HBL.AsNoTracking().Where(x => ids.Contains(x.mblid)).ToListAsync());
+        }
+        _jobById = jobs.GroupBy(x => x.JobID).ToDictionary(g => g.Key, g => g.First());
+        _mblById = mbls.GroupBy(x => x.MblID).ToDictionary(g => g.Key, g => g.First());
+        var order = jobIds.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
+        return hbls
+            .OrderBy(h => _mblById.TryGetValue(h.mblid, out var m) && m.Jobid.HasValue && order.TryGetValue(m.Jobid.Value, out var i) ? i : int.MaxValue)
+            .ThenBy(h => h.hbl)
+            .ToList();
+    }
+
+    /// <summary>Chọn HBL ở chế độ nhiều Job: lấy MBL / loại lô của HBL đó cho các nút và tab bên dưới.</summary>
+    async Task SelectMblForAsync(M_HBL? hbl)
+    {
+        if (!IsMulti || hbl == null) return;
+        _selMbl = _mblById.TryGetValue(hbl.mblid, out var m) ? m : null;
+        if (_selMbl != null)
+        {
+            type = await shipsv.GetTypeByMBLID(_selMbl.MblID);
+            salecode_injob = await shipsv.GetsaleinJob_byJobId(_selMbl.Jobid);
+            var selJob = await shipsv.GetJob_byid(_selMbl.Jobid);
+            _jobLoai = selJob?.Loai_Nvo_Fre;
+            _jobBookingNo = selJob?.BookingNo;
+        }
+    }
+
+    string JobMblLabel(M_HBL h)
+    {
+        if (!_mblById.TryGetValue(h.mblid, out var m)) return string.Empty;
+        var job = m.Jobid.HasValue && _jobById.TryGetValue(m.Jobid.Value, out var j) ? j.JobNo : "";
+        return $"{job} / {m.Mbl}";
+    }
+
     [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
     [Parameter] public List<M_Customer>? Customers { get; set; } = default!;
     M_HBL detail;
@@ -424,11 +499,14 @@
             SaleNames = await supsv.GetListSale();
             ListUsers = await supsv.GetListUsers();
             Ports = await supsv.GetListPort();
-            type = await shipsv.GetTypeByMBLID(MBLDetail.MblID); // Sea Air Truck HQ
-            salecode_injob = await shipsv.GetsaleinJob_byJobId(MBLDetail.Jobid);
-            var job = await shipsv.GetJob_byid(MBLDetail.Jobid);
-            _jobLoai = job?.Loai_Nvo_Fre;
-            _jobBookingNo = job?.BookingNo;
+            if (CurMbl != null) type = await shipsv.GetTypeByMBLID(CurMbl.MblID); // Sea Air Truck HQ
+            if (CurMbl != null)
+            {
+                salecode_injob = await shipsv.GetsaleinJob_byJobId(CurMbl.Jobid);
+                var job = await shipsv.GetJob_byid(CurMbl.Jobid);
+                _jobLoai = job?.Loai_Nvo_Fre;
+                _jobBookingNo = job?.BookingNo;
+            }
             await Refresh();
 
         }
@@ -508,11 +586,14 @@
             StateHasChanged();
             await Task.Delay(500);
 
-            Listdata = await shipsv.GetListHBL(MBLDetail!.MblID);
+            Listdata = IsMulti ? await LoadMultiAsync() : await shipsv.GetListHBL(CurMbl!.MblID);
             ListDebit = await shipsv.GetListDebitALL();
             ListCredit = await shipsv.GetListCreditALL();
             if (Listdata.Count > 0)
+            {
                 hbldetail = Listdata[0];
+                await SelectMblForAsync(hbldetail);
+            }
             await LoadTabCountsAsync();
         }
         finally
@@ -527,6 +608,11 @@
 
     async Task AddItem()
     {
+        if (IsMulti)
+        {
+            CallSnackBar(IsVietnameseUi ? "Đang ở chế độ Chỉ HBL: tắt Chỉ HBL rồi mở đúng MBL để thêm HBL mới." : "HBL-only mode: switch it off and open the MBL to add a new HBL.", MudBlazor.Severity.Warning);
+            return;
+        }
         if (!await ssv.CheckPermission(usr, "Add", "HBL"))
         {
             CallSnackBar(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning);
@@ -541,19 +627,19 @@
     // HBL mới lấy tuyến, tàu và lịch tàu từ MBL cha; riêng số lượng cont thì lấy từ booking của job.
     async Task ApplyMblAndBookingInfoAsync(M_HBL item)
     {
-        if (MBLDetail != null)
+        if (CurMbl != null)
         {
-            item.bkno = MBLDetail.Bkno;
-            item.polname = MBLDetail.Polname;
-            item.polcode = MBLDetail.Polcode;
-            item.podname = MBLDetail.Podname;
-            item.podcode = MBLDetail.Podcode;
-            item.vessel = MBLDetail.Vessel;
-            item.voy = MBLDetail.Voy;
-            item.ETD = MBLDetail.ETD;
-            item.ETA = MBLDetail.ETA;
-            if (MBLDetail.CustomerID != Guid.Empty)
-                item.CustomerID = MBLDetail.CustomerID;
+            item.bkno = CurMbl.Bkno;
+            item.polname = CurMbl.Polname;
+            item.polcode = CurMbl.Polcode;
+            item.podname = CurMbl.Podname;
+            item.podcode = CurMbl.Podcode;
+            item.vessel = CurMbl.Vessel;
+            item.voy = CurMbl.Voy;
+            item.ETD = CurMbl.ETD;
+            item.ETA = CurMbl.ETA;
+            if (CurMbl.CustomerID != Guid.Empty)
+                item.CustomerID = CurMbl.CustomerID;
         }
 
         var bookingNo = _jobBookingNo?.Trim();
@@ -642,8 +728,8 @@
             return code.Substring(code.Length - 3);
         }
         string tiepdaungu = await supsv.GetTiepDauNguByFunc(func_loai);
-        var polcode = includePol ? Last3(MBLDetail?.Polcode) : string.Empty;
-        var podcode = includePod ? Last3(MBLDetail?.Podcode) : string.Empty;
+        var polcode = includePol ? Last3(CurMbl?.Polcode) : string.Empty;
+        var podcode = includePod ? Last3(CurMbl?.Podcode) : string.Empty;
         item.hbl = tiepdaungu + polcode + podcode + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D5") : "RefNoError!");
     }
     async Task CommittedItem(M_HBL item)
@@ -668,7 +754,7 @@
                 item.debitCompleted = item.creditCompleted = false;
                 item.hblID = Guid.Empty;
             }
-            item.mblid = MBLDetail!.MblID;
+            item.mblid = CurMbl!.MblID;
             item.userupdate = usr;
             if(!item.datereport.HasValue) item.datereport= type.Contains("I") ? item.ETA : item.ETD;
             item.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", new CultureInfo("en-US"));
@@ -722,6 +808,7 @@
         else
         {
             hbldetail = args.Item;
+            await SelectMblForAsync(args.Item);
             await LoadTabCountsAsync();
         }
     }
@@ -1472,7 +1559,7 @@
             _processingUploadManifest = true;
             StateHasChanged();
             await Task.Delay(1);
-            var rs = await rsv.Emanifest(MBLDetail!, hbldetail);
+            var rs = await rsv.Emanifest(CurMbl!, hbldetail);
             CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
         }
         catch (Exception ex)
