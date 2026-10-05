@@ -243,8 +243,6 @@
 
                 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="shipment-type-filter">
                     <MudText Typo="Typo.caption" Class="shipment-filter-label">@Localizer["Type"]</MudText>
-                    <MudSwitch T="bool" @bind-Value="_hblOnly" Label="@(IsViHblOnly ? "Chỉ HBL" : "HBL only")" Color="Color.Secondary" Size="Size.Small" Class="shipment-type-switch"
-                               title="@(IsViHblOnly ? "Ẩn Job và MBL, hiện một bảng HBL của các Job đang lọc" : "Hide Job and MBL, show one HBL table for the filtered jobs")" />
                     <MudSwitch @bind-Value="chkSI" Label="SI" Color="Color.Primary" Size="Size.Small" Class="shipment-type-switch" />
                     <MudSwitch @bind-Value="chkSE" Label="SE" Color="Color.Primary" Size="Size.Small" Class="shipment-type-switch" />
                     <MudSwitch @bind-Value="chkAI" Label="AI" Color="Color.Primary" Size="Size.Small" Class="shipment-type-switch" />
@@ -311,7 +309,6 @@
             </MudCard>
         }
 
-        <div style="@(_hblOnly ? "display:none" : null)">
         <MudDataGrid T="M_Job" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-shipment-bg shipment-grid"
                      FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height=@($"calc(100vh - {GetGridHeightOffset()})") QuickFilter="_quickFilter"
                      FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap" SortMode="SortMode.Single"
@@ -458,17 +455,6 @@
             }
         </ChildRowContent>
     </MudDataGrid>
-        </div>
-        @if (_hblOnly)
-        {
-            <div class="hbl-only-wrap">
-                @if (HblOnlySkipped > 0)
-                {
-                    <MudText Typo="Typo.caption" Color="Color.Secondary">@(IsViHblOnly ? $"{HblOnlySkipped} lô Truck / Customs không hiện ở chế độ Chỉ HBL" : $"{HblOnlySkipped} Truck / Customs jobs are not shown in HBL-only mode")</MudText>
-                }
-                <Index_6_0_HBL JobIds="HblOnlyJobIds" Customers="Customers" />
-            </div>
-        }
 
     </MudPaper>
 </div>
@@ -942,16 +928,12 @@
         if (HasViewDocFilter && !_viewDocAutoLoaded)
         {
             _viewDocAutoLoaded = true;
-            if (_initTask != null)
-                await _initTask;
             if (await Refresh())
                 await ApplyViewDocFilterToGrid();
         }
         else if (!string.IsNullOrWhiteSpace(NewJobBookingNo) && !_newJobFromBookingHandled)
         {
             _newJobFromBookingHandled = true;
-            if (_initTask != null)
-                await _initTask;
             await Refresh();
             await AddNewJobRow(NewJobBookingNo);
         }
@@ -1112,34 +1094,7 @@
     }
     // ====== end View Document feature ======
 
-    // OnAfterRenderAsync(firstRender) chạy ngay khi OnInitializedAsync tới lần await đầu tiên, lúc đó
-    // usr / userdetail chưa có → Refresh() kiểm tra quyền với user rỗng và báo "không có quyền".
-    // Giữ Task khởi tạo để phần tự tải (mở từ Xem tài liệu / 2.4.2) chờ khởi tạo xong.
-    private Task? _initTask;
-
-    // ---------- Chế độ "Chỉ HBL": ẩn bảng Job / MBL, hiện một bảng HBL của các Job đang lọc ----------
-    bool _hblOnly;
-    List<Guid> _hblOnlyIds = new();
-    static bool IsViHblOnly => System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("vi", StringComparison.OrdinalIgnoreCase);
-
-    IEnumerable<M_Job> HblOnlyJobs => Listdata.Where(_quickFilter);
-
-    /// <summary>Job sea / air đang lọc (Truck và Customs có cấu trúc riêng nên bỏ qua). Giữ cùng một list nếu không đổi để bảng HBL không tải lại.</summary>
-    List<Guid> HblOnlyJobIds
-    {
-        get
-        {
-            var ids = HblOnlyJobs.Where(x => x.Loai != "Truck" && x.Loai != "Customs").Select(x => x.JobID).ToList();
-            if (!ids.SequenceEqual(_hblOnlyIds)) _hblOnlyIds = ids;
-            return _hblOnlyIds;
-        }
-    }
-
-    int HblOnlySkipped => HblOnlyJobs.Count(x => x.Loai == "Truck" || x.Loai == "Customs");
-
-    protected override Task OnInitializedAsync() => _initTask = InitializePageAsync();
-
-    private async Task InitializePageAsync()
+    protected async override Task OnInitializedAsync()
     {
         try
         {
@@ -1905,10 +1860,8 @@
     }
     string CusidtoCusCode(Guid cusid)
     {
-        if (cusid == null || cusid == Guid.Empty)
-            return string.Empty;
-        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
-        return rs == null ? string.Empty : $"{rs.Customer_Code} - {rs.COMPANY!}";
+        var rs = Customers?.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs.CodeName();
     }
     private async Task<IEnumerable<string?>> SearchPort(string text)
     {

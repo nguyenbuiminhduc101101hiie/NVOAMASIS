@@ -1,7 +1,6 @@
 @using MudBlazor
 @inject IStringLocalizer<SharedResource> Localizer
 @inject IDialogService DialogService
-@inject BookingService bksv
 
 <style>
     .mbl-container {
@@ -234,21 +233,8 @@
 
                         <MudGrid Spacing="2">
                             <MudItem xs="12" md="3">
-                                <MudTextField T="string"
-                                              Value="Item.Bkno"
-                                              ValueChanged="OnBookingNoChanged"
+                                <MudTextField @bind-Value="Item.Bkno"
                                               Label="@Localizer["BookingNo"]"
-                                              HelperText="Nhập số Booking rồi rời ô để lấy Carrier"
-                                              Adornment="Adornment.End"
-                                              AdornmentIcon="@Icons.Material.Filled.Sync"
-                                              OnAdornmentClick="@(() => LoadCarrierFromBookingAsync(true))"
-                                              Margin="Margin.Dense" />
-                            </MudItem>
-
-                            <MudItem xs="12" md="3">
-                                <MudTextField @bind-Value="Item.Carrier"
-                                              Label="Carrier"
-                                              HelperText="@_carrierHint"
                                               Margin="Margin.Dense" />
                             </MudItem>
 
@@ -490,59 +476,10 @@
         MudDialog.Close(Item);
     }
 
-    /// <summary>Hiển thị khách hàng dạng "Mã - Tên".</summary>
     string CusidtoCusCode(Guid cusid)
     {
-        if (cusid == Guid.Empty)
-            return string.Empty;
         var rs = Customers?.FirstOrDefault(x => x.Customer_ID == cusid);
-        if (rs == null)
-            return string.Empty;
-        var code = rs.Customer_Code?.Trim();
-        if (string.IsNullOrWhiteSpace(code))
-            code = rs.shortname?.Trim();
-        var name = rs.COMPANY?.Trim();
-        if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(name))
-            return $"{code} - {name}";
-        return name ?? code ?? string.Empty;
-    }
-
-    string? _carrierHint;
-
-    /// <summary>Đổi số Booking: lấy Carrier từ Booking đó.</summary>
-    private async Task OnBookingNoChanged(string? value)
-    {
-        var changed = !string.Equals(Item.Bkno?.Trim(), value?.Trim(), StringComparison.OrdinalIgnoreCase);
-        Item.Bkno = value;
-        if (changed)
-            await LoadCarrierFromBookingAsync(overwrite: true);
-    }
-
-    /// <summary>Tra Booking theo số Booking của MBL và điền Carrier.</summary>
-    private async Task LoadCarrierFromBookingAsync(bool overwrite)
-    {
-        var bookingNo = Item.Bkno?.Trim();
-        if (string.IsNullOrWhiteSpace(bookingNo))
-        {
-            _carrierHint = null;
-            return;
-        }
-        var bk = await bksv.GetDetailBookingFromBookingNo(bookingNo);
-        if (bk == null)
-        {
-            _carrierHint = $"Không tìm thấy Booking {bookingNo}";
-        }
-        else if (string.IsNullOrWhiteSpace(bk.Carrier))
-        {
-            _carrierHint = $"Booking {bookingNo} chưa có Carrier";
-        }
-        else
-        {
-            if (overwrite || string.IsNullOrWhiteSpace(Item.Carrier))
-                Item.Carrier = bk.Carrier.Trim();
-            _carrierHint = $"Lấy từ Booking {bookingNo}";
-        }
-        StateHasChanged();
+        return rs.CodeName();
     }
 
     private async Task<IEnumerable<Guid>> SearchCustomer(string text)
@@ -554,8 +491,7 @@
         if (!string.IsNullOrWhiteSpace(text))
         {
             query = Customers.Where(x =>
-                ((x.Customer_Code ?? string.Empty) + " - " + (x.COMPANY ?? string.Empty) + "_" + (x.shortname ?? string.Empty))
-                    .Contains(text, StringComparison.OrdinalIgnoreCase));
+                x.SearchKey().Contains(text, StringComparison.OrdinalIgnoreCase));
         }
 
         var ids = query.Select(x => x.Customer_ID).Distinct().ToList();

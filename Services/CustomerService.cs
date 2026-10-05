@@ -89,6 +89,24 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
             return new List<M_Customer>();
         }
     }
+    /// <summary>Toàn bộ khách hàng, không điều kiện (dùng cho 2.1 / 5.0 / 6.0 / 6.1 / 5.1.1 / 5.1.2). Dòng rỗng đầu danh sách giống GetList().</summary>
+    public async Task<List<M_Customer>> GetListAll()
+    {
+        try
+        {
+            _context.ChangeTracker.Clear();
+            var rs = await _context.Customer
+                .OrderBy(x => x.Customer_Code)
+                .AsNoTracking()
+                .ToListAsync();
+            rs.Insert(0, new M_Customer { COMPANY = "" });
+            return rs;
+        }
+        catch (Exception)
+        {
+            return new List<M_Customer>();
+        }
+    }
     public async Task<List<M_Customer>> GetList_booking()
     {
         try
@@ -140,21 +158,23 @@ public class CustomerService(AppDbContext _context, HistoryLogService HistoryLog
         }
     }
 
-    /// <summary>
-    /// 2.2.3 Vendor: hiện tất cả đối tượng trừ khách hàng (MainCode chứa "Customer")
-    /// và trừ Sale NOMI; không phụ thuộc phòng ban.
-    /// </summary>
     public async Task<List<M_Customer>> GetListBySale_vendor(AuthUser user)
     {
         try
         {
             _context.ChangeTracker.Clear();
-            return await _context.Customer.AsNoTracking()
-                .Where(x => (x.MainCode == null || !EF.Functions.Like(x.MainCode, "%Customer%"))
-                         && (x.SaleName == null || x.SaleName != "NOMI"))
-                .OrderBy(x => x.SaleName)
-                .ThenByDescending(x => x.Customer_Code)
-                .ToListAsync();
+            var rs = await _context.Customer.OrderByDescending(x => x.Customer_Code).AsNoTracking().ToListAsync();
+            if (user.Department!.Contains("ADMIN"))
+                //rs = rs.Where(x => !string.IsNullOrEmpty(x.SaleName) && (x.SaleName == "NOMI" || x.SaleName.ToUpper() == user.Usr.ToUpper())).OrderBy(x => x.SaleName).ToList();
+
+                rs = rs.Where(x => !string.IsNullOrEmpty(x.MainCode) && !x.MainCode.Contains("Customer")).OrderBy(x => x.SaleName).ToList();
+
+            else if (user.Department!.Contains("SALE"))
+                //rs = rs.Where(x => x.SaleName != "NOMI").OrderBy(x => x.SaleName).ToList();
+                rs = rs.Where(x => !string.IsNullOrEmpty(x.SaleName) && !string.IsNullOrEmpty(x.MainCode) && !x.MainCode.Contains("Customer")).OrderBy(x => x.SaleName).ToList();
+            else
+                rs = rs.Where(x => !string.IsNullOrEmpty(x.SaleName) && !string.IsNullOrEmpty(x.MainCode) && !x.MainCode.Contains("Customer")).OrderBy(x => x.SaleName).ToList();
+            return rs;
         }
         catch (Exception ex)
         {

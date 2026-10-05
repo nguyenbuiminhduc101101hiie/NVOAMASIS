@@ -10,9 +10,7 @@
 @using System.Globalization﻿
 @inject HistoryLogService HistoryLogService
 @using System.Text.Json;
-@using Microsoft.EntityFrameworkCore
 @inject IJSRuntime JSRuntime
-@inject Microsoft.EntityFrameworkCore.IDbContextFactory<NVOAMASIS.Data.AppDbContext> HblDbFactory
 <MudTabs SliderColor="Color.Primary">
     <MudTabPanel Text="@($"HBL [{(hbldetail != null ? hbldetail.hbl : null)}]")" Class="custom-tab">
         <MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-hbl-bg"
@@ -100,10 +98,6 @@
                         <MudDatePicker Label="Selected Date Get HBL" DateChanged="((t)=>UpdateHBLNo(context.Item,(DateTime)t!))" ImmediateText DateFormat="MM/yyyy" />
                     </EditTemplate>
                 </PropertyColumn>
-                @if (IsMulti)
-                {
-                    <PropertyColumn Property="x => JobMblLabel(x)" Title="Job / MBL" Filterable="true" />
-                }
 
                 <PropertyColumn Property="x => x.release" Title="@Localizer["Release"]" Required="false" Filterable="false">
                     <EditTemplate>
@@ -308,72 +302,6 @@
 
 @code {
     [Parameter] public M_MBL? MBLDetail { get; set; } = default!;
-    // ---------- Chế độ "Chỉ HBL": một bảng HBL cho nhiều Job (không cần chọn MBL) ----------
-    /// <summary>Danh sách Job cần hiện HBL. Khác null = chế độ nhiều Job (MBLDetail bỏ trống).</summary>
-    [Parameter] public List<Guid>? JobIds { get; set; }
-    bool IsMulti => JobIds != null;
-    static bool IsVietnameseUi => System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("vi", StringComparison.OrdinalIgnoreCase);
-    M_MBL? _selMbl;
-    /// <summary>MBL đang dùng: MBLDetail (chế độ thường) hoặc MBL của HBL đang chọn (chế độ nhiều Job).</summary>
-    M_MBL? CurMbl => MBLDetail ?? _selMbl;
-    Dictionary<Guid, M_MBL> _mblById = new();
-    Dictionary<Guid, M_Job> _jobById = new();
-    string? _loadedJobKey;
-
-    string JobKey(IEnumerable<Guid>? ids) => ids == null ? "" : string.Join(",", ids);
-
-    protected override async Task OnParametersSetAsync()
-    {
-        if (IsMulti && _loadedJobKey != null && _loadedJobKey != JobKey(JobIds))
-            await Refresh();
-    }
-
-    async Task<List<M_HBL>> LoadMultiAsync()
-    {
-        var jobIds = (JobIds ?? new List<Guid>()).Distinct().ToList();
-        _loadedJobKey = JobKey(JobIds);
-        _mblById = new(); _jobById = new();
-        if (jobIds.Count == 0) return new List<M_HBL>();
-        await using var ctx = await HblDbFactory.CreateDbContextAsync();
-        var jobs = new List<M_Job>(); var mbls = new List<M_MBL>(); var hbls = new List<M_HBL>();
-        foreach (var chunk in jobIds.Chunk(1000))
-        {
-            var ids = chunk.ToList();
-            jobs.AddRange(await ctx.Job.AsNoTracking().Where(x => ids.Contains(x.JobID)).ToListAsync());
-            mbls.AddRange(await ctx.MBL.AsNoTracking().Where(x => x.Jobid != null && ids.Contains(x.Jobid.Value)).ToListAsync());
-        }
-        foreach (var chunk in mbls.Select(x => x.MblID).Distinct().Chunk(1000))
-        {
-            var ids = chunk.ToList();
-            hbls.AddRange(await ctx.HBL.AsNoTracking().Where(x => ids.Contains(x.mblid)).ToListAsync());
-        }
-        _jobById = jobs.GroupBy(x => x.JobID).ToDictionary(g => g.Key, g => g.First());
-        _mblById = mbls.GroupBy(x => x.MblID).ToDictionary(g => g.Key, g => g.First());
-        var order = jobIds.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
-        return hbls
-            .OrderBy(h => _mblById.TryGetValue(h.mblid, out var m) && m.Jobid.HasValue && order.TryGetValue(m.Jobid.Value, out var i) ? i : int.MaxValue)
-            .ThenBy(h => h.hbl)
-            .ToList();
-    }
-
-    /// <summary>Chọn HBL ở chế độ nhiều Job: lấy MBL / loại lô của HBL đó cho các nút và tab bên dưới.</summary>
-    async Task SelectMblForAsync(M_HBL? hbl)
-    {
-        if (!IsMulti || hbl == null) return;
-        _selMbl = _mblById.TryGetValue(hbl.mblid, out var m) ? m : null;
-        if (_selMbl != null)
-        {
-            type = await shipsv.GetTypeByMBLID(_selMbl.MblID);
-        }
-    }
-
-    string JobMblLabel(M_HBL h)
-    {
-        if (!_mblById.TryGetValue(h.mblid, out var m)) return string.Empty;
-        var job = m.Jobid.HasValue && _jobById.TryGetValue(m.Jobid.Value, out var j) ? j.JobNo : "";
-        return $"{job} / {m.Mbl}";
-    }
-
     [CascadingParameter] MudDialogInstance? MudDialog { get; set; }
     [Parameter] public List<M_Customer>? Customers { get; set; } = default!;
     M_HBL detail;
@@ -422,7 +350,7 @@
             CFS = await supsv.GetlistCFS();
             Warehouse = await supsv.GetlistWhouse();
             SaleNames = await supsv.GetListSale();
-            if (CurMbl != null) type = await shipsv.GetTypeByMBLID(CurMbl.MblID); // Sea Air Truck HQ
+            type = await shipsv.GetTypeByMBLID(MBLDetail.MblID); // Sea Air Truck HQ
             await Refresh();
 
         }
@@ -454,14 +382,11 @@
             StateHasChanged();
             await Task.Delay(500);
 
-            Listdata = IsMulti ? await LoadMultiAsync() : await shipsv.GetListHBL(CurMbl!.MblID);
+            Listdata = await shipsv.GetListHBL(MBLDetail!.MblID);
             ListDebit = await shipsv.GetListDebitALL();
             ListCredit = await shipsv.GetListCreditALL();
             if (Listdata.Count > 0)
-            {
                 hbldetail = Listdata[0];
-                await SelectMblForAsync(hbldetail);
-            }
         }
         finally
         {
@@ -474,11 +399,6 @@
     MudDataGrid<M_HBL> mudTable;
     async Task AddItem()
     {
-        if (IsMulti)
-        {
-            CallSnackBar(IsVietnameseUi ? "Đang ở chế độ Chỉ HBL: tắt Chỉ HBL rồi mở đúng MBL để thêm HBL mới." : "HBL-only mode: switch it off and open the MBL to add a new HBL.", MudBlazor.Severity.Warning);
-            return;
-        }
         if (!await ssv.CheckPermission(usr, "Add", "HBL"))
         {
             CallSnackBar("You have not access to Add", MudBlazor.Severity.Warning);
@@ -489,43 +409,43 @@
 
             var item = new M_HBL
                 {
-                    bkno = CurMbl!.Bkno,
-                    statusMBL = CurMbl!.statusMBL,
-                    shipper = CurMbl.Shipper,
-                    consignee = CurMbl.Consignee,
-                    notify1 = CurMbl.Notify1,
-                    notify2 = CurMbl.Notify2,
-                    vessel = CurMbl.Vessel,
-                    voy = CurMbl.Voy,
-                    porname = CurMbl.Porname,
-                    porcode = CurMbl.Porcode,
-                    polname = CurMbl.Polname,
-                    polcode = CurMbl.Polcode,
-                    podname = CurMbl.Podname,
-                    podcode = CurMbl.Podcode,
-                    delcode = CurMbl.Delcode,
-                    delName = CurMbl.Delname,
-                    markAndNumbers = CurMbl.markAndNumbers,
-                    NoOfPackages = CurMbl.NoOfPackages,
-                    gross = CurMbl.Gross,
-                    cbm = CurMbl.CBM,
-                    freightPayableAt = CurMbl.FreightPayableAt,
-                    numberOfOriginal = CurMbl.NumberOfOriginal,
-                    placeAndDate = CurMbl.PlaceAndDate,
-                    freightAmount = CurMbl.FreightAmount,
-                    dateLaden = CurMbl.DateLaden,
-                    forDelivery = CurMbl.ForDelivery,
-                    description = CurMbl.Description,
-                    say = CurMbl.Say,
-                    loadStowCount = CurMbl.LoadStowCount,
-                    shipOnboard = CurMbl.ShipOnboard,
-                    CustomerID = CurMbl.CustomerID,
-                    AgentID = CurMbl.AgentID,
-                    Continued = CurMbl.Continued,
-                    editable = CurMbl.Editable,
-                    ETA = CurMbl.ETA,
-                    ETD = CurMbl.ETD,
-                    ActualDelDate = CurMbl.ActualDelDate,
+                    bkno = MBLDetail!.Bkno,
+                    statusMBL = MBLDetail!.statusMBL,
+                    shipper = MBLDetail.Shipper,
+                    consignee = MBLDetail.Consignee,
+                    notify1 = MBLDetail.Notify1,
+                    notify2 = MBLDetail.Notify2,
+                    vessel = MBLDetail.Vessel,
+                    voy = MBLDetail.Voy,
+                    porname = MBLDetail.Porname,
+                    porcode = MBLDetail.Porcode,
+                    polname = MBLDetail.Polname,
+                    polcode = MBLDetail.Polcode,
+                    podname = MBLDetail.Podname,
+                    podcode = MBLDetail.Podcode,
+                    delcode = MBLDetail.Delcode,
+                    delName = MBLDetail.Delname,
+                    markAndNumbers = MBLDetail.markAndNumbers,
+                    NoOfPackages = MBLDetail.NoOfPackages,
+                    gross = MBLDetail.Gross,
+                    cbm = MBLDetail.CBM,
+                    freightPayableAt = MBLDetail.FreightPayableAt,
+                    numberOfOriginal = MBLDetail.NumberOfOriginal,
+                    placeAndDate = MBLDetail.PlaceAndDate,
+                    freightAmount = MBLDetail.FreightAmount,
+                    dateLaden = MBLDetail.DateLaden,
+                    forDelivery = MBLDetail.ForDelivery,
+                    description = MBLDetail.Description,
+                    say = MBLDetail.Say,
+                    loadStowCount = MBLDetail.LoadStowCount,
+                    shipOnboard = MBLDetail.ShipOnboard,
+                    CustomerID = MBLDetail.CustomerID,
+                    AgentID = MBLDetail.AgentID,
+                    Continued = MBLDetail.Continued,
+                    editable = MBLDetail.Editable,
+                    ETA = MBLDetail.ETA,
+                    ETD = MBLDetail.ETD,
+                    ActualDelDate = MBLDetail.ActualDelDate,
                     userupdate = usr,
                     dateupdate = DateTime.Now.ToString()
                 };
@@ -535,72 +455,72 @@
         {
             var item = new M_HBL
                 {
-                    bkno = CurMbl!.Bkno,
-                    statusMBL = CurMbl!.statusMBL,
-                    shipper = CurMbl.Shipper,
-                    consignee = CurMbl.Consignee,
-                    Air_ShipperAccountNumber = CurMbl.Air_ShipperAccountNumber,
-                    Air_ConsigneeAccountNumber = CurMbl.Air_ConsigneeAccountNumber,
-                    Air_IssuingCarrier = CurMbl.Air_IssuingCarrier,
-                    Air_AccountingInfomation = CurMbl.Air_AccountingInfomation,
-                    Air_AgentIATACode = CurMbl.Air_AgentIATACode,
-                    Air_AccountNo = CurMbl.Air_AccountNo,
-                    Air_AirportofDeparture = CurMbl.Air_AirportofDeparture,
-                    Air_to = CurMbl.Air_to,
-                    Air_ByfirstCarrier = CurMbl.Air_ByfirstCarrier,
-                    Air_to2 = CurMbl.Air_to2,
-                    Air_by2 = CurMbl.Air_by2,
-                    Air_to3 = CurMbl.Air_to3,
-                    Air_by3 = CurMbl.Air_by3,
-                    Air_Currency = CurMbl.Air_Currency,
-                    Air_CHGSCode = CurMbl.Air_CHGSCode,
-                    Air_PPD = CurMbl.Air_PPD,
-                    Air_COLL = CurMbl.Air_COLL,
-                    Air_otherPPD = CurMbl.Air_otherPPD,
-                    Air_otherCOLL = CurMbl.Air_otherCOLL,
-                    Air_DeclaredValuedForCarriage = CurMbl.Air_DeclaredValuedForCarriage,
-                    Air_DeclaredValueForCustoms = CurMbl.Air_DeclaredValueForCustoms,
-                    Air_AirportOfDestination = CurMbl.Air_AirportOfDestination,
-                    Air_FlightDate1 = CurMbl.Air_FlightDate1,
-                    Air_FlightDate2 = CurMbl.Air_FlightDate2,
-                    Air_AmountOfInsurance = CurMbl.Air_AmountOfInsurance,
-                    Air_HandlingInfomation = CurMbl.Air_HandlingInfomation,
-                    Air_NoOfPiecesRCP = CurMbl.Air_NoOfPiecesRCP,
-                    Air_GrossWieght = CurMbl.Air_GrossWieght,
-                    Air_kglb = CurMbl.Air_kglb,
-                    Air_RateClass = CurMbl.Air_RateClass,
-                    Air_CommodityItemNo = CurMbl.Air_CommodityItemNo,
-                    Air_ChargeableWeight = CurMbl.Air_ChargeableWeight,
-                    Air_RateCharge = CurMbl.Air_RateCharge,
-                    Air_Total = CurMbl.Air_Total,
-                    Air_NatureAndquantityOfgoods = CurMbl.Air_NatureAndquantityOfgoods,
-                    Air_WeightCharge_Prepaid = CurMbl.Air_WeightCharge_Prepaid,
-                    Air_WeightCharge_Collect = CurMbl.Air_WeightCharge_Collect,
-                    Air_Valuation_Prepaid = CurMbl.Air_Valuation_Prepaid,
-                    Air_Valuation_Collect = CurMbl.Air_Valuation_Collect,
-                    Air_Tax_Prepaid = CurMbl.Air_Tax_Prepaid,
-                    Air_Tax_Collect = CurMbl.Air_Tax_Collect,
-                    Air_TotalOtherChargesDueAgent_Prepaid = CurMbl.Air_TotalOtherChargesDueAgent_Prepaid,
-                    Air_TotalOtherChargesDueAgent_Collect = CurMbl.Air_TotalOtherChargesDueAgent_Collect,
-                    Air_TotalOtherChargesDueCarrier_Prepaid = CurMbl.Air_TotalOtherChargesDueCarrier_Prepaid,
-                    Air_TotalOtherChargesDueCarrier_Collect = CurMbl.Air_TotalOtherChargesDueCarrier_Collect,
-                    Air_TotalPrepaid = CurMbl.Air_TotalPrepaid,
-                    Air_TotalCollect = CurMbl.Air_TotalCollect,
-                    Air_CurrencyConversionRates = CurMbl.Air_CurrencyConversionRates,
-                    Air_CCChargesInDestCurrenct = CurMbl.Air_CCChargesInDestCurrenct,
-                    Air_OtherCharges = CurMbl.Air_OtherCharges,
-                    Air_ChargesatDestination = CurMbl.Air_ChargesatDestination,
-                    Air_TotalCollectCharges = CurMbl.Air_TotalCollectCharges,
-                    Air_PAM = CurMbl.Air_PAM,
-                    Air_HisAgent = CurMbl.Air_HisAgent,
-                    CustomerID = CurMbl.CustomerID,
-                    AgentID = CurMbl.AgentID,
-                    Continued = CurMbl.Continued,
-                    editable = CurMbl.Editable,
+                    bkno = MBLDetail!.Bkno,
+                    statusMBL = MBLDetail!.statusMBL,
+                    shipper = MBLDetail.Shipper,
+                    consignee = MBLDetail.Consignee,
+                    Air_ShipperAccountNumber = MBLDetail.Air_ShipperAccountNumber,
+                    Air_ConsigneeAccountNumber = MBLDetail.Air_ConsigneeAccountNumber,
+                    Air_IssuingCarrier = MBLDetail.Air_IssuingCarrier,
+                    Air_AccountingInfomation = MBLDetail.Air_AccountingInfomation,
+                    Air_AgentIATACode = MBLDetail.Air_AgentIATACode,
+                    Air_AccountNo = MBLDetail.Air_AccountNo,
+                    Air_AirportofDeparture = MBLDetail.Air_AirportofDeparture,
+                    Air_to = MBLDetail.Air_to,
+                    Air_ByfirstCarrier = MBLDetail.Air_ByfirstCarrier,
+                    Air_to2 = MBLDetail.Air_to2,
+                    Air_by2 = MBLDetail.Air_by2,
+                    Air_to3 = MBLDetail.Air_to3,
+                    Air_by3 = MBLDetail.Air_by3,
+                    Air_Currency = MBLDetail.Air_Currency,
+                    Air_CHGSCode = MBLDetail.Air_CHGSCode,
+                    Air_PPD = MBLDetail.Air_PPD,
+                    Air_COLL = MBLDetail.Air_COLL,
+                    Air_otherPPD = MBLDetail.Air_otherPPD,
+                    Air_otherCOLL = MBLDetail.Air_otherCOLL,
+                    Air_DeclaredValuedForCarriage = MBLDetail.Air_DeclaredValuedForCarriage,
+                    Air_DeclaredValueForCustoms = MBLDetail.Air_DeclaredValueForCustoms,
+                    Air_AirportOfDestination = MBLDetail.Air_AirportOfDestination,
+                    Air_FlightDate1 = MBLDetail.Air_FlightDate1,
+                    Air_FlightDate2 = MBLDetail.Air_FlightDate2,
+                    Air_AmountOfInsurance = MBLDetail.Air_AmountOfInsurance,
+                    Air_HandlingInfomation = MBLDetail.Air_HandlingInfomation,
+                    Air_NoOfPiecesRCP = MBLDetail.Air_NoOfPiecesRCP,
+                    Air_GrossWieght = MBLDetail.Air_GrossWieght,
+                    Air_kglb = MBLDetail.Air_kglb,
+                    Air_RateClass = MBLDetail.Air_RateClass,
+                    Air_CommodityItemNo = MBLDetail.Air_CommodityItemNo,
+                    Air_ChargeableWeight = MBLDetail.Air_ChargeableWeight,
+                    Air_RateCharge = MBLDetail.Air_RateCharge,
+                    Air_Total = MBLDetail.Air_Total,
+                    Air_NatureAndquantityOfgoods = MBLDetail.Air_NatureAndquantityOfgoods,
+                    Air_WeightCharge_Prepaid = MBLDetail.Air_WeightCharge_Prepaid,
+                    Air_WeightCharge_Collect = MBLDetail.Air_WeightCharge_Collect,
+                    Air_Valuation_Prepaid = MBLDetail.Air_Valuation_Prepaid,
+                    Air_Valuation_Collect = MBLDetail.Air_Valuation_Collect,
+                    Air_Tax_Prepaid = MBLDetail.Air_Tax_Prepaid,
+                    Air_Tax_Collect = MBLDetail.Air_Tax_Collect,
+                    Air_TotalOtherChargesDueAgent_Prepaid = MBLDetail.Air_TotalOtherChargesDueAgent_Prepaid,
+                    Air_TotalOtherChargesDueAgent_Collect = MBLDetail.Air_TotalOtherChargesDueAgent_Collect,
+                    Air_TotalOtherChargesDueCarrier_Prepaid = MBLDetail.Air_TotalOtherChargesDueCarrier_Prepaid,
+                    Air_TotalOtherChargesDueCarrier_Collect = MBLDetail.Air_TotalOtherChargesDueCarrier_Collect,
+                    Air_TotalPrepaid = MBLDetail.Air_TotalPrepaid,
+                    Air_TotalCollect = MBLDetail.Air_TotalCollect,
+                    Air_CurrencyConversionRates = MBLDetail.Air_CurrencyConversionRates,
+                    Air_CCChargesInDestCurrenct = MBLDetail.Air_CCChargesInDestCurrenct,
+                    Air_OtherCharges = MBLDetail.Air_OtherCharges,
+                    Air_ChargesatDestination = MBLDetail.Air_ChargesatDestination,
+                    Air_TotalCollectCharges = MBLDetail.Air_TotalCollectCharges,
+                    Air_PAM = MBLDetail.Air_PAM,
+                    Air_HisAgent = MBLDetail.Air_HisAgent,
+                    CustomerID = MBLDetail.CustomerID,
+                    AgentID = MBLDetail.AgentID,
+                    Continued = MBLDetail.Continued,
+                    editable = MBLDetail.Editable,
                     userupdate = usr,
-                    ETA = CurMbl.ETA,
-                    ETD = CurMbl.ETD,
-                    ActualDelDate = CurMbl.ActualDelDate,
+                    ETA = MBLDetail.ETA,
+                    ETD = MBLDetail.ETD,
+                    ActualDelDate = MBLDetail.ActualDelDate,
                     dateupdate = DateTime.Now.ToString()
                 };
             Listdata.Add(item);
@@ -648,8 +568,8 @@
     async Task UpdateHBLNo(M_HBL item, DateTime value)
     {
         var refno = await supsv.GetRefNoByFunc("HBL", value.Month, value.Year, usr);
-        var polcode = CurMbl!.Polcode != null ? CurMbl!.Polcode!.Substring(CurMbl.Polcode.Length - 3) : "";
-        var podcode = CurMbl!.Podcode != null ? CurMbl!.Podcode!.Substring(CurMbl.Podcode.Length - 3) : "";
+        var polcode = MBLDetail!.Polcode != null ? MBLDetail!.Polcode!.Substring(MBLDetail.Polcode.Length - 3) : "";
+        var podcode = MBLDetail!.Podcode != null ? MBLDetail!.Podcode!.Substring(MBLDetail.Podcode.Length - 3) : "";
         item.hbl = polcode + podcode + value.ToString("yyMM") + (refno.HasValue ? refno.Value.ToString("D5") : "RefNoError!");
     }
     async Task CommittedItem(M_HBL item)
@@ -674,7 +594,7 @@
                 item.debitCompleted = item.creditCompleted = false;
                 item.hblID = Guid.Empty;
             }
-            item.mblid = CurMbl!.MblID;
+            item.mblid = MBLDetail!.MblID;
             item.userupdate = usr;
             if(!item.datereport.HasValue) item.datereport= type.Contains("I") ? item.ETA : item.ETD;
             item.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", new CultureInfo("en-US"));
@@ -721,15 +641,11 @@
             return string.Empty;
         }
     }
-    async Task RowClicked(DataGridRowClickEventArgs<M_HBL> args)
+    void RowClicked(DataGridRowClickEventArgs<M_HBL> args)
     {
         if(args.Item.approve.HasValue && args.Item.approve.Value)
             CallSnackBar("This HBL is approved!", MudBlazor.Severity.Info);
-        else
-        {
-            hbldetail = args.Item;
-            await SelectMblForAsync(args.Item);
-        }
+        else hbldetail = args.Item;
     }
 
     void RowRightClicked(DataGridRowClickEventArgs<M_HBL> args)
@@ -964,17 +880,13 @@
     }
     string CusidtoCusCode(Guid cusid)
     {
-        if (cusid == null || cusid == Guid.Empty)
-            return string.Empty;
-        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
-        return rs == null ? string.Empty : rs.COMPANY!;
+        var rs = Customers?.FirstOrDefault(x => x.Customer_ID == cusid);
+        return rs.CodeName();
     }
     string AgentidtoName(Guid id)
     {
-        if (id == null || id == Guid.Empty)
-            return string.Empty;
-        var rs = Customers.FirstOrDefault(x => x.Customer_ID == id);
-        return rs == null ? string.Empty : rs.COMPANY!;
+        var rs = Customers?.FirstOrDefault(x => x.Customer_ID == id);
+        return rs.CodeName();
     }
     string formatDate(DateTime? date)
     {
@@ -992,7 +904,7 @@
                 return Customers.Select(x => x.Customer_ID);
             }
             // MBL.Porname = mst_Consignee;
-            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+            return Customers.Where(x => x.SearchKey().Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
         }
         catch (Exception)
         {
@@ -1005,10 +917,10 @@
         {
             if (string.IsNullOrWhiteSpace(text))
             {
-                return Customers.Where(x => !string.IsNullOrWhiteSpace(x.MainCode) && x.MainCode.Contains("Agent")).Select(x => x.Customer_ID);
+                return Customers.Select(x => x.Customer_ID);
             }
             // MBL.Porname = mst_Consignee;
-            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+            return Customers.Where(x => x.SearchKey().Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
         }
         catch (Exception)
         {
