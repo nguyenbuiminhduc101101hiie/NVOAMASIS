@@ -128,47 +128,174 @@ window.copyToClipboard = function (text) {
 
 // Shipment grid/tab colors: apply globally via CSS variables.
 // Stored in localStorage so the color persists after refresh.
-window.JNLShipmentColorStorageKey = "JNLShipmentGridColors";
+// Lưu ý: commit b5e630f đổi tên hàm sang JNL* nhưng C# (MainLayout, ShipmentGridColorSelector) và app.css
+// vẫn dùng tên nvocc* / --nvocc-* → trình duyệt báo "Could not find 'nvoccLoadShipmentColorSettings'".
+// Giữ MỘT bản cài đặt và xuất ra cả hai bộ tên; đặt cả hai bộ biến CSS.
+(function () {
+    // Khóa đang dùng từ sau b5e630f; khóa cũ chỉ đọc khi chưa có khóa mới.
+    const STORAGE_KEY = "JNLShipmentGridColors";
+    const LEGACY_KEYS = ["nvoccShipmentGridColors"];
 
-window.JNLApplyShipmentColorSettings = (headerBg, selectedBg, tabToolbarBg) => {
-    const resolvedHeaderBg = headerBg || "#0077b6";
-    const resolvedSelectedBg = selectedBg || "#1E88E5";
-    const resolvedTabToolbarBg = tabToolbarBg || "#ffffff";
+    const apply = (headerBg, selectedBg, tabToolbarBg) => {
+        const resolvedHeaderBg = headerBg || "#0077b6";
+        const resolvedSelectedBg = selectedBg || "#1E88E5";
+        const resolvedTabToolbarBg = tabToolbarBg || "#ffffff";
 
-    document.documentElement.style.setProperty("--JNL-table-header-bg", resolvedHeaderBg);
-    document.documentElement.style.setProperty("--JNL-selected-row-bg", resolvedSelectedBg);
-    document.documentElement.style.setProperty("--JNL-tab-toolbar-bg", resolvedTabToolbarBg);
+        const root = document.documentElement.style;
+        for (const prefix of ["--nvocc", "--JNL"]) {
+            root.setProperty(prefix + "-table-header-bg", resolvedHeaderBg);
+            root.setProperty(prefix + "-selected-row-bg", resolvedSelectedBg);
+            root.setProperty(prefix + "-tab-toolbar-bg", resolvedTabToolbarBg);
+        }
 
-    try {
-        const data = {
-            headerBg: resolvedHeaderBg,
-            selectedBg: resolvedSelectedBg,
-            tabToolbarBg: resolvedTabToolbarBg
-        };
-        localStorage.setItem(window.JNLShipmentColorStorageKey, JSON.stringify(data));
-    } catch (e) {
-        // ignore localStorage errors
-    }
-};
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                headerBg: resolvedHeaderBg,
+                selectedBg: resolvedSelectedBg,
+                tabToolbarBg: resolvedTabToolbarBg
+            }));
+        } catch (e) {
+            // ignore localStorage errors
+        }
+    };
 
-window.JNLGetShipmentColorSettings = () => {
-    try {
-        const raw = localStorage.getItem(window.JNLShipmentColorStorageKey);
-        if (!raw) return null;
-        return JSON.parse(raw);
-    } catch (e) {
+    const get = () => {
+        try {
+            for (const key of [STORAGE_KEY, ...LEGACY_KEYS]) {
+                const raw = localStorage.getItem(key);
+                if (raw) return JSON.parse(raw);
+            }
+        } catch (e) {
+            // ignore
+        }
         return null;
-    }
-};
+    };
 
-window.JNLLoadShipmentColorSettings = () => {
-    const settings = window.JNLGetShipmentColorSettings();
-    if (settings && typeof settings === "object") {
-        window.JNLApplyShipmentColorSettings(
-            settings.headerBg,
-            settings.selectedBg,
-            settings.tabToolbarBg
-        );
+    const load = () => {
+        const settings = get();
+        if (settings && typeof settings === "object") {
+            apply(settings.headerBg, settings.selectedBg, settings.tabToolbarBg);
+        }
+    };
+
+    window.nvoccShipmentColorStorageKey = STORAGE_KEY;
+    window.JNLShipmentColorStorageKey = STORAGE_KEY;
+    window.nvoccApplyShipmentColorSettings = apply;
+    window.JNLApplyShipmentColorSettings = apply;
+    window.nvoccGetShipmentColorSettings = get;
+    window.JNLGetShipmentColorSettings = get;
+    window.nvoccLoadShipmentColorSettings = load;
+    window.JNLLoadShipmentColorSettings = load;
+})();
+
+// Kéo giãn menu bên trái (MainLayout).
+// Toàn bộ thao tác kéo chạy ở trình duyệt: mỗi khung hình chỉ đổi CSS variable độ rộng của MudDrawer / MudLayout,
+// không gửi từng chuyển động chuột về server (trước đây mỗi lần nhích chuột = 1 vòng SignalR + vẽ lại cả layout → giật).
+// Thả chuột mới lưu localStorage và báo .NET đúng 1 lần (OnDrawerResized).
+window.nvoccDrawerResize = {
+    attach(handle, dotnetRef, options) {
+        if (!handle || handle.__nvoccDrawerResize) return;
+        const opt = Object.assign({ min: 180, max: 480, defaultWidth: 240, storageKey: "nvocc.drawerWidth" }, options || {});
+        const doc = document.documentElement;
+        const findDrawer = () => document.querySelector(".mud-drawer.mud-drawer-pos-left") || document.querySelector(".mud-drawer");
+        const findLayout = () => handle.closest(".mud-layout") || document.querySelector(".mud-layout");
+        const clamp = (w) => Math.round(Math.min(opt.max, Math.max(opt.min, w)));
+
+        let pointerId = null, startX = 0, startW = 0, current = 0, frame = 0;
+
+        // Độ rộng đích (biến CSS), không đọc kích thước thật vì có thể đang chạy hiệu ứng co giãn của MudBlazor
+        const currentWidth = () => {
+            const layout = findLayout();
+            const v = layout ? parseFloat(getComputedStyle(layout).getPropertyValue("--mud-drawer-width-left")) : NaN;
+            if (!isNaN(v) && v > 0) return v;
+            const drawer = findDrawer();
+            return drawer ? drawer.getBoundingClientRect().width : opt.defaultWidth;
+        };
+
+        const apply = (w) => {
+            const drawer = findDrawer();
+            const layout = findLayout();
+            if (drawer) drawer.style.setProperty("--mud-drawer-width", w + "px");
+            if (layout) layout.style.setProperty("--mud-drawer-width-left", w + "px");
+        };
+
+        const commit = (w) => {
+            try { localStorage.setItem(opt.storageKey, String(w)); } catch (e) { /* ignore */ }
+            if (dotnetRef) dotnetRef.invokeMethodAsync("OnDrawerResized", w).catch(() => { });
+            // để các lưới / biểu đồ tự tính lại kích thước theo độ rộng mới
+            window.dispatchEvent(new Event("resize"));
+        };
+
+        const onDown = (e) => {
+            if (e.button !== 0) return;
+            if (!findDrawer()) return;
+            pointerId = e.pointerId;
+            startX = e.clientX;
+            startW = clamp(currentWidth());
+            current = startW;
+            try { handle.setPointerCapture(pointerId); } catch (err) { /* ignore */ }
+            doc.classList.add("nvocc-drawer-resizing");
+            e.preventDefault();
+        };
+
+        const onMove = (e) => {
+            if (pointerId === null || e.pointerId !== pointerId) return;
+            current = clamp(startW + (e.clientX - startX));
+            if (!frame) frame = requestAnimationFrame(() => { frame = 0; apply(current); });
+            e.preventDefault();
+        };
+
+        const onUp = () => {
+            if (pointerId === null) return;
+            try { handle.releasePointerCapture(pointerId); } catch (err) { /* ignore */ }
+            pointerId = null;
+            if (frame) { cancelAnimationFrame(frame); frame = 0; }
+            apply(current);
+            doc.classList.remove("nvocc-drawer-resizing");
+            if (current !== startW) commit(current); // bấm không kéo (vd trong nhấp đúp) thì không báo server
+        };
+
+        const onDblClick = () => {
+            current = clamp(opt.defaultWidth);
+            apply(current);
+            commit(current);
+        };
+
+        const onKey = (e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            if (!findDrawer()) return;
+            const step = e.shiftKey ? 48 : 16;
+            current = clamp(currentWidth() + (e.key === "ArrowRight" ? step : -step));
+            apply(current);
+            commit(current);
+            e.preventDefault();
+        };
+
+        handle.addEventListener("pointerdown", onDown);
+        handle.addEventListener("pointermove", onMove);
+        handle.addEventListener("pointerup", onUp);
+        handle.addEventListener("pointercancel", onUp);
+        handle.addEventListener("lostpointercapture", onUp);
+        handle.addEventListener("dblclick", onDblClick);
+        handle.addEventListener("keydown", onKey);
+
+        handle.__nvoccDrawerResize = {
+            detach() {
+                handle.removeEventListener("pointerdown", onDown);
+                handle.removeEventListener("pointermove", onMove);
+                handle.removeEventListener("pointerup", onUp);
+                handle.removeEventListener("pointercancel", onUp);
+                handle.removeEventListener("lostpointercapture", onUp);
+                handle.removeEventListener("dblclick", onDblClick);
+                handle.removeEventListener("keydown", onKey);
+                doc.classList.remove("nvocc-drawer-resizing");
+                delete handle.__nvoccDrawerResize;
+            }
+        };
+    },
+
+    detach(handle) {
+        if (handle && handle.__nvoccDrawerResize) handle.__nvoccDrawerResize.detach();
     }
 };
 

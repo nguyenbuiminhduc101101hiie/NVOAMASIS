@@ -252,6 +252,16 @@
                     }
                 </MudButton>
 
+                <MudButton Disabled="@(_processingApprove || !_canApproveDirect || detail == null || detail.Approve == true)"
+                           OnClick="ApproveDirectAsync"
+                           Size="Size.Small"
+                           Color="Color.Success"
+                           Variant="Variant.Filled"
+                           StartIcon="@Icons.Material.Filled.TaskAlt"
+                           title="@(_canApproveDirect ? "Duyệt ngay phiếu đang chọn (ghi người duyệt và ngày giờ)" : "Bạn không có quyền duyệt loại phiếu này")">
+                    Duyệt
+                </MudButton>
+
                 <MudButton Disabled="_processingApprove"
                            OnClick="SendApproveRequestAsync"
                            Size="Size.Small"
@@ -268,7 +278,7 @@
                         <MudText>Gửi Yêu cầu Duyệt</MudText>
                     }
                 </MudButton>
-                <MudButton Disabled="_processingUnapprove"
+                <MudButton Disabled="@(_processingUnapprove || detail == null || detail.Approve != true)"
                            OnClick="UnapproveAsync"
                            Size="Size.Small"
                            Color="Color.Error"
@@ -281,7 +291,7 @@
                     }
                     else
                     {
-                        <MudText>Bỏ Approve</MudText>
+                        <MudText>Bỏ duyệt</MudText>
                     }
                 </MudButton>
                 <MudButton Disabled="_processingVoucher"
@@ -360,7 +370,7 @@
                             <MudChip T="string" Size="Size.Small" Color="Color.Success">Approved</MudChip>
                             @if (!string.IsNullOrWhiteSpace(context.Item.ApproveBy))
                             {
-                                <MudText Typo="Typo.caption">@context.Item.ApproveBy</MudText>
+                                <MudText Typo="Typo.caption" title="Người duyệt · ngày giờ duyệt">@context.Item.ApproveBy@(context.Item.ApproveDate.HasValue ? $" · {context.Item.ApproveDate:dd/MM/yyyy HH:mm}" : "")</MudText>
                             }
                         }
                         else if (context.Item.Approve == false && !string.IsNullOrWhiteSpace(context.Item.ApproveBy))
@@ -1305,6 +1315,8 @@
                 detail.PhieuchiID,
                 current?.UsrId ?? Guid.Empty,
                 usr);
+            if (rs.Flag)
+                await HistoryLogService.LogAsync(usr, "Unapprove", "Phieuchi", detail.PhieuchiID, detail.Sophieuchi, new { UnapproveBy = usr, UnapproveDate = DateTime.Now, OldApproveBy = detail.ApproveBy, OldApproveDate = detail.ApproveDate });
             CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
             if (rs.Flag)
                 await Refresh();
@@ -1320,5 +1332,59 @@
     }
 
     private bool _processingApprove = false;
+    private bool _canApproveDirect;
+    private bool _canApproveChecked;
+
+    /// <summary>Duyệt trực tiếp phiếu đang chọn: ghi người duyệt + ngày giờ (quyền theo cờ duyệt phiếu của user).</summary>
+    private async Task ApproveDirectAsync()
+    {
+        if (detail == null || detail.PhieuchiID == Guid.Empty)
+        {
+            CallSnackBar("Chọn một phiếu chi để duyệt.", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (detail.Approve == true)
+        {
+            CallSnackBar($"Phiếu đã được duyệt bởi {detail.ApproveBy} lúc {detail.ApproveDate:dd/MM/yyyy HH:mm}.", MudBlazor.Severity.Info);
+            return;
+        }
+        var ok = await DialogService.ShowMessageBox("Duyệt phiếu chi", $"Duyệt phiếu chi {detail.Sophieuchi}?", yesText: "Duyệt", cancelText: "Huỷ");
+        if (ok != true) return;
+        try
+        {
+            _processingApprove = true;
+            var current = asv.GetUserDetail();
+            var id = detail.PhieuchiID;
+            var no = detail.Sophieuchi;
+            var rs = await phieuApproveSv.ApproveDirectAsync(PhieuApproveService.LoaiChi, id, current?.UsrId ?? Guid.Empty);
+            CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+            if (rs.Flag)
+            {
+                await HistoryLogService.LogAsync(usr, "Approve", "Phieuchi", id, no, new { ApproveBy = usr, ApproveDate = DateTime.Now });
+                await Refresh();
+            }
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _processingApprove = false;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_canApproveChecked) return;
+        _canApproveChecked = true;
+        try
+        {
+            var current = asv.GetUserDetail();
+            _canApproveDirect = await phieuApproveSv.CanApproveAsync(PhieuApproveService.LoaiChi, current?.UsrId ?? Guid.Empty);
+            if (_canApproveDirect) StateHasChanged();
+        }
+        catch { }
+    }
     private bool _processingUnapprove = false;
 }

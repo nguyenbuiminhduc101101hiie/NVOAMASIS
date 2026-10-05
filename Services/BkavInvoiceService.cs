@@ -1194,6 +1194,9 @@ public class BkavInvoiceService(
             return 7;
         if (rounded == 7)
             return 8;
+        // Thuế suất khác (VD 5.263%) — BKAV hiển thị "KHAC:x%" trên hóa đơn; dùng mã 6, TaxRate giữ nguyên giá trị thực
+        if (rounded > 0 && rounded <= 10)
+            return 6;
         throw new ArgumentOutOfRangeException(nameof(taxPercent), taxPercent, "BKAV does not support this tax rate.");
     }
 
@@ -1546,6 +1549,7 @@ public class BkavInvoiceService(
         var taxAmount = line.thanhtiensauthue.HasValue && line.thanhtien.HasValue
             ? line.thanhtiensauthue.Value - line.thanhtien.Value
             : Math.Round(amount * taxRate / 100, 0);
+        var taxRateId = MapTaxRateId(taxRate);
 
         return new BkavInvoiceDetailsWS
         {
@@ -1558,8 +1562,9 @@ public class BkavInvoiceService(
             Qty = quantity,
             Price = price,
             Amount = amount,
-            TaxRateID = MapTaxRateId(taxRate),
-            TaxRate = taxRate,
+            TaxRateID = taxRateId,
+            // mã 6 theo bảng BKAV luôn đi với TaxRate = -4; tiền thuế vẫn lấy theo thuế suất thực của dòng
+            TaxRate = taxRateId == 6 ? -4 : taxRate,
             TaxAmount = taxAmount,
             DiscountRate = 0,
             DiscountAmount = 0,

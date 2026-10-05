@@ -35,12 +35,27 @@ namespace NVOAMASIS.Services
 {
     public class ShipmentService(AppDbContext _context, IWebHostEnvironment _env, IJSRuntime JSRuntime, AccountService asv, SupportServices supsv, HistoryLogService HistoryLogService, IDbContextFactory<AppDbContext> _dbFactory, ITenantContext _tenantContext, BillSeaLayoutFormService billSeaLayoutFormService)
     {
+        // Số ID tối đa trong một câu IN (...) — tránh giới hạn 2100 tham số / câu lệnh quá dài của SQL Server
+        private const int InClauseChunkSize = 1000;
+
         public async Task<List<M_Job>> GetListJobByMBLs(List<M_MBL> listdata)
         {
-            _context.ChangeTracker.Clear();
-            var jobids = listdata.Select(x => x.Jobid).Distinct().ToList();
-            var ids = string.Join(",", jobids.Select(id => $"'{id}'"));
-            var rs = await _context.Job.FromSqlRaw($"SELECT * FROM Job where Jobid in ({ids})").ToListAsync();
+            // Bỏ Jobid null (trước đây sinh ra '' trong IN (...) => lỗi convert uniqueidentifier)
+            var jobids = (listdata ?? new List<M_MBL>())
+                .Where(x => x.Jobid.HasValue && x.Jobid.Value != Guid.Empty)
+                .Select(x => x.Jobid!.Value)
+                .Distinct()
+                .ToList();
+            if (jobids.Count == 0)
+                return new List<M_Job>();
+
+            await using var ctx = await _dbFactory.CreateDbContextAsync();
+            var rs = new List<M_Job>();
+            foreach (var chunk in jobids.Chunk(InClauseChunkSize))
+            {
+                var ids = chunk.ToList();
+                rs.AddRange(await ctx.Job.AsNoTracking().Where(j => ids.Contains(j.JobID)).ToListAsync());
+            }
             return rs;
         }
 
@@ -603,11 +618,9 @@ namespace NVOAMASIS.Services
         {
             try
             {
-                _context.ChangeTracker.Clear();
-
-                var mblids = Listdata
+                var mblids = (Listdata ?? new List<M_HBL>())
                     .Where(x => x.mblid != Guid.Empty)
-                    .Select(x => x.mblid.ToString())  // Convert Guid -> string
+                    .Select(x => x.mblid)
                     .Distinct()
                     .ToList();
 
@@ -616,9 +629,14 @@ namespace NVOAMASIS.Services
                     return new List<M_MBL>();
                 }
 
-                var rs = await _context.MBL
-                    .Where(m => m.MblID.ToString().Contains(mblids.ToString()))
-                    .ToListAsync();
+                // Lỗi cũ: so sánh với mblids.ToString() ("System.Collections.Generic.List`1[...]") => không bao giờ khớp MBL nào
+                await using var ctx = await _dbFactory.CreateDbContextAsync();
+                var rs = new List<M_MBL>();
+                foreach (var chunk in mblids.Chunk(InClauseChunkSize))
+                {
+                    var ids = chunk.ToList();
+                    rs.AddRange(await ctx.MBL.AsNoTracking().Where(m => ids.Contains(m.MblID)).ToListAsync());
+                }
 
                 return rs;
             }
@@ -1645,8 +1663,8 @@ namespace NVOAMASIS.Services
 
         public async Task<List<M_Debit>> GetListDebitHBLs(List<M_HBL> listdata)
         {
-            // Use a fresh context instance to avoid parallel operations on the scoped _context
-            // and rely on LINQ Contains instead of building raw SQL strings (avoids SQL injection & reader concurrency issues)
+            // Dùng context riêng (tránh chạy song song trên _context scoped).
+            // Chia lô ID để không vượt giới hạn 2100 tham số của SQL Server khi khoảng ngày dài.
             if (listdata == null || listdata.Count == 0)
                 return new List<M_Debit>();
 
@@ -1655,17 +1673,15 @@ namespace NVOAMASIS.Services
                 return new List<M_Debit>();
 
             await using var ctx = await _dbFactory.CreateDbContextAsync();
-            var parameters = new List<object>();
-            var inClauseParts = new List<string>();
-            for (int i = 0; i < hblIds.Count; i++)
+            var rs = new List<M_Debit>();
+            foreach (var chunk in hblIds.Chunk(InClauseChunkSize))
             {
-                var paramName = $"@p{i}";
-                inClauseParts.Add(paramName);
-                parameters.Add(new Microsoft.Data.SqlClient.SqlParameter(paramName, hblIds[i]));
+                var ids = chunk.ToList();
+                rs.AddRange(await ctx.Debit.AsNoTracking()
+                    .Where(x => x.continued == true && ids.Contains(x.hblid))
+                    .ToListAsync());
             }
-            var inClause = string.Join(",", inClauseParts);
-            var sql = $"SELECT * FROM Debit WHERE continued = 1 AND hblid IN ({inClause})";
-            return await ctx.Debit.FromSqlRaw(sql, parameters.ToArray()).AsNoTracking().ToListAsync();
+            return rs;
         }
         public async Task<List<M_Credit>> GetListCreditHBLs(List<M_HBL> listdata)
         {
@@ -1676,19 +1692,16 @@ namespace NVOAMASIS.Services
             if (hblIds.Count == 0)
                 return new List<M_Credit>();
 
-            // Build parameterized IN clause to avoid direct Contains usage per coding guideline
             await using var ctx = await _dbFactory.CreateDbContextAsync();
-            var parameters = new List<object>();
-            var inClauseParts = new List<string>();
-            for (int i = 0; i < hblIds.Count; i++)
+            var rs = new List<M_Credit>();
+            foreach (var chunk in hblIds.Chunk(InClauseChunkSize))
             {
-                var paramName = $"@p{i}";
-                inClauseParts.Add(paramName);
-                parameters.Add(new Microsoft.Data.SqlClient.SqlParameter(paramName, hblIds[i]));
+                var ids = chunk.ToList();
+                rs.AddRange(await ctx.Credit.AsNoTracking()
+                    .Where(x => x.continued == true && ids.Contains(x.hblid))
+                    .ToListAsync());
             }
-            var inClause = string.Join(",", inClauseParts);
-            var sql = $"SELECT * FROM Credit WHERE continued = 1 AND hblid IN ({inClause})";
-            return await ctx.Credit.FromSqlRaw(sql, parameters.ToArray()).AsNoTracking().ToListAsync();
+            return rs;
         }
         public async Task<List<M_HoaDonDauRa>> GetListHoaDonDauRaALL()
         {
@@ -6384,27 +6397,28 @@ namespace NVOAMASIS.Services
         }
         public async Task<List<M_HBL>> GetListHBLDateRange(DateRange dateRange)
         {
-            _context.ChangeTracker.Clear();
+            AuthUser user = asv.GetUserDetail();
 
-            AuthUser user = new AuthUser();
-            user = asv.GetUserDetail();
-            if (user.Department == "ADMIN")
+            // Lọc ngay dưới SQL thay vì tải cả bảng HBL vào bộ nhớ.
+            // Ngày kết thúc lấy trọn ngày (< End + 1 ngày) vì datereport có lưu giờ.
+            // Chưa chọn đủ khoảng ngày => không trả dữ liệu (giữ như cũ, tránh tải toàn bộ bảng)
+            if (dateRange?.Start == null || dateRange.End == null)
+                return new List<M_HBL>();
+
+            var from = dateRange.Start.Value.Date;
+            var toExclusive = dateRange.End.Value.Date.AddDays(1);
+
+            await using var ctx = await _dbFactory.CreateDbContextAsync();
+            IQueryable<M_HBL> query = ctx.HBL.AsNoTracking()
+                .Where(x => x.datereport >= from && x.datereport < toExclusive);
+
+            if (user?.Department != "ADMIN")
             {
-                var rs = await _context.HBL.ToListAsync();
-                rs = rs.Where(x => x.datereport >= dateRange.Start && x.datereport <= dateRange.End)
-                    .OrderByDescending(x => x.dateupdate).ToList();
-                return rs;
-            }
-            else
-            {
-                var rs = await _context.HBL.ToListAsync();
-                rs = rs.Where(x => x.datereport >= dateRange.Start && x.datereport <= dateRange.End && (x.SaleName == user.Name))
-                    .OrderByDescending(x => x.dateupdate).ToList();
-                return rs;
-
+                var saleName = user?.Name;
+                query = query.Where(x => x.SaleName == saleName);
             }
 
-
+            return await query.OrderByDescending(x => x.dateupdate).ToListAsync();
         }
         public async Task<List<M_Debit>> GetListDebitDateRange(DateRange dateRange)
         {

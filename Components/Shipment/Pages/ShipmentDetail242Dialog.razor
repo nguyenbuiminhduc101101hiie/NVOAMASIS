@@ -1,0 +1,694 @@
+@* 2.4.2 — Chi tiết lô hàng (HBL): Debit, Credit, Hóa đơn, Phiếu thu / chi và các thao tác khóa / duyệt ngay tại đây. *@
+@using System.Globalization
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@inject ShipmentService shipsv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject PhieuApproveService phieuApproveSv
+@inject NavigationManager NavManager
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+@inject Microsoft.EntityFrameworkCore.IDbContextFactory<NVOAMASIS.Data.AppDbContext> DbFactory
+
+<style>
+    .sd242 .sd-head { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; margin-bottom: 8px; }
+    .sd242 .sd-kv { font-size: .8rem; color: var(--mud-palette-text-secondary); }
+    .sd242 .sd-kv b { color: var(--mud-palette-text-primary); font-weight: 600; }
+    .sd242 table.sd-table { border-collapse: collapse; width: 100%; font-size: .8rem; }
+    .sd242 table.sd-table th, .sd242 table.sd-table td {
+        border-bottom: 1px solid var(--mud-palette-lines-default); padding: 3px 6px; white-space: nowrap; text-align: left;
+    }
+    .sd242 table.sd-table th { background: var(--mud-palette-background-grey); font-weight: 600; position: sticky; top: 0; z-index: 1; }
+    .sd242 table.sd-table td.num, .sd242 table.sd-table th.num { text-align: right; }
+    .sd242 table.sd-table tr.locked td { color: var(--mud-palette-text-secondary); }
+    .sd242 .sd-scroll { max-height: 52vh; overflow: auto; }
+    .sd242 .sd-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+    .sd242 .sd-clip { display: inline-block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+    .sd242 tr.paid td { background: #ecfdf5; }
+    .sd242 .sd-sum { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .78rem; margin: 2px 0 6px; }
+    .sd242 .sd-sum span b { font-weight: 600; }
+    .sd242 .sd-due { color: #b91c1c; }
+    .sd242 .sd-paidtxt { color: #047857; }
+    .sd242 .sd-status { min-width: 180px; }
+    .sd242 .sd-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+    .sd242 .sd-empty { color: var(--mud-palette-text-secondary); padding: 16px; text-align: center; }
+</style>
+
+<MudDialog Class="sd242">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.Visibility" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">HBL @_hbl?.hbl</MudText>
+            @if (IsShipmentLocked)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Error" Icon="@Icons.Material.Filled.Lock">@T("Rpt242_ShipmentLocked", "Lô hàng đã khóa", "Shipment locked")</MudChip>
+            }
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_hbl == null)
+        {
+            <div class="sd-empty">@Localizer["DataNotFound"]</div>
+        }
+        else
+        {
+            <div class="sd-head">
+                <span class="sd-kv">Ref <b>@JobNo</b></span>
+                <span class="sd-kv">MBL <b>@MblNo</b></span>
+                <span class="sd-kv">@Localizer["Customer"] <b>@CustomerLabel(_hbl.CustomerID)</b>
+                    @if (!string.IsNullOrWhiteSpace(CreditTermOf(_hbl.CustomerID)))
+                    {
+                        <span> · @T("Rpt242_CreditTerm", "Hạn công nợ", "Credit term") <b>@CreditTermOf(_hbl.CustomerID)</b></span>
+                    }
+                </span>
+                <span class="sd-kv">ETD <b>@Fmt(_hbl.ETD)</b> · ETA <b>@Fmt(_hbl.ETA)</b></span>
+                <MudSelect T="string" Value="_status" ValueChanged="OnStatusChanged" Dense="true" Margin="Margin.Dense"
+                           Variant="Variant.Outlined" Label="@Localizer["Status"]" Class="sd-status"
+                           Disabled="@(_busy || !_canEdit || _hbl.approve == true)"
+                           HelperText="@(_hbl.approve == true ? T("Rpt242_StatusLocked", "Lô đã duyệt: mở khóa để đổi trạng thái", "Approved: unlock to change status") : null)"
+                           Style="@StatusSelectStyle">
+                    @foreach (var st in StatusOptions)
+                    {
+                        <MudSelectItem Value="@st.Name"><span class="sd-dot" style="background:@(string.IsNullOrWhiteSpace(st.Color) ? "#94a3b8" : st.Color)"></span>@st.Name</MudSelectItem>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(_status) && !StatusOptions.Any(o => o.Name == _status))
+                    {
+                        <MudSelectItem Value="@_status">@_status</MudSelectItem>
+                    }
+                </MudSelect>
+                <MudSpacer />
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                         Color="@(_hbl.approve == true ? Color.Success : Color.Default)"
+                         Icon="@(_hbl.approve == true ? Icons.Material.Filled.CheckCircle : Icons.Material.Outlined.Circle)">HBL Approve</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                         Color="@(_hbl.debitCompleted == true ? Color.Success : Color.Default)"
+                         Icon="@(_hbl.debitCompleted == true ? Icons.Material.Filled.Lock : Icons.Material.Filled.LockOpen)">Debit</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                         Color="@(_hbl.creditCompleted == true ? Color.Success : Color.Default)"
+                         Icon="@(_hbl.creditCompleted == true ? Icons.Material.Filled.Lock : Icons.Material.Filled.LockOpen)">Credit</MudChip>
+                @if (IsShipmentLocked)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" Disabled="@(!_canApprove || _busy)"
+                               StartIcon="@Icons.Material.Filled.LockOpen" OnClick="@(() => SetShipmentLockAsync(false))">
+                        @T("Rpt242_UnlockShipment", "Mở khóa lô hàng", "Unlock shipment")
+                    </MudButton>
+                }
+                else
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Error" Disabled="@(!_canApprove || _busy)"
+                               StartIcon="@Icons.Material.Filled.Lock" OnClick="@(() => SetShipmentLockAsync(true))">
+                        @T("Rpt242_LockShipment", "Khóa lô hàng", "Lock shipment")
+                    </MudButton>
+                }
+            </div>
+
+            <MudTabs Elevation="0" Rounded="true" PanelClass="pt-2" @bind-ActivePanelIndex="_tab">
+                @* ---------------- Debit ---------------- *@
+                <MudTabPanel Text="@($"Debit ({_debits.Count})")">
+                    <div class="sd-toolbar">
+                        <span class="sd-kv">@T("Rpt242_LockedLines", "Đã khóa", "Locked") <b>@_debits.Count(x => x.khoa == true)/@_debits.Count</b></span>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                   Disabled="@(_busy || _debits.All(x => x.khoa == true))"
+                                   StartIcon="@Icons.Material.Filled.Lock" OnClick="LockAllDebitsAsync">
+                            @T("Rpt242_LockAllDebit", "Khóa tất cả Debit", "Lock all Debit lines")
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                   Color="@(_hbl.debitCompleted == true ? Color.Warning : Color.Primary)" Disabled="_busy"
+                                   StartIcon="@(_hbl.debitCompleted == true ? Icons.Material.Filled.LockOpen : Icons.Material.Filled.TaskAlt)"
+                                   OnClick="@(() => SetCompletedAsync(debit: !(_hbl.debitCompleted == true), credit: null))">
+                            @(_hbl.debitCompleted == true
+                                ? T("Rpt242_UndoDebitDone", "Bỏ hoàn thành Debit", "Undo Debit completed")
+                                : T("Rpt242_DebitDone", "Xác nhận hoàn thành Debit", "Confirm Debit completed"))
+                        </MudButton>
+                    </div>
+                    @Summary(_debits.Select(x => (x.tiente, x.thanhtiensauthue, x.dathanhtoan == true)))
+                    @if (_debits.Count == 0)
+                    {
+                        <div class="sd-empty">@Localizer["DataNotFound"]</div>
+                    }
+                    else
+                    {
+                        <div class="sd-scroll">
+                            <table class="sd-table">
+                                <thead>
+                                    <tr>
+                                        <th>@T("Rpt242_Lock", "Khóa", "Lock")</th>
+                                        <th>Debit No</th>
+                                        <th>@Localizer["Customer"]</th>
+                                        <th>@Localizer["Item"]</th>
+                                        <th class="num">Qty</th>
+                                        <th class="num">@Localizer["Unit Price"]</th>
+                                        <th>Cur</th>
+                                        <th class="num">@Localizer["Total Price Inc. VAT"]</th>
+                                        <th>@T("Rpt242_InvoiceNo", "Số HĐ", "Invoice No.")</th>
+                                        <th>@Localizer["Approve"]</th>
+                                        <th>@T("Rpt242_Paid", "Đã thu", "Paid")</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var d in _debits)
+                                    {
+                                        <tr class="@((d.khoa == true ? "locked " : "") + (d.dathanhtoan == true ? "paid" : ""))">
+                                            <td>
+                                                <MudIconButton Size="Size.Small"
+                                                               Icon="@(d.khoa == true ? Icons.Material.Filled.Lock : Icons.Material.Filled.LockOpen)"
+                                                               Color="@(d.khoa == true ? Color.Error : Color.Default)"
+                                                               Disabled="@(_busy || (d.khoa == true && !_canUnlockDebit))"
+                                                               title="@(d.khoa == true ? T("Rpt242_UnlockLine", "Mở khóa (ACCOUNT/ADMIN)", "Unlock (ACCOUNT/ADMIN)") : T("Rpt242_LockLine", "Khóa dòng này", "Lock this line"))"
+                                                               OnClick="@(() => ToggleDebitLockAsync(d))" />
+                                            </td>
+                                            <td>@d.debitno</td>
+                                            <td><span class="sd-clip" title="@CustomerLabel(d.customerid)">@CustomerLabel(d.customerid)</span></td>
+                                            <td><span class="sd-clip" title="@ChargeLabel(d.itemid)">@ChargeLabel(d.itemid)</span></td>
+                                            <td class="num">@N(d.soluong)</td>
+                                            <td class="num">@N(d.dongia)</td>
+                                            <td>@d.tiente</td>
+                                            <td class="num">@N(d.thanhtiensauthue)</td>
+                                            <td>@d.sohoadondaura</td>
+                                            <td>@Tick(d.approve)</td>
+                                            <td>@PaidChip(d.dathanhtoan)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </MudTabPanel>
+
+                @* ---------------- Credit ---------------- *@
+                <MudTabPanel Text="@($"Credit ({_credits.Count})")">
+                    <div class="sd-toolbar">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                   Color="@(_hbl.creditCompleted == true ? Color.Warning : Color.Error)" Disabled="_busy"
+                                   StartIcon="@(_hbl.creditCompleted == true ? Icons.Material.Filled.LockOpen : Icons.Material.Filled.Lock)"
+                                   OnClick="@(() => SetCompletedAsync(debit: null, credit: !(_hbl.creditCompleted == true)))">
+                            @(_hbl.creditCompleted == true
+                                ? T("Rpt242_UnlockCredit", "Mở khóa Credit", "Unlock Credit")
+                                : T("Rpt242_LockCredit", "Khóa Credit (hoàn thành)", "Lock Credit (completed)"))
+                        </MudButton>
+                        <span class="sd-kv">@T("Rpt242_CreditLockHint", "Credit khóa theo cả HBL: không thêm / sửa / xóa được dòng Credit.", "Credit is locked per HBL: no add / edit / delete.")</span>
+                    </div>
+                    @Summary(_credits.Select(x => (x.tiente, x.thanhtiensauthue, x.dathanhtoan == true)))
+                    @if (_credits.Count == 0)
+                    {
+                        <div class="sd-empty">@Localizer["DataNotFound"]</div>
+                    }
+                    else
+                    {
+                        <div class="sd-scroll">
+                            <table class="sd-table">
+                                <thead>
+                                    <tr>
+                                        <th>@T("Rpt242_Vendor", "Đối tượng", "Party")</th>
+                                        <th>@Localizer["Item"]</th>
+                                        <th class="num">Qty</th>
+                                        <th class="num">@Localizer["Unit Price"]</th>
+                                        <th>Cur</th>
+                                        <th class="num">@Localizer["Total Price Inc. VAT"]</th>
+                                        <th>DNTT</th>
+                                        <th>@Localizer["Approve"]</th>
+                                        <th>@T("Rpt242_PaidOut", "Đã chi", "Paid")</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var c in _credits)
+                                    {
+                                        <tr class="@((_hbl.creditCompleted == true ? "locked " : "") + (c.dathanhtoan == true ? "paid" : ""))">
+                                            <td><span class="sd-clip" title="@CustomerLabel(c.customerid)">@CustomerLabel(c.customerid)</span></td>
+                                            <td><span class="sd-clip" title="@ChargeLabel(c.itemid)">@ChargeLabel(c.itemid)</span></td>
+                                            <td class="num">@N(c.soluong)</td>
+                                            <td class="num">@N(c.dongia)</td>
+                                            <td>@c.tiente</td>
+                                            <td class="num">@N(c.thanhtiensauthue)</td>
+                                            <td>@c.sodntt</td>
+                                            <td>@Tick(c.approve)</td>
+                                            <td>@PaidChip(c.dathanhtoan)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </MudTabPanel>
+
+                @* ---------------- Hóa đơn ---------------- *@
+                <MudTabPanel Text="@($"{T("Rpt242_Invoices", "Hóa đơn", "Invoices")} ({_invoices.Count})")">
+                    @if (_invoices.Count == 0)
+                    {
+                        <div class="sd-empty">@Localizer["DataNotFound"]</div>
+                    }
+                    else
+                    {
+                        <div class="sd-scroll">
+                            <table class="sd-table">
+                                <thead>
+                                    <tr>
+                                        <th>@Localizer["Approve"]</th>
+                                        <th>@T("Rpt242_InternalNo", "Số HĐ nội bộ", "Internal No.")</th>
+                                        <th>@T("Rpt242_EInvoiceNo", "Số HĐ online", "E-Invoice No.")</th>
+                                        <th>@T("Rpt242_IssueDate", "Ngày phát hành", "Issue date")</th>
+                                        <th>@Localizer["Customer"]</th>
+                                        <th>@Localizer["Item"]</th>
+                                        <th>Cur</th>
+                                        <th class="num">@Localizer["Total Price Inc. VAT"]</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var h in _invoices)
+                                    {
+                                        <tr class="@(h.approve == true ? "locked" : "")">
+                                            <td>
+                                                <MudIconButton Size="Size.Small"
+                                                               Icon="@(h.approve == true ? Icons.Material.Filled.Lock : Icons.Material.Filled.LockOpen)"
+                                                               Color="@(h.approve == true ? Color.Success : Color.Default)"
+                                                               Disabled="@(_busy || !_canApprove)"
+                                                               title="@(h.approve == true ? T("Rpt242_Unapprove", "Bỏ duyệt", "Unapprove") : T("Rpt242_Approve", "Duyệt (khóa)", "Approve (lock)"))"
+                                                               OnClick="@(() => ToggleInvoiceApproveAsync(h))" />
+                                            </td>
+                                            <td>@h.sohoadonNoibo</td>
+                                            <td>@h.sohoadonDientu</td>
+                                            <td>@Fmt(h.ngayphathanhhoadonDientu)</td>
+                                            <td><span class="sd-clip" title="@CustomerLabel(h.customerid)">@CustomerLabel(h.customerid)</span></td>
+                                            <td><span class="sd-clip" title="@ChargeLabel(h.itemid)">@ChargeLabel(h.itemid)</span></td>
+                                            <td>@h.tiente</td>
+                                            <td class="num">@N(h.thanhtiensauthue)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </MudTabPanel>
+
+                @* ---------------- Phiếu thu / chi ---------------- *@
+                <MudTabPanel Text="@($"{T("Rpt242_Vouchers", "Phiếu thu / chi", "Receipts / Payments")} ({_receipts.Count + _payments.Count})")">
+                    <div class="sd-kv mb-1">@T("Rpt242_VoucherHint", "Phiếu chưa duyệt: gửi yêu cầu duyệt theo quy trình 10.1 / 10.2. Chỉ người đã duyệt mới bỏ duyệt được.", "Unapproved: send an approval request (same flow as 10.1 / 10.2). Only the approver can unapprove.")</div>
+                    @if (_receipts.Count + _payments.Count == 0)
+                    {
+                        <div class="sd-empty">@Localizer["DataNotFound"]</div>
+                    }
+                    else
+                    {
+                        <div class="sd-scroll">
+                            <table class="sd-table">
+                                <thead>
+                                    <tr>
+                                        <th>@T("Rpt242_VoucherType", "Loại", "Type")</th>
+                                        <th>@T("Rpt242_VoucherNo", "Số phiếu", "No.")</th>
+                                        <th>@T("Rpt242_Date", "Ngày", "Date")</th>
+                                        <th>@T("Rpt242_Content", "Nội dung", "Content")</th>
+                                        <th>Cur</th>
+                                        <th class="num">@T("Rpt242_Amount", "Số tiền", "Amount")</th>
+                                        <th>@T("Rpt242_Status", "Trạng thái", "Status")</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var p in _receipts)
+                                    {
+                                        @VoucherRow(PhieuApproveService.LoaiThu, T("Rpt242_Receipt", "Thu", "Receipt"), p.PhieuthuID, p.SoPhieuthu, p.Ngay, p.Noidung, p.Currency, p.Sotien, p.Approve, p.ApproveBy, p.ApproveToken)
+                                    }
+                                    @foreach (var p in _payments)
+                                    {
+                                        @VoucherRow(PhieuApproveService.LoaiChi, T("Rpt242_Payment", "Chi", "Payment"), p.PhieuchiID, p.Sophieuchi, p.Ngay, p.Noidung, p.Currency, p.Sotien, p.Approve, p.ApproveBy, p.ApproveToken)
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </MudTabPanel>
+            </MudTabs>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close" Variant="Variant.Text">@Localizer["Close"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public Guid HblId { get; set; }
+    [Parameter] public string? JobNo { get; set; }
+    [Parameter] public string? MblNo { get; set; }
+    [Parameter] public List<Guid> ReceiptIds { get; set; } = new();
+    [Parameter] public List<Guid> PaymentIds { get; set; } = new();
+    [Parameter] public Func<Guid, string> CustomerLabel { get; set; } = _ => string.Empty;
+    [Parameter] public Func<Guid, string> ChargeLabel { get; set; } = _ => string.Empty;
+    /// <summary>Tab mở sẵn: 0 Debit, 1 Credit, 2 Hóa đơn, 3 Phiếu.</summary>
+    [Parameter] public int InitialTab { get; set; }
+    /// <summary>Danh sách trạng thái HBL (tên, mã màu) từ bảng Trạng thái.</summary>
+    [Parameter] public List<(string Name, string Color)> StatusOptions { get; set; } = new();
+    [Parameter] public Func<Guid, string> CreditTermOf { get; set; } = _ => string.Empty;
+
+    string? _status;
+    bool _canEdit;
+
+    string StatusSelectStyle
+    {
+        get
+        {
+            var color = StatusOptions.FirstOrDefault(o => o.Name == _status).Color;
+            return string.IsNullOrWhiteSpace(color) ? string.Empty : $"--sd-status:{color}; color:{color};";
+        }
+    }
+
+    async Task OnStatusChanged(string? value)
+    {
+        if (_hbl == null || string.Equals(value, _hbl.statusHBL, StringComparison.Ordinal)) return;
+        if (!_canEdit)
+        {
+            Snackbar.Add(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+        await RunAsync(async () =>
+        {
+            var fresh = await shipsv.GetHBL_byHBLid(HblId) ?? throw new InvalidOperationException(Localizer["DataNotFound"]);
+            if (fresh.approve == true) throw new InvalidOperationException(Localizer["HblApproved"]);
+            var old = JsonSerializer.Deserialize<M_HBL>(JsonSerializer.Serialize(fresh))!;
+            fresh.statusHBL = value;
+            fresh.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", _en);
+            fresh.userupdate = _usr;
+            var rs = await shipsv.UpdateHBLDetail(fresh, old);
+            if (!rs.Flag) throw new InvalidOperationException(rs.Message);
+            _hbl = await shipsv.GetHBL_byHBLid(HblId);
+            _status = _hbl?.statusHBL;
+            Snackbar.Add(T("Rpt242_StatusSaved", "Đã đổi trạng thái lô hàng", "Shipment status updated"), MudBlazor.Severity.Success);
+        });
+    }
+
+    /// <summary>Tổng / đã thanh toán / còn nợ theo từng loại tiền.</summary>
+    RenderFragment Summary(IEnumerable<(string? Cur, double? Amount, bool Paid)> rows) => __builder =>
+    {
+        var groups = rows.GroupBy(r => string.IsNullOrWhiteSpace(r.Cur) ? "?" : r.Cur!.Trim().ToUpperInvariant()).ToList();
+        if (groups.Count == 0) return;
+        <div class="sd-sum">
+            @foreach (var g in groups)
+            {
+                var total = g.Sum(r => r.Amount ?? 0);
+                var paid = g.Where(r => r.Paid).Sum(r => r.Amount ?? 0);
+                <span>@g.Key: @T("Rpt242_Total", "Tổng", "Total") <b>@N(total)</b>
+                    · <span class="sd-paidtxt">@T("Rpt242_PaidAmt", "Đã thanh toán", "Paid") <b>@N(paid)</b></span>
+                    · <span class="sd-due">@T("Rpt242_Due", "Còn nợ", "Outstanding") <b>@N(total - paid)</b></span>
+                </span>
+            }
+            <span>(@T("Rpt242_PaidLines", "dòng đã thanh toán", "paid lines") @rows.Count(r => r.Paid)/@rows.Count())</span>
+        </div>
+    };
+
+    RenderFragment PaidChip(bool? paid) => __builder =>
+    {
+        if (paid == true)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled" Icon="@Icons.Material.Filled.Paid">Paid</MudChip>
+        }
+        else
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">@T("Rpt242_Unpaid", "Còn nợ", "Unpaid")</MudChip>
+        }
+    };
+
+    M_HBL? _hbl;
+    List<M_Debit> _debits = new();
+    List<M_Credit> _credits = new();
+    List<M_HoaDonDauRa> _invoices = new();
+    List<M_PhieuThu> _receipts = new();
+    List<M_PhieuChi> _payments = new();
+    bool _loading = true, _busy, _changed, _canApprove, _canUnlockDebit;
+    int _tab;
+    string _usr = string.Empty;
+    readonly CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    bool IsShipmentLocked => _hbl != null && _hbl.approve == true && _hbl.debitCompleted == true && _hbl.creditCompleted == true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _tab = InitialTab;
+        _usr = asv.GetAuth().Result.User.Identity!.Name!;
+        var dept = asv.GetUserDetail()?.Department?.Trim();
+        _canUnlockDebit = string.Equals(dept, "ACCOUNT", StringComparison.OrdinalIgnoreCase)
+                          || string.Equals(dept, "ADMIN", StringComparison.OrdinalIgnoreCase);
+        _canApprove = await ssv.CheckPermission(_usr, "Approve", "HBL");
+        _canEdit = await ssv.CheckPermission(_usr, "Edit", "HBL");
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _hbl = await shipsv.GetHBL_byHBLid(HblId);
+            _status = _hbl?.statusHBL;
+            _debits = (await shipsv.GetListDebitHBL(HblId)).OrderBy(x => x.debitno).ToList();
+            _credits = (await shipsv.GetListCreditHBL(HblId)).ToList();
+            _invoices = (await shipsv.GetListHoaDonDauRaHBL(HblId))
+                .OrderBy(x => x.sohoadonNoibo).ThenBy(x => x.soThuTu ?? 0).ToList();
+
+            await using var ctx = await DbFactory.CreateDbContextAsync();
+            var rIds = ReceiptIds.Distinct().ToList();
+            var pIds = PaymentIds.Distinct().ToList();
+            _receipts = rIds.Count == 0 ? new() : await ctx.Phieuthu.AsNoTracking().Where(x => rIds.Contains(x.PhieuthuID)).OrderBy(x => x.SoPhieuthu).ToListAsync();
+            _payments = pIds.Count == 0 ? new() : await ctx.Phieuchi.AsNoTracking().Where(x => pIds.Contains(x.PhieuchiID)).OrderBy(x => x.Sophieuchi).ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // ---------- Khóa lô hàng: duyệt HBL + hoàn thành Debit + hoàn thành Credit ----------
+    async Task SetShipmentLockAsync(bool locked)
+    {
+        if (_hbl == null) return;
+        if (!_canApprove)
+        {
+            Snackbar.Add(Localizer["NoPermission_Approve"], MudBlazor.Severity.Warning);
+            return;
+        }
+        var msg = locked
+            ? T("Rpt242_LockConfirm", "Khóa lô hàng: duyệt HBL và xác nhận hoàn thành cả Debit lẫn Credit. Sau đó không sửa HBL, không thêm/sửa/xóa Debit, Credit được nữa. Tiếp tục?",
+                "Lock shipment: approve the HBL and mark both Debit and Credit completed. HBL, Debit and Credit can no longer be changed. Continue?")
+            : T("Rpt242_UnlockConfirm", "Mở khóa lô hàng: bỏ duyệt HBL và bỏ hoàn thành Debit, Credit. Tiếp tục?",
+                "Unlock shipment: unapprove the HBL and undo Debit / Credit completed. Continue?");
+        if (await DialogService.ShowMessageBox(T("Rpt242_Confirm", "Xác nhận", "Confirm"), msg, yesText: "OK", cancelText: Localizer["cancel"]) != true)
+            return;
+
+        await RunAsync(async () =>
+        {
+            var fresh = await shipsv.GetHBL_byHBLid(HblId);
+            if (fresh == null) throw new InvalidOperationException(Localizer["DataNotFound"]);
+            fresh.approve = locked;
+            fresh.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", _en);
+            fresh.userupdate = _usr;
+            var rs = await shipsv.UpdateHBLDetail_approve(fresh);
+            if (!rs.Flag) throw new InvalidOperationException(rs.Message);
+            rs = await shipsv.SetHblDebitCreditCompleted(HblId, debitCompleted: locked, creditCompleted: locked);
+            if (!rs.Flag) throw new InvalidOperationException(rs.Message);
+            _hbl = await shipsv.GetHBL_byHBLid(HblId);
+            Snackbar.Add(locked ? T("Rpt242_Locked", "Đã khóa lô hàng", "Shipment locked") : T("Rpt242_Unlocked", "Đã mở khóa lô hàng", "Shipment unlocked"), MudBlazor.Severity.Success);
+        });
+    }
+
+    async Task SetCompletedAsync(bool? debit, bool? credit)
+    {
+        if (_hbl == null) return;
+        await RunAsync(async () =>
+        {
+            var rs = await shipsv.SetHblDebitCreditCompleted(HblId, debitCompleted: debit, creditCompleted: credit);
+            if (!rs.Flag) throw new InvalidOperationException(rs.Message);
+            if (debit.HasValue) _hbl.debitCompleted = debit;
+            if (credit.HasValue) _hbl.creditCompleted = credit;
+            Snackbar.Add(rs.Message, MudBlazor.Severity.Success);
+        });
+    }
+
+    // ---------- Khóa từng dòng Debit (mở khóa: ACCOUNT / ADMIN) ----------
+    async Task ToggleDebitLockAsync(M_Debit d)
+    {
+        var next = !(d.khoa == true);
+        if (!next && !_canUnlockDebit)
+        {
+            Snackbar.Add("Only ACCOUNT or ADMIN can unlock Debit!", MudBlazor.Severity.Warning);
+            return;
+        }
+        await RunAsync(async () =>
+        {
+            var old = JsonSerializer.Deserialize<M_Debit>(JsonSerializer.Serialize(d))!;
+            d.khoa = next;
+            d.dateupdate = DateTime.Now.ToString();
+            d.userupdate = _usr;
+            var rs = await shipsv.UpdateDebitMBL(d, old);
+            if (!rs.Flag)
+            {
+                d.khoa = old.khoa;
+                throw new InvalidOperationException(rs.Message);
+            }
+        });
+    }
+
+    async Task LockAllDebitsAsync()
+    {
+        var open = _debits.Where(x => x.khoa != true).ToList();
+        if (open.Count == 0) return;
+        await RunAsync(async () =>
+        {
+            var now = DateTime.Now.ToString();
+            open.ForEach(x => { x.khoa = true; x.dateupdate = now; x.userupdate = _usr; });
+            var rs = await shipsv.UpdateDebitMBL(open);
+            if (!rs.Flag)
+            {
+                open.ForEach(x => x.khoa = false);
+                throw new InvalidOperationException(rs.Message);
+            }
+            Snackbar.Add($"{T("Rpt242_LockedCount", "Đã khóa", "Locked")} {open.Count} Debit", MudBlazor.Severity.Success);
+        });
+    }
+
+    // ---------- Duyệt / bỏ duyệt hóa đơn ----------
+    async Task ToggleInvoiceApproveAsync(M_HoaDonDauRa h)
+    {
+        if (!_canApprove)
+        {
+            Snackbar.Add(Localizer["NoPermission_Approve"], MudBlazor.Severity.Warning);
+            return;
+        }
+        await RunAsync(async () =>
+        {
+            var prev = h.approve;
+            h.approve = !(h.approve == true);
+            h.dateupdate = DateTime.Now.ToString("dd/MMM/yyyy", _en);
+            h.userupdate = _usr;
+            var rs = await shipsv.UpdateHoaDonDauRaMBL_approve(h);
+            if (!rs.Flag)
+            {
+                h.approve = prev;
+                throw new InvalidOperationException(rs.Message);
+            }
+        });
+    }
+
+    // ---------- Phiếu thu / chi: gửi duyệt hoặc bỏ duyệt theo quy trình sẵn có ----------
+    RenderFragment VoucherRow(string loai, string typeLabel, Guid id, string? no, DateTime? date, string? content,
+                              string? cur, double? amount, bool? approved, string? approveBy, string? token) => __builder =>
+    {
+        <tr class="@(approved == true ? "locked" : "")">
+            <td>@typeLabel</td>
+            <td><b>@no</b></td>
+            <td>@Fmt(date)</td>
+            <td><span class="sd-clip" title="@content">@content</span></td>
+            <td>@cur</td>
+            <td class="num">@N(amount)</td>
+            <td>
+                @if (approved == true)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.Lock">@(string.IsNullOrWhiteSpace(approveBy) ? "Approve" : approveBy)</MudChip>
+                }
+                else if (approved == false && !string.IsNullOrWhiteSpace(approveBy))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error">Deny · @approveBy</MudChip>
+                }
+                else if (!string.IsNullOrWhiteSpace(token))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning">@T("Rpt242_Waiting", "Chờ duyệt", "Pending")</MudChip>
+                }
+                else
+                {
+                    <MudChip T="string" Size="Size.Small">@T("Rpt242_NotApproved", "Chưa duyệt", "Not approved")</MudChip>
+                }
+            </td>
+            <td>
+                @if (approved == true)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" Disabled="_busy"
+                               StartIcon="@Icons.Material.Filled.LockOpen" OnClick="@(() => UnapproveVoucherAsync(loai, id))">
+                        @T("Rpt242_Unapprove", "Bỏ duyệt", "Unapprove")
+                    </MudButton>
+                }
+                else
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary" Disabled="_busy"
+                               StartIcon="@Icons.Material.Filled.Send" OnClick="@(() => RequestVoucherApprovalAsync(loai, id))">
+                        @T("Rpt242_RequestApprove", "Gửi duyệt", "Request approval")
+                    </MudButton>
+                }
+            </td>
+        </tr>
+    };
+
+    async Task RequestVoucherApprovalAsync(string loai, Guid id)
+    {
+        await RunAsync(async () =>
+        {
+            var rs = await phieuApproveSv.SendApprovalRequestAsync(loai, id, _usr, NavManager.BaseUri);
+            Snackbar.Add(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (rs.Flag) await ReloadVouchersAsync();
+        });
+    }
+
+    async Task UnapproveVoucherAsync(string loai, Guid id)
+    {
+        await RunAsync(async () =>
+        {
+            var current = asv.GetUserDetail();
+            var rs = await phieuApproveSv.UnapproveAsync(loai, id, current?.UsrId ?? Guid.Empty, _usr);
+            Snackbar.Add(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (rs.Flag) await ReloadVouchersAsync();
+        });
+    }
+
+    async Task ReloadVouchersAsync()
+    {
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+        var rIds = _receipts.Select(x => x.PhieuthuID).ToList();
+        var pIds = _payments.Select(x => x.PhieuchiID).ToList();
+        if (rIds.Count > 0)
+            _receipts = await ctx.Phieuthu.AsNoTracking().Where(x => rIds.Contains(x.PhieuthuID)).OrderBy(x => x.SoPhieuthu).ToListAsync();
+        if (pIds.Count > 0)
+            _payments = await ctx.Phieuchi.AsNoTracking().Where(x => pIds.Contains(x.PhieuchiID)).OrderBy(x => x.Sophieuchi).ToListAsync();
+    }
+
+    // ---------- tiện ích ----------
+    async Task RunAsync(Func<Task> action)
+    {
+        try
+        {
+            _busy = true;
+            await action();
+            _changed = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    void Close() => MudDialog.Close(DialogResult.Ok(_changed));
+
+    string Fmt(DateTime? d) => d?.ToString("dd/MM/yyyy") ?? string.Empty;
+    string N(double? v) => v?.ToString("#,##0.##", _en) ?? string.Empty;
+    static string Tick(bool? v) => v == true ? "✔" : string.Empty;
+
+    static bool IsVietnamese => CultureInfo.CurrentUICulture.Name.StartsWith("vi", StringComparison.OrdinalIgnoreCase);
+
+    string T(string key, string vi, string en)
+    {
+        var s = Localizer[key];
+        return s.ResourceNotFound || string.IsNullOrWhiteSpace(s.Value) ? (IsVietnamese ? vi : en) : s.Value;
+    }
+}

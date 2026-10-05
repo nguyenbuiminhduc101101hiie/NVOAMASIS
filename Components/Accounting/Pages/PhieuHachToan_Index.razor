@@ -1,0 +1,351 @@
+@* 10.4.8 Hạch toán phiếu thu / chi đã duyệt *@
+@using System.Globalization
+@using NVOAMASIS.Services.Accounting
+@inject Microsoft.EntityFrameworkCore.IDbContextFactory<NVOAMASIS.Data.AppDbContext> DbFactory
+@inject SupportServices supsv
+@inject HistoryLogService HistoryLogService
+@inject SharedServices ssv
+@inject AccountService asv
+@inject CustomerService csv
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<PageTitle>Hạch toán phiếu thu / chi</PageTitle>
+
+<style>
+    .pht-grid .mud-table-root { table-layout: auto !important; width: auto !important; min-width: 100% !important; }
+    .pht-grid .mud-table-head th.mud-table-cell { white-space: normal !important; line-height: 1.2; padding: 6px !important; }
+    .pht-grid .mud-table-body td.mud-table-cell { white-space: nowrap; padding: 3px 6px !important; }
+    .pht-clip { display: inline-block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+    .pht-tx { min-width: 190px; }
+    .pht-sum { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .8rem; color: var(--mud-palette-text-secondary); }
+    .pht-sum b { color: var(--mud-palette-text-primary); }
+</style>
+
+<div class="product-price-page">
+    <PpScreenHeader Title="10.4.8 Hạch toán phiếu thu / chi" Subtitle="@HeaderSubtitle">
+        <Toolbar>
+            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="flex-wrap">
+                <MudDateRangePicker @bind-DateRange="_range" Label="Ngày phiếu" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                    DateFormat="dd/MM/yyyy" Style="max-width:240px" />
+                <MudSelect T="string" @bind-Value="_loai" Label="Loại" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Style="max-width:120px">
+                    <MudSelectItem Value="@("")">Thu + Chi</MudSelectItem>
+                    <MudSelectItem Value="@PhieuHachToanService.LoaiThu">Phiếu thu</MudSelectItem>
+                    <MudSelectItem Value="@PhieuHachToanService.LoaiChi">Phiếu chi</MudSelectItem>
+                </MudSelect>
+                <MudButton OnClick="LoadAsync" Disabled="_loading" Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Search">Tải</MudButton>
+                <MudSelect T="string" @bind-Value="_state" Label="Trạng thái" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Style="max-width:160px">
+                    <MudSelectItem Value="@("")">Tất cả</MudSelectItem>
+                    <MudSelectItem Value="@("none")">Chưa hạch toán</MudSelectItem>
+                    <MudSelectItem Value="@("draft")">Đã hạch toán (nháp)</MudSelectItem>
+                    <MudSelectItem Value="@("posted")">Đã ghi sổ</MudSelectItem>
+                </MudSelect>
+                <MudSelect T="string" Value="_defaultTx" ValueChanged="OnDefaultTxChanged" Label="Nghiệp vụ mặc định" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" Dense="true" Class="pht-tx">
+                    @TxOptions
+                </MudSelect>
+                <MudTextField @bind-Value="_search" Immediate="true" Placeholder="Tìm số phiếu, khách hàng, nội dung…" Variant="Variant.Outlined"
+                              Margin="Margin.Dense" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.FilterList" Clearable="true" Style="min-width:220px" />
+                <MudButton OnClick="PostAllPendingAsync" Disabled="@(_busy || !_canAdd || Pending.Count == 0)" Size="Size.Small" Variant="Variant.Outlined"
+                           Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlaylistAddCheck">
+                    Hạch toán các dòng chưa hạch toán (@Pending.Count)
+                </MudButton>
+            </MudStack>
+        </Toolbar>
+    </PpScreenHeader>
+
+    <MudPaper Class="product-price-card" Elevation="0">
+        <div class="pht-sum pa-2">
+            <span>Phiếu: <b>@Filtered.Count</b></span>
+            <span>Chưa hạch toán: <b>@Filtered.Count(r => !_vouchers.ContainsKey(r.Id))</b></span>
+            <span>Nháp: <b>@Filtered.Count(r => _vouchers.TryGetValue(r.Id, out var v) && !v.IsPosted)</b></span>
+            <span>Đã ghi sổ: <b>@Filtered.Count(r => _vouchers.TryGetValue(r.Id, out var v) && v.IsPosted)</b></span>
+            <span>Tổng quy đổi VND: <b>@N(Filtered.Sum(r => r.AmountVnd))</b></span>
+        </div>
+        <MudDataGrid T="PhieuHachToanService.PhieuRow" Items="@Filtered" Class="pht-grid" Dense="true" Hover="true" Striped="true" Bordered="true"
+                     Virtualize="true" FixedHeader="true" Height="calc(100vh - 250px)" Loading="_loading" ReadOnly="true"
+                     Filterable="false" ShowColumnOptions="false" SortMode="SortMode.Single">
+            <Columns>
+                <TemplateColumn Sortable="false" Title="Hạch toán">
+                    <CellTemplate>
+                        @{ var r = context.Item; var has = _vouchers.TryGetValue(r.Id, out var vs); }
+                        <MudTooltip Text="@TickHint(r, has ? vs : null)">
+                            <MudCheckBox T="bool" Value="has" ValueChanged="@(v => ToggleAsync(r, v))" Dense="true" Size="Size.Small"
+                                         Color="@(has && vs!.IsPosted ? Color.Success : Color.Primary)"
+                                         Disabled="@(_busy || (has && vs!.IsPosted) || (has ? !_canDelete : !_canAdd))" />
+                        </MudTooltip>
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Loại" SortBy="@(r => r.Loai)">
+                    <CellTemplate>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@(context.Item.Loai == PhieuHachToanService.LoaiThu ? Color.Success : Color.Warning)">@context.Item.Loai</MudChip>
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="r => r.So" Title="Số phiếu" />
+                <PropertyColumn Property="r => r.Ngay" Title="Ngày" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="r => r.PostingDate" Title="Ngày hạch toán" Format="dd/MM/yyyy" />
+                <TemplateColumn Title="Khách hàng / NCC" SortBy="@(r => CustomerName(r.CustomerId))">
+                    <CellTemplate><span class="pht-clip" title="@CustomerName(context.Item.CustomerId)">@CustomerName(context.Item.CustomerId)</span></CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Nội dung" Sortable="false">
+                    <CellTemplate><span class="pht-clip" title="@context.Item.NoiDung">@context.Item.NoiDung</span></CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="r => r.Currency" Title="Tiền tệ" />
+                <PropertyColumn Property="r => r.Amount" Title="Số tiền" Format="#,##0.##" Culture="_en" CellStyle="text-align:right" />
+                <PropertyColumn Property="r => r.Rate" Title="Tỷ giá" Format="#,##0.##" Culture="_en" CellStyle="text-align:right" />
+                <PropertyColumn Property="r => r.AmountVnd" Title="Quy đổi VND" Format="#,##0" Culture="_en" CellStyle="text-align:right" />
+                <TemplateColumn Title="TK Nợ / Có (phiếu)" Sortable="false">
+                    <CellTemplate>@context.Item.TkNo / @context.Item.TkCo</CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Nghiệp vụ" Sortable="false">
+                    <CellTemplate>
+                        @{ var r = context.Item; var has = _vouchers.TryGetValue(r.Id, out var vs); }
+                        @if (has)
+                        {
+                            <span title="Nghiệp vụ của chứng từ đã tạo">@TxLabel(vs!.TransactionTypeCode)</span>
+                        }
+                        else
+                        {
+                            <MudSelect T="string" Value="@RowTx(r)" ValueChanged="@(v => _rowTx[r.Id] = v)" Dense="true" Margin="Margin.Dense"
+                                       Disabled="_busy" Class="pht-tx">
+                                @TxOptions
+                            </MudSelect>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <TemplateColumn Title="Chứng từ KT" SortBy="@(r => _vouchers.TryGetValue(r.Id, out var v) ? v.VoucherNo : "")">
+                    <CellTemplate>
+                        @if (_vouchers.TryGetValue(context.Item.Id, out var vs))
+                        {
+                            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                                <span>@vs.VoucherNo</span>
+                                @if (vs.IsPosted)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.Lock">Đã ghi sổ</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">Nháp</MudChip>
+                                }
+                            </MudStack>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Chưa hạch toán</MudText>
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+            </Columns>
+        </MudDataGrid>
+    </MudPaper>
+</div>
+
+@code {
+    const string PermissionMenuName = "PhieuKeToan";
+    PhieuHachToanService _svc = default!;
+    readonly CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    DateRange _range = new(new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1), DateTime.Today);
+    string _loai = string.Empty;
+    string _state = string.Empty;
+    string _search = string.Empty;
+    string _defaultTx = PhieuHachToanService.TheoTkPhieu;
+    bool _loading, _busy, _canView, _canAdd, _canDelete;
+    string _usr = string.Empty;
+
+    List<PhieuHachToanService.PhieuRow> _rows = new();
+    Dictionary<Guid, PhieuHachToanService.VoucherState> _vouchers = new();
+    Dictionary<Guid, string> _rowTx = new();
+    List<M_TransactionTypes> _txTypes = new();
+    Dictionary<Guid, string> _customerNames = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _svc = new PhieuHachToanService(DbFactory, supsv, HistoryLogService);
+        _usr = asv.GetAuth().Result.User.Identity?.Name ?? string.Empty;
+        _canView = await ssv.CheckPermission(_usr, "View", PermissionMenuName);
+        _canAdd = await ssv.CheckPermission(_usr, "Add", PermissionMenuName);
+        _canDelete = await ssv.CheckPermission(_usr, "Delete", PermissionMenuName);
+        try
+        {
+            _txTypes = await _svc.GetTransactionTypesAsync();
+            _customerNames = (await csv.GetList()).GroupBy(c => c.Customer_ID)
+                .ToDictionary(g => g.Key, g => { var c = g.First(); return string.IsNullOrWhiteSpace(c.Customer_Code) ? c.COMPANY ?? "" : $"{c.Customer_Code} - {c.COMPANY}"; });
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    string HeaderSubtitle => "Phiếu đã duyệt · tick để tạo chứng từ kế toán nháp theo nghiệp vụ, bỏ tick để xoá (chứng từ đã ghi sổ không xoá được)";
+
+    List<PhieuHachToanService.PhieuRow> Filtered => _rows.Where(r =>
+    {
+        var has = _vouchers.TryGetValue(r.Id, out var v);
+        var stateOk = _state switch
+        {
+            "none" => !has,
+            "draft" => has && !v!.IsPosted,
+            "posted" => has && v!.IsPosted,
+            _ => true
+        };
+        if (!stateOk) return false;
+        if (string.IsNullOrWhiteSpace(_search)) return true;
+        var q = _search.Trim();
+        return Has(r.So, q) || Has(r.NoiDung, q) || Has(CustomerName(r.CustomerId), q) || Has(r.Bill, q)
+               || (has && Has(v!.VoucherNo, q));
+    }).ToList();
+
+    List<PhieuHachToanService.PhieuRow> Pending => Filtered.Where(r => !_vouchers.ContainsKey(r.Id)).ToList();
+
+    static bool Has(string? s, string q) => !string.IsNullOrEmpty(s) && s.Contains(q, StringComparison.OrdinalIgnoreCase);
+
+    string CustomerName(Guid? id) => id.HasValue && _customerNames.TryGetValue(id.Value, out var n) ? n : string.Empty;
+
+    string RowTx(PhieuHachToanService.PhieuRow r) => _rowTx.TryGetValue(r.Id, out var t) ? t : _defaultTx;
+
+    void OnDefaultTxChanged(string value)
+    {
+        _defaultTx = value;
+        _rowTx.Clear(); // đổi mặc định thì áp lại cho mọi dòng chưa chọn riêng
+    }
+
+    string TxLabel(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return string.Empty;
+        if (code is "PHIEUTHU" or "PHIEUCHI") return "Theo TK trên phiếu";
+        var t = _txTypes.FirstOrDefault(x => x.Code == code);
+        return t == null ? code : $"{t.Code} - {t.Name}";
+    }
+
+    RenderFragment TxOptions => __builder =>
+    {
+        <MudSelectItem Value="@PhieuHachToanService.TheoTkPhieu">Theo TK Nợ / Có trên phiếu</MudSelectItem>
+        @foreach (var t in _txTypes)
+        {
+            <MudSelectItem Value="@t.Code">@($"{t.Code} - {t.Name}")</MudSelectItem>
+        }
+    };
+
+    string TickHint(PhieuHachToanService.PhieuRow r, PhieuHachToanService.VoucherState? v)
+    {
+        if (v == null) return _canAdd ? "Tick để tạo chứng từ kế toán nháp theo nghiệp vụ đã chọn" : "Không có quyền thêm (PhieuKeToan · Add)";
+        if (v.IsPosted) return $"Chứng từ {v.VoucherNo} đã ghi sổ — không bỏ hạch toán được (bỏ ghi sổ ở 10.4.1 trước)";
+        return _canDelete ? $"Bỏ tick để xoá chứng từ nháp {v.VoucherNo}" : "Không có quyền xoá (PhieuKeToan · Delete)";
+    }
+
+    async Task LoadAsync()
+    {
+        if (!_canView)
+        {
+            Snackbar.Add(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+            return;
+        }
+        try
+        {
+            _loading = true;
+            StateHasChanged();
+            var from = _range?.Start ?? DateTime.Today.AddMonths(-1);
+            var to = _range?.End ?? DateTime.Today;
+            _rows = await _svc.LoadApprovedAsync(from, to, string.IsNullOrEmpty(_loai) ? null : _loai);
+            _vouchers = await _svc.GetVouchersAsync(_rows.Select(r => r.Id));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task ToggleAsync(PhieuHachToanService.PhieuRow r, bool check)
+    {
+        if (check)
+        {
+            if (!_canAdd) { Snackbar.Add(Localizer["NoPermission_Add"], MudBlazor.Severity.Warning); return; }
+            await RunAsync(async () =>
+            {
+                var rs = await _svc.CreateDraftAsync(r, RowTx(r), _usr);
+                Snackbar.Add(rs.Message, rs.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+                await RefreshVouchersAsync(r.Id);
+            });
+        }
+        else
+        {
+            if (!_canDelete) { Snackbar.Add(Localizer["NoPermission_Delete"], MudBlazor.Severity.Warning); return; }
+            var v = _vouchers.TryGetValue(r.Id, out var vs) ? vs : null;
+            if (v == null) return;
+            var ok = await DialogService.ShowMessageBox("Bỏ hạch toán",
+                $"Xoá chứng từ nháp {v.VoucherNo} của phiếu {r.So}?", yesText: "Xoá", cancelText: "Huỷ");
+            if (ok != true) return;
+            await RunAsync(async () =>
+            {
+                var rs = await _svc.DeleteDraftAsync(r.Id, r.So, _usr);
+                Snackbar.Add(rs.Message, rs.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+                await RefreshVouchersAsync(r.Id);
+            });
+        }
+    }
+
+    async Task PostAllPendingAsync()
+    {
+        var list = Pending;
+        if (list.Count == 0) return;
+        var ok = await DialogService.ShowMessageBox("Hạch toán hàng loạt",
+            $"Tạo chứng từ nháp cho {list.Count} phiếu chưa hạch toán (mỗi dòng theo nghiệp vụ đang chọn ở dòng đó)?", yesText: "Hạch toán", cancelText: "Huỷ");
+        if (ok != true) return;
+        await RunAsync(async () =>
+        {
+            int done = 0;
+            var errors = new List<string>();
+            foreach (var r in list)
+            {
+                try
+                {
+                    var rs = await _svc.CreateDraftAsync(r, RowTx(r), _usr);
+                    if (rs.Success) done++; else errors.Add(rs.Message);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{r.So}: {ex.Message}");
+                }
+            }
+            _vouchers = await _svc.GetVouchersAsync(_rows.Select(x => x.Id));
+            Snackbar.Add($"Đã hạch toán {done}/{list.Count} phiếu.", errors.Count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+            if (errors.Count > 0)
+                await DialogService.ShowMessageBox("Một số phiếu chưa hạch toán được", string.Join("\n", errors.Take(30)), yesText: "OK");
+        });
+    }
+
+    async Task RefreshVouchersAsync(Guid id)
+    {
+        var map = await _svc.GetVouchersAsync(new[] { id });
+        if (map.TryGetValue(id, out var v)) _vouchers[id] = v; else _vouchers.Remove(id);
+    }
+
+    async Task RunAsync(Func<Task> action)
+    {
+        try
+        {
+            _busy = true;
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error); // vd kỳ kế toán đã khóa sổ
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    string N(decimal v) => v.ToString("#,##0", _en);
+}

@@ -60,29 +60,49 @@
         flex-direction: column;
         position: relative;
     }
+    /* Thanh kéo nằm NGOÀI menu, bám theo mép phải (biến CSS do MudLayout đặt) — không đè lên thanh cuộn của menu.
+       Việc kéo chạy bằng JS (window.nvoccDrawerResize trong MyJS.js), không qua server. */
     .drawer-resize-handle {
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 6px;
-        height: 100%;
+        position: fixed;
+        top: var(--mud-appbar-height, 64px);
+        bottom: 0;
+        left: calc(var(--mud-drawer-width-left, 240px) - 3px);
+        width: 8px;
         cursor: col-resize;
-        z-index: 10;
+        z-index: 1150;
         background: transparent;
         touch-action: none;
         user-select: none;
+        outline: none;
     }
-    .drawer-resize-handle:hover,
-    .drawer-resizing .drawer-resize-handle {
-        background: rgba(25, 118, 210, 0.35);
+    .drawer-resize-handle::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 3px;
+        width: 2px;
+        background: transparent;
+        transition: background-color .15s ease;
     }
-    .drawer-resize-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 2000;
-        cursor: col-resize;
-        user-select: none;
-        touch-action: none;
+    .drawer-resize-handle:hover::after,
+    .drawer-resize-handle:focus-visible::after,
+    .nvocc-drawer-resizing .drawer-resize-handle::after {
+        background: rgba(25, 118, 210, 0.6);
+    }
+    .drawer-resize-handle.is-hidden {
+        display: none;
+    }
+    /* Trong lúc kéo: tắt hiệu ứng chuyển động của MudBlazor để menu bám sát con trỏ */
+    .nvocc-drawer-resizing,
+    .nvocc-drawer-resizing * {
+        cursor: col-resize !important;
+        user-select: none !important;
+    }
+    .nvocc-drawer-resizing .mud-drawer,
+    .nvocc-drawer-resizing .mud-drawer *,
+    .nvocc-drawer-resizing .mud-main-content {
+        transition: none !important;
     }
 </style>
 <CascadingValue Value="this">
@@ -215,27 +235,19 @@
         <MudDrawer Open=_drawerOpen ClipMode=DrawerClipMode.Always Elevation=2
         Variant="DrawerVariant.Responsive"
         Breakpoint="Breakpoint.Md" DisableOverlay
-        Width="@($"{_drawerWidth}px")"
-        Class="@(_isResizingDrawer ? "drawer-resizing" : null)">
+        Width="@($"{_drawerWidth}px")">
             <div class="drawer-with-resize">
                 <NavMenu OnTabRequest="@((t) => OpenTab(t.Key,t.Title,t.Content))" @ref="_navMenuRef" />
-                @if (_drawerOpen)
-                {
-                    <div class="drawer-resize-handle"
-                         title="Kéo để đổi độ rộng menu"
-                         @onpointerdown="OnDrawerResizeStart"
-                         @onpointerup="OnDrawerResizeEnd"
-                         @onpointercancel="OnDrawerResizeEnd"></div>
-                }
             </div>
         </MudDrawer>
-        @if (_isResizingDrawer)
-        {
-            <div class="drawer-resize-overlay"
-                 @onpointermove="OnDrawerResizeMove"
-                 @onpointerup="OnDrawerResizeEnd"
-                 @onpointercancel="OnDrawerResizeEnd"></div>
-        }
+        @* Luôn render (chỉ ẩn bằng class) để JS gắn sự kiện một lần *@
+        <div class="drawer-resize-handle @(_drawerOpen ? null : "is-hidden")"
+             @ref="_drawerHandle"
+             role="separator"
+             aria-orientation="vertical"
+             aria-label="Kéo để đổi độ rộng menu"
+             tabindex="0"
+             title="Kéo để đổi độ rộng menu · Nhấp đúp để về mặc định"></div>
         <MudMainContent>
             @* @Body *@
             <DynamicTabs @ref="_tabs" />
@@ -272,37 +284,51 @@
     private double _drawerWidth = 240;
     private const double DrawerMinWidth = 180;
     private const double DrawerMaxWidth = 480;
+    private const double DrawerDefaultWidth = 240;
     private const string DrawerWidthStorageKey = "nvocc.drawerWidth";
-    private bool _isResizingDrawer;
+    private ElementReference _drawerHandle;
+    private DotNetObjectReference<MainLayout>? _layoutRef;
     AuthUser user = new AuthUser();
     void DrawerToggle() => _drawerOpen = !_drawerOpen;
 
-    private void OnDrawerResizeStart(PointerEventArgs e)
+    /// <summary>JS (nvoccDrawerResize) gọi đúng 1 lần khi thả chuột: đồng bộ độ rộng để lần render sau giữ nguyên.</summary>
+    [JSInvokable]
+    public Task OnDrawerResized(double width)
     {
-        if (!_drawerOpen || e.Button != 0)
-            return;
-        _isResizingDrawer = true;
-    }
-
-    private void OnDrawerResizeMove(PointerEventArgs e)
-    {
-        if (!_isResizingDrawer)
-            return;
-
-        var next = Math.Clamp(e.ClientX, DrawerMinWidth, DrawerMaxWidth);
+        var next = Math.Clamp(width, DrawerMinWidth, DrawerMaxWidth);
         if (Math.Abs(next - _drawerWidth) < 0.5)
-            return;
-
+            return Task.CompletedTask;
         _drawerWidth = next;
+        return InvokeAsync(StateHasChanged);
     }
 
-    private async Task OnDrawerResizeEnd(PointerEventArgs e)
+    private async Task AttachDrawerResizeAsync()
     {
-        if (!_isResizingDrawer)
-            return;
+        _layoutRef ??= DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("nvoccDrawerResize.attach", _drawerHandle, _layoutRef, new
+        {
+            min = DrawerMinWidth,
+            max = DrawerMaxWidth,
+            defaultWidth = DrawerDefaultWidth,
+            storageKey = DrawerWidthStorageKey
+        });
+    }
 
-        _isResizingDrawer = false;
-        await SaveDrawerWidthAsync();
+    /// <summary>Chạy một bước khởi tạo JS; lỗi của bước này không chặn các bước sau.</summary>
+    private static async Task TryJsAsync(string step, Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (JSDisconnectedException)
+        {
+            // circuit đã đóng
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MainLayout] {step}: {ex.Message}");
+        }
     }
 
     private async Task LoadDrawerWidthAsync()
@@ -319,17 +345,6 @@
         }
     }
 
-    private async Task SaveDrawerWidthAsync()
-    {
-        try
-        {
-            await JS.InvokeVoidAsync("localStorage.setItem", DrawerWidthStorageKey, _drawerWidth.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
-        }
-        catch
-        {
-            // ignore JS / storage errors
-        }
-    }
     private int _unreadEmailCount = 0;
     /// <summary>Tên phần mềm (appsettings.json → "AppBrand"): hiện trên thanh tiêu đề và đầu tên tab trình duyệt.</summary>
     private static string AppBrand => NVOAMASIS.AppInfo.Brand;
@@ -398,20 +413,16 @@
         if (!firstRender)
             return;
 
-        try
-        {
-            await LoadDrawerWidthAsync();
-            await ApplyStoredFontPreference();
-            // Apply saved Shipment grid colors globally (CSS variables + localStorage).
-            await JS.InvokeVoidAsync("nvoccLoadShipmentColorSettings");
-            // Tên tab trình duyệt: "AMASIS - NVOCC | <màn hình>"
-            await JS.InvokeVoidAsync("nvoccSetBrandTitle", AppBrand);
-            await InvokeAsync(StateHasChanged);
-        }
-        catch
-        {
-            // ignore JS errors
-        }
+        // Mỗi bước một try: trước đây 1 hàm JS thiếu (nvoccLoadShipmentColorSettings) làm bỏ qua cả
+        // đặt tiêu đề tab lẫn StateHasChanged → độ rộng menu đã lưu không được áp dụng.
+        await TryJsAsync("drawer width", LoadDrawerWidthAsync);
+        await TryJsAsync("font size", ApplyStoredFontPreference);
+        // Apply saved Shipment grid colors globally (CSS variables + localStorage).
+        await TryJsAsync("shipment colors", () => JS.InvokeVoidAsync("nvoccLoadShipmentColorSettings").AsTask());
+        // Tên tab trình duyệt: "AMASIS - NVOCC | <màn hình>"
+        await TryJsAsync("brand title", () => JS.InvokeVoidAsync("nvoccSetBrandTitle", AppBrand).AsTask());
+        await TryJsAsync("drawer resize", AttachDrawerResizeAsync);
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task LoadThemePreference()
@@ -647,6 +658,15 @@
     public async ValueTask DisposeAsync()
     {
         Dispose();
+        try
+        {
+            await JS.InvokeVoidAsync("nvoccDrawerResize.detach", _drawerHandle);
+        }
+        catch
+        {
+            // circuit có thể đã đóng
+        }
+        _layoutRef?.Dispose();
         TabRequests.OpenRequested -= OnTabRequested;
         _chatSubscription?.Dispose();
         if (_hubConnection != null)

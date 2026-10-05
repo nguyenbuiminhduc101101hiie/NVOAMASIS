@@ -119,6 +119,8 @@ namespace NVOAMASIS.Models
         public string? mbl_Truck_LenhDieuXeNo { get; set; }
         public string? mbl_Truck_YeucauTruckingNo { get; set; }
         public DateTime? ActualDelDate { get; set; }
+        /// <summary>Hãng tàu, lấy từ Booking (Bkno) — chạy Scripts/AlterMBL_AddCarrier.sql trước khi deploy.</summary>
+        public string? Carrier { get; set; }
         public M_MBL DeepCopy()
         {
             string json = JsonSerializer.Serialize(this);

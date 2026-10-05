@@ -9,34 +9,119 @@
 @inject ShipmentService shipsv
 @inject IStringLocalizer<SharedResource> Localizer
 @inject IJSRuntime JS
+@inject Microsoft.EntityFrameworkCore.IDbContextFactory<NVOAMASIS.Data.AppDbContext> DbFactory
 @attribute [Authorize]
-@using System.Globalization﻿
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
 
 <PageTitle>@Localizer["Shipment Report"]</PageTitle>
+<style>
+    /* 2.4.2: cột co theo dữ liệu — bảng rộng bằng nội dung, tiêu đề xuống dòng, dữ liệu một dòng */
+    .rpt242-grid .mud-table-container { overflow-x: auto; }
+    .rpt242-grid table.mud-table-root {
+        table-layout: auto !important;
+        width: auto !important;
+        min-width: 0 !important;
+    }
+    .rpt242-grid .mud-table-head th.mud-table-cell {
+        min-width: 0 !important;
+        white-space: normal !important;
+        line-height: 1.2;
+        vertical-align: bottom;
+        padding: 6px 6px !important;
+        position: relative;
+    }
+    .rpt242-grid .mud-table-head th.mud-table-cell * { white-space: normal !important; }
+    .rpt242-grid .mud-table-head .column-header { gap: 0 !important; }
+    /* Nút sắp xếp / lọc trên tiêu đề nổi lên khi rê chuột, không chiếm bề rộng cột */
+    .rpt242-grid .mud-table-head .column-options {
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        display: flex;
+        align-items: center;
+        opacity: 0;
+        background: inherit;
+        transition: opacity .15s;
+    }
+    .rpt242-grid .mud-table-head th.mud-table-cell:hover .column-options,
+    .rpt242-grid .mud-table-head .column-options:focus-within { opacity: 1; }
+    .rpt242-grid .mud-table-head .column-options .mud-icon-button { padding: 2px !important; }
+    .rpt242-grid .mud-table-head .rpt242-hf { display: flex; flex-direction: column; gap: 2px; }
+    .rpt242-grid .rpt242-filter {
+        width: 100%; min-width: 60px; max-width: 160px; box-sizing: border-box;
+        font-size: 11px; line-height: 1.2; padding: 1px 4px;
+        border: 1px solid rgba(255,255,255,.55); border-radius: 4px;
+        background: rgba(255,255,255,.95); color: #1f2937;
+    }
+    .rpt242-grid .rpt242-filter:focus { outline: 2px solid var(--mud-palette-primary); }
+    .rpt242-grid .rpt242-eye { display: inline-flex; align-items: center; gap: 0; }
+    .rpt242-grid .rpt242-shiplink .mud-link { cursor: pointer; }
+    .rpt242-colmenu { padding: 6px 12px; max-height: 70vh; overflow-y: auto; min-width: 220px; }
+    .rpt242-colmenu-head { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+    .rpt242-grid .rpt242-term { margin-left: 4px; font-size: 10px; padding: 0 4px; border-radius: 6px; background: #fef3c7; color: #92400e; }
+    .rpt242-grid .rpt242-status { display: inline-block; font-size: 11px; line-height: 1.4; padding: 0 6px; border: 1px solid; border-radius: 10px; }
+    .rpt242-grid .rpt242-eye .mud-icon-button { padding: 2px !important; }
+    .rpt242-grid .mud-table-body td.mud-table-cell,
+    .rpt242-grid .mud-table-foot td.mud-table-cell {
+        white-space: nowrap;
+        padding: 4px 6px !important;
+    }
+</style>
+<style>@HiddenColsCss</style>
+
 <MudContainer MaxWidth=MaxWidth.False>
     
     <MudStack Row="true" Justify="Justify.FlexStart" Spacing="3">
-        <MudDateRangePicker @bind-DateRange="frmtoDate" Label="@Localizer["searchdatefromto"]" Color="Color.Primary"/>
-        <MudIconButton HtmlTag="label"
-                    OnClick="@(()=>Refresh(frmtoDate))" Disabled="_loading"
-                    Size="Size.Small" Color="Color.Primary" Variant="Variant.Text"
-                    Icon="@Icons.Material.Filled.Search"/>
+        <MudDateRangePicker @bind-DateRange="frmtoDate" Label="@Localizer["searchdatefromto"]" Color="Color.Primary"
+                            HelperText="@T("Rpt242_DateRangeHint", "Lọc theo Date Report của HBL", "Filtered by HBL Date Report")" />
+        <MudTooltip Arrow="true" Placement="Placement.Bottom">
+            <ChildContent>
+                <MudIconButton HtmlTag="label"
+                            OnClick="@(()=>Refresh(frmtoDate))" Disabled="_loading"
+                            Size="Size.Small" Color="Color.Primary" Variant="Variant.Text"
+                            Icon="@Icons.Material.Filled.Search"/>
+            </ChildContent>
+            <TooltipContent>
+                <div style="text-align:left; max-width:340px; line-height:1.5; white-space:normal;">
+                    @if (IsVietnamese)
+                    {
+                        <div><b>Tìm theo khoảng thời gian</b></div>
+                        <div>Lọc theo <b>Date Report</b> của HBL (không phải ETD / ETA / ngày giao).</div>
+                        <div>• Date Report mặc định là ngày tạo HBL; nếu để trống khi lưu thì hàng nhập (SI, AI) lấy ETA, hàng khác lấy ETD. Sửa ở cột Date Report trên màn Shipment.</div>
+                        <div>• Lấy trọn cả ngày cuối của khoảng.</div>
+                        <div>• ADMIN thấy mọi HBL; người khác chỉ thấy HBL có Sale Name là mình.</div>
+                        <div>Bấm kính lúp để tải dữ liệu.</div>
+                    }
+                    else
+                    {
+                        <div><b>Search by period</b></div>
+                        <div>Filters by the HBL <b>Date Report</b> (not ETD / ETA / delivery date).</div>
+                        <div>• Date Report defaults to the HBL creation date; if left empty on save, imports (SI, AI) take ETA and others take ETD. Edit it in the Date Report column on the Shipment screen.</div>
+                        <div>• The whole last day is included.</div>
+                        <div>• ADMIN sees every HBL; other users see only HBLs where they are the Sale Name.</div>
+                        <div>Click the magnifier to load data.</div>
+                    }
+                </div>
+            </TooltipContent>
+        </MudTooltip>
 
         <MudCheckBox @bind-Value="chkShowChart" Label="@Localizer["ShowChart"]" Color="Color.Primary" Size="Size.Medium" />
-        <MudRadioGroup @bind-Value="chkUSD">
+        <MudRadioGroup @bind-Value="chkUSD" @bind-Value:after="RebuildCharts">
             <MudRadio Value="@true" Color="Color.Primary" Size="Size.Small">USD</MudRadio>
             <MudRadio Value="@false" Color="Color.Primary" Size="Size.Small">VND</MudRadio>
         </MudRadioGroup>
-        <MudCheckBox @bind-Checked="chkVAT" Label="VAT" Color="Color.Primary" Size="Size.Medium" />
+        <MudCheckBox @bind-Value="chkVAT" @bind-Value:after="RebuildCharts" Label="VAT" Color="Color.Primary" Size="Size.Medium" />
         <MudCheckBox @bind-Value="ChkOnTime" Color="Color.Primary" Size="Size.Small">@Localizer["OnTimeDelivery"]</MudCheckBox>
         <MudCheckBox @bind-Value="ChkLate" Color="Color.Primary" Size="Size.Small">@Localizer["LateDelivery"]</MudCheckBox>
         <MudSwitch @bind-Value="chkPending" Label="@Localizer["Pending"]" Color="Color.Primary" Size="Size.Medium"/>
         <MudSwitch @bind-Value="chkDeli" Label="@Localizer["Delivered"]" Color="Color.Primary" Size="Size.Medium"/>
         <MudSwitch @bind-Value="chkCancel" Label="@Localizer["Cancelled"]" Color="Color.Primary" Size="Size.Medium"/>
     </MudStack>
-    <MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-shipment-bg"
-                         FilterMode="@DataGridFilterMode.Simple" Dense="true" Virtualize="true" Height="calc(100vh - 41vh);" QuickFilter="_quickFilter"
-                         FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap" RowClassFunc="@SelectedRowClassFunc"
+    <MudDataGrid T="M_HBL" Items="@Listdata" Filterable="true" @ref="mudTable" Class="table-shipment-bg rpt242-grid"
+                         FilterMode="@DataGridFilterMode.Simple" ShowColumnOptions="false" Dense="true" Virtualize="true" Height="calc(100vh - 41vh)" QuickFilter="_quickFilter"
+                         FixedHeader="true" FixedFooter="true" FooterClass="no-wrap" RowClassFunc="@SelectedRowClassFunc"
                          RowClick="@RowClicked" RowContextMenuClick="RowRightClicked" Bordered="true" RowClass="no-wrap-cell"
                          ColumnResizeMode="ResizeMode.Column" Loading="_loading">
                 <ToolBarContent>
@@ -54,6 +139,43 @@
                             <MudText>@Localizer["Export"]</MudText>
                         }
                     </MudButton>
+                    <MudMenu Icon="@Icons.Material.Filled.DirectionsBoat" Size="Size.Small" Dense="true"
+                             AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" Style="margin-left:6px;"
+                             title="@T("Rpt242_OfPick", "Chọn mã phí (CHARGE_CODE) tính Profit NVOCC", "Choose charge codes for Profit NVOCC")">
+                        <div class="rpt242-colmenu" @onclick:stopPropagation="true">
+                            <div class="rpt242-colmenu-head">
+                                <b>@T("Rpt242_OfPick", "Chọn mã phí (CHARGE_CODE) tính Profit NVOCC", "Choose charge codes for Profit NVOCC")</b>
+                            </div>
+                            <MudTextField @bind-Value="_ofSearch" Immediate="true" Placeholder="@T("Rpt242_OfSearch", "Tìm mã / tên phí", "Search code / name")"
+                                          Margin="Margin.Dense" Variant="Variant.Outlined" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+                            <div class="rpt242-colmenu-head">
+                                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="UseAutoOf">@T("Rpt242_OfAuto", "Tự nhận (mặc định)", "Auto (default)")</MudButton>
+                                <span class="sd-kv" style="font-size:11px;">@(_ofCodes.Count == 0 ? T("Rpt242_OfAutoOn", "đang tự nhận", "auto") : $"{_ofCodes.Count} {T("Rpt242_OfChosen", "mã đã chọn", "selected")}")</span>
+                            </div>
+                            @foreach (var c in OfPickList)
+                            {
+                                <MudCheckBox T="bool" Value="@IsOfSelected(c)" ValueChanged="@(v => SetOfCode(c, v))" Dense="true" Size="Size.Small" Color="Color.Primary"
+                                             Label="@($"{c.CHARGE_CODE} — {c.CHARGE}")" />
+                            }
+                        </div>
+                    </MudMenu>
+                    <MudMenu Icon="@Icons.Material.Filled.ViewColumn" Size="Size.Small" Dense="true"
+                             AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" Style="margin-left:12px;"
+                             title="@T("Rpt242_ChooseCols", "Chọn cột hiển thị", "Choose columns")">
+                        <div class="rpt242-colmenu" @onclick:stopPropagation="true">
+                            <div class="rpt242-colmenu-head">
+                                <b>@T("Rpt242_ChooseCols", "Chọn cột hiển thị", "Choose columns")</b>
+                                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => SetAllColumns(true))">@T("Rpt242_ShowAll", "Hiện tất cả", "Show all")</MudButton>
+                                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ResetColumns">@T("Rpt242_Default", "Mặc định", "Default")</MudButton>
+                            </div>
+                            @foreach (var col in ColumnDefs)
+                            {
+                                <MudCheckBox T="bool" Value="@(!_hiddenCols.Contains(col.Key))" ValueChanged="@(v => SetColumnVisible(col.Key, v))"
+                                             Label="@col.Label" Dense="true" Size="Size.Small" Color="Color.Primary" />
+                            }
+                        </div>
+                    </MudMenu>
+                    <MudText Typo="Typo.caption" Style="white-space:nowrap;">@T("Rpt242_Columns", "Cột", "Columns") (@(ColumnDefs.Count - _hiddenCols.Count)/@ColumnDefs.Count)</MudText>
                     <MudStack Spacing="2" Style="margin-left:20px;">
                         <MudStack Row>
                             <MudSwitch @bind-Value="chkSI" Label="SI" Color="Color.Primary" Size="Size.Small" />
@@ -76,67 +198,272 @@
                                      Clearable ResetValueOnEmptyText SearchFunc="SearchCustomer" ToStringFunc="CusidtoCusCode" />
                 </ToolBarContent>
                 <Columns>
-                    <PropertyColumn Property="x => x.hbl" Title="@Localizer["HBL"]" Required CellStyleFunc="_cellStyleFunc">
+                    <TemplateColumn Sortable="false" Filterable="false" CellStyleFunc="_cellStyleFunc">
+                        <HeaderTemplate>
+                            <MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" title="@T("Rpt242_ViewDetail", "Xem chi tiết lô hàng", "Shipment details")" />
+                        </HeaderTemplate>
                         <CellTemplate>
-                            <MudLink OnClick="@(() => OpenDetailHBL(context.Item))">@context.Item.hbl</MudLink>
+                            <span class="rpt242-eye">
+                                <MudIconButton Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" Color="Color.Primary"
+                                               title="@T("Rpt242_ViewDetail", "Xem chi tiết lô hàng: Debit, Credit, hóa đơn, phiếu thu / chi", "Shipment details: Debit, Credit, invoices, receipts / payments")"
+                                               OnClick="@(() => OpenShipmentDetail(context.Item))" />
+                                @if (context.Item.approve == true && context.Item.debitCompleted == true && context.Item.creditCompleted == true)
+                                {
+                                    <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Small" Color="Color.Error" title="@T("Rpt242_ShipmentLocked", "Lô hàng đã khóa", "Shipment locked")" />
+                                }
+                            </span>
+                        </CellTemplate>
+                    </TemplateColumn>
+                    <PropertyColumn Property="x => x.hbl" Title="@Localizer["HBL"]" Required CellStyleFunc="_cellStyleFunc" Filterable="false">
+                        <HeaderTemplate>
+                            <div class="rpt242-hf">
+                                <span>@Localizer["HBL"]</span>
+                                <div @onclick:stopPropagation="true">
+                                    <input class="rpt242-filter" type="text" placeholder="🔍" value="@_fHbl"
+                                           @oninput="@(e => { _fHbl = e.Value?.ToString() ?? string.Empty; })" />
+                                </div>
+                            </div>
+                        </HeaderTemplate>
+                        <CellTemplate>
+                            @ShipLink(context.Item, ShipmentLinkTarget.Hbl, context.Item.hbl)
                         </CellTemplate>
                         <FooterTemplate>
                             @Localizer["Total"]
                         </FooterTemplate>
                     </PropertyColumn>
-                    <PropertyColumn Property="x => CusidtoCusCode(x.CustomerID)" Title="@Localizer["Customer"]" Required CellStyleFunc="_cellStyleFunc">
-                        <FooterTemplate>
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="@(x => x.polcode + " → " + x.podcode)" Title="@Localizer["Shipping Line"]" Required CellStyleFunc="_cellStyleFunc">
-                        <FooterTemplate>
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="x=> TypeJob(x)" Title="@Localizer["Service Type"]" Required CellStyleFunc="_cellStyleFunc">
-                        <FooterTemplate>
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="x=> formatDate(x.ETD)" Title="@Localizer["ETD"]" Required CellStyleFunc="_cellStyleFunc">
-                        <FooterTemplate>
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="x=> formatDate(x.ETA)" Title="@Localizer["ETA"]" Required CellStyleFunc="_cellStyleFunc">
-                        <FooterTemplate>
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="x=> formatDate(x.ActualDelDate)" Title="@Localizer["ADD"]" Required CellStyleFunc="_cellStyleFunc">
-                        <FooterTemplate>
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="x=> x.statusHBL" Title="@Localizer["Status"]" Required CellStyleFunc="_cellStyleFunc">
-                        <FooterTemplate>
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="@(x => TDebit_(x.hblID))" Title="@Localizer["Debit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
-                        <FooterTemplate>
-                            @(mudTable.FilteredItems.Sum(x => TDebit_(x.hblID))!.Value.ToString("##,##0.##", _en))
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="@(x => TCredit_(x.hblID))" Title="@Localizer["Credit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
-                        <FooterTemplate>
-                            @(mudTable.FilteredItems.Sum(x => TCredit_(x.hblID))!.Value.ToString("##,##0.##", _en))
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="@(x => TProfit_(x.hblID, ""))" Title="@Localizer["Profit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
-                        <FooterTemplate>
-                            @(mudTable.FilteredItems.Sum(x => TProfit_(x.hblID, ""))!.Value.ToString("##,##0.##", _en))
-                        </FooterTemplate>
-                    </PropertyColumn>
-                    <PropertyColumn Property="x => CheckOnTime(x)" Title="@Localizer["On Time"]" Required CellStyleFunc="_cellStyleFunc" Filterable="false">
+                    <PropertyColumn HeaderClass="rc-ref" CellClass="rc-ref" FooterClass="rc-ref" Property="x => RefNo(x)" Title="@T("Rpt242_RefJobNo", "Ref (Job No)", "Ref (Job No)")" Required CellStyleFunc="_cellStyleFunc" Filterable="false">
+                        <HeaderTemplate>
+                            <div class="rpt242-hf">
+                                <span>Ref</span>
+                                <div @onclick:stopPropagation="true">
+                                    <input class="rpt242-filter" type="text" placeholder="🔍" value="@_fRef"
+                                           @oninput="@(e => { _fRef = e.Value?.ToString() ?? string.Empty; })" />
+                                </div>
+                            </div>
+                        </HeaderTemplate>
                         <CellTemplate>
-                            @if (CheckOnTime(context.Item) == 1)
+                            @if (!string.IsNullOrWhiteSpace(RefNo(context.Item)))
                             {
-                                <MudIcon Icon="@Icons.Material.Filled.Check" Color="Color.Success" />
-                            } 
-                            else if (CheckOnTime(context.Item) == 0)
-                            {
-                                <MudIcon Icon="@Icons.Material.Filled.Close" Color="Color.Error" />
+                                @ShipLink(context.Item, ShipmentLinkTarget.Job, RefNo(context.Item))
                             }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-mbl" CellClass="rc-mbl" FooterClass="rc-mbl" Property="x => MblNo(x)" Title="@Localizer["MBL"]" Required CellStyleFunc="_cellStyleFunc" Filterable="false">
+                        <HeaderTemplate>
+                            <div class="rpt242-hf">
+                                <span>@Localizer["MBL"]</span>
+                                <div @onclick:stopPropagation="true">
+                                    <input class="rpt242-filter" type="text" placeholder="🔍" value="@_fMbl"
+                                           @oninput="@(e => { _fMbl = e.Value?.ToString() ?? string.Empty; })" />
+                                </div>
+                            </div>
+                        </HeaderTemplate>
+                        <CellTemplate>
+                            @if (!string.IsNullOrWhiteSpace(MblNo(context.Item)))
+                            {
+                                @ShipLink(context.Item, ShipmentLinkTarget.Mbl, MblNo(context.Item))
+                            }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-booking" CellClass="rc-booking" FooterClass="rc-booking" Property="x => BookingNoOf(x)" Title="@T("Rpt242_BookingNo", "Số Booking", "Booking No.")" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            @if (!string.IsNullOrWhiteSpace(BookingNoOf(context.Item)))
+                            {
+                                <MudLink OnClick="@(() => OpenBooking(BookingNoOf(context.Item)))"
+                                         title="@T("Rpt242_OpenBooking", "Mở Booking ở 6.1", "Open this booking in 6.1")">@BookingNoOf(context.Item)</MudLink>
+                            }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-customer" CellClass="rc-customer" FooterClass="rc-customer" Property="x => CusidtoCusCode(x.CustomerID)" Title="@Localizer["Customer"]" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            <MudLink OnClick="@(() => EditPartyAsync(context.Item.CustomerID))"
+                                     title="@T("Rpt242_EditCustomer", "Mở form sửa khách hàng", "Edit this customer")">@CusidtoCusCode(context.Item.CustomerID)</MudLink>
+                            @if (!string.IsNullOrWhiteSpace(CreditTerm(context.Item.CustomerID)))
+                            {
+                                <span class="rpt242-term" title="@T("Rpt242_CreditTerm", "Hạn công nợ", "Credit term")">@T("Rpt242_TermShort", "HCN", "Term") @CreditTerm(context.Item.CustomerID)</span>
+                            }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-debitparties" CellClass="rc-debitparties" FooterClass="rc-debitparties" Property="x => DebitPartyCodes(x.hblID)" Title="@T("Rpt242_DebitParties", "Đối tượng Debit", "Debit Parties")" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            @{ var dparties = DebitParties(context.Item.hblID); }
+                            @for (var i = 0; i < dparties.Count; i++)
+                            {
+                                var party = dparties[i];
+                                if (i > 0)
+                                {
+                                    <span>, </span>
+                                }
+                                <MudLink OnClick="@(() => OpenDebitIn50(context.Item))"
+                                         title="@DebitLinkHint(party.Name)">@party.Code</MudLink>
+                            }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-creditparties" CellClass="rc-creditparties" FooterClass="rc-creditparties" Property="x => CreditPartyCodes(x.hblID)" Title="@T("Rpt242_CreditParties", "Đối tượng Credit", "Credit Parties")" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            @{ var parties = CreditParties(context.Item.hblID); }
+                            @for (var i = 0; i < parties.Count; i++)
+                            {
+                                var party = parties[i];
+                                if (i > 0)
+                                {
+                                    <span>, </span>
+                                }
+                                <MudLink OnClick="@(() => OpenCreditIn50(context.Item))"
+                                         title="@CreditLinkHint(party.Name)">@party.Code</MudLink>
+                            }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-agent" CellClass="rc-agent" FooterClass="rc-agent" Property="x => AgentCode(x)" Title="@T("Rpt242_Agent", "Agent", "Agent")" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            <span title="@AgentName(context.Item)">@AgentCode(context.Item)</span>
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-carrier" CellClass="rc-carrier" FooterClass="rc-carrier" Property="x => CarrierOf(x)" Title="@T("Rpt242_Carrier", "Carrier", "Carrier")" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            @if (!string.IsNullOrWhiteSpace(CarrierOf(context.Item)))
+                            {
+                                <MudLink OnClick="@(() => EditCarrierAsync(CarrierOf(context.Item)))"
+                                         title="@(CarrierHint(context.Item) + " · " + T("Rpt242_EditCarrier", "Mở form sửa hãng tàu", "Edit this carrier"))">@CarrierOf(context.Item)</MudLink>
+                            }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-polpod" CellClass="rc-polpod" FooterClass="rc-polpod" Property="@(x => x.polcode + " → " + x.podcode)" Title="POL/POD" Required CellStyleFunc="_cellStyleFunc">
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-service" CellClass="rc-service" FooterClass="rc-service" Property="x=> TypeJob(x)" Title="@Localizer["Service Type"]" Required CellStyleFunc="_cellStyleFunc">
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-cargo" CellClass="rc-cargo" FooterClass="rc-cargo" Property="x => CargoKind(x)" Title="@T("Rpt242_CargoKind", "Loại hàng", "Freight / NVOCC")" Required CellStyleFunc="_cellStyleFunc">
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-etd" CellClass="rc-etd" FooterClass="rc-etd" Property="x=> formatDate(x.ETD)" Title="@Localizer["ETD"]" Required CellStyleFunc="_cellStyleFunc">
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-eta" CellClass="rc-eta" FooterClass="rc-eta" Property="x=> formatDate(x.ETA)" Title="@Localizer["ETA"]" Required CellStyleFunc="_cellStyleFunc">
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-add" CellClass="rc-add" FooterClass="rc-add" Property="x=> formatDate(x.ActualDelDate)" Title="@T("Rpt242_ActualDeliveryDate", "Ngày giao (ADD)", "Actual Delivery (ADD)")" Required CellStyleFunc="_cellStyleFunc">
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-status" CellClass="rc-status" FooterClass="rc-status" Property="x=> x.statusHBL" Title="@Localizer["Status"]" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            @if (!string.IsNullOrWhiteSpace(context.Item.statusHBL))
+                            {
+                                <span class="rpt242-status" style="@StatusStyle(context.Item.statusHBL)">@context.Item.statusHBL</span>
+                            }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-debit" CellClass="rc-debit" FooterClass="rc-debit" Property="@(x => TDebit_(x.hblID))" Title="@Localizer["Debit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                        <FooterTemplate>
+                            @((mudTable?.FilteredItems ?? Enumerable.Empty<M_HBL>()).Sum(x => TDebit_(x.hblID) ?? 0).ToString("##,##0.##", _en))
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-credit" CellClass="rc-credit" FooterClass="rc-credit" Property="@(x => TCredit_(x.hblID))" Title="@Localizer["Credit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                        <FooterTemplate>
+                            @((mudTable?.FilteredItems ?? Enumerable.Empty<M_HBL>()).Sum(x => TCredit_(x.hblID) ?? 0).ToString("##,##0.##", _en))
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-debitdue" CellClass="rc-debitdue" FooterClass="rc-debitdue" Property="@(x => DebitDue(x.hblID))" Title="@T("Rpt242_DebitDue", "Còn nợ Debit", "Debit outstanding")" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                        <FooterTemplate>
+                            @((mudTable?.FilteredItems ?? Enumerable.Empty<M_HBL>()).Sum(x => DebitDue(x.hblID)).ToString("##,##0.##", _en))
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-creditdue" CellClass="rc-creditdue" FooterClass="rc-creditdue" Property="@(x => CreditDue(x.hblID))" Title="@T("Rpt242_CreditDue", "Còn nợ Credit", "Credit outstanding")" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                        <FooterTemplate>
+                            @((mudTable?.FilteredItems ?? Enumerable.Empty<M_HBL>()).Sum(x => CreditDue(x.hblID)).ToString("##,##0.##", _en))
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-profit" CellClass="rc-profit" FooterClass="rc-profit" Property="@(x => TProfit_(x.hblID, ""))" Title="@Localizer["Profit"]" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                        <FooterTemplate>
+                            @((mudTable?.FilteredItems ?? Enumerable.Empty<M_HBL>()).Sum(x => TProfit_(x.hblID, "") ?? 0).ToString("##,##0.##", _en))
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-profitnvocc" CellClass="rc-profitnvocc" FooterClass="rc-profitnvocc" Property="@(x => ProfitNvocc(x))" Title="@T("Rpt242_ProfitNvocc", "Profit NVOCC", "Profit NVOCC")" Required CellStyleFunc="_cellStyleFunc" Format="#,##0.##" CellStyle="text-align: right;" Culture="@_en" Filterable="false">
+                        <HeaderTemplate>
+                            <span style="cursor:help;" title="@(T("Rpt242_ProfitNvoccHint", "Cước OF: Debit OF − Credit OF (mã/tên phí OF, O/F, Ocean Freight). Lô không có cước OF để trống.", "Ocean freight only: Debit OF − Credit OF. Blank when the shipment has no OF line.") + "\n" + OfChargesHint)">@T("Rpt242_ProfitNvocc", "Profit NVOCC", "Profit NVOCC")</span>
+                        </HeaderTemplate>
+                        <FooterTemplate>
+                            @((mudTable?.FilteredItems ?? Enumerable.Empty<M_HBL>()).Sum(x => ProfitNvocc(x) ?? 0).ToString("##,##0.##", _en))
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-ontime" CellClass="rc-ontime" FooterClass="rc-ontime" Property="x => CheckOnTime(x)" Title="@Localizer["On Time"]" Required CellStyleFunc="_cellStyleFunc" Filterable="false">
+                        <HeaderTemplate>
+                            <MudTooltip Arrow="true" Placement="Placement.Bottom">
+                                <ChildContent>
+                                    <span style="cursor:help; display:inline-flex; align-items:center; gap:4px;">
+                                        @Localizer["On Time"]
+                                        <MudIcon Icon="@Icons.Material.Outlined.Info" Style="font-size:1rem;" />
+                                    </span>
+                                </ChildContent>
+                                <TooltipContent>
+                                    <div style="text-align:left; max-width:320px; line-height:1.5; white-space:normal;">
+                                        <b>On Time: giao hàng đúng hạn</b><br />
+                                        So ngày giao thực tế (ADD) với ngày mốc:<br />
+                                        • SE, AE, SI, AI: so với <b>ETA</b><br />
+                                        • Truck, Customs: so với <b>ETD</b><br />
+                                        ✔ ADD bằng hoặc sớm hơn ngày mốc (chỉ so ngày)<br />
+                                        ✘ ADD muộn hơn ngày mốc<br />
+                                        Để trống: lô Pending / Cancelled, chưa nhập ADD hoặc thiếu ETA / ETD.
+                                    </div>
+                                </TooltipContent>
+                            </MudTooltip>
+                        </HeaderTemplate>
+                        <CellTemplate>
+                            @{ var onTime = CheckOnTime(context.Item); }
+                            @if (onTime == 1)
+                            {
+                                <span title="@OnTimeHint(context.Item)"><MudIcon Icon="@Icons.Material.Filled.Check" Color="Color.Success" /></span>
+                            }
+                            else if (onTime == 0)
+                            {
+                                <span title="@OnTimeHint(context.Item)"><MudIcon Icon="@Icons.Material.Filled.Close" Color="Color.Error" /></span>
+                            }
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-einvoice" CellClass="rc-einvoice" FooterClass="rc-einvoice" Property="x => DocNos(_docRefs.Invoices, x.hblID)" Title="@T("Rpt242_EInvoiceNo", "Số HĐ online", "E-Invoice No.")" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            @DocLinks(ShipmentDocRefs.Get(_docRefs.Invoices, context.Item.hblID), DocKind.Invoice, context.Item)
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-receipt" CellClass="rc-receipt" FooterClass="rc-receipt" Property="x => DocNos(_docRefs.Receipts, x.hblID)" Title="@T("Rpt242_ReceiptNo", "Số phiếu thu", "Receipt No.")" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            @DocLinks(ShipmentDocRefs.Get(_docRefs.Receipts, context.Item.hblID), DocKind.Receipt, context.Item)
+                        </CellTemplate>
+                        <FooterTemplate>
+                        </FooterTemplate>
+                    </PropertyColumn>
+                    <PropertyColumn HeaderClass="rc-payment" CellClass="rc-payment" FooterClass="rc-payment" Property="x => DocNos(_docRefs.Payments, x.hblID)" Title="@T("Rpt242_PaymentNo", "Số phiếu chi", "Payment No.")" Required CellStyleFunc="_cellStyleFunc">
+                        <CellTemplate>
+                            @DocLinks(ShipmentDocRefs.Get(_docRefs.Payments, context.Item.hblID), DocKind.Payment, context.Item)
                         </CellTemplate>
                         <FooterTemplate>
                         </FooterTemplate>
@@ -173,6 +500,8 @@
     List<string> trangthais = new List<string>();
     List<TrangThai> tts = new List<TrangThai>();
     List<M_Customer> Customers = new List<M_Customer>();
+    Dictionary<Guid, string> customerNameById = new Dictionary<Guid, string>();
+    Dictionary<Guid, M_Customer> partyById = new Dictionary<Guid, M_Customer>();
     List<ChargeModel> charges = new List<ChargeModel>();
     CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
     protected async override Task OnInitializedAsync()
@@ -182,15 +511,24 @@
             _loading = true;
             userdetail = asv.GetUserDetail();
             Customers = await csv.GetList(userdetail);
+            customerNameById = Customers
+                .GroupBy(x => x.Customer_ID)
+                .ToDictionary(g => g.Key, g => g.First().COMPANY ?? string.Empty);
             tts = await supsv.GetListTrangThai();
-            trangthais = tts.Where(x => x.Tieude.ToLower() == "job").OrderBy(x=>x.Noidung).Select(x=>x.Noidung).ToList();
-            usr = asv.GetAuth().Result.User.Identity!.Name!;
+            trangthais = tts.Where(x => (x.Tieude ?? string.Empty).ToLower() == "job").OrderBy(x=>x.Noidung).Select(x=>x.Noidung).ToList();
+            var auth = await asv.GetAuth();
+            usr = auth.User.Identity!.Name!;
             charges = await supsv.GetListCharge();
+            _ofChargeIds = null;
+            // Agent / nhà cung cấp trên Credit có thể không nằm trong danh sách khách theo user, nên tra trên toàn bộ danh mục
+            partyById = (await csv.GetList())
+                .GroupBy(x => x.Customer_ID)
+                .ToDictionary(g => g.Key, g => g.First());
         }
         catch(Exception ex)
         {
+            Console.WriteLine($"[ShipmentReport] OnInitializedAsync: {ex}");
             CallSnackBar(Localizer["PleaseSlowDown"], MudBlazor.Severity.Error);
-
         }
         finally
         {
@@ -205,34 +543,80 @@
     List<M_MBL> MBLs = new List<M_MBL>();
     List<M_Job> Jobs = new List<M_Job>();
     M_HBL jobdetail;
+
+    // Bảng tra cứu (thay cho FirstOrDefault/Where lặp lại trên từng ô của lưới)
+    Dictionary<Guid, M_MBL> mblById = new Dictionary<Guid, M_MBL>();
+    Dictionary<Guid, M_Job> jobById = new Dictionary<Guid, M_Job>();
+    ILookup<Guid, M_Debit> debitByHbl = Enumerable.Empty<M_Debit>().ToLookup(x => x.hblid);
+    ILookup<Guid, M_Credit> creditByHbl = Enumerable.Empty<M_Credit>().ToLookup(x => x.hblid);
+    ShipmentDocRefs _docRefs = new ShipmentDocRefs();
+    Dictionary<string, string> carrierByBookingNo = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    void ResetData()
+    {
+        Listdata = new List<M_HBL>();
+        ListDebit = new List<M_Debit>();
+        ListCredit = new List<M_Credit>();
+        MBLs = new List<M_MBL>();
+        Jobs = new List<M_Job>();
+        jobdetail = null;
+        _docRefs = new ShipmentDocRefs();
+        carrierByBookingNo = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        BuildLookups();
+        RebuildCharts();
+    }
+
+    void BuildLookups()
+    {
+        mblById = MBLs.GroupBy(x => x.MblID).ToDictionary(g => g.Key, g => g.First());
+        jobById = Jobs.GroupBy(x => x.JobID).ToDictionary(g => g.Key, g => g.First());
+        debitByHbl = ListDebit.ToLookup(x => x.hblid);
+        creditByHbl = ListCredit.ToLookup(x => x.hblid);
+    }
+
     async Task Refresh(DateRange frmtoDate)
     {
         try
         {
             _loading = true;
-            Listdata.Clear();
-            dataStatus = null;
-            labelsStatus = null;
-            jobdetail = null;
-            await Task.Delay(500);
+            // Xoá toàn bộ dữ liệu cũ để không còn sót MBL/Job/Debit/Credit của lần tìm trước
+            ResetData();
             StateHasChanged();
             if (!await ssv.CheckPermission(usr, "View", "Shipment"))
             {
                 CallSnackBar(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
                 return;
             }
-            Listdata = await shipsv.GetListHBLDateRange(frmtoDate);
-            if (Listdata.Count > 0)
+            var hbls = await shipsv.GetListHBLDateRange(frmtoDate);
+            if (hbls.Count > 0)
             {
-                MBLs = await shipsv.GetListMBLHBLs(Listdata);
-                ListDebit = await shipsv.GetListDebitHBLs(Listdata);
-                ListCredit = await shipsv.GetListCreditHBLs(Listdata);
+                MBLs = await shipsv.GetListMBLHBLs(hbls);
+                ListDebit = await shipsv.GetListDebitHBLs(hbls);
+                ListCredit = await shipsv.GetListCreditHBLs(hbls);
+                if (MBLs.Count > 0)
+                    Jobs = await shipsv.GetListJobByMBLs(MBLs);
+                try
+                {
+                    _docRefs = await LoadDocRefsAsync(hbls, ListDebit);
+                }
+                catch (Exception ex)
+                {
+                    // Không để lỗi tra chứng từ làm hỏng cả báo cáo
+                    CallSnackBar(ex.Message, MudBlazor.Severity.Warning);
+                }
+                try
+                {
+                    carrierByBookingNo = await LoadBookingCarriersAsync(hbls);
+                }
+                catch (Exception ex)
+                {
+                    CallSnackBar(ex.Message, MudBlazor.Severity.Warning);
+                }
             }
-            if (MBLs.Count > 0)
-                Jobs = await shipsv.GetListJobByMBLs(MBLs);
 
-            if (Listdata.Count > 0)
-                ListdataToArraay(Listdata);
+            BuildLookups();
+            Listdata = hbls;
+            RebuildCharts();
         }
         catch(Exception ex)
         {
@@ -271,23 +655,12 @@
 
     void RowRightClicked(DataGridRowClickEventArgs<M_HBL> args)
     {
-
-        //_events.Insert(0, $"Event = RowRightClick, Index = {args.RowIndex}, Data = {System.Text.Json.JsonSerializer.Serialize(args.Item)}");
     }
 
+    // Lỗ (profit < 0) tô đỏ, còn lại xanh
     private Func<M_HBL, string> _cellStyleFunc => x =>
-    {
-        // var profitFreight = TProfit_Job(x.JobID, "FREIGHT");
-        // var profitLocal = TProfit_Job(x.JobID, "LOCAL");
-        // var profitAll = TProfit_Job(x.JobID, "");
-        // var profitNotCom = TProfit_Job(x.JobID, "notCOM");
+        (TProfit_(x.hblID, "") ?? 0) < 0 ? "color: #FF5733" : "color: #087210";
 
-        // if (profitFreight < 0 || profitLocal < 0 || profitAll < 0 || profitNotCom < 0)
-        //     return "color: #FF5733";
-
-        return "color: #087210"; // XANH
-
-    };
     string formatDate(DateTime? date)
     {
         if(date == null)
@@ -297,50 +670,138 @@
     bool chkPending = false, chkDeli = false, chkCancel = false, ChkOnTime = false, ChkLate = false, chkVAT = false, chkUSD = true;
 
     private Guid _searchCus;
+
+    // Quy tắc lọc: trong cùng một nhóm là HOẶC, giữa các nhóm là VÀ.
+    // Ví dụ chọn SI + "Đã xuất HĐ" => các lô SI ĐÃ xuất HĐ (trước đây ra SI HOẶC đã xuất HĐ).
+    string _fHbl = string.Empty, _fRef = string.Empty, _fMbl = string.Empty;
+
+    // ---------- Chọn cột hiển thị (lưu theo trình duyệt) ----------
+    const string ColsStorageKey = "rpt242.hiddenCols";
+    static readonly string[] DefaultHiddenCols = { "ref", "mbl", "booking" };
+    HashSet<string> _hiddenCols = new(DefaultHiddenCols);
+
+    List<(string Key, string Label)> ColumnDefs => new()
+    {
+        ("ref", "Ref (Job No)"), ("mbl", "MBL"), ("booking", T("Rpt242_BookingNo", "Số Booking", "Booking No.")),
+        ("customer", Localizer["Customer"]), ("debitparties", T("Rpt242_DebitParties", "Đối tượng Debit", "Debit Parties")),
+        ("creditparties", T("Rpt242_CreditParties", "Đối tượng Credit", "Credit Parties")),
+        ("agent", "Agent"), ("carrier", "Carrier"), ("polpod", "POL/POD"), ("service", Localizer["Service Type"]),
+        ("cargo", T("Rpt242_CargoKind", "Loại hàng", "Freight / NVOCC")), ("etd", "ETD"), ("eta", "ETA"),
+        ("add", T("Rpt242_ActualDeliveryDate", "Ngày giao (ADD)", "Actual Delivery (ADD)")), ("status", Localizer["Status"]),
+        ("debit", "Debit"), ("credit", "Credit"),
+        ("debitdue", T("Rpt242_DebitDue", "Còn nợ Debit", "Debit outstanding")), ("creditdue", T("Rpt242_CreditDue", "Còn nợ Credit", "Credit outstanding")),
+        ("profit", "Profit"), ("profitnvocc", "Profit NVOCC"), ("ontime", "On Time"),
+        ("einvoice", T("Rpt242_EInvoiceNo", "Số HĐ online", "E-Invoice No.")), ("receipt", T("Rpt242_ReceiptNo", "Số phiếu thu", "Receipt No.")),
+        ("payment", T("Rpt242_PaymentNo", "Số phiếu chi", "Payment No."))
+    };
+
+    string HiddenColsCss => _hiddenCols.Count == 0
+        ? string.Empty
+        : string.Join(",", _hiddenCols.Select(k => $".rpt242-grid .rc-{k}")) + "{display:none !important;}";
+
+    async Task SetColumnVisible(string key, bool visible)
+    {
+        if (visible) _hiddenCols.Remove(key); else _hiddenCols.Add(key);
+        if (!visible && key == "ref") _fRef = string.Empty;   // cột ẩn thì bỏ điều kiện lọc của cột đó
+        if (!visible && key == "mbl") _fMbl = string.Empty;
+        await SaveColumnsAsync();
+    }
+
+    async Task SetAllColumns(bool visible)
+    {
+        _hiddenCols = visible ? new() : ColumnDefs.Select(c => c.Key).ToHashSet();
+        await SaveColumnsAsync();
+    }
+
+    async Task ResetColumns()
+    {
+        _hiddenCols = new(DefaultHiddenCols);
+        _fRef = _fMbl = string.Empty;
+        await SaveColumnsAsync();
+    }
+
+    async Task SaveColumnsAsync()
+    {
+        try { await JS.InvokeVoidAsync("localStorage.setItem", ColsStorageKey, string.Join(",", _hiddenCols)); }
+        catch { /* trình duyệt chặn localStorage thì chỉ nhớ trong phiên */ }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var savedOf = await JS.InvokeAsync<string?>("localStorage.getItem", OfStorageKey);
+            if (!string.IsNullOrEmpty(savedOf))
+            {
+                _ofCodes = new HashSet<string>(savedOf.Split('\u001f', StringSplitOptions.RemoveEmptyEntries), StringComparer.OrdinalIgnoreCase);
+                _ofChargeIds = null;
+                StateHasChanged();
+            }
+            var saved = await JS.InvokeAsync<string?>("localStorage.getItem", ColsStorageKey);
+            if (saved != null)
+            {
+                var valid = ColumnDefs.Select(c => c.Key).ToHashSet();
+                _hiddenCols = saved.Split(',', StringSplitOptions.RemoveEmptyEntries).Where(valid.Contains).ToHashSet();
+                StateHasChanged();
+            }
+        }
+        catch { }
+    }
+
+    static bool Like(string? value, string filter) =>
+        string.IsNullOrWhiteSpace(filter) || (value?.Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase) ?? false);
+
     private Func<M_HBL, bool> _quickFilter => x =>
     {
-        // 1. Kiểm tra theo loại (checkbox)
-        bool matchLoai = !chkDeli && !chkPending && !chkCancel && !ChkLate && !ChkOnTime
-                         || (chkDeli && x.statusHBL?.Contains("Deli", StringComparison.OrdinalIgnoreCase) == true)
-                         || (chkPending && x.statusHBL?.Contains("Pending", StringComparison.OrdinalIgnoreCase) == true)
-                         || (chkCancel && x.statusHBL?.Contains("Cancel", StringComparison.OrdinalIgnoreCase) == true)
-                         || (ChkLate && CheckOnTime(x) == 0 == true)
-                         || (ChkOnTime && CheckOnTime(x) == 1 == true);
+        // Nhóm 1: trạng thái lô hàng
+        bool anyStatus = chkDeli || chkPending || chkCancel;
+        bool matchStatus = !anyStatus
+            || (chkDeli && x.statusHBL?.Contains("Deli", StringComparison.OrdinalIgnoreCase) == true)
+            || (chkPending && x.statusHBL?.Contains("Pending", StringComparison.OrdinalIgnoreCase) == true)
+            || (chkCancel && x.statusHBL?.Contains("Cancel", StringComparison.OrdinalIgnoreCase) == true);
 
-        var mbl = MBLs.FirstOrDefault(m => m.MblID == x.mblid);
-        var job = mbl != null ? Jobs.FirstOrDefault(j => j.JobID == mbl.Jobid) : null;
-        var loai = job?.Loai;
-        bool matchLoai2 = !chkSI && !chkSE && !chkAI && !chkAE && !chkTruck && !chkCustoms && !chkInvIssued && !chkDebitReceived && !chkSpentCredit && !chkReceivedSpentAgent
-              || (chkSI && loai?.Equals("SI", StringComparison.OrdinalIgnoreCase) == true)
-              || (chkSE && loai?.Equals("SE", StringComparison.OrdinalIgnoreCase) == true)
-              || (chkAI && loai?.Equals("AI", StringComparison.OrdinalIgnoreCase) == true)
-              || (chkAE && loai?.Equals("AE", StringComparison.OrdinalIgnoreCase) == true)
-              || (chkTruck && loai?.Equals("Truck", StringComparison.OrdinalIgnoreCase) == true)
-              || (chkCustoms && loai?.Equals("Customs", StringComparison.OrdinalIgnoreCase) == true)
-              || (chkInvIssued && x.issueinvoice == true)
-              || (chkDebitReceived && x.dathudebit == true)
-              || (chkSpentCredit && x.dachicredit == true)
-              || (chkReceivedSpentAgent && x.dathuchidaily == true);
+        // Nhóm 2: đúng hạn / trễ hạn
+        bool anyOnTime = ChkOnTime || ChkLate;
+        bool matchOnTime = !anyOnTime
+            || (ChkOnTime && CheckOnTime(x) == 1)
+            || (ChkLate && CheckOnTime(x) == 0);
 
-        // 2. Kiểm tra theo search
-        bool matchSearch = true;
+        // Nhóm 3: loại dịch vụ
+        var loai = GetJob(x)?.Loai;
+        bool anyType = chkSI || chkSE || chkAI || chkAE || chkTruck || chkCustoms;
+        bool matchType = !anyType
+            || (chkSI && loai?.Equals("SI", StringComparison.OrdinalIgnoreCase) == true)
+            || (chkSE && loai?.Equals("SE", StringComparison.OrdinalIgnoreCase) == true)
+            || (chkAI && loai?.Equals("AI", StringComparison.OrdinalIgnoreCase) == true)
+            || (chkAE && loai?.Equals("AE", StringComparison.OrdinalIgnoreCase) == true)
+            || (chkTruck && loai?.Equals("Truck", StringComparison.OrdinalIgnoreCase) == true)
+            || (chkCustoms && loai?.Equals("Customs", StringComparison.OrdinalIgnoreCase) == true);
 
-        if (_searchCus != Guid.Empty)
-        {
-            matchSearch = (x.CustomerID == _searchCus);
-        }
+        // Nhóm 4: tình trạng tài chính
+        bool anyFinance = chkInvIssued || chkDebitReceived || chkSpentCredit || chkReceivedSpentAgent;
+        bool matchFinance = !anyFinance
+            || (chkInvIssued && x.issueinvoice == true)
+            || (chkDebitReceived && x.dathudebit == true)
+            || (chkSpentCredit && x.dachicredit == true)
+            || (chkReceivedSpentAgent && x.dathuchidaily == true);
 
-        return matchLoai && matchLoai2 && matchSearch;
+        // Nhóm 5: khách hàng
+        bool matchSearch = _searchCus == Guid.Empty || x.CustomerID == _searchCus;
+
+        // Nhóm 6: ô lọc nhanh dưới tiêu đề HBL / Ref / MBL
+        bool matchCols = Like(x.hbl, _fHbl) && Like(RefNo(x), _fRef) && Like(MblNo(x), _fMbl);
+
+        return matchStatus && matchOnTime && matchType && matchFinance && matchSearch && matchCols;
     };
 
     DateRange frmtoDate = new DateRange(new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(-4),
                                         new DateTime(DateTime.Now.Year, DateTime.Now.Month, 1).AddMonths(1).AddDays(-1));
     string CusidtoCusCode(Guid cusid)
     {
-        if (cusid == null || cusid == Guid.Empty)
+        if (cusid == Guid.Empty)
             return string.Empty;
-        var rs = Customers.FirstOrDefault(x => x.Customer_ID == cusid);
-        return rs == null ? string.Empty : rs.COMPANY!;
+        return customerNameById.TryGetValue(cusid, out var name) ? name : string.Empty;
     }
     string Charidtocharge(Guid id)
     {
@@ -356,88 +817,30 @@
         var rs = charges.FirstOrDefault(x => x.CHARGE_ID == id);
         return rs == null ? string.Empty : $"{rs.loaidichvu_charge}"!;
     }
+
+    /// <summary>
+    /// Quy đổi một dòng phí sang USD hoặc VND (theo chkUSD).
+    /// Tỷ giá trống/0 thì coi là 1 (trước đây tỷ giá null làm cả dòng thành null và bị bỏ khỏi tổng).
+    /// Lưu ý: tỷ giá trên dòng phí được hiểu là tỷ giá sang VND, nên ngoại tệ khác USD/VND (EUR...) quy về USD chưa chính xác.
+    /// </summary>
+    double ConvertAmount(double? thanhtien, double? thanhtiensauthue, string? tiente, double? tigia)
+    {
+        var tien = (chkVAT ? thanhtiensauthue : thanhtien) ?? 0;
+        var rate = (tigia == null || tigia == 0) ? 1 : tigia.Value;
+        if (chkUSD)
+            return string.Equals(tiente, "USD", StringComparison.OrdinalIgnoreCase) ? tien : tien / rate;
+        return string.Equals(tiente, "VND", StringComparison.OrdinalIgnoreCase) ? tien : tien * rate;
+    }
+
     double? TDebit_(Guid id)
-    {
-        var debit = ListDebit.Where(x => x.hblid == id).ToList();
-        return debit.Sum(x =>
-        {
-            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
-            if (chkUSD)
-            {
-                return x.tiente == "USD"
-                    ? tien * 1
-                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
-            }
-            else if (!chkUSD)
-            {
-                return x.tiente == "VND"
-                    ? tien * 1
-                    : tien * x.tigiadebit;
-            }
-            return tien; 
-        });
-    }
+        => debitByHbl[id].Sum(x => ConvertAmount(x.thanhtien, x.thanhtiensauthue, x.tiente, x.tigiadebit));
+
     double? TCredit_(Guid id)
-    {
-        var credit = ListCredit.Where(x => x.hblid == id).ToList();
-        return credit.Sum(x =>
-        {
-            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
-            if (chkUSD)
-            {
-                return x.tiente == "USD"
-                    ? tien * 1
-                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
-            }
-            else if (!chkUSD)
-            {
-                return x.tiente == "VND"
-                    ? tien * 1
-                    : tien * x.tigiacredit;
-            }
-            return tien;
-        });
-    }
+        => creditByHbl[id].Sum(x => ConvertAmount(x.thanhtien, x.thanhtiensauthue, x.tiente, x.tigiacredit));
+
     double? TProfit_(Guid id, string type)
-    {
-        var debit = ListDebit.Where(x => x.hblid == id).ToList();
-        var credit = ListCredit.Where(x => x.hblid == id).ToList();
-        var totaldebit = debit.Sum(x =>
-        {
-            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
-            if (chkUSD)
-            {
-                return x.tiente == "USD"
-                    ? tien * 1
-                    : tien / (x.tigiadebit == 0 ? 1 : x.tigiadebit); // tránh chia 0
-            }
-            else if (!chkUSD)
-            {
-                return x.tiente == "VND"
-                    ? tien * 1
-                    : tien * x.tigiadebit;
-            }
-            return tien;
-        });
-        var totalcredit = credit.Sum(x =>
-        {
-            var tien = chkVAT ? x.thanhtiensauthue : x.thanhtien;
-            if (chkUSD)
-            {
-                return x.tiente == "USD"
-                    ? tien * 1
-                    : tien / (x.tigiacredit == 0 ? 1 : x.tigiacredit); // tránh chia 0
-            }
-            else if (!chkUSD)
-            {
-                return x.tiente == "VND"
-                    ? tien * 1
-                    : tien * x.tigiacredit;
-            }
-            return tien;
-        });
-        return totaldebit - totalcredit;
-    }
+        => (TDebit_(id) ?? 0) - (TCredit_(id) ?? 0);
+
     private bool _processingUpload = false;
     async Task ExportReport()
     {
@@ -453,35 +856,57 @@
             var worksheet = package.Workbook.Worksheets.Add("Report");
 
             // Tiêu đề cột
-            worksheet.Cells[1, 1].Value = "HBL";
-            worksheet.Cells[1, 2].Value = "Customer";
-            worksheet.Cells[1, 3].Value = "POL → POD";
-            worksheet.Cells[1, 4].Value = "Service Type";
-            worksheet.Cells[1, 5].Value = "ETD";
-            worksheet.Cells[1, 6].Value = "ETA";
-            worksheet.Cells[1, 7].Value = "ADD";
-            worksheet.Cells[1, 8].Value = "Status";
-            worksheet.Cells[1, 9].Value = "Debit";
-            worksheet.Cells[1, 10].Value = "Credit";
-            worksheet.Cells[1, 11].Value = "Profit";
-            worksheet.Cells[1, 12].Value = "On Time";
+            var cur = $"{(chkUSD ? "USD" : "VND")}{(chkVAT ? ", VAT" : "")}";
+            var headers = new[]
+            {
+                "HBL", "Ref (Job No)", "MBL", "Booking No.", "Customer", "POL/POD", "Service Type",
+                "ETD", "ETA", "Actual Delivery (ADD)", "Status",
+                $"Debit ({cur})", $"Credit ({cur})", $"Profit ({cur})", "On Time",
+                "E-Invoice No.", "Receipt No.", "Payment No.",
+                "Agent", "Carrier", "Freight / NVOCC", "Debit Parties", "Credit Parties", $"Debit outstanding ({cur})", $"Credit outstanding ({cur})", "Credit term", $"Profit NVOCC ({cur})"
+            };
+            const int colEtd = 8, colAdd = 10, colDebit = 12, colProfit = 14;
+            var lastCol = headers.Length;
+            for (var c = 0; c < headers.Length; c++)
+                worksheet.Cells[1, c + 1].Value = headers[c];
+            worksheet.Cells[1, 1, 1, lastCol].Style.Font.Bold = true;
 
             int row = 2;
             foreach (var item in itemsToExport)
             {
-                worksheet.Cells[row, 1].Value = item.hbl;
-                worksheet.Cells[row, 2].Value = CusidtoCusCode(item.CustomerID);
-                worksheet.Cells[row, 3].Value = $"{item.polcode} → {item.podcode}";
-                worksheet.Cells[row, 4].Value = TypeJob(item);
-                worksheet.Cells[row, 5].Value = formatDate(item.ETD);
-                worksheet.Cells[row, 6].Value = formatDate(item.ETA);
-                worksheet.Cells[row, 7].Value = formatDate(item.ActualDelDate);
-                worksheet.Cells[row, 8].Value = item.statusHBL;
-                worksheet.Cells[row, 9].Value = TDebit_(item.hblID);
-                worksheet.Cells[row, 10].Value = TCredit_(item.hblID);
-                worksheet.Cells[row, 11].Value = TProfit_(item.hblID, "");
-                worksheet.Cells[row, 12].Value = CheckOnTime(item) == 1 ? "✔" : (CheckOnTime(item) == 0 ? "✘" : "");
+                var onTime = CheckOnTime(item);
+                object?[] values =
+                {
+                    item.hbl, RefNo(item), MblNo(item), BookingNoOf(item), CusidtoCusCode(item.CustomerID),
+                    $"{item.polcode} → {item.podcode}", TypeJob(item),
+                    // Ghi ngày dạng Date thật để Excel sắp xếp / lọc được
+                    item.ETD?.Date, item.ETA?.Date, item.ActualDelDate?.Date, item.statusHBL,
+                    TDebit_(item.hblID), TCredit_(item.hblID), TProfit_(item.hblID, ""),
+                    onTime == 1 ? "✔" : (onTime == 0 ? "✘" : ""),
+                    DocNos(_docRefs.Invoices, item.hblID), DocNos(_docRefs.Receipts, item.hblID), DocNos(_docRefs.Payments, item.hblID),
+                    AgentName(item), CarrierOf(item), CargoKind(item), DebitPartyNames(item.hblID), CreditPartyNames(item.hblID), DebitDue(item.hblID), CreditDue(item.hblID), CreditTerm(item.CustomerID), ProfitNvocc(item)
+                };
+                for (var c = 0; c < values.Length; c++)
+                    worksheet.Cells[row, c + 1].Value = values[c];
                 row++;
+            }
+
+            if (row > 2)
+            {
+                worksheet.Cells[2, colEtd, row - 1, colAdd].Style.Numberformat.Format = "dd/MMM/yyyy";
+                worksheet.Cells[2, colDebit, row - 1, colProfit].Style.Numberformat.Format = "#,##0.##";
+                worksheet.Cells[2, lastCol, row - 1, lastCol].Style.Numberformat.Format = "#,##0.##"; // Profit NVOCC
+                worksheet.Cells[2, lastCol - 3, row - 1, lastCol - 2].Style.Numberformat.Format = "#,##0.##"; // Còn nợ Debit / Credit
+
+                // Dòng tổng
+                worksheet.Cells[row, 1].Value = "Total";
+                for (var c = colDebit; c <= colProfit; c++)
+                {
+                    var letter = OfficeOpenXml.ExcelCellAddress.GetColumnLetter(c);
+                    worksheet.Cells[row, c].Formula = $"SUM({letter}2:{letter}{row - 1})";
+                }
+                worksheet.Cells[row, colDebit, row, colProfit].Style.Numberformat.Format = "#,##0.##";
+                worksheet.Cells[row, 1, row, lastCol].Style.Font.Bold = true;
             }
 
             worksheet.Cells.AutoFitColumns();
@@ -504,41 +929,797 @@
     }
     private async Task<IEnumerable<Guid>> SearchCustomer(string text)
     {
-        try
+        await Task.CompletedTask;
+        if (string.IsNullOrWhiteSpace(text))
         {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return Customers.Select(x => x.Customer_ID);
-            }
-            // MBL.Porname = mst_Consignee;
-            return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
+            return Customers.Select(x => x.Customer_ID);
         }
-        catch (Exception)
-        {
-            throw;
-        }
+        return Customers.Where(x => (x.shortname + "_" + x.COMPANY).Contains(text, StringComparison.OrdinalIgnoreCase)).Select(x => x.Customer_ID);
     }
-    string TypeJob(M_HBL item)
+
+    /// <summary>Job của HBL: lấy qua MBL, nếu không có MBL thì dùng Jobid trên HBL.</summary>
+    M_Job? GetJob(M_HBL item)
     {
         if (item == null)
-            return string.Empty;
-        var mbl = MBLs.FirstOrDefault(x => x.MblID == item.mblid);
-        var job = Jobs.FirstOrDefault(x => x.JobID == (mbl == null ? item.Jobid : mbl.Jobid));
-        var type = job != null ? job.Loai : string.Empty;
-        var fcl = job != null ? job.FLC : string.Empty;
-        return $"{fcl} - {type}";
+            return null;
+        Guid? jobId = mblById.TryGetValue(item.mblid, out var mbl) ? mbl.Jobid : item.Jobid;
+        if (jobId == null)
+            return null;
+        return jobById.TryGetValue(jobId.Value, out var job) ? job : null;
     }
+
+    string TypeJob(M_HBL item)
+    {
+        var job = GetJob(item);
+        if (job == null)
+            return string.Empty;
+        return $"{job.FLC} - {job.Loai}";
+    }
+
+    /// <summary>
+    /// 1 = đúng hạn, 0 = trễ, 2 = chưa đánh giá được (Pending / Cancelled / chưa có ngày giao thực tế hoặc ngày mốc).
+    /// Hàng biển / hàng không, cả xuất và nhập (SE, AE, SI, AI), so ngày giao thực tế với ETA;
+    /// Truck, Customs và loại khác so với ETD.
+    /// Chỉ so phần ngày, bỏ phần giờ.
+    /// </summary>
     int CheckOnTime(M_HBL item)
     {
         if (item == null)
-            return 0;
-        if ((item.statusHBL ?? string.Empty).Contains("Pending")) return 2;
-        var mbl = MBLs.FirstOrDefault(x => x.MblID == item.mblid);
-        var job = Jobs.FirstOrDefault(x => x.JobID == (mbl == null ? item.Jobid : mbl.Jobid));
-        var type = job != null ? job.Loai : string.Empty;
-        var rs = type == null ? false : (type.Contains("E") ? item.ETA == item.ActualDelDate : item.ETD == item.ActualDelDate);
-        return rs ? 1 : 0;
+            return 2;
+        var status = item.statusHBL ?? string.Empty;
+        if (status.Contains("Pending", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("Cancel", StringComparison.OrdinalIgnoreCase))
+            return 2;
+        if (item.ActualDelDate == null)
+            return 2;
+
+        var type = (GetJob(item)?.Loai ?? string.Empty).Trim().ToUpperInvariant();
+        var compareWithEta = type is "SE" or "AE" or "SI" or "AI";
+        var target = compareWithEta ? item.ETA : item.ETD;
+        if (target == null)
+            return 2;
+
+        return item.ActualDelDate.Value.Date <= target.Value.Date ? 1 : 0;
     }
+    private static bool IsVietnamese =>
+        CultureInfo.CurrentUICulture.Name.StartsWith("vi", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Lấy bản dịch theo khóa; khóa chưa có trong bảng dịch thì dùng câu mặc định theo ngôn ngữ.</summary>
+    string T(string key, string vi, string en)
+    {
+        var s = Localizer[key];
+        return s.ResourceNotFound || string.IsNullOrWhiteSpace(s.Value) ? (IsVietnamese ? vi : en) : s.Value;
+    }
+
+    /// <summary>Chú thích khi rê chuột lên ✔ / ✘: ngày giao thực tế so với ngày mốc nào.</summary>
+    string OnTimeHint(M_HBL item)
+    {
+        var type = (GetJob(item)?.Loai ?? string.Empty).Trim().ToUpperInvariant();
+        var useEta = type is "SE" or "AE" or "SI" or "AI";
+        var target = useEta ? item.ETA : item.ETD;
+        var label = useEta ? "ETA" : "ETD";
+        if (item.ActualDelDate == null || target == null)
+            return string.Empty;
+        var cmp = item.ActualDelDate.Value.Date <= target.Value.Date ? "≤" : ">";
+        return $"ADD {formatDate(item.ActualDelDate)} {cmp} {label} {formatDate(target)}";
+    }
+
+    [CascadingParameter] Components.Layout.MainLayout? Layout { get; set; }
+
+    enum DocKind { Invoice, Receipt, Payment }
+
+    /// <summary>Carrier lưu dạng "tên viết tắt_tên công ty" (đối tượng Main Code Shipping): tìm lại đúng đối tượng để sửa.</summary>
+    Guid FindCarrierId(string carrier)
+    {
+        var key = carrier.Trim();
+        bool Eq(string? a) => !string.IsNullOrWhiteSpace(a) && string.Equals(a.Trim(), key, StringComparison.OrdinalIgnoreCase);
+        var all = partyById.Values;
+        var hit = all.FirstOrDefault(c => Eq($"{c.shortname}_{c.COMPANY}"))
+               ?? all.Where(c => c.MainCode?.Contains("Shipping", StringComparison.OrdinalIgnoreCase) == true)
+                     .FirstOrDefault(c => Eq(c.shortname) || Eq(c.COMPANY) || Eq(c.Customer_Code))
+               ?? all.FirstOrDefault(c => Eq(c.shortname) || Eq(c.COMPANY) || Eq(c.Customer_Code));
+        return hit?.Customer_ID ?? Guid.Empty;
+    }
+
+    private async Task EditCarrierAsync(string? carrier)
+    {
+        if (string.IsNullOrWhiteSpace(carrier)) return;
+        var id = FindCarrierId(carrier);
+        if (id == Guid.Empty)
+        {
+            CallSnackBar(T("Rpt242_CarrierNotFound", $"Không tìm thấy \"{carrier}\" trong danh mục khách hàng / hãng tàu.", $"\"{carrier}\" was not found in the customer list."), MudBlazor.Severity.Warning);
+            return;
+        }
+        await EditPartyAsync(id);
+    }
+
+    /// <summary>Mở form sửa khách hàng (form dùng chung của 2.2.x) và lưu lại.</summary>
+    private async Task EditPartyAsync(Guid customerId)
+    {
+        if (customerId == Guid.Empty || !partyById.TryGetValue(customerId, out var cus))
+        {
+            CallSnackBar(Localizer["DataNotFound"], MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(usr, "Edit", "System-Customer"))
+        {
+            CallSnackBar(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+        if (userdetail?.Department == "SALES" && cus.SaleName == "NOMI")
+        {
+            CallSnackBar(Localizer["CannotEditNomi"], MudBlazor.Severity.Warning);
+            return;
+        }
+        var old = cus.DeepCopy();
+        var editModel = cus.DeepCopy();
+        var options = new DialogOptions
+        {
+            ClassBackground = "class-dialog-custom class-dialog-customer-wide",
+            FullWidth = true,
+            MaxWidth = MaxWidth.False,
+            CloseOnEscapeKey = false,
+            DisableBackdropClick = true
+        };
+        var parameters = new DialogParameters<Components.CUSTOMER.Pages.Edit> { { x => x.customer, editModel }, { x => x.EditOrNot, true } };
+        var dialog = await DialogService.ShowAsync<Components.CUSTOMER.Pages.Edit>(string.Format(Localizer["Customer_EditTitle"], cus.Customer_Code), parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not M_Customer data)
+            return;
+        var rs = await csv.UpdateOrCreate(data, old, "");
+        CallSnackBar(rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        if (rs.Flag)
+        {
+            partyById[data.Customer_ID] = data;
+            customerNameById[data.Customer_ID] = data.COMPANY ?? string.Empty;
+            var idx = Customers.FindIndex(x => x.Customer_ID == data.Customer_ID);
+            if (idx >= 0) Customers[idx] = data;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Con mắt: xem chi tiết lô hàng (Debit, Credit, hóa đơn, phiếu thu/chi) và khóa / duyệt tại chỗ.</summary>
+    private async Task OpenShipmentDetail(M_HBL item)
+    {
+        if (!await ssv.CheckPermission(usr, "View", "Shipment"))
+        {
+            CallSnackBar(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+            return;
+        }
+        var parameters = new DialogParameters<ShipmentDetail242Dialog>
+        {
+            { x => x.HblId, item.hblID },
+            { x => x.JobNo, RefNo(item) },
+            { x => x.MblNo, MblNo(item) },
+            { x => x.ReceiptIds, ShipmentDocRefs.Get(_docRefs.Receipts, item.hblID).Select(d => d.Id).ToList() },
+            { x => x.PaymentIds, ShipmentDocRefs.Get(_docRefs.Payments, item.hblID).Select(d => d.Id).ToList() },
+            { x => x.CustomerLabel, (Func<Guid, string>)(id => { var p = PartyLabel(id); return string.IsNullOrEmpty(p.Code) ? CusidtoCusCode(id) : $"{p.Code} - {p.Name}"; }) },
+            { x => x.ChargeLabel, (Func<Guid, string>)Charidtocharge },
+            { x => x.StatusOptions, HblStatusOptions },
+            { x => x.CreditTermOf, (Func<Guid, string>)CreditTerm }
+        };
+        var options = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.ExtraLarge, CloseOnEscapeKey = true };
+        var dialog = await DialogService.ShowAsync<ShipmentDetail242Dialog>(null, parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled || result.Data is not true)
+            return;
+
+        // Cập nhật lại dòng đang xem (cờ khóa, trạng thái duyệt chứng từ)
+        try
+        {
+            var fresh = await shipsv.GetHBL_byHBLid(item.hblID);
+            if (fresh != null)
+            {
+                item.approve = fresh.approve;
+                item.debitCompleted = fresh.debitCompleted;
+                item.creditCompleted = fresh.creditCompleted;
+                item.statusHBL = fresh.statusHBL;
+                item.ActualDelDate = fresh.ActualDelDate;
+            }
+            var refs = await LoadDocRefsAsync(new List<M_HBL> { item }, debitByHbl[item.hblID]);
+            _docRefs.Invoices[item.hblID] = ShipmentDocRefs.Get(refs.Invoices, item.hblID).ToList();
+            _docRefs.Receipts[item.hblID] = ShipmentDocRefs.Get(refs.Receipts, item.hblID).ToList();
+            _docRefs.Payments[item.hblID] = ShipmentDocRefs.Get(refs.Payments, item.hblID).ToList();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Warning);
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>Số Booking ghi trên HBL; HBL chưa có thì lấy số Booking của Job.</summary>
+    string BookingNoOf(M_HBL item) =>
+        !string.IsNullOrWhiteSpace(item.bkno) ? item.bkno.Trim() : (GetJob(item)?.BookingNo?.Trim() ?? string.Empty);
+
+    /// <summary>Carrier lấy từ Booking của HBL (theo số Booking trên HBL); không có thì dùng Carrier lưu trên HBL, rồi Carrier của MBL.</summary>
+    string CarrierOf(M_HBL item)
+    {
+        var bk = item.bkno?.Trim();
+        if (!string.IsNullOrEmpty(bk) && carrierByBookingNo.TryGetValue(bk, out var carrier) && !string.IsNullOrWhiteSpace(carrier))
+            return carrier;
+        if (!string.IsNullOrWhiteSpace(item.Carrier))
+            return item.Carrier.Trim();
+        return mblById.TryGetValue(item.mblid, out var m) ? m.Carrier?.Trim() ?? string.Empty : string.Empty;
+    }
+
+    string CarrierHint(M_HBL item) =>
+        string.IsNullOrWhiteSpace(item.bkno) ? string.Empty : "Booking " + item.bkno.Trim();
+
+    /// <summary>Carrier của các Booking mà HBL tham chiếu (bản cập nhật mới nhất của mỗi số Booking).</summary>
+    async Task<Dictionary<string, string>> LoadBookingCarriersAsync(List<M_HBL> hbls)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var bookingNos = hbls
+            .Select(x => x.bkno?.Trim())
+            .Where(x => !string.IsNullOrEmpty(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (bookingNos.Count == 0)
+            return result;
+
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+        foreach (var chunk in bookingNos.Chunk(1000))
+        {
+            var nos = chunk.ToList();
+            var rows = await ctx.CONTAINEROUTBOUNDNOTIFY_sale.AsNoTracking()
+                .Where(x => x.BookingNo != null && nos.Contains(x.BookingNo) && x.Carrier != null && x.Carrier != "")
+                .Select(x => new { x.BookingNo, x.Carrier, x.UpdateTime })
+                .ToListAsync();
+            foreach (var g in rows.GroupBy(x => x.BookingNo!.Trim(), StringComparer.OrdinalIgnoreCase))
+                result[g.Key] = g.OrderByDescending(x => x.UpdateTime).First().Carrier!.Trim();
+        }
+        return result;
+    }
+
+    (string Code, string Name) PartyLabel(Guid id)
+    {
+        if (id == Guid.Empty || !partyById.TryGetValue(id, out var c))
+            return (string.Empty, string.Empty);
+        var name = c.COMPANY ?? string.Empty;
+        var code = !string.IsNullOrWhiteSpace(c.Customer_Code) ? c.Customer_Code!
+                 : !string.IsNullOrWhiteSpace(c.shortname) ? c.shortname!
+                 : name;
+        return (code.Trim(), name.Trim());
+    }
+
+    /// <summary>Agent lấy từ MBL (AgentID).</summary>
+    Guid AgentId(M_HBL item) => mblById.TryGetValue(item.mblid, out var m) ? m.AgentID : Guid.Empty;
+    string AgentCode(M_HBL item) => PartyLabel(AgentId(item)).Code;
+    string AgentName(M_HBL item) => PartyLabel(AgentId(item)).Name;
+
+    /// <summary>Loại hàng chọn khi tạo Job: Freight hoặc NVOCC-Freight.</summary>
+    string CargoKind(M_HBL item) => GetJob(item)?.Loai_Nvo_Fre ?? string.Empty;
+
+    bool IsNvocc(M_HBL item) => CargoKind(item).Contains("NVOCC", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Phí OF (cước biển): mã hoặc tên phí là OF / O/F / OCF, hoặc tên chứa "OCEAN FREIGHT".</summary>
+    HashSet<Guid>? _ofChargeIds;
+    HashSet<Guid> OfChargeIds => _ofChargeIds ??= OfCharges.Select(c => c.CHARGE_ID).ToHashSet();
+
+    // Mã phí (CHARGE_CODE) người dùng chọn để tính Profit NVOCC; trống = tự nhận. Lưu theo trình duyệt.
+    const string OfStorageKey = "rpt242.ofCodes";
+    HashSet<string> _ofCodes = new(StringComparer.OrdinalIgnoreCase);
+    string _ofSearch = string.Empty;
+
+    /// <summary>Các phí được tính là cước OF: theo mã đã chọn, chưa chọn thì tự nhận theo mã / tên phí.</summary>
+    List<ChargeModel> OfCharges => _ofCodes.Count > 0
+        ? charges.Where(c => !string.IsNullOrWhiteSpace(c.CHARGE_CODE) && _ofCodes.Contains(c.CHARGE_CODE.Trim())).ToList()
+        : charges.Where(c => IsOfCode(c.CHARGE_CODE) || IsOfName(c.CHARGE)).ToList();
+
+    bool IsOfSelected(ChargeModel c) => _ofCodes.Count > 0
+        ? _ofCodes.Contains((c.CHARGE_CODE ?? "").Trim())
+        : IsOfCode(c.CHARGE_CODE) || IsOfName(c.CHARGE);
+
+    /// <summary>Danh sách phí để chọn: phí đang tính OF lên đầu, lọc theo ô tìm.</summary>
+    IEnumerable<ChargeModel> OfPickList => charges
+        .Where(c => !string.IsNullOrWhiteSpace(c.CHARGE_CODE))
+        .GroupBy(c => c.CHARGE_CODE!.Trim(), StringComparer.OrdinalIgnoreCase).Select(g => g.First())
+        .Where(c => string.IsNullOrWhiteSpace(_ofSearch)
+                    || (c.CHARGE_CODE?.Contains(_ofSearch.Trim(), StringComparison.OrdinalIgnoreCase) ?? false)
+                    || (c.CHARGE?.Contains(_ofSearch.Trim(), StringComparison.OrdinalIgnoreCase) ?? false))
+        .OrderByDescending(IsOfSelected).ThenBy(c => c.CHARGE_CODE)
+        .Take(200);
+
+    async Task SetOfCode(ChargeModel c, bool selected)
+    {
+        // Lần đầu chọn tay: bắt đầu từ các mã đang tự nhận để không mất lựa chọn hiện tại
+        if (_ofCodes.Count == 0)
+            foreach (var a in charges.Where(x => IsOfCode(x.CHARGE_CODE) || IsOfName(x.CHARGE)))
+                if (!string.IsNullOrWhiteSpace(a.CHARGE_CODE)) _ofCodes.Add(a.CHARGE_CODE.Trim());
+        var code = (c.CHARGE_CODE ?? "").Trim();
+        if (selected) _ofCodes.Add(code); else _ofCodes.Remove(code);
+        _ofChargeIds = null;
+        await SaveOfCodesAsync();
+    }
+
+    async Task UseAutoOf()
+    {
+        _ofCodes.Clear();
+        _ofChargeIds = null;
+        await SaveOfCodesAsync();
+    }
+
+    async Task SaveOfCodesAsync()
+    {
+        try { await JS.InvokeVoidAsync("localStorage.setItem", OfStorageKey, string.Join("\u001f", _ofCodes)); }
+        catch { }
+    }
+
+    static string Norm(string? v) =>
+        new string((v ?? string.Empty).ToUpperInvariant().Where(char.IsLetterOrDigit).ToArray());
+
+    /// <summary>Mã phí: OF, O/F, O.F, OCF, OFR, hoặc OF kèm số / cỡ cont (OF20, OF40HC, O/F 40'...).</summary>
+    static bool IsOfCode(string? code)
+    {
+        var n = Norm(code);
+        if (n is "OF" or "OCF" or "OFR" or "OFT" or "SOF") return true;
+        if (n.Length > 2 && n.StartsWith("OF") && char.IsDigit(n[2])) return true;
+        // CHARGE_CODE có cụm "OF" đứng riêng: "OF-40", "SEA OF", "OF_USD"...
+        var tokens = (code ?? string.Empty).ToUpperInvariant()
+            .Split(new[] { ' ', '-', '_', '.', '(', ')', '\'', '"' }, StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Any(t => t is "OF" or "O/F") || n.Contains("OCEANFREIGHT") || n.Contains("SEAFREIGHT");
+    }
+
+    /// <summary>Tên phí: OF / O/F ..., hoặc có chữ Ocean freight / Sea freight / Cước biển.</summary>
+    static bool IsOfName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        var n = Norm(name);
+        if (IsOfCode(name)) return true;
+        var lower = name.Trim().ToLowerInvariant();
+        return n.Contains("OCEANFREIGHT") || n.Contains("SEAFREIGHT")
+               || lower.StartsWith("of ") || lower.StartsWith("o/f") || lower.StartsWith("o.f")
+               || lower.Contains("cước biển") || lower.Contains("cuoc bien");
+    }
+
+    string OfChargesHint
+    {
+        get
+        {
+            var list = OfCharges;
+            if (charges.Count == 0) return string.Empty;
+            return list.Count == 0
+                ? T("Rpt242_NoOfCharge", "Không tìm thấy phí OF nào trong danh mục phí (mã/tên OF, O/F, Ocean Freight...).", "No OF charge found in the charge list.")
+                : T("Rpt242_OfChargesUsed", "Phí đang tính là OF: ", "Charges treated as OF: ") + string.Join(", ", list.Select(c => $"{c.CHARGE_CODE} ({c.CHARGE})").Take(15));
+        }
+    }
+
+    /// <summary>
+    /// Profit của lô NVOCC = Debit phí OF − Credit phí OF (quy đổi USD/VND, VAT như cột Profit).
+    /// Lô Freight để trống.
+    /// </summary>
+    double? ProfitNvocc(M_HBL item)
+    {
+        var of = OfChargeIds;
+        var debits = debitByHbl[item.hblID].Where(x => of.Contains(x.itemid)).ToList();
+        var credits = creditByHbl[item.hblID].Where(x => of.Contains(x.itemid)).ToList();
+        if (debits.Count == 0 && credits.Count == 0)
+            return null;
+        var debit = debits.Sum(x => ConvertAmount(x.thanhtien, x.thanhtiensauthue, x.tiente, x.tigiadebit));
+        var credit = credits.Sum(x => ConvertAmount(x.thanhtien, x.thanhtiensauthue, x.tiente, x.tigiacredit));
+        return debit - credit;
+    }
+
+    /// <summary>Còn nợ Debit = Debit chưa tick "Đã thanh toán" (quy đổi như cột Debit).</summary>
+    double DebitDue(Guid hblId) => debitByHbl[hblId].Where(x => x.dathanhtoan != true)
+        .Sum(x => ConvertAmount(x.thanhtien, x.thanhtiensauthue, x.tiente, x.tigiadebit));
+
+    /// <summary>Còn nợ Credit = Credit chưa tick "Đã thanh toán".</summary>
+    double CreditDue(Guid hblId) => creditByHbl[hblId].Where(x => x.dathanhtoan != true)
+        .Sum(x => ConvertAmount(x.thanhtien, x.thanhtiensauthue, x.tiente, x.tigiacredit));
+
+    /// <summary>Hạn công nợ của khách (danh mục khách hàng).</summary>
+    string CreditTerm(Guid cusId) =>
+        cusId != Guid.Empty && partyById.TryGetValue(cusId, out var c) ? (c.hancongno ?? string.Empty).Trim() : string.Empty;
+
+    /// <summary>Màu trạng thái lô hàng theo bảng Trạng thái (HBL).</summary>
+    string StatusColor(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return string.Empty;
+        var hit = tts.FirstOrDefault(t => string.Equals(t.Tieude, "HBL", StringComparison.OrdinalIgnoreCase)
+                                          && string.Equals(t.Noidung?.Trim(), status.Trim(), StringComparison.OrdinalIgnoreCase))
+               ?? tts.FirstOrDefault(t => string.Equals(t.Noidung?.Trim(), status.Trim(), StringComparison.OrdinalIgnoreCase));
+        return hit?.Mamau ?? string.Empty;
+    }
+
+    string StatusStyle(string? status)
+    {
+        var color = StatusColor(status);
+        return string.IsNullOrWhiteSpace(color)
+            ? "border-color: #94a3b8; color: #334155;"
+            : $"border-color: {color}; color: {color}; background: color-mix(in srgb, {color} 12%, transparent);";
+    }
+
+    List<(string Name, string Color)> HblStatusOptions =>
+        tts.Where(t => string.Equals(t.Tieude, "HBL", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(t.Noidung))
+           .OrderBy(t => t.Noidung)
+           .Select(t => (t.Noidung.Trim(), t.Mamau ?? string.Empty))
+           .Distinct()
+           .ToList();
+
+    /// <summary>Mở 6.1 Booking, lọc sẵn số Booking.</summary>
+    private async Task OpenBooking(string bookingNo)
+    {
+        if (!await ssv.CheckPermission(usr, "View", "Booking-Request"))
+        {
+            CallSnackBar($"{Localizer["NoPermission_View"]} (6.1 Booking)", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (Layout == null) return;
+        var layout = Layout;
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent(0, typeof(Components.Booking.Pages.Index));
+            builder.AddAttribute(1, "InitialBookingNo", bookingNo);
+            builder.AddAttribute(2, "OnTabRequest",
+                EventCallback.Factory.Create<(string Key, string Title, RenderFragment Content)>(this, t => layout.OpenTab(t.Key, t.Title, t.Content)));
+            builder.CloseComponent();
+        };
+        await layout.OpenTab($"Booking_RPT_{bookingNo}", $"6.1 Booking · {bookingNo}", content);
+    }
+
+    /// <summary>Các đối tượng (nhà cung cấp) trên Credit của HBL, không trùng.</summary>
+    List<(string Code, string Name)> CreditParties(Guid hblId) =>
+        creditByHbl[hblId]
+            .Select(x => x.customerid)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .Select(PartyLabel)
+            .Where(x => !string.IsNullOrWhiteSpace(x.Code))
+            .OrderBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    string CreditLinkHint(string name) =>
+        name + " · " + T("Rpt242_OpenCredit", "Mở Credit của HBL ở 5.0", "Open the Credit of this HBL in 5.0");
+
+    /// <summary>Các đối tượng trên Debit của HBL, không trùng.</summary>
+    List<(string Code, string Name)> DebitParties(Guid hblId) =>
+        debitByHbl[hblId]
+            .Select(x => x.customerid)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .Select(PartyLabel)
+            .Where(x => !string.IsNullOrWhiteSpace(x.Code))
+            .OrderBy(x => x.Code, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    string DebitPartyCodes(Guid hblId) => string.Join(", ", DebitParties(hblId).Select(x => x.Code));
+    string DebitPartyNames(Guid hblId) => string.Join(", ", DebitParties(hblId).Select(x => x.Name));
+
+    string DebitLinkHint(string name) =>
+        name + " · " + T("Rpt242_OpenDebit", "Mở Debit của HBL ở 5.0", "Open the Debit of this HBL in 5.0");
+
+    /// <summary>Mở tab Debit (giao diện Debit của 5.0) cho đúng HBL để xem / sửa.</summary>
+    private async Task OpenDebitIn50(M_HBL item)
+    {
+        if (!await ssv.CheckPermission(usr, "View", "Shipment5"))
+        {
+            CallSnackBar($"{Localizer["NoPermission_View"]} (5.0 Shipment)", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (Layout == null)
+        {
+            await OpenInShipment50(item, ShipmentLinkTarget.Hbl);
+            return;
+        }
+        var hbl = await shipsv.GetHBL_byHBLid(item.hblID) ?? item;
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent(0, typeof(Components.Shipment.Pages.Payment.DebitTab_5_0));
+            builder.AddAttribute(1, "Type", "HBL");
+            builder.AddAttribute(2, "HBLDetail", hbl);
+            builder.AddAttribute(3, "Customers", Customers);
+            builder.AddAttribute(4, "isDuty", false);
+            builder.CloseComponent();
+        };
+        await Layout.OpenTab($"Debit5.0_RPT_{item.hblID}", $"5.0 Debit · {item.hbl}", content);
+    }
+
+    string CreditPartyCodes(Guid hblId) => string.Join(", ", CreditParties(hblId).Select(x => x.Code));
+    string CreditPartyNames(Guid hblId) => string.Join(", ", CreditParties(hblId).Select(x => x.Name));
+
+    /// <summary>Mở tab Credit (giao diện Credit của 5.0) cho đúng HBL để xem / sửa.</summary>
+    private async Task OpenCreditIn50(M_HBL item)
+    {
+        if (!await ssv.CheckPermission(usr, "View", "Shipment5"))
+        {
+            CallSnackBar($"{Localizer["NoPermission_View"]} (5.0 Shipment)", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (Layout == null)
+        {
+            await OpenInShipment50(item, ShipmentLinkTarget.Hbl);
+            return;
+        }
+        // Lấy lại HBL mới nhất (trạng thái khoá Credit có thể đã đổi)
+        var hbl = await shipsv.GetHBL_byHBLid(item.hblID) ?? item;
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent(0, typeof(Components.Shipment.Pages.Payment.CreditTab_5_0));
+            builder.AddAttribute(1, "Type", "HBL");
+            builder.AddAttribute(2, "HBLDetail", hbl);
+            builder.AddAttribute(3, "Customers", Customers);
+            builder.AddAttribute(4, "isCommission", false);
+            builder.CloseComponent();
+        };
+        await Layout.OpenTab($"Credit5.0_RPT_{item.hblID}", $"5.0 Credit · {item.hbl}", content);
+    }
+
+    /// <summary>Một chứng từ gắn với HBL (số HĐ điện tử, phiếu thu, phiếu chi).</summary>
+    sealed record ShipmentDocRef(Guid Id, string No, bool Approved);
+
+    /// <summary>Chứng từ theo HBL (key = hblID).</summary>
+    sealed class ShipmentDocRefs
+    {
+        public Dictionary<Guid, List<ShipmentDocRef>> Invoices { get; } = new();
+        public Dictionary<Guid, List<ShipmentDocRef>> Receipts { get; } = new();
+        public Dictionary<Guid, List<ShipmentDocRef>> Payments { get; } = new();
+
+        public static IReadOnlyList<ShipmentDocRef> Get(Dictionary<Guid, List<ShipmentDocRef>> map, Guid hblId) =>
+            map.TryGetValue(hblId, out var list) ? list : Array.Empty<ShipmentDocRef>();
+    }
+
+    static readonly char[] DocNoSeparators = { ',', ';', '/', '|', ' ', '\t', '\r', '\n' };
+
+    static IEnumerable<string> SplitDocNos(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? Enumerable.Empty<string>()
+            : text.Split(DocNoSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>
+    /// Số HĐ điện tử, phiếu thu, phiếu chi theo từng HBL.
+    /// - HĐ điện tử: HoaDonDauRa.sohoadonDientu của HBL.
+    /// - Phiếu thu: Debit.PhieuthuID của HBL, cộng phiếu thu có BillNo chứa đúng số HBL.
+    /// - Phiếu chi: phiếu chi có ô HBL chứa đúng số HBL (phiếu chi không có khoá ngoại tới HBL).
+    /// </summary>
+    async Task<ShipmentDocRefs> LoadDocRefsAsync(List<M_HBL> hbls, IEnumerable<M_Debit>? debits)
+    {
+        const int chunkSize = 1000;
+        var result = new ShipmentDocRefs();
+        if (hbls == null || hbls.Count == 0)
+            return result;
+
+        var hblIds = hbls.Select(x => x.hblID).Where(id => id != Guid.Empty).Distinct().ToList();
+        var hblIdByNo = hbls
+            .Where(x => !string.IsNullOrWhiteSpace(x.hbl))
+            .GroupBy(x => x.hbl!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.hblID).Distinct().ToList(), StringComparer.OrdinalIgnoreCase);
+
+        static void Add(Dictionary<Guid, List<ShipmentDocRef>> map, Guid hblId, ShipmentDocRef doc)
+        {
+            if (!map.TryGetValue(hblId, out var list))
+                map[hblId] = list = new List<ShipmentDocRef>();
+            if (!list.Any(x => x.Id == doc.Id && string.Equals(x.No, doc.No, StringComparison.OrdinalIgnoreCase)))
+                list.Add(doc);
+        }
+
+        await using var ctx = await DbFactory.CreateDbContextAsync();
+
+        // 1) Số hoá đơn điện tử
+        foreach (var chunk in hblIds.Chunk(chunkSize))
+        {
+            var ids = chunk.ToList();
+            var rows = await ctx.HoaDonDauRa.AsNoTracking()
+                .Where(x => x.continued == true && ids.Contains(x.hblid)
+                            && x.sohoadonDientu != null && x.sohoadonDientu != "")
+                .Select(x => new { x.hblid, x.sohoadonDientu })
+                .Distinct()
+                .ToListAsync();
+            foreach (var r in rows)
+                Add(result.Invoices, r.hblid, new ShipmentDocRef(r.hblid, r.sohoadonDientu!.Trim(), true));
+        }
+
+        // 2) Phiếu thu liên kết qua Debit.PhieuthuID
+        var receiptHbls = (debits ?? Enumerable.Empty<M_Debit>())
+            .Where(d => d.PhieuthuID.HasValue && d.PhieuthuID.Value != Guid.Empty)
+            .Select(d => new { d.hblid, PhieuthuID = d.PhieuthuID!.Value })
+            .Distinct()
+            .ToList();
+        var receiptById = new Dictionary<Guid, (string No, bool Approved)>();
+        foreach (var chunk in receiptHbls.Select(x => x.PhieuthuID).Distinct().Chunk(chunkSize))
+        {
+            var ids = chunk.ToList();
+            var rows = await ctx.Phieuthu.AsNoTracking()
+                .Where(x => ids.Contains(x.PhieuthuID))
+                .Select(x => new { x.PhieuthuID, x.SoPhieuthu, x.Approve })
+                .ToListAsync();
+            foreach (var r in rows)
+                receiptById[r.PhieuthuID] = (r.SoPhieuthu ?? string.Empty, r.Approve == true);
+        }
+        foreach (var r in receiptHbls)
+            if (receiptById.TryGetValue(r.PhieuthuID, out var p) && !string.IsNullOrWhiteSpace(p.No))
+                Add(result.Receipts, r.hblid, new ShipmentDocRef(r.PhieuthuID, p.No.Trim(), p.Approved));
+
+        if (hblIdByNo.Count > 0)
+        {
+            //    + phiếu thu cũ chỉ ghi số HBL trong BillNo
+            var billRows = await ctx.Phieuthu.AsNoTracking()
+                .Where(x => x.BillNo != null && x.BillNo != "" && x.SoPhieuthu != null && x.SoPhieuthu != "")
+                .Select(x => new { x.PhieuthuID, x.SoPhieuthu, x.BillNo, x.Approve })
+                .ToListAsync();
+            foreach (var r in billRows)
+                foreach (var no in SplitDocNos(r.BillNo))
+                    if (hblIdByNo.TryGetValue(no, out var ids))
+                        foreach (var id in ids)
+                            Add(result.Receipts, id, new ShipmentDocRef(r.PhieuthuID, r.SoPhieuthu!.Trim(), r.Approve == true));
+
+            // 3) Phiếu chi theo ô HBL
+            var payRows = await ctx.Phieuchi.AsNoTracking()
+                .Where(x => x.Hbl != null && x.Hbl != "" && x.Sophieuchi != null && x.Sophieuchi != "")
+                .Select(x => new { x.PhieuchiID, x.Sophieuchi, x.Hbl, x.Approve })
+                .ToListAsync();
+            foreach (var r in payRows)
+                foreach (var no in SplitDocNos(r.Hbl))
+                    if (hblIdByNo.TryGetValue(no, out var ids))
+                        foreach (var id in ids)
+                            Add(result.Payments, id, new ShipmentDocRef(r.PhieuchiID, r.Sophieuchi!.Trim(), r.Approve == true));
+        }
+
+        foreach (var map in new[] { result.Invoices, result.Receipts, result.Payments })
+            foreach (var key in map.Keys.ToList())
+                map[key] = map[key].OrderBy(x => x.No, StringComparer.OrdinalIgnoreCase).ToList();
+
+        return result;
+    }
+
+    static string DocNos(Dictionary<Guid, List<ShipmentDocRef>> map, Guid hblId) =>
+        string.Join(", ", ShipmentDocRefs.Get(map, hblId).Select(x => x.No));
+
+    /// <summary>Danh sách số chứng từ cách nhau dấu phẩy, mỗi số là một link mở màn hình chỉnh sửa.</summary>
+    RenderFragment DocLinks(IReadOnlyList<ShipmentDocRef> docs, DocKind kind, M_HBL hbl) => __builder =>
+    {
+        for (var i = 0; i < docs.Count; i++)
+        {
+            var doc = docs[i];
+            if (i > 0)
+            {
+                <span>, </span>
+            }
+            <MudLink OnClick="@(() => OpenDocument(kind, doc, hbl))" title="@DocLinkHint(kind, doc)">@doc.No</MudLink>
+        }
+    };
+
+    string DocLinkHint(DocKind kind, ShipmentDocRef doc) => kind switch
+    {
+        DocKind.Invoice => T("Rpt242_OpenEInvoice", "Mở 5.13 E-Invoice của HBL này", "Open 5.13 E-Invoice for this HBL"),
+        DocKind.Receipt => doc.Approved
+            ? T("Rpt242_OpenReceiptApproved", "Mở 10.1 Phiếu thu (đã duyệt, chỉ xem)", "Open 10.1 Receipt (approved, view only)")
+            : T("Rpt242_OpenReceipt", "Mở 10.1 Phiếu thu để chỉnh sửa", "Open 10.1 Receipt to edit"),
+        _ => doc.Approved
+            ? T("Rpt242_OpenPaymentApproved", "Mở 10.2 Phiếu chi (đã duyệt, chỉ xem)", "Open 10.2 Payment (approved, view only)")
+            : T("Rpt242_OpenPayment", "Mở 10.2 Phiếu chi để chỉnh sửa", "Open 10.2 Payment to edit")
+    };
+
+    /// <summary>Mở tab 5.13 / 10.1 / 10.2 đã lọc sẵn đúng chứng từ (phiếu chưa duyệt tự mở hộp thoại sửa).</summary>
+    private async Task OpenDocument(DocKind kind, ShipmentDocRef doc, M_HBL hbl)
+    {
+        var (menu, title) = kind switch
+        {
+            DocKind.Invoice => ("E_Invoice", "5.13 E-Invoice"),
+            DocKind.Receipt => ("Phieuthu", $"10.1 {Localizer["Phieuthu"]}"),
+            _ => ("Phieuchi", $"10.2 {Localizer["Phieuchi"]}")
+        };
+        if (!await ssv.CheckPermission(usr, "View", menu))
+        {
+            CallSnackBar($"{Localizer["NoPermission_View"]} ({title})", MudBlazor.Severity.Warning);
+            return;
+        }
+        if (Layout == null)
+        {
+            CallSnackBar(Localizer["DataNotFound"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        RenderFragment content = builder =>
+        {
+            switch (kind)
+            {
+                case DocKind.Invoice:
+                    builder.OpenComponent(0, typeof(Components.EInvoice.Pages.EInvoice_Index));
+                    builder.AddAttribute(1, "InitialHblId", (Guid?)hbl.hblID);
+                    builder.AddAttribute(2, "InitialSearch", doc.No);
+                    break;
+                case DocKind.Receipt:
+                    builder.OpenComponent(0, typeof(Components.PhieuThu.Pages.PhieuThu_Index));
+                    builder.AddAttribute(1, "InitialPhieuId", (Guid?)doc.Id);
+                    builder.AddAttribute(2, "InitialSoPhieu", doc.No);
+                    break;
+                default:
+                    builder.OpenComponent(0, typeof(Components.PhieuChi.Pages.PhieuChi_Index));
+                    builder.AddAttribute(1, "InitialPhieuId", (Guid?)doc.Id);
+                    builder.AddAttribute(2, "InitialSoPhieu", doc.No);
+                    break;
+            }
+            builder.CloseComponent();
+        };
+
+        await Layout.OpenTab($"RPT242_{kind}_{doc.No}", $"{title} · {doc.No}", content);
+    }
+
+    enum ShipmentLinkTarget { Hbl, Job, Mbl }
+
+    /// <summary>Ref = số Job (cấp từ 1.7 RefNo).</summary>
+    string RefNo(M_HBL item) => GetJob(item)?.JobNo ?? string.Empty;
+
+    string MblNo(M_HBL item) => mblById.TryGetValue(item.mblid, out var m) ? m.Mbl ?? string.Empty : string.Empty;
+
+    /// <summary>
+    /// Mở tab 5.0 Shipment đã lọc sẵn đúng lô (dùng cơ chế InitialJobNo / InitialMBL / InitialHBL của 5.0 như màn Xem tài liệu).
+    /// Click HBL → lọc tới Job + HBL; click Ref → lọc theo Job; click MBL → lọc tới Job + MBL.
+    /// </summary>
+    enum ShipmentScreen { S21, S50, S60 }
+
+    /// <summary>Số HBL / Job / MBL bấm vào hiện menu chọn mở ở 2.1, 5.0 hoặc 6.0 (đã lọc sẵn đúng lô).</summary>
+    RenderFragment ShipLink(M_HBL item, ShipmentLinkTarget target, string? text) => __builder =>
+    {
+        <MudMenu Dense="true" AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" Class="rpt242-shiplink">
+            <ActivatorContent>
+                <MudLink Typo="Typo.body2" title="@T("Rpt242_OpenIn", "Mở ở 2.1 / 5.0 / 6.0", "Open in 2.1 / 5.0 / 6.0")">@text</MudLink>
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem Icon="@Icons.Material.Filled.Inventory2" OnClick="@(() => OpenInShipment(item, target, ShipmentScreen.S21))">2.1 @Localizer["Shipment"]</MudMenuItem>
+                <MudMenuItem Icon="@Icons.Material.Filled.Payments" OnClick="@(() => OpenInShipment(item, target, ShipmentScreen.S50))">5.0 @Localizer["Shipment"]</MudMenuItem>
+                <MudMenuItem Icon="@Icons.Material.Filled.Assignment" OnClick="@(() => OpenInShipment(item, target, ShipmentScreen.S60))">6.0 @Localizer["Shipment"]</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+    };
+
+    private Task OpenInShipment50(M_HBL item, ShipmentLinkTarget target) => OpenInShipment(item, target, ShipmentScreen.S50);
+
+    private async Task OpenInShipment(M_HBL item, ShipmentLinkTarget target, ShipmentScreen screen)
+    {
+        var (menu, prefix, compType) = screen switch
+        {
+            ShipmentScreen.S21 => ("Shipment", "2.1", typeof(Components.Shipment.Pages.ShipmentIndex)),
+            ShipmentScreen.S60 => ("Shipment6", "6.0", typeof(Components.Shipment.Pages.TaskNav.Shipment_6_0_Index)),
+            _ => ("Shipment5", "5.0", typeof(Components.Shipment.Pages.Payment.Shipment_5_0_Index))
+        };
+        if (!await ssv.CheckPermission(usr, "View", menu))
+        {
+            CallSnackBar($"{Localizer["NoPermission_View"]} ({prefix} Shipment)", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var jobNo = RefNo(item);
+        var mbl = MblNo(item);
+        string? hblFilter = target == ShipmentLinkTarget.Hbl ? item.hbl?.Trim() : null;
+        string? mblFilter = target == ShipmentLinkTarget.Mbl ? mbl : null;
+        string? jobFilter = string.IsNullOrWhiteSpace(jobNo) ? null : jobNo;
+
+        if (jobFilter == null && hblFilter == null && mblFilter == null)
+        {
+            CallSnackBar(Localizer["DataNotFound"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        if (Layout == null)
+        {
+            // Không có layout (vd mở trang trực tiếp): giữ cách cũ là xem chi tiết HBL trong hộp thoại
+            await OpenDetailHBL(item);
+            return;
+        }
+
+        RenderFragment content = builder =>
+        {
+            builder.OpenComponent(0, compType);
+            builder.AddAttribute(1, "InitialJobNo", jobFilter);
+            builder.AddAttribute(2, "InitialMBL", mblFilter);
+            builder.AddAttribute(3, "InitialHBL", hblFilter);
+            builder.CloseComponent();
+        };
+
+        var label = target switch
+        {
+            ShipmentLinkTarget.Hbl => hblFilter,
+            ShipmentLinkTarget.Mbl => mblFilter,
+            _ => jobFilter
+        };
+        var key = $"Shipment{prefix}_RPT_{target}_{label}";
+        await Layout.OpenTab(key, $"{prefix} {Localizer["Shipment"]} · {label}", content);
+    }
+
     private async Task OpenDetailHBL(M_HBL item)
     {
         var mbl = await shipsv.GetMBL_byHBLid(item.mblid);
@@ -548,7 +1729,6 @@
             return;
         }
         var optionsdialog = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
-        DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
         var parameters = new DialogParameters<DetailDialogHBL> { { x => x.detail, mbl }, { x=>x.Customers,Customers} };
         var dialog = await DialogService.ShowAsync<DetailDialogHBL>($"HBLs", parameters, optionsdialog);
         var result = await dialog.Result;
@@ -565,61 +1745,66 @@
         "Spent Credit",
         "Received & Spent Agent"
     };
-    void ListdataToArraay(List<M_HBL> listitems)
+
+    /// <summary>Tính lại 3 biểu đồ. Gọi sau khi tải dữ liệu và khi đổi USD/VND hoặc VAT.</summary>
+    void RebuildCharts()
     {
+        Series = new List<ChartSeries>();
+        if (Listdata.Count == 0)
+        {
+            labelsStatus = Array.Empty<string>();
+            dataStatus = Array.Empty<double>();
+            dataIssue = new double[] { 0, 0, 0, 0 };
+            XAxisLabels = Array.Empty<string>();
+            return;
+        }
+
         var groupedLoai = Listdata
             .Where(x => !string.IsNullOrEmpty(x.statusHBL))
             .GroupBy(x => x.statusHBL)
-            .Select(g => new
-            {
-                statusHBL = g.Key,
-                SoLuong = g.Count() // hoặc g.Sum(x => x.soluong ?? 0)
-            })
+            .Select(g => new { statusHBL = g.Key, SoLuong = g.Count() })
             .ToList();
 
         labelsStatus = groupedLoai.Select(x => x.statusHBL).ToArray()!;
         dataStatus = groupedLoai.Select(x => (double)x.SoLuong).ToArray();
 
-
         dataIssue = new double[]
         {
-        Listdata.Count(x => x.issueinvoice == true),
-        Listdata.Count(x => x.dathudebit == true),
-        Listdata.Count(x => x.dachicredit == true),
-        Listdata.Count(x => x.dathuchidaily == true)
+            Listdata.Count(x => x.issueinvoice == true),
+            Listdata.Count(x => x.dathudebit == true),
+            Listdata.Count(x => x.dachicredit == true),
+            Listdata.Count(x => x.dathuchidaily == true)
         };
 
-        // line chart
-        var maxDate = Listdata.Where(x => x.datereport.HasValue).Max(x => x.datereport.Value);
-        var distinctMonths = Listdata
-        .Where(x => x.datereport.HasValue)
-        .Select(x => new { Month = x.datereport.Value.Month, Year = x.datereport.Value.Year })
-        .Distinct()
-        .OrderBy(x => x.Year).ThenBy(x => x.Month)
-        .ToList();
-        while (distinctMonths.Count < 4)
+        // Biểu đồ lợi nhuận theo tháng (tối thiểu 4 tháng)
+        var withDate = Listdata.Where(x => x.datereport.HasValue).ToList();
+        if (withDate.Count == 0)
         {
-            var last = distinctMonths.FirstOrDefault() ?? new { Month = maxDate.Month, Year = maxDate.Year };
-            var prev = new DateTime(last.Year, last.Month, 1).AddMonths(-1);
-            distinctMonths.Insert(0, new { Month = prev.Month, Year = prev.Year });
+            XAxisLabels = Array.Empty<string>();
+            return;
         }
-        var monthNames = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.AbbreviatedMonthNames;
-        XAxisLabels = distinctMonths.Select(x => monthNames[x.Month - 1]).ToArray();
-
-        var profitPerMonth = distinctMonths.Select(month =>
+        var maxDate = withDate.Max(x => x.datereport!.Value);
+        var months = withDate
+            .Select(x => new DateTime(x.datereport!.Value.Year, x.datereport.Value.Month, 1))
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
+        while (months.Count < 4)
         {
-        var profit = Listdata
-            .Where(x => x.datereport.HasValue &&
-                        x.datereport.Value.Month == month.Month &&
-                        x.datereport.Value.Year == month.Year)
-            .Sum(x => TProfit_(x.hblID, "") ?? 0);
-        return profit;
-        }).ToArray();
+            var first = months.Count > 0 ? months[0] : new DateTime(maxDate.Year, maxDate.Month, 1);
+            months.Insert(0, first.AddMonths(-1));
+        }
+        // Kèm năm để không lẫn khi khoảng ngày vắt qua năm
+        XAxisLabels = months.Select(m => m.ToString("MM/yy")).ToArray();
 
-        Series.Clear();
+        var profitPerMonth = months.Select(month => withDate
+                .Where(x => x.datereport!.Value.Year == month.Year && x.datereport.Value.Month == month.Month)
+                .Sum(x => TProfit_(x.hblID, "") ?? 0))
+            .ToArray();
+
         Series.Add(new ChartSeries
         {
-            Name = "Profit",
+            Name = $"Profit ({(chkUSD ? "USD" : "VND")})",
             Data = profitPerMonth
         });
     }
@@ -628,12 +1813,8 @@
     {
         YAxisFormat = "#,##0"
     };
-    public List<ChartSeries> Series = new List<ChartSeries>
-    {
-        new ChartSeries() { Name = "Series 1", Data = new double[] { 90000, 79000, 72000, 69000, 62000, 62000, 55000, 65000, 70000 } },
-        new ChartSeries() { Name = "Series 2", Data = new double[] { 35000, 41000, 35000, 51000, 49000, 62000, 69000, 91000, 148000 } },
-    };
-    public string[] XAxisLabels = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep" };
+    public List<ChartSeries> Series = new List<ChartSeries>();
+    public string[] XAxisLabels = Array.Empty<string>();
 
     bool chkSI = false, chkSE = false, chkAI = false, chkAE = false, chkTruck = false, chkCustoms = false, chkInvIssued = false, chkDebitReceived = false
     , chkSpentCredit = false, chkReceivedSpentAgent = false;

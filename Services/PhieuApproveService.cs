@@ -296,6 +296,77 @@ public class PhieuApproveService(
     }
 
     /// <summary>
+    /// Duyệt trực tiếp trên 10.1 / 10.2 (không qua email / thông báo):
+    /// chỉ user có quyền duyệt loại phiếu (Duyet_Phieu_Thu / Duyet_Phieu_Chi), ghi người duyệt + ngày giờ.
+    /// </summary>
+    public async Task<BoolandMessReponse> ApproveDirectAsync(string loai, Guid phieuId, Guid currentUserId)
+    {
+        try
+        {
+            db.ChangeTracker.Clear();
+            if (currentUserId == Guid.Empty)
+                return new BoolandMessReponse(false, "Không xác định được user hiện tại.");
+            var approver = await db.UserList.AsNoTracking().FirstOrDefaultAsync(x => x.UsrId == currentUserId);
+            if (approver == null || !IsUserAllowed(approver, loai))
+                return new BoolandMessReponse(false, "Bạn không có quyền duyệt loại phiếu này.");
+
+            var actorName = approver.Name ?? approver.Usr ?? approver.Email ?? currentUserId.ToString();
+            var now = DateTime.Now;
+
+            if (loai == LoaiThu)
+            {
+                var item = await db.Phieuthu.FirstOrDefaultAsync(x => x.PhieuthuID == phieuId);
+                if (item == null)
+                    return new BoolandMessReponse(false, "Không tìm thấy phiếu thu.");
+                if (item.Approve == true)
+                    return new BoolandMessReponse(false, $"Phiếu thu đã được duyệt bởi {item.ApproveBy} lúc {item.ApproveDate:dd/MM/yyyy HH:mm}.");
+
+                item.Approve = true;
+                item.ApproveBy = actorName;
+                item.ApproveByUserId = currentUserId;
+                item.ApproveDate = now;
+                item.Trangthai = "DaDuyet";
+                item.UserUpdate = actorName;
+                item.DateUpdate = now.ToString("dd/MMM/yyyy");
+                await db.SaveChangesAsync();
+                await NotifyWatchersAndOtherApproversAsync(db, LoaiThu, BuildThuSummary(item), true, actorName, null, currentUserId);
+                return new BoolandMessReponse(true, $"Đã duyệt phiếu thu {item.SoPhieuthu} ({actorName}, {now:dd/MM/yyyy HH:mm}).");
+            }
+            else
+            {
+                var item = await db.Phieuchi.FirstOrDefaultAsync(x => x.PhieuchiID == phieuId);
+                if (item == null)
+                    return new BoolandMessReponse(false, "Không tìm thấy phiếu chi.");
+                if (item.Approve == true)
+                    return new BoolandMessReponse(false, $"Phiếu chi đã được duyệt bởi {item.ApproveBy} lúc {item.ApproveDate:dd/MM/yyyy HH:mm}.");
+
+                item.Approve = true;
+                item.ApproveBy = actorName;
+                item.ApproveByUserId = currentUserId;
+                item.ApproveDate = now;
+                item.Trangthai = "DaDuyet";
+                item.Useupdate = actorName;
+                item.DateUpdate = now.ToString("dd/MMM/yyyy");
+                await db.SaveChangesAsync();
+                await NotifyWatchersAndOtherApproversAsync(db, LoaiChi, BuildChiSummary(item), true, actorName, null, currentUserId);
+                return new BoolandMessReponse(true, $"Đã duyệt phiếu chi {item.Sophieuchi} ({actorName}, {now:dd/MM/yyyy HH:mm}).");
+            }
+        }
+        catch (Exception ex)
+        {
+            return new BoolandMessReponse(false, "Duyệt thất bại: " + ex.Message);
+        }
+    }
+
+    /// <summary>Người dùng hiện tại có quyền duyệt loại phiếu này không (cờ Duyet_Phieu_Thu / Duyet_Phieu_Chi).</summary>
+    public async Task<bool> CanApproveAsync(string loai, Guid userId)
+    {
+        if (userId == Guid.Empty) return false;
+        var user = await db.UserList.AsNoTracking().FirstOrDefaultAsync(x => x.UsrId == userId);
+        return user != null && IsUserAllowed(user, loai);
+    }
+
+    /// <summary>
     /// Chỉ user đã Approve (ApproveByUserId) mới được bỏ Approve.
     /// </summary>
     public async Task<BoolandMessReponse> UnapproveAsync(string loai, Guid phieuId, Guid currentUserId, string currentUserName)

@@ -1,0 +1,368 @@
+@using System.Globalization
+@inject IStringLocalizer<SharedResource> Localizer
+@inject ISnackbar Snackbar
+
+@* Form nhập / sửa 1 dòng Debit — cùng bố cục với "Xem chi tiết Debit" (ViewDebitDialog).
+   Dùng chung cho tab Debit của 2.1, 5.0 và 6.0; mọi phép tính / tra cứu do tab truyền vào để giữ nguyên nghiệp vụ. *@
+
+<style>
+    .debit-edit-dialog .mud-dialog-content {
+        padding: 16px 20px 8px 20px !important;
+    }
+
+    .debit-edit-dialog .ded-hero {
+        background-color: #f0f7fb;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+    }
+
+    .debit-edit-dialog .ded-section {
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 16px;
+    }
+
+    .debit-edit-dialog .ded-section-header {
+        margin-bottom: 4px;
+    }
+
+    .debit-edit-dialog .ded-field-label {
+        display: block;
+    }
+
+    .debit-edit-dialog .ded-total input {
+        font-weight: 600;
+        color: var(--mud-palette-primary);
+    }
+
+    .debit-edit-dialog .text-right input {
+        text-align: right;
+    }
+
+    .debit-edit-dialog .ded-chip {
+        cursor: pointer;
+        user-select: none;
+    }
+</style>
+
+<MudDialog Class="debit-edit-dialog">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@(IsNew ? Icons.Material.Filled.PostAdd : Icons.Material.Filled.EditNote)" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">@MudDialog.Title</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudForm @ref="_form" Model="Item">
+            @* ───── Đầu phiếu: số Debit, trạng thái, khách hàng, phí ───── *@
+            <MudPaper Class="ded-hero" Elevation="0">
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" sm="7">
+                        <MudStack Row="true" AlignItems="AlignItems.End" Spacing="1">
+                            <MudAutocomplete T="string" @bind-Value="Item.debitno"
+                                             Label="@Localizer["Debit No."]" Required="true" RequiredError="Bắt buộc"
+                                             SearchFunc="SearchDebitNoSafe" CoerceText="false" CoerceValue="true" Clearable="true"
+                                             Style="font-weight:600;" Dense="true" />
+                            <MudTooltip Text="Lấy số Debit mới (tháng hiện tại)">
+                                <MudIconButton Icon="@Icons.Material.Filled.Autorenew" Size="Size.Small" Color="Color.Primary"
+                                               Disabled="_busy" OnClick="@(() => NewDebitNoAsync(DateTime.Now))" />
+                            </MudTooltip>
+                            <MudDatePicker Label="@Localizer["Selected Date Get Debit No"]" DateFormat="MM/yyyy" Dense="true"
+                                           Disabled="@(!string.IsNullOrEmpty(Item.debitno) || _busy)"
+                                           DateChanged="@(d => d.HasValue ? NewDebitNoAsync(d.Value) : Task.CompletedTask)"
+                                           Style="max-width:150px;" />
+                        </MudStack>
+                        @if (!IsMBL && !string.IsNullOrWhiteSpace(ContCount))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">Số lượng cont của HBL: @ContCount</MudText>
+                        }
+                    </MudItem>
+                    <MudItem xs="12" sm="5" Class="d-flex justify-end align-center">
+                        <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap" Justify="Justify.FlexEnd">
+                            @* Đã thanh toán / Approve không sửa trên form (giống trước) — chỉ hiển thị *@
+                            <MudChip T="string" Size="Size.Small" Variant="@FlagVariant(Item.dathanhtoan)" Color="@FlagColor(Item.dathanhtoan, Color.Success)" Icon="@FlagIcon(Item.dathanhtoan)">@Localizer["Paid"]</MudChip>
+                            <MudChip T="string" Size="Size.Small" Variant="@FlagVariant(Item.approve)" Color="@FlagColor(Item.approve, Color.Success)" Icon="@FlagIcon(Item.approve)">@Localizer["Approve"]</MudChip>
+                        </MudStack>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudStack Row="true" AlignItems="AlignItems.End" Spacing="1">
+                            <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" Color="Color.Secondary" Class="mb-2" />
+                            <MudAutocomplete T="Guid" @bind-Value="Item.customerid"
+                                             Label="@Localizer["Customer"]" Required="true" RequiredError="Bắt buộc"
+                                             SearchFunc="SearchCustomer" ToStringFunc="CustomerText" Clearable="true" Dense="true"
+                                             HelperText="@CustomerHint" />
+                        </MudStack>
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudStack Row="true" AlignItems="AlignItems.End" Spacing="1">
+                            <MudIcon Icon="@Icons.Material.Filled.Inventory2" Size="Size.Small" Color="Color.Secondary" Class="mb-2" />
+                            <MudAutocomplete T="Guid" @bind-Value="Item.itemid"
+                                             Label="@Localizer["Item"]" Required="true" RequiredError="Bắt buộc"
+                                             SearchFunc="SearchCharge" ToStringFunc="ChargeText" Clearable="true" Dense="true" />
+                        </MudStack>
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+
+            @* ───── Pricing ───── *@
+            <MudPaper Class="ded-section" Elevation="0" Outlined="true">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="ded-section-header">
+                    <MudIcon Icon="@Icons.Material.Filled.Payments" Size="Size.Small" Color="Color.Primary" />
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;">@Localizer["Pricing"]</MudText>
+                </MudStack>
+                <MudDivider Class="mb-3" />
+                <MudGrid Spacing="3">
+                    <MudItem xs="6" sm="4">
+                        <MudNumericField T="double?" Value="Item.dongia" ValueChanged="OnUnitPriceChanged"
+                                         Label="@Localizer["Unit Price"]" Format="#,##0.##" Culture="@_en"
+                                         HideSpinButtons="true" Class="text-right" Dense="true" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudAutocomplete T="string" Value="Item.type" ValueChanged="OnTypeChanged"
+                                         Label="@Localizer["Type"]" Required="true" RequiredError="Bắt buộc"
+                                         SearchFunc="SearchTypeSafe" CoerceText="true" CoerceValue="false"
+                                         ResetValueOnEmptyText="false" SelectValueOnTab="true" Dense="true"
+                                         HelperText="Chọn trong danh sách; đổi Type sẽ gợi ý lại Qty" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudNumericField T="double?" Value="Item.soluong" ValueChanged="OnQuantityChanged"
+                                         Label="@Localizer["Quantity"]" Format="#,##0.##" Culture="@_en"
+                                         HideSpinButtons="true" Class="text-right" Dense="true" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudSelect T="string" @bind-Value="Item.tiente" Label="@Localizer["Loaitiente"]" Dense="true">
+                            <MudSelectItem Value="@("VND")">VND</MudSelectItem>
+                            <MudSelectItem Value="@("USD")">USD</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudNumericField T="double?" Value="Item.thanhtien" ValueChanged="OnTotalChanged"
+                                         Label="@Localizer["Total Price"]" Format="#,##0.##" Culture="@_en"
+                                         HideSpinButtons="true" Class="text-right" Dense="true" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudNumericField T="double?" Value="Item.thue" ValueChanged="OnVatChanged"
+                                         Label="@($"{Localizer["VAT"]} (%)")" Format="#,##0.##" Culture="@_en"
+                                         HideSpinButtons="true" Class="text-right" Dense="true" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudNumericField T="double?" @bind-Value="Item.thanhtiensauthue"
+                                         Label="@Localizer["Total Price Inc. VAT"]" Format="#,##0.##" Culture="@_en"
+                                         HideSpinButtons="true" Class="text-right ded-total" Dense="true" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudNumericField T="double?" @bind-Value="Item.tigiadebit"
+                                         Label="@Localizer["Exchange Rate Debit"]" Format="#,##0.##" Culture="@_en"
+                                         HideSpinButtons="true" Class="text-right" Dense="true"
+                                         Required="true" RequiredError="Bắt buộc"
+                                         Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.CurrencyExchange"
+                                         AdornmentColor="Color.Success" AdornmentAriaLabel="@Localizer["gettigia"]"
+                                         OnAdornmentClick="GetRateDebitAsync" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudNumericField T="double?" @bind-Value="Item.tigiahoandondaura"
+                                         Label="@Localizer["Exchange Rate Invoice"]" Format="#,##0.##" Culture="@_en"
+                                         HideSpinButtons="true" Class="text-right" Dense="true"
+                                         Required="true" RequiredError="Bắt buộc"
+                                         Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.CurrencyExchange"
+                                         AdornmentColor="Color.Success" AdornmentAriaLabel="@Localizer["gettigia"]"
+                                         OnAdornmentClick="GetRateInvoiceAsync" />
+                    </MudItem>
+                </MudGrid>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-2">
+                    Thành tiền = Đơn giá × Số lượng; Sau VAT = Thành tiền × (1 + VAT%). Bấm biểu tượng ⇄ ở ô tỷ giá để lấy tỷ giá theo loại tiền.
+                </MudText>
+            </MudPaper>
+
+            @* ───── Status ───── *@
+            <MudPaper Class="ded-section" Elevation="0" Outlined="true">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="ded-section-header">
+                    <MudIcon Icon="@Icons.Material.Filled.Flag" Size="Size.Small" Color="Color.Primary" />
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;">@Localizer["Status"]</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ml-2">Bấm để bật / tắt</MudText>
+                </MudStack>
+                <MudDivider Class="mb-3" />
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudChip T="string" Class="ded-chip" Size="Size.Small" Variant="@FlagVariant(Item.thuho)" Color="@FlagColor(Item.thuho, Color.Info)" Icon="@FlagIcon(Item.thuho)"
+                             OnClick="@(() => Item.thuho = !(Item.thuho ?? false))">@Localizer["On Behaft"]</MudChip>
+                    <MudChip T="string" Class="ded-chip" Size="Size.Small" Variant="@FlagVariant(Item.daIndebit)" Color="@FlagColor(Item.daIndebit, Color.Success)" Icon="@FlagIcon(Item.daIndebit)"
+                             OnClick="@(() => Item.daIndebit = !(Item.daIndebit ?? false))">@Localizer["Debit Printed"]</MudChip>
+                    <MudChip T="string" Class="ded-chip" Size="Size.Small" Variant="@FlagVariant(Item.daXuatHoadon)" Color="@FlagColor(Item.daXuatHoadon, Color.Success)" Icon="@FlagIcon(Item.daXuatHoadon)"
+                             Disabled="@(Item.khoa == true)"
+                             OnClick="@(() => Item.daXuatHoadon = !(Item.daXuatHoadon ?? false))">@Localizer["Invoice Printed"]</MudChip>
+                    <MudChip T="string" Class="ded-chip" Size="Size.Small" Variant="@FlagVariant(Item.InArrival)" Color="@FlagColor(Item.InArrival, Color.Success)" Icon="@FlagIcon(Item.InArrival)"
+                             OnClick="@(() => Item.InArrival = !(Item.InArrival ?? false))">@Localizer["Arrival Printed"]</MudChip>
+                    <MudTooltip Text="@(LockToggleDisabled ? "Chỉ ACCOUNT hoặc ADMIN được mở khóa Debit" : string.Empty)">
+                        <MudChip T="string" Class="ded-chip" Size="Size.Small" Variant="@FlagVariant(Item.khoa)" Color="@FlagColor(Item.khoa, Color.Error)" Icon="@FlagIcon(Item.khoa)"
+                                 Disabled="LockToggleDisabled"
+                                 OnClick="@(() => Item.khoa = !(Item.khoa ?? false))">@Localizer["Locked"]</MudChip>
+                    </MudTooltip>
+                </MudStack>
+            </MudPaper>
+
+            @* ───── Other Info ───── *@
+            <MudPaper Class="ded-section" Elevation="0" Outlined="true">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="ded-section-header">
+                    <MudIcon Icon="@Icons.Material.Filled.Description" Size="Size.Small" Color="Color.Primary" />
+                    <MudText Typo="Typo.subtitle1" Style="font-weight:600;">@Localizer["Other Info"]</MudText>
+                </MudStack>
+                <MudDivider Class="mb-3" />
+                <MudGrid Spacing="3">
+                    <MudItem xs="6" sm="3">
+                        <MudAutocomplete T="string" @bind-Value="Item.ContainerNo" Label="@Localizer["Cont. No."]"
+                                         SearchFunc="SearchContainerNoSafe" CoerceText="true" CoerceValue="false" Strict="false"
+                                         ResetValueOnEmptyText="true" Clearable="true" Dense="true" />
+                    </MudItem>
+                    <MudItem xs="6" sm="3">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ded-field-label">@Localizer["Invoice No."]</MudText>
+                        <MudText Typo="Typo.body1">@(string.IsNullOrWhiteSpace(Item.sohoadondaura) ? "-" : Item.sohoadondaura)</MudText>
+                    </MudItem>
+                    <MudItem xs="6" sm="3">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ded-field-label">@Localizer["UserUpdate"]</MudText>
+                        <MudText Typo="Typo.body1">@(string.IsNullOrWhiteSpace(Item.userupdate) ? "-" : Item.userupdate)</MudText>
+                    </MudItem>
+                    <MudItem xs="6" sm="3">
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ded-field-label">@Localizer["Dateupdate"]</MudText>
+                        <MudText Typo="Typo.body1">@(string.IsNullOrWhiteSpace(Item.dateupdate) ? "-" : Item.dateupdate)</MudText>
+                    </MudItem>
+                    <MudItem xs="12">
+                        <MudTextField T="string" @bind-Value="Item.ghichu" Label="@Localizer["Notes"]" Lines="2" AutoGrow="true" Dense="true" />
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">@Localizer["Cancel"]</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save"
+                   Disabled="_busy" OnClick="SaveAsync">@Localizer["Save"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>Bản sao để sửa; chỉ trả về tab khi bấm Save.</summary>
+    [Parameter] public M_Debit Item { get; set; } = new();
+    [Parameter] public bool IsNew { get; set; }
+    [Parameter] public bool IsMBL { get; set; }
+    [Parameter] public string? ContCount { get; set; }
+
+    /// <summary>Debit đang khóa khi mở form và user không có quyền mở khóa → không cho bỏ "Locked".</summary>
+    [Parameter] public bool OriginallyLocked { get; set; }
+    [Parameter] public bool CanUnlock { get; set; }
+
+    [Parameter] public Func<string, Task<IEnumerable<Guid>>> SearchCustomer { get; set; } = _ => Task.FromResult(Enumerable.Empty<Guid>());
+    [Parameter] public Func<Guid, string> CustomerText { get; set; } = _ => string.Empty;
+    [Parameter] public Func<Guid, string>? CustomerTooltip { get; set; }
+    [Parameter] public Func<string, Task<IEnumerable<Guid>>> SearchCharge { get; set; } = _ => Task.FromResult(Enumerable.Empty<Guid>());
+    [Parameter] public Func<Guid, string> ChargeText { get; set; } = _ => string.Empty;
+    [Parameter] public Func<string, Task<IEnumerable<string>>>? SearchType { get; set; }
+    [Parameter] public Func<string?, Task<IEnumerable<string?>>>? SearchContainerNo { get; set; }
+    [Parameter] public Func<string?, Task<IEnumerable<string>>>? SearchDebitNo { get; set; }
+    [Parameter] public Func<DateTime, Task<string>>? NewDebitNo { get; set; }
+    [Parameter] public Action<M_Debit>? ApplyQuantityByType { get; set; }
+    [Parameter] public Action<M_Debit>? CalculateTotal { get; set; }
+    [Parameter] public Action<M_Debit>? CalculateVat { get; set; }
+    [Parameter] public Func<string?, Task<double?>>? GetExchangeRate { get; set; }
+
+    MudForm _form = default!;
+    bool _busy;
+    static readonly CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
+
+    bool LockToggleDisabled => OriginallyLocked && !CanUnlock && Item.khoa == true;
+    string? CustomerHint => CustomerTooltip?.Invoke(Item.customerid);
+
+    static Variant FlagVariant(bool? value) => (value ?? false) ? Variant.Filled : Variant.Outlined;
+    static Color FlagColor(bool? value, Color trueColor) => (value ?? false) ? trueColor : Color.Default;
+    static string FlagIcon(bool? value) => (value ?? false) ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked;
+
+    // ───── tính toán: dùng lại đúng hàm của tab ─────
+    void OnUnitPriceChanged(double? v) { Item.dongia = v; CalculateTotal?.Invoke(Item); }
+    void OnQuantityChanged(double? v) { Item.soluong = v; CalculateTotal?.Invoke(Item); }
+    void OnTotalChanged(double? v) { Item.thanhtien = v; CalculateVat?.Invoke(Item); }
+    void OnVatChanged(double? v) { Item.thue = v; CalculateVat?.Invoke(Item); }
+
+    /// <summary>
+    /// Chỉ nhận Type có trong danh sách; chỉ gợi ý lại Qty khi Type thật sự đổi sang loại hợp lệ
+    /// (gõ dở rồi rời ô, chọn lại đúng loại cũ hoặc xóa ô thì giữ nguyên Qty).
+    /// </summary>
+    async Task OnTypeChanged(string? v)
+    {
+        v = v?.Trim();
+        if (string.Equals(v, Item.type?.Trim(), StringComparison.OrdinalIgnoreCase))
+            return;
+        if (string.IsNullOrEmpty(v))
+            return; // không cho xóa trắng Type; giữ giá trị cũ
+
+        string? match = v;
+        if (SearchType != null)
+        {
+            var list = await SearchType(v);
+            match = list.FirstOrDefault(t => string.Equals(t?.Trim(), v, StringComparison.OrdinalIgnoreCase));
+        }
+        if (match == null)
+        {
+            Snackbar.Add($"Type \"{v}\" không có trong danh sách.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        Item.type = match;
+        ApplyQuantityByType?.Invoke(Item);
+    }
+
+    async Task GetRateDebitAsync()
+    {
+        if (GetExchangeRate == null) return;
+        Item.tigiadebit = await GetExchangeRate(Item.tiente);
+    }
+
+    async Task GetRateInvoiceAsync()
+    {
+        if (GetExchangeRate == null) return;
+        Item.tigiahoandondaura = await GetExchangeRate(Item.tiente);
+    }
+
+    async Task NewDebitNoAsync(DateTime date)
+    {
+        if (NewDebitNo == null) return;
+        try
+        {
+            _busy = true;
+            Item.debitno = await NewDebitNo(date);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    Task<IEnumerable<string>> SearchTypeSafe(string text)
+        => SearchType?.Invoke(text) ?? Task.FromResult(Enumerable.Empty<string>());
+
+    Task<IEnumerable<string>> SearchDebitNoSafe(string text)
+        => SearchDebitNo?.Invoke(text) ?? Task.FromResult(Enumerable.Empty<string>());
+
+    async Task<IEnumerable<string>> SearchContainerNoSafe(string text)
+    {
+        if (SearchContainerNo == null) return Enumerable.Empty<string>();
+        var rs = await SearchContainerNo(text);
+        return rs.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!);
+    }
+
+    async Task SaveAsync()
+    {
+        await _form.Validate();
+        if (!_form.IsValid)
+            return;
+        if (Item.customerid == Guid.Empty || Item.itemid == Guid.Empty)
+        {
+            Snackbar.Add("Vui lòng chọn Customer và Item.", MudBlazor.Severity.Warning);
+            return;
+        }
+        MudDialog.Close(DialogResult.Ok(Item));
+    }
+
+    void Cancel() => MudDialog.Cancel();
+}
