@@ -3,210 +3,345 @@
 @using NVOAMASIS.Models
 @using NVOAMASIS.Services.Localization
 @using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Web.Virtualization
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IWebHostEnvironment Env
 @inject IStringLocalizer<SharedResource> Localizer
 
+<style>
+    .le-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 8px; }
+    .le-bar .le-search { min-width: 280px; flex: 1; }
+    .le-wrap { height: 62vh; overflow: auto; border: 1px solid var(--mud-palette-lines-default); border-radius: 8px; }
+    .le-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+    .le-table th { position: sticky; top: 0; z-index: 2; background: var(--mud-palette-background-grey); text-align: left; padding: 6px; font-weight: 600; border-bottom: 1px solid var(--mud-palette-lines-default); }
+    .le-table td { padding: 2px 4px; border-bottom: 1px solid var(--mud-palette-lines-default); vertical-align: top; }
+    .le-table td.le-key { font-family: Consolas, monospace; font-size: 12px; color: var(--mud-palette-text-secondary); word-break: break-all; padding-top: 6px; }
+    .le-table textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 3px 5px; border: 1px solid transparent; border-radius: 4px; background: transparent; resize: vertical; min-height: 28px; color: inherit; }
+    .le-table textarea:hover { border-color: var(--mud-palette-lines-inputs); }
+    .le-table textarea:focus { outline: none; border-color: var(--mud-palette-primary); background: var(--mud-palette-surface); }
+    .le-table textarea.le-dirty { background: #fff7d6; border-color: #f2c94c; }
+    .le-table textarea.le-missing { background: #fdecec; }
+    .le-new td { background: #eef6ff; }
+    .le-loc { font-size: 11px; line-height: 1.35; padding-top: 5px !important; }
+    .le-loc span { display: inline-block; margin: 0 4px 2px 0; padding: 0 6px; border-radius: 8px; background: #eef2ff; color: #3730a3; white-space: nowrap; }
+    .le-loc span.le-file { background: #f1f5f9; color: #475569; }
+    .le-loc .le-unused { color: #b91c1c; background: #fdecec; }
+</style>
+
 <MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@Localizer["EditLanguage"]</MudText>
+    </TitleContent>
     <DialogContent>
-        <MudStack Spacing="3">
-            <!-- Culture Selection -->
-            <MudSelect T="string" @bind-Value="SelectedCulture" @bind-Value:after="OnCultureChanged"
-                Label="@Localizer["Language"]" Variant="Variant.Outlined">
-                @foreach (var culture in AvailableCultures)
-                {
-                    <MudSelectItem Value="@culture">@culture</MudSelectItem>
-                }
-            </MudSelect>
+        <div class="le-bar">
+            <MudTextField T="string" @bind-Value="_search" Immediate="true" DebounceInterval="250" Class="le-search"
+                          Placeholder="Tìm theo key, tên hiển thị (cả 3 ngôn ngữ) hoặc màn hình (vd: 6.1)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" />
+            <MudSwitch T="bool" @bind-Value="_onlyMissing" Color="Color.Warning" Label="Chỉ dòng thiếu bản dịch" />
+            <MudSwitch T="bool" @bind-Value="_onlyDirty" Color="Color.Primary" Label="Chỉ dòng đã sửa" />
+            <MudSwitch T="bool" @bind-Value="_onlyUsed" Color="Color.Success" Label="Chỉ key đang dùng" />
+            <MudText Typo="Typo.caption">@Filtered.Count / @_rows.Count key · đã sửa <b>@DirtyCount</b> ô</MudText>
+        </div>
 
-            <!-- ResourceKey Search/Autocomplete -->
-            @if (!string.IsNullOrEmpty(SelectedCulture))
-            {
-                <MudAutocomplete T="string" @bind-Value="SelectedResourceKey" @bind-Value:after="OnResourceKeyChanged"
-                    Label="@Localizer["Key"]" Variant="Variant.Outlined" SearchFunc="SearchResourceKeys" Immediate="true"
-                    CoerceText="true" Clearable="true" MaxItems="50" />
-            }
-
-            <!-- Value Input -->
-            @if (!string.IsNullOrEmpty(SelectedCulture) && !string.IsNullOrEmpty(SelectedResourceKey))
-            {
-                <MudTextField @bind-Value="ResourceValue" Label="@Localizer["Value"]" Variant="Variant.Outlined" Lines="3"
-                    AutoGrow="true" />
-            }
-        </MudStack>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else
+        {
+            <div class="le-wrap">
+                <table class="le-table">
+                    <colgroup>
+                        <col style="width:18%" />
+                        <col style="width:16%" />
+                        @foreach (var _ in _cultures)
+                        {
+                            <col />
+                        }
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Vị trí hiển thị</th>
+                            @foreach (var c in _cultures)
+                            {
+                                <th>@CultureTitle(c)</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="le-new">
+                            <td><input class="mud-input-slot" style="width:100%;font-family:Consolas,monospace;font-size:12px;padding:4px;border:1px dashed #94a3b8;border-radius:4px"
+                                       placeholder="+ Thêm key mới" @bind="_newKey" @bind:event="oninput" /></td>
+                            <td></td>
+                            @foreach (var c in _cultures)
+                            {
+                                var cult = c;
+                                <td><textarea rows="1" placeholder="@CultureTitle(cult)" value="@(_newValues.TryGetValue(cult, out var nv) ? nv : "")"
+                                              @oninput="@(e => _newValues[cult] = e.Value?.ToString() ?? string.Empty)"></textarea></td>
+                            }
+                        </tr>
+                        <Virtualize Items="Filtered" Context="row" ItemSize="34" OverscanCount="20" SpacerElement="tr">
+                            <tr @key="row.Key">
+                                <td class="le-key" title="@row.Key">@row.Key</td>
+                                <td class="le-loc" title="@row.LocationTitle">
+                                    @if (row.Locations.Count == 0)
+                                    {
+                                        <span class="le-unused">@(_usageLoaded ? "Không thấy trong code" : "")</span>
+                                    }
+                                    @foreach (var loc in row.Locations.Take(3))
+                                    {
+                                        <span class="@(loc.IsFile ? "le-file" : "")">@loc.Text</span>
+                                    }
+                                    @if (row.Locations.Count > 3)
+                                    {
+                                        <span>+@(row.Locations.Count - 3)</span>
+                                    }
+                                </td>
+                                @foreach (var c in _cultures)
+                                {
+                                    var cult = c;
+                                    var cell = row.Cells[cult];
+                                    <td>
+                                        <textarea rows="1" class="@(cell.Dirty ? "le-dirty" : string.IsNullOrWhiteSpace(cell.Value) ? "le-missing" : "")"
+                                                  value="@cell.Value" @onchange="@(e => cell.Value = e.Value?.ToString() ?? string.Empty)"></textarea>
+                                    </td>
+                                }
+                            </tr>
+                        </Virtualize>
+                    </tbody>
+                </table>
+            </div>
+        }
     </DialogContent>
     <DialogActions>
+        <MudCheckBox T="bool" @bind-Value="_reloadAfterSave" Color="Color.Primary" Label="Áp dụng ngay (tải lại trang sau khi lưu)" />
         <MudSpacer />
         <MudButton OnClick="Cancel" Color="Color.Secondary">@Localizer["Cancel"]</MudButton>
-        <MudButton OnClick="Save" Color="Color.Primary" Variant="Variant.Filled"
-            Disabled="saving || string.IsNullOrEmpty(SelectedCulture) || string.IsNullOrEmpty(SelectedResourceKey)">
-            @(saving? Localizer["Saving..."] : Localizer["Save"])</MudButton>
+        <MudButton OnClick="Save" Color="Color.Primary" Variant="Variant.Filled" Disabled="@(_saving || (DirtyCount == 0 && !HasNewKey))">
+            @(_saving ? Localizer["Saving..."] : Localizer["Save"]) @(DirtyCount > 0 ? $"({DirtyCount})" : "")
+        </MudButton>
     </DialogActions>
 </MudDialog>
 
 @code {
     [CascadingParameter] public MudDialogInstance? MudDialog { get; set; }
 
-    private string? SelectedCulture { get; set; }
-    private string? SelectedResourceKey { get; set; }
-
-    private string ResourceValue { get; set; } = string.Empty;
-    private List<string> AvailableCultures { get; set; } = new();
-    private List<string> ResourceKeysForCulture { get; set; } = new();
-    private bool saving = false;
-
-    protected override async Task OnInitializedAsync()
+    sealed class Cell
     {
-        await LoadCultures();
+        public int? Id { get; set; }
+        public string Original { get; set; } = string.Empty;
+        public string Value { get; set; } = string.Empty;
+        public bool Dirty => !string.Equals(Original, Value, StringComparison.Ordinal);
     }
 
-    private async Task LoadCultures()
+    sealed record Loc(string Text, bool IsFile);
+
+    sealed class Row
+    {
+        public string Key { get; init; } = string.Empty;
+        public Dictionary<string, Cell> Cells { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<Loc> Locations { get; set; } = new();
+        public string LocationTitle { get; set; } = string.Empty;
+        public string LocationSearch { get; set; } = string.Empty;
+    }
+
+    sealed class UsageFile
+    {
+        public Dictionary<string, List<List<string>>> files { get; set; } = new();
+        public Dictionary<string, List<string>> keys { get; set; } = new();
+    }
+
+    bool _onlyUsed, _usageLoaded;
+    UsageFile? _usage;
+
+    async Task LoadUsageAsync()
     {
         try
         {
-            using var context = await DbFactory.CreateDbContextAsync();
-            AvailableCultures = await context.LocalizationResources
-            .Select(r => r.Culture)
-            .Distinct()
-            .OrderBy(c => c)
-            .ToListAsync();
+            var path = Path.Combine(Env.WebRootPath ?? "wwwroot", "data", "localization-usage.json");
+            if (!File.Exists(path)) return;
+            await using var fs = File.OpenRead(path);
+            _usage = await System.Text.Json.JsonSerializer.DeserializeAsync<UsageFile>(fs);
+            _usageLoaded = _usage != null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[LocalizationEditor] usage file: {ex.Message}");
+        }
+    }
 
-            // If no cultures in DB, use default list from CultureSelector
-            if (!AvailableCultures.Any())
+    void FillLocations(Row row)
+    {
+        if (_usage == null || !_usage.keys.TryGetValue(row.Key, out var filesOfKey)) return;
+        var locs = new List<Loc>();
+        var titleLines = new List<string>();
+        foreach (var f in filesOfKey)
+        {
+            var screens = _usage.files.TryGetValue(f, out var sc) ? sc : new();
+            var shortFile = f.Replace("Components/", "").Replace("/Pages/", "/");
+            if (screens.Count == 0)
             {
-                AvailableCultures = new List<string> { "en-US", "vi-VN", "zh-CN" };
+                locs.Add(new Loc(shortFile, true));
+                titleLines.Add(shortFile);
+                continue;
+            }
+            foreach (var s in screens)
+            {
+                var num = s.Count > 0 ? s[0] : "";
+                var lk = s.Count > 1 ? s[1] : "";
+                var lt = s.Count > 2 ? s[2] : "";
+                var name = !string.IsNullOrEmpty(lk) ? Localizer[lk].Value : lt;
+                var text = string.IsNullOrEmpty(num) ? name : $"{num} {name}";
+                if (!locs.Any(l => l.Text == text)) locs.Add(new Loc(text, false));
+                titleLines.Add($"{text}  ←  {shortFile}");
             }
         }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Error loading cultures: {ex.Message}", MudBlazor.Severity.Error);
-        }
+        row.Locations = locs;
+        row.LocationTitle = string.Join("\n", titleLines.Distinct());
+        row.LocationSearch = string.Join(" | ", titleLines);
     }
 
-    private async Task OnCultureChanged()
+    static readonly string[] PreferredOrder = { "vi-VN", "en-US", "zh-CN" };
+
+    List<string> _cultures = new();
+    List<Row> _rows = new();
+    string? _search;
+    bool _onlyMissing, _onlyDirty, _loading = true, _saving, _reloadAfterSave = true;
+    string? _newKey;
+    Dictionary<string, string> _newValues = new(StringComparer.OrdinalIgnoreCase);
+
+    bool HasNewKey => !string.IsNullOrWhiteSpace(_newKey) && _newValues.Values.Any(v => !string.IsNullOrWhiteSpace(v));
+    int DirtyCount => _rows.Sum(r => r.Cells.Values.Count(c => c.Dirty));
+
+    static string CultureTitle(string c) => c switch
     {
-        SelectedResourceKey = null;
-        ResourceValue = string.Empty;
-        ResourceKeysForCulture.Clear();
+        "vi-VN" => "Tiếng Việt (vi-VN)",
+        "en-US" => "English (en-US)",
+        "zh-CN" => "中文 (zh-CN)",
+        _ => c
+    };
 
-        if (!string.IsNullOrEmpty(SelectedCulture))
-        {
-            await LoadResourceKeysForCulture();
-        }
-
-        StateHasChanged();
-    }
-
-    private async Task LoadResourceKeysForCulture()
+    List<Row> Filtered
     {
-        try
+        get
         {
-            using var context = await DbFactory.CreateDbContextAsync();
-            ResourceKeysForCulture = await context.LocalizationResources
-            .Where(r => r.Culture == SelectedCulture)
-            .Select(r => r.ResourceKey)
-            .Distinct()
-            .OrderBy(k => k)
-            .ToListAsync();
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Error loading resource keys: {ex.Message}", MudBlazor.Severity.Error);
-        }
-    }
-
-    private async Task<IEnumerable<string>> SearchResourceKeys(string value)
-    {
-        if (string.IsNullOrEmpty(SelectedCulture))
-        {
-            return Enumerable.Empty<string>();
-        }
-
-        if (ResourceKeysForCulture.Count == 0)
-        {
-            await LoadResourceKeysForCulture();
-        }
-
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return ResourceKeysForCulture.Take(50);
-        }
-
-        return ResourceKeysForCulture
-        .Where(k => k.Contains(value, StringComparison.OrdinalIgnoreCase))
-        .Take(50);
-    }
-
-    private async Task OnResourceKeyChanged()
-    {
-        if (!string.IsNullOrEmpty(SelectedCulture) && !string.IsNullOrEmpty(SelectedResourceKey))
-        {
-            await LoadResourceValue();
-        }
-        else
-        {
-            ResourceValue = string.Empty;
-        }
-
-        StateHasChanged();
-    }
-
-    private async Task LoadResourceValue()
-    {
-        try
-        {
-            using var context = await DbFactory.CreateDbContextAsync();
-            var resource = await context.LocalizationResources
-            .FirstOrDefaultAsync(r => r.Culture == SelectedCulture && r.ResourceKey == SelectedResourceKey);
-
-            ResourceValue = resource?.Value ?? string.Empty;
-        }
-        catch (Exception ex)
-        {
-            Snackbar.Add($"Error loading resource value: {ex.Message}", MudBlazor.Severity.Error);
-        }
-    }
-
-    private async Task Save()
-    {
-        if (string.IsNullOrEmpty(SelectedCulture) || string.IsNullOrEmpty(SelectedResourceKey))
-        {
-            Snackbar.Add(Localizer["PleaseSelectLanguageAndKey"],
-            MudBlazor.Severity.Warning);
-            return;
-        }
-
-        saving = true;
-        try
-        {
-            using var context = await DbFactory.CreateDbContextAsync();
-            var resource = await context.LocalizationResources
-            .FirstOrDefaultAsync(r => r.Culture == SelectedCulture && r.ResourceKey == SelectedResourceKey);
-
-            if (resource == null)
+            IEnumerable<Row> q = _rows;
+            if (!string.IsNullOrWhiteSpace(_search))
             {
-                // Create new resource
-                resource = new LocalizationResource
+                var s = _search.Trim();
+                q = q.Where(r => r.Key.Contains(s, StringComparison.OrdinalIgnoreCase)
+                                 || r.LocationSearch.Contains(s, StringComparison.OrdinalIgnoreCase)
+                                 || r.Cells.Values.Any(c => c.Value.Contains(s, StringComparison.OrdinalIgnoreCase)));
+            }
+            if (_onlyMissing) q = q.Where(r => r.Cells.Values.Any(c => string.IsNullOrWhiteSpace(c.Value)));
+            if (_onlyDirty) q = q.Where(r => r.Cells.Values.Any(c => c.Dirty));
+            if (_onlyUsed) q = q.Where(r => r.Locations.Count > 0);
+            return q.ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    async Task LoadAsync()
+    {
+        try
+        {
+            _loading = true;
+            if (_usage == null) await LoadUsageAsync();
+            await using var ctx = await DbFactory.CreateDbContextAsync();
+            var all = await ctx.LocalizationResources.AsNoTracking()
+                .Select(r => new { r.Id, r.ResourceKey, r.Culture, r.Value })
+                .ToListAsync();
+
+            var cultures = all.Select(r => r.Culture).Where(c => !string.IsNullOrWhiteSpace(c)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var p in PreferredOrder)
+                if (!cultures.Contains(p, StringComparer.OrdinalIgnoreCase)) cultures.Add(p);
+            _cultures = cultures
+                .OrderBy(c => Array.FindIndex(PreferredOrder, p => string.Equals(p, c, StringComparison.OrdinalIgnoreCase)) is var i && i >= 0 ? i : 99)
+                .ThenBy(c => c)
+                .ToList();
+
+            _rows = all.GroupBy(r => r.ResourceKey, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(g =>
                 {
-                    ResourceKey = SelectedResourceKey,
-                    Culture = SelectedCulture,
-                    Value = ResourceValue
-                };
-                context.LocalizationResources.Add(resource);
-            }
-            else
+                    var row = new Row { Key = g.Key };
+                    foreach (var c in _cultures)
+                    {
+                        var r = g.FirstOrDefault(x => string.Equals(x.Culture, c, StringComparison.OrdinalIgnoreCase));
+                        var v = r?.Value ?? string.Empty;
+                        row.Cells[c] = new Cell { Id = r?.Id, Original = v, Value = v };
+                    }
+                    FillLocations(row);
+                    return row;
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error loading resources: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    async Task Save()
+    {
+        _saving = true;
+        try
+        {
+            var changedCultures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using var ctx = await DbFactory.CreateDbContextAsync();
+
+            var dirty = _rows.SelectMany(r => r.Cells.Select(kv => (Row: r, Culture: kv.Key, Cell: kv.Value))).Where(x => x.Cell.Dirty).ToList();
+            var ids = dirty.Where(x => x.Cell.Id.HasValue).Select(x => x.Cell.Id!.Value).ToList();
+            var existing = ids.Count == 0 ? new Dictionary<int, LocalizationResource>()
+                : await ctx.LocalizationResources.Where(r => ids.Contains(r.Id)).ToDictionaryAsync(r => r.Id);
+
+            foreach (var d in dirty)
             {
-                // Update existing resource
-                resource.Value = ResourceValue;
+                if (d.Cell.Id.HasValue && existing.TryGetValue(d.Cell.Id.Value, out var res))
+                    res.Value = d.Cell.Value;
+                else
+                    ctx.LocalizationResources.Add(new LocalizationResource { ResourceKey = d.Row.Key, Culture = d.Culture, Value = d.Cell.Value });
+                changedCultures.Add(d.Culture);
             }
 
-            await context.SaveChangesAsync();
+            if (HasNewKey)
+            {
+                var key = _newKey!.Trim();
+                var already = await ctx.LocalizationResources.Where(r => r.ResourceKey == key).Select(r => r.Culture).ToListAsync();
+                foreach (var kv in _newValues.Where(kv => !string.IsNullOrWhiteSpace(kv.Value)))
+                {
+                    if (already.Contains(kv.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        Snackbar.Add($"Key {key} ({kv.Key}) đã có, sửa trực tiếp trong danh sách.", MudBlazor.Severity.Warning);
+                        continue;
+                    }
+                    ctx.LocalizationResources.Add(new LocalizationResource { ResourceKey = key, Culture = kv.Key, Value = kv.Value.Trim() });
+                    changedCultures.Add(kv.Key);
+                }
+            }
 
-            // Clear cache for the updated culture
-            DbStringLocalizerFactory.ClearCache(SelectedCulture);
+            var count = await ctx.SaveChangesAsync();
+            foreach (var c in changedCultures) DbStringLocalizerFactory.ClearCache(c);
 
-            Snackbar.Add(Localizer["SaveLanguageValueSuccessfully"], MudBlazor.Severity.Success);
-            MudDialog?.Close(DialogResult.Ok(true));
+            Snackbar.Add($"{Localizer["SaveLanguageValueSuccessfully"]} ({count})", MudBlazor.Severity.Success);
+            _newKey = null;
+            _newValues.Clear();
+
+            if (_reloadAfterSave && count > 0)
+            {
+                MudDialog?.Close(DialogResult.Ok(true));
+                Nav.NavigateTo(Nav.Uri, forceLoad: true);
+                return;
+            }
+            await LoadAsync();
         }
         catch (Exception ex)
         {
@@ -214,12 +349,9 @@
         }
         finally
         {
-            saving = false;
+            _saving = false;
         }
     }
 
-    private void Cancel()
-    {
-        MudDialog?.Cancel();
-    }
+    void Cancel() => MudDialog?.Cancel();
 }

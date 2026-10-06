@@ -6591,6 +6591,7 @@ namespace NVOAMASIS.Services
             var rscredit = await _context.Credit.Select(x => x.type).Distinct().ToListAsync();
             var rs = rsdebit
                 .Union(rscredit)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct()
                 .ToList();
             return rs!;

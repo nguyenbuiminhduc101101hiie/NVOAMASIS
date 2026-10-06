@@ -1,0 +1,484 @@
+@* 6.1.1 — Booking theo chuyến tàu: chọn Tàu + Số chuyến → các booking cùng chuyến → sửa 1 booking → áp dụng thay đổi cho các booking khác cùng chuyến. *@
+@using System.Reflection
+@using System.Text.Json
+@inject BookingService bksv
+@inject CustomerService Cussv
+@inject SharedServices ssv
+@inject AccountService asv
+@inject HistoryLogService HistoryLogService
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject IStringLocalizer<SharedResource> Localizer
+
+<style>
+    .bkv-page { padding: 12px; }
+    .bkv-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 10px; }
+    .bkv-bar .bkv-pick { min-width: 260px; }
+    .bkv-hint { font-size: 12px; color: #64748b; }
+    .bkv-grid .mud-table-cell { white-space: nowrap; }
+    .bkv-sel td { background: #e0ecff !important; }
+    .bkv-apply { border: 1px solid #c7d2fe; background: #f5f7ff; border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+    .bkv-apply h6 { margin: 0 0 6px; font-size: 14px; font-weight: 700; }
+    .bkv-apply table { border-collapse: collapse; font-size: 12px; width: 100%; background: #fff; }
+    .bkv-apply th, .bkv-apply td { border-bottom: 1px solid #e5e7eb; padding: 3px 6px; text-align: left; vertical-align: top; }
+    .bkv-apply th { background: #eef2ff; font-weight: 600; }
+    .bkv-old { color: #b91c1c; text-decoration: line-through; }
+    .bkv-new { color: #047857; font-weight: 600; }
+    .bkv-cols { display: grid; grid-template-columns: minmax(320px, 1.2fr) minmax(280px, 1fr); gap: 12px; }
+    @@media (max-width: 900px) { .bkv-cols { grid-template-columns: 1fr; } }
+</style>
+
+<MudContainer MaxWidth="MaxWidth.False" Class="bkv-page">
+    <MudText Typo="Typo.h6" Class="mb-1">Booking theo chuyến tàu</MudText>
+    <div class="bkv-hint mb-2">Chọn Tàu và Số chuyến → chọn 1 booking để sửa → sau khi lưu, chọn các thay đổi muốn áp dụng cho các booking khác cùng chuyến.</div>
+
+    <div class="bkv-bar">
+        <MudAutocomplete T="string" Class="bkv-pick" Label="Tàu (Vessel)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                         Value="_vessel" ValueChanged="OnVesselChanged" SearchFunc="SearchVessel" MaxItems="200"
+                         Clearable="true" ResetValueOnEmptyText="true" CoerceText="true">
+            <ItemTemplate Context="v">
+                <span>@v <span class="bkv-hint">(@CountByVessel(v) booking)</span></span>
+            </ItemTemplate>
+        </MudAutocomplete>
+        <MudAutocomplete T="string" Class="bkv-pick" Label="Số chuyến (Voy)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                         Value="_voy" ValueChanged="OnVoyChanged" SearchFunc="SearchVoy" MaxItems="200"
+                         Disabled="@string.IsNullOrWhiteSpace(_vessel)"
+                         Clearable="true" ResetValueOnEmptyText="true" CoerceText="true">
+            <ItemTemplate Context="v">
+                <span>@v <span class="bkv-hint">(@CountByVoy(v) booking)</span></span>
+            </ItemTemplate>
+        </MudAutocomplete>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Refresh"
+                   OnClick="ReloadAsync" Disabled="_loading">@Localizer["reload"]</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Info" Size="Size.Small" StartIcon="@Icons.Material.Filled.Edit"
+                   OnClick="EditSelectedAsync" Disabled="@(_selected == null || _busy)">Sửa booking đang chọn</MudButton>
+        @if (_loading)
+        {
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_vessel) && !string.IsNullOrWhiteSpace(_voy))
+    {
+        <div class="bkv-hint mb-1">@_voyBookings.Count booking trên tàu <b>@_vessel</b> chuyến <b>@_voy</b> · bấm 1 dòng để chọn, bấm đúp để sửa.</div>
+        <MudDataGrid T="Models.Booking" Items="@_voyBookings" Dense="true" Hover="true" Striped="true" Class="bkv-grid"
+                     RowClick="@(a => _selected = a.Item)" RowClassFunc="@((b, i) => _selected != null && b.ContainerOutBoundNotifyId == _selected.ContainerOutBoundNotifyId ? "bkv-sel" : string.Empty)"
+                     Height="calc(100vh - 330px)" FixedHeader="true">
+            <Columns>
+                <TemplateColumn Title="" Sortable="false">
+                    <CellTemplate>
+                        <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" Color="Color.Info" title="Sửa booking này"
+                                       Disabled="_busy" OnClick="@(async () => { _selected = context.Item; await EditSelectedAsync(); })" />
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.BookingNo" Title="@Localizer["BookingNo"]" />
+                <PropertyColumn Property="x => x.bkcarrier" Title="Số Booking hãng tàu" />
+                <PropertyColumn Property="x => CustomerName(x.MaincusBk_Id_)" Title="@Localizer["Customer"]" />
+                <PropertyColumn Property="x => x.trangthai" Title="@Localizer["status"]" />
+                <PropertyColumn Property="x => x.FCL_LCL_Air" Title="FCL / LCL / Air" />
+                <PropertyColumn Property="x => x.Carrier" Title="Carrier" />
+                <PropertyColumn Property="x => x.hano_POL" Title="POL" />
+                <PropertyColumn Property="x => x.hano_POD" Title="POD" />
+                <PropertyColumn Property="x => x.ETD" Title="ETD" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.ETA" Title="ETA" Format="dd/MM/yyyy" />
+                <PropertyColumn Property="x => x.SICutOff" Title="SI Cut-off" />
+                <PropertyColumn Property="x => x.hano_Closing" Title="VGM Closing" />
+                <PropertyColumn Property="x => x.hano_Closingdelivery" Title="Cargo Closing" />
+                <TemplateColumn Title="@Localizer["Approve"]" Sortable="false">
+                    <CellTemplate>
+                        @if (context.Item.Approve == true)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Small" Color="Color.Success" title="Đã duyệt: không sửa / không cập nhật" />
+                        }
+                    </CellTemplate>
+                </TemplateColumn>
+                <PropertyColumn Property="x => x.UserID" Title="@Localizer["UserUpdate"]" />
+            </Columns>
+            <NoRecordsContent><div class="bkv-hint pa-4">Không có booking nào trên chuyến này.</div></NoRecordsContent>
+        </MudDataGrid>
+    }
+    else
+    {
+        <div class="bkv-hint pa-4">Chọn Tàu và Số chuyến để xem các booking.</div>
+    }
+
+    @if (_pending != null)
+    {
+        <div class="bkv-apply">
+            <h6>Áp dụng thay đổi của booking @_pending.Source.BookingNo cho các booking khác cùng chuyến</h6>
+            @if (_pending.Changes.Count == 0)
+            {
+                <div class="bkv-hint">Không có trường nào thay đổi.</div>
+            }
+            else
+            {
+                <div class="bkv-cols">
+                    <div>
+                        <div class="bkv-hint mb-1">Trường đã thay đổi (tick để áp dụng):</div>
+                        <table>
+                            <thead><tr><th></th><th>Trường</th><th>Cũ</th><th>Mới</th></tr></thead>
+                            <tbody>
+                                @foreach (var c in _pending.Changes)
+                                {
+                                    <tr>
+                                        <td><MudCheckBox T="bool" @bind-Value="c.Apply" Dense="true" Size="Size.Small" Color="Color.Primary" /></td>
+                                        <td>@c.Label @if (c.CustomerSpecific) { <span class="bkv-hint">(riêng từng booking)</span> }</td>
+                                        <td class="bkv-old">@c.OldText</td>
+                                        <td class="bkv-new">@c.NewText</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div>
+                        <div class="bkv-hint mb-1">
+                            Booking sẽ được cập nhật:
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => SetAllTargets(true))">Chọn hết</MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => SetAllTargets(false))">Bỏ hết</MudButton>
+                        </div>
+                        <table>
+                            <thead><tr><th></th><th>@Localizer["BookingNo"]</th><th>@Localizer["Customer"]</th></tr></thead>
+                            <tbody>
+                                @foreach (var t in _pending.Targets)
+                                {
+                                    <tr>
+                                        <td><MudCheckBox T="bool" @bind-Value="t.Apply" Disabled="t.Locked" Dense="true" Size="Size.Small" Color="Color.Primary" /></td>
+                                        <td>@t.Booking.BookingNo @if (t.Locked) { <span class="bkv-hint">(đã duyệt)</span> }</td>
+                                        <td>@CustomerName(t.Booking.MaincusBk_Id_)</td>
+                                    </tr>
+                                }
+                                @if (_pending.Targets.Count == 0)
+                                {
+                                    <tr><td colspan="3" class="bkv-hint">Không còn booking nào khác trên chuyến này.</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+            <div class="d-flex gap-2 mt-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.DoneAll"
+                           Disabled="@(_busy || !_pending.Changes.Any(c => c.Apply) || !_pending.Targets.Any(t => t.Apply && !t.Locked))"
+                           OnClick="ApplyToOthersAsync">
+                    Cập nhật @_pending.Targets.Count(t => t.Apply && !t.Locked) booking
+                </MudButton>
+                <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => _pending = null)" Disabled="_busy">Bỏ qua</MudButton>
+                @if (_busy)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                }
+            </div>
+        </div>
+    }
+</MudContainer>
+
+@code {
+    List<Models.Booking> _all = new();
+    List<Models.Booking> _voyBookings = new();
+    List<M_Customer> _customers = new();
+    Models.Booking? _selected;
+    string? _vessel, _voy;
+    bool _loading, _busy;
+    string _usr = string.Empty;
+    PendingApply? _pending;
+
+    /// <summary>Không bao giờ chép sang booking khác.</summary>
+    static readonly HashSet<string> NeverCopy = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ContainerOutBoundNotifyId", "BookingNo", "Approve", "UserID", "UpdateTime", "DocID", "Fileno"
+    };
+
+    /// <summary>Thông tin riêng của từng booking: vẫn cho áp dụng nhưng mặc định không tick.</summary>
+    static readonly HashSet<string> CustomerSpecific = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "quotationID", "Customer_ID", "CONSIGNEEID", "MaincusBk_Id_", "Market_id", "ATTN", "Sale_ID", "SaleName", "SaleCode", "Code",
+        "bkcarrier", "trangthai", "hano_Commodity", "hanoFCL_Quality", "hano_WeightCBMPKG", "agencyname_box", "principle",
+        "hanoAir_ShipperConsignee", "hanoAir_Descriptionofgoods", "hanoAIr_MAWBHAWBNo"
+    };
+
+    static readonly Dictionary<string, string> Labels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Vessel"] = "Tàu (Vessel)", ["VoyNo"] = "Số chuyến (Voy)", ["Carrier"] = "Carrier", ["ETD"] = "ETD", ["ETA"] = "ETA", ["hano_POL"] = "POL", ["hano_POD"] = "POD", ["hano_POR"] = "POR",
+        ["hano_POT"] = "POT", ["SICutOff"] = "SI Cut-off", ["hano_Closing"] = "VGM Closing", ["hano_Closingdelivery"] = "Cargo Closing",
+        ["Emptydepot"] = "Empty depot", ["PickupAt"] = "Pickup at", ["DropOff"] = "Drop off", ["bkcarrier"] = "Số Booking hãng tàu",
+        ["trangthai"] = "Trạng thái", ["hano_Commodity"] = "Commodity", ["hanoFCL_Quality"] = "Volume", ["hano_WeightCBMPKG"] = "Weight / CBM / PKG",
+        ["agencyname_box"] = "Agency Name", ["principle"] = "Principle", ["hanoLCL_BookingPIC"] = "VIA (Coload)", ["hano_Payment"] = "Payment",
+        ["FCL_LCL_Air"] = "FCL / LCL / Air", ["iol"] = "Dept.", ["Lo"] = "IM / EX", ["quotationID"] = "Quotation", ["MaincusBk_Id_"] = "Customer",
+        ["CONSIGNEEID"] = "To (Shipper)", ["Customer_ID"] = "Consignee", ["remarksFCL"] = "Remarks FCL", ["remarksLCL"] = "Remarks LCL", ["remarksAir"] = "Remarks Air"
+    };
+
+    static readonly PropertyInfo[] CopyableProps = typeof(Models.Booking)
+        .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+        .Where(p => p.CanRead && p.CanWrite && !NeverCopy.Contains(p.Name)
+                    && (p.PropertyType.IsValueType || p.PropertyType == typeof(string)))
+        .ToArray();
+
+    sealed class ChangeItem
+    {
+        public PropertyInfo Prop { get; init; } = default!;
+        public string Label { get; init; } = string.Empty;
+        public string OldText { get; init; } = string.Empty;
+        public string NewText { get; init; } = string.Empty;
+        public object? NewValue { get; init; }
+        public bool CustomerSpecific { get; init; }
+        public bool Apply { get; set; }
+    }
+
+    sealed class TargetItem
+    {
+        public Models.Booking Booking { get; init; } = default!;
+        public bool Locked { get; init; }
+        public bool Apply { get; set; }
+    }
+
+    sealed class PendingApply
+    {
+        public Models.Booking Source { get; init; } = default!;
+        public List<ChangeItem> Changes { get; init; } = new();
+        public List<TargetItem> Targets { get; init; } = new();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _usr = asv.GetAuth().Result.User.Identity?.Name ?? string.Empty;
+        if (!await ssv.CheckPermission(_usr, "View", "Booking-Request"))
+        {
+            Snackbar.Add(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
+            return;
+        }
+        _customers = await Cussv.GetListAll();
+        await ReloadAsync();
+    }
+
+    async Task ReloadAsync()
+    {
+        try
+        {
+            _loading = true;
+            _all = await bksv.GetListSBooking() ?? new();
+            FilterVoyage();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    static string Norm(string? s) => (s ?? string.Empty).Trim();
+    static bool Same(string? a, string? b) => string.Equals(Norm(a), Norm(b), StringComparison.OrdinalIgnoreCase);
+
+    int CountByVessel(string v) => _all.Count(b => Same(b.Vessel, v));
+    int CountByVoy(string v) => _all.Count(b => Same(b.Vessel, _vessel) && Same(b.VoyNo, v));
+
+    Task<IEnumerable<string>> SearchVessel(string? text)
+    {
+        var list = _all.Select(b => Norm(b.Vessel)).Where(v => v.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(v => v).AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(text)) list = list.Where(v => v.Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(list);
+    }
+
+    Task<IEnumerable<string>> SearchVoy(string? text)
+    {
+        var list = _all.Where(b => Same(b.Vessel, _vessel)).Select(b => Norm(b.VoyNo)).Where(v => v.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(v => v).AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(text)) list = list.Where(v => v.Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(list);
+    }
+
+    void OnVesselChanged(string? v)
+    {
+        _vessel = v;
+        _voy = null;
+        _pending = null;
+        FilterVoyage();
+    }
+
+    void OnVoyChanged(string? v)
+    {
+        _voy = v;
+        _pending = null;
+        FilterVoyage();
+    }
+
+    void FilterVoyage()
+    {
+        _voyBookings = string.IsNullOrWhiteSpace(_vessel) || string.IsNullOrWhiteSpace(_voy)
+            ? new()
+            : _all.Where(b => Same(b.Vessel, _vessel) && Same(b.VoyNo, _voy)).OrderBy(b => b.BookingNo).ToList();
+        if (_selected != null)
+            _selected = _voyBookings.FirstOrDefault(b => b.ContainerOutBoundNotifyId == _selected.ContainerOutBoundNotifyId);
+    }
+
+    string CustomerName(Guid? id)
+        => id == null || id == Guid.Empty ? string.Empty : _customers.FirstOrDefault(c => c.Customer_ID == id)?.CodeName() ?? string.Empty;
+
+    static Models.Booking Clone(Models.Booking b) => JsonSerializer.Deserialize<Models.Booking>(JsonSerializer.Serialize(b))!;
+
+    string FormatValue(PropertyInfo p, object? v)
+    {
+        if (v == null) return string.Empty;
+        if (v is DateTime d) return d.ToString("dd/MM/yyyy HH:mm").Replace(" 00:00", "");
+        if (v is Guid g)
+        {
+            if (g == Guid.Empty) return string.Empty;
+            var cus = _customers.FirstOrDefault(c => c.Customer_ID == g);
+            return cus != null ? cus.CodeName() : g.ToString();
+        }
+        if (v is bool bo) return bo ? "✔" : "✘";
+        return v.ToString() ?? string.Empty;
+    }
+
+    async Task EditSelectedAsync()
+    {
+        if (_selected == null)
+        {
+            Snackbar.Add(Localizer["PleaseSelectData"], MudBlazor.Severity.Warning);
+            return;
+        }
+        if (_selected.Approve == true)
+        {
+            Snackbar.Add(Localizer["DataAlreadyApproved"], MudBlazor.Severity.Warning);
+            return;
+        }
+        if (!await ssv.CheckPermission(_usr, "Edit", "Booking-Request"))
+        {
+            Snackbar.Add(Localizer["NoPermission_Edit"], MudBlazor.Severity.Warning);
+            return;
+        }
+
+        var oldData = Clone(_selected);
+        var editing = Clone(_selected);
+        var options = new DialogOptions { ClassBackground = "class-dialog-custom", FullWidth = true, MaxWidth = MaxWidth.Medium };
+        var parameters = new DialogParameters<Add> { { x => x._BookingDetail, editing }, { x => x.Status, "edit" } };
+        var dialog = await DialogService.ShowAsync<Add>(Localizer["BookingRequest_Edit"], parameters, options);
+        var result = await dialog.Result;
+        if (result.Canceled) return;
+
+        try
+        {
+            _busy = true;
+            var data = (Models.Booking)result.Data;
+            var rs = await bksv.UpdateOrCreateBBookingRequest(data);
+            await HistoryLogService.LogAsync(_usr, "Update Booking-Request", "Booking-Request", data.ContainerOutBoundNotifyId, data.BookingNo, new { OldData = oldData, NewData = data });
+            var ok = rs.Count > 1 && rs[1] == "1";
+            Snackbar.Add(rs.Count > 0 ? rs[0] : "Update", ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+            if (!ok) return;
+
+            BuildPending(oldData, data);
+            await ReloadAsync();
+            if (_pending != null)
+            {
+                // Lấy lại các booking đích từ dữ liệu mới tải
+                foreach (var t in _pending.Targets.ToList())
+                {
+                    var fresh = _all.FirstOrDefault(b => b.ContainerOutBoundNotifyId == t.Booking.ContainerOutBoundNotifyId);
+                    if (fresh == null) _pending.Targets.Remove(t);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    void BuildPending(Models.Booking oldData, Models.Booking newData)
+    {
+        var changes = new List<ChangeItem>();
+        foreach (var p in CopyableProps)
+        {
+            var o = p.GetValue(oldData);
+            var n = p.GetValue(newData);
+            if (Equals(o, n)) continue;
+            if (o is string os && n is string ns && os.Trim() == ns.Trim()) continue;
+            if (o == null && n is string s1 && s1.Trim().Length == 0) continue;
+            if (n == null && o is string s2 && s2.Trim().Length == 0) continue;
+            var specific = CustomerSpecific.Contains(p.Name);
+            changes.Add(new ChangeItem
+            {
+                Prop = p,
+                Label = Labels.TryGetValue(p.Name, out var l) ? l : p.Name,
+                OldText = FormatValue(p, o),
+                NewText = FormatValue(p, n),
+                NewValue = n,
+                CustomerSpecific = specific,
+                Apply = !specific
+            });
+        }
+
+        var targets = _all
+            .Where(b => b.ContainerOutBoundNotifyId != newData.ContainerOutBoundNotifyId
+                        && Same(b.Vessel, oldData.Vessel) && Same(b.VoyNo, oldData.VoyNo))
+            .OrderBy(b => b.BookingNo)
+            .Select(b => new TargetItem { Booking = b, Locked = b.Approve == true, Apply = b.Approve != true })
+            .ToList();
+
+        _pending = new PendingApply { Source = newData, Changes = changes, Targets = targets };
+    }
+
+    void SetAllTargets(bool on)
+    {
+        if (_pending == null) return;
+        foreach (var t in _pending.Targets.Where(t => !t.Locked)) t.Apply = on;
+    }
+
+    async Task ApplyToOthersAsync()
+    {
+        if (_pending == null) return;
+        var fields = _pending.Changes.Where(c => c.Apply).ToList();
+        var targets = _pending.Targets.Where(t => t.Apply && !t.Locked).ToList();
+        if (fields.Count == 0 || targets.Count == 0) return;
+
+        var msg = $"Cập nhật {fields.Count} trường ({string.Join(", ", fields.Select(f => f.Label))}) cho {targets.Count} booking cùng chuyến?";
+        if (await DialogService.ShowMessageBox("Xác nhận", msg, yesText: "Cập nhật", cancelText: Localizer["cancel"]) != true) return;
+
+        _busy = true;
+        int ok = 0;
+        var errors = new List<string>();
+        try
+        {
+            foreach (var t in targets)
+            {
+                var fresh = _all.FirstOrDefault(b => b.ContainerOutBoundNotifyId == t.Booking.ContainerOutBoundNotifyId) ?? t.Booking;
+                if (fresh.Approve == true) { errors.Add($"{fresh.BookingNo}: đã duyệt"); continue; }
+                var before = Clone(fresh);
+                var after = Clone(fresh);
+                foreach (var f in fields) f.Prop.SetValue(after, f.NewValue);
+                after.UserID = _usr;
+                after.UpdateTime = DateTime.Now;
+                var rs = await bksv.UpdateAnBookingRequest(after);
+                if (rs.Flag)
+                {
+                    ok++;
+                    await HistoryLogService.LogAsync(_usr, "Update Booking-Request (theo chuyến tàu)", "Booking-Request", after.ContainerOutBoundNotifyId, after.BookingNo,
+                        new { From = _pending.Source.BookingNo, Fields = fields.Select(f => f.Prop.Name).ToList(), OldData = before, NewData = after });
+                }
+                else
+                {
+                    errors.Add($"{fresh.BookingNo}: {rs.Message}");
+                }
+            }
+            Snackbar.Add($"Đã cập nhật {ok}/{targets.Count} booking.", errors.Count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+            foreach (var e in errors.Take(5)) Snackbar.Add(e, MudBlazor.Severity.Error);
+            _pending = null;
+            await ReloadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

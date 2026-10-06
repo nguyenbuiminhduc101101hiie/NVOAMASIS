@@ -413,3 +413,61 @@ window.nvoccSetBrandTitle = (brand) => {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
     else start();
 })();
+
+// ===================== Màu & font chữ toàn phần mềm (lưu theo trình duyệt) =====================
+(function () {
+    var KEY = 'nvocc.textTheme';
+    var STYLE_ID = 'nvocc-text-theme';
+
+    function css(t) {
+        var r = [];
+        var root = [];
+        if (t.fontFamily) {
+            root.push('--mud-typography-default-family:' + t.fontFamily);
+            r.push('html body, html body .mud-typography, html body .mud-input, html body .mud-input-slot, html body .mud-table-cell, html body .mud-button-label, html body .mud-nav-link, html body .mud-chip, html body input, html body textarea, html body select, html body button { font-family:' + t.fontFamily + ' !important; }');
+        }
+        if (t.fontSize) r.push('html body { font-size:' + t.fontSize + ' !important; }');
+        if (t.fontWeight) r.push('html body .mud-typography, html body .mud-input-slot, html body .mud-table-cell { font-weight:' + t.fontWeight + '; }');
+        if (t.textPrimary) {
+            root.push('--mud-palette-text-primary:' + t.textPrimary);
+            r.push('html body { color:' + t.textPrimary + '; }');
+        }
+        if (t.textSecondary) root.push('--mud-palette-text-secondary:' + t.textSecondary);
+        if (t.primary) { root.push('--mud-palette-primary:' + t.primary); root.push('--mud-palette-primary-text:#fff'); }
+        if (t.background) { root.push('--mud-palette-background:' + t.background); r.push('html body { background-color:' + t.background + ' !important; }'); }
+        if (t.surface) root.push('--mud-palette-surface:' + t.surface);
+        if (t.labelColor) r.push('html body .mud-input-label, html body label.mud-input-label { color:' + t.labelColor + ' !important; }');
+        if (t.inputColor) r.push('html body .mud-input-slot, html body .mud-input input, html body .mud-input textarea { color:' + t.inputColor + ' !important; }');
+        if (t.gridHeaderBg) r.push('html body .mud-table-head th.mud-table-cell, html body .mud-table-head .mud-table-cell { background-color:' + t.gridHeaderBg + ' !important; }');
+        if (t.gridHeaderText) r.push('html body .mud-table-head th.mud-table-cell, html body .mud-table-head th.mud-table-cell * { color:' + t.gridHeaderText + ' !important; }');
+        if (t.gridText) r.push('html body .mud-table-body td.mud-table-cell { color:' + t.gridText + ' !important; }');
+        if (t.linkColor) r.push('html body a, html body .mud-link { color:' + t.linkColor + ' !important; }');
+        if (root.length) r.unshift(':root{' + root.join(';') + ';}');
+        return r.join('\n');
+    }
+
+    function apply(t) {
+        t = t || {};
+        var el = document.getElementById(STYLE_ID);
+        if (!el) {
+            el = document.createElement('style');
+            el.id = STYLE_ID;
+        }
+        el.textContent = css(t);
+        document.head.appendChild(el); // luôn đặt cuối <head> để ưu tiên hơn CSS khác
+    }
+
+    function load() {
+        try { var s = localStorage.getItem(KEY); return s ? JSON.parse(s) : {}; } catch (e) { return {}; }
+    }
+
+    window.nvoccGetTextTheme = function () { return JSON.stringify(load()); };
+    window.nvoccPreviewTextTheme = function (json) { try { apply(JSON.parse(json || '{}')); } catch (e) { } };
+    window.nvoccSaveTextTheme = function (json) {
+        try { localStorage.setItem(KEY, json || '{}'); } catch (e) { }
+        window.nvoccPreviewTextTheme(json);
+    };
+    window.nvoccLoadTextTheme = function () { apply(load()); };
+    // MudThemeProvider có thể ghi lại biến :root sau khi tải → áp lại vài lần đầu
+    try { window.nvoccLoadTextTheme(); setTimeout(window.nvoccLoadTextTheme, 800); setTimeout(window.nvoccLoadTextTheme, 2500); } catch (e) { }
+})();

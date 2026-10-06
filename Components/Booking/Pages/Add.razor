@@ -1,4 +1,5 @@
 ﻿@using MudBlazor
+@using Microsoft.EntityFrameworkCore
 
 @inject ISnackbar Snackbar
 @inject AccountService asv
@@ -12,6 +13,8 @@
 @inject SupportServices supsv
 @inject GlobalServices gsv
 @inject NotificationService _notificationService
+@inject IDialogService DialogService
+@inject Microsoft.EntityFrameworkCore.IDbContextFactory<NVOAMASIS.Data.AppDbContext> DbFactory
 <MudDialog Class="booking-dialog">
     <DialogContent>
         <div class="booking-dialog-content">
@@ -35,24 +38,40 @@
                                                     <div class="booking-section-title">Booking information</div>
                                                     <MudGrid Spacing="2" AlignItems="AlignItems.End">
                                                         <MudItem xs="12" sm="6" md="3">
-                                                            <MudTextField Class="booking-field labelCustomColor"
-                                                                          Variant="Variant.Outlined"
-                                                                          Margin="Margin.Dense"
-                                                                          @bind-Value="cbofrom"
-                                                                          Label="@Localizer["from"]"
-                                                                          AdornmentColor="@ColorTextFields"
-                                                                          Immediate="true"
-                                                                          Clearable="true" />
+                                                            <MudAutocomplete Class="booking-field labelCustomColor"
+                                                                             T="string"
+                                                                             Variant="Variant.Outlined"
+                                                                             Margin="Margin.Dense"
+                                                                             @bind-Value="cbofrom"
+                                                                             Label="@Localizer["from"]"
+                                                                             AdornmentColor="@ColorTextFields"
+                                                                             SearchFunc="SearchPortCode"
+                                                                             MaxItems="100"
+                                                                             CoerceText="true"
+                                                                             Clearable="true"
+                                                                             ResetValueOnEmptyText="true">
+                                                                <ItemTemplate Context="pc">
+                                                                    <span><b>@pc</b> <span style="color:#64748b">@PortNameOf(pc)</span></span>
+                                                                </ItemTemplate>
+                                                            </MudAutocomplete>
                                                         </MudItem>
                                                         <MudItem xs="12" sm="6" md="3">
-                                                            <MudTextField Class="booking-field labelCustomColor"
-                                                                          Variant="Variant.Outlined"
-                                                                          Margin="Margin.Dense"
-                                                                          @bind-Value="cboto"
-                                                                          Label="@Localizer["to"]"
-                                                                          AdornmentColor="@ColorTextFields"
-                                                                          Immediate="true"
-                                                                          Clearable="true" />
+                                                            <MudAutocomplete Class="booking-field labelCustomColor"
+                                                                             T="string"
+                                                                             Variant="Variant.Outlined"
+                                                                             Margin="Margin.Dense"
+                                                                             @bind-Value="cboto"
+                                                                             Label="@Localizer["to"]"
+                                                                             AdornmentColor="@ColorTextFields"
+                                                                             SearchFunc="SearchPortCode"
+                                                                             MaxItems="100"
+                                                                             CoerceText="true"
+                                                                             Clearable="true"
+                                                                             ResetValueOnEmptyText="true">
+                                                                <ItemTemplate Context="pc">
+                                                                    <span><b>@pc</b> <span style="color:#64748b">@PortNameOf(pc)</span></span>
+                                                                </ItemTemplate>
+                                                            </MudAutocomplete>
                                                         </MudItem>
                                                         <MudItem xs="12" md="1" Class="d-flex justify-content-center justify-content-md-start">
                                                             <MudTooltip Text="@Localizer["BookingNo"]">
@@ -123,7 +142,7 @@
                                                                 <MudSelectItem Value="@("Consol")">Consol</MudSelectItem>
                                                             </MudSelect>
                                                         </MudItem>
-                                                        <MudItem xs="12" sm="6" md="2">
+                                                        <MudItem xs="12" sm="6" md="3">
                                                             <MudSelect Class="booking-field labelCustomColor"
                                                                        T="string"
                                                                        Variant="Variant.Outlined"
@@ -136,7 +155,7 @@
                                                                 <MudSelectItem Value="@("EX")">EX</MudSelectItem>
                                                             </MudSelect>
                                                         </MudItem>
-                                                        <MudItem xs="12" sm="6" md="2">
+                                                        <MudItem xs="12" sm="6" md="3">
                                                             <MudTextField Class="booking-field labelCustomColor"
                                                                           T="string?"
                                                                           Variant="Variant.Outlined"
@@ -147,21 +166,73 @@
                                                                           Clearable="true"
                                                                           Label="Code" />
                                                         </MudItem>
-                                                        <MudItem xs="12" sm="6" md="2">
+                                                        <MudItem xs="12">
                                                             <MudAutocomplete Class="booking-field labelCustomColor"
                                                                              T="Guid"
                                                                              Variant="Variant.Outlined"
                                                                              Margin="Margin.Dense"
                                                                              Label="@Localizer["QuotationNo"]"
-                                                                             @bind-Value="_BookingDetail.quotationID"
+                                                                             Value="_BookingDetail.quotationID"
+                                                                             ValueChanged="OnQuotationChanged"
                                                                              AdornmentColor="@ColorTextFields"
                                                                              Required="true"
                                                                              SearchFunc="SearchQuotations"
-                                                                             ToStringFunc="GetQuotationLabel" />
+                                                                             MaxItems="300"
+                                                                             PopoverClass="booking-quo-popover"
+                                                                             ToStringFunc="GetQuotationLabel">
+                                                                <ItemTemplate Context="qid">
+                                                                    @{ var q = Quotations.FirstOrDefault(x => x.quotationID == qid); }
+                                                                    @if (q != null)
+                                                                    {
+                                                                        <div style="line-height:1.25">
+                                                                            <b>@q.quotationNo</b>
+                                                                            <div style="font-size:11px;color:#64748b">@QuoCustomer(q) · @q.pol → @q.pod @(q.validDate.HasValue ? $"· HL {q.validDate:dd/MM/yyyy}" : "")</div>
+                                                                        </div>
+                                                                    }
+                                                                </ItemTemplate>
+                                                            </MudAutocomplete>
                                                         </MudItem>
                                                     </MudGrid>
                                                 </div>
                                             </MudItem>
+
+                                            @if (_quo != null)
+                                            {
+                                                <MudItem xs="12">
+                                                    <div class="booking-section">
+                                                        <div class="booking-section-title">
+                                                            Quotation @_quo.quotationNo
+                                                            @if (_quoLoading)
+                                                            {
+                                                                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                                                            }
+                                                        </div>
+                                                        <div class="bk-quo-kv">
+                                                            <span>@Localizer["Customer"] <b>@QuoCustomer(_quo)</b></span>
+                                                            @if (!string.IsNullOrWhiteSpace(_quo.Subject)) { <span>Subject <b>@_quo.Subject</b></span> }
+                                                            @if (!string.IsNullOrWhiteSpace(_quo.type)) { <span>Type <b>@_quo.type</b></span> }
+                                                            <span>POL → POD <b>@_quo.pol → @_quo.pod</b></span>
+                                                            @if (!string.IsNullOrWhiteSpace(_quo.Transitport)) { <span>Transit <b>@_quo.Transitport</b></span> }
+                                                            @if (!string.IsNullOrWhiteSpace(_quo.shippingline)) { <span>Carrier <b>@_quo.shippingline</b></span> }
+                                                            @if (!string.IsNullOrWhiteSpace(_quo.TransitTime)) { <span>T/T <b>@_quo.TransitTime</b></span> }
+                                                            @if (!string.IsNullOrWhiteSpace(_quo.frequency)) { <span>Freq <b>@_quo.frequency</b></span> }
+                                                            @if (_quo.validDate.HasValue) { <span>Valid <b>@_quo.validDate.Value.ToString("dd/MM/yyyy")</b></span> }
+                                                            @if (!string.IsNullOrWhiteSpace(_quo.SaleName)) { <span>Sale <b>@_quo.SaleName</b></span> }
+                                                            <span>@Localizer["Approve"] <b>@(_quo.Approve == true ? "✔" : "—")</b></span>
+                                                        </div>
+                                                        <MudGrid Spacing="2" Class="mt-1">
+                                                            <MudItem xs="12" md="6">
+                                                                <div class="bk-quo-cap">Debit (@_quoDebits.Count)</div>
+                                                                @QuoChargeTable(_quoDebits)
+                                                            </MudItem>
+                                                            <MudItem xs="12" md="6">
+                                                                <div class="bk-quo-cap">Credit (@_quoCredits.Count)</div>
+                                                                @QuoChargeTable(_quoCredits)
+                                                            </MudItem>
+                                                        </MudGrid>
+                                                    </div>
+                                                </MudItem>
+                                            }
 
                                             <MudItem xs="12">
                                                 <div class="booking-section">
@@ -234,6 +305,18 @@
                                                                              Margin="Margin.Dense"
                                                                              Label="@Localizer["Agency_Name"]"
                                                                              @bind-Value="_BookingDetail.agencyname_box"
+                                                                             CoerceText="true"
+                                                                             Clearable="true"
+                                                                             AdornmentColor="@ColorTextFields"
+                                                                             SearchFunc="Search_Agency" ToStringFunc="CusStrLabel" />
+                                                        </MudItem>
+                                                        <MudItem xs="12">
+                                                            <MudAutocomplete Class="booking-field labelCustomColor"
+                                                                             T="string"
+                                                                             Variant="Variant.Outlined"
+                                                                             Margin="Margin.Dense"
+                                                                             Label="Principle"
+                                                                             @bind-Value="_BookingDetail.principle"
                                                                              CoerceText="true"
                                                                              Clearable="true"
                                                                              AdornmentColor="@ColorTextFields"
@@ -1954,6 +2037,18 @@
         font-weight: 600;
     }
 
+    /* Chi tiết Quotation trong form Booking */
+    .bk-quo-kv { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12px; color: #475569; }
+    .bk-quo-kv b { color: #0f172a; font-weight: 600; }
+    .bk-quo-cap { font-size: 12px; font-weight: 700; color: #334155; margin: 2px 0 4px; }
+    .bk-quo-table { width: 100%; border-collapse: collapse; font-size: 12px; background: #fff; border-radius: 8px; overflow: hidden; }
+    .bk-quo-table th, .bk-quo-table td { padding: 3px 6px; border-bottom: 1px solid #e5e7eb; text-align: left; white-space: normal; vertical-align: top; }
+    .bk-quo-table th:first-child, .bk-quo-table td:first-child { width: 45%; }
+    .bk-quo-table th { background: #f1f5f9; font-weight: 600; }
+    .bk-quo-table td.num, .bk-quo-table th.num { text-align: right; }
+    .bk-quo-table .bk-quo-empty { color: #94a3b8; text-align: center; }
+    .booking-quo-popover { min-width: 360px; }
+
     /* ===== Màu nền nhạt cho các tab (6.1 Thêm / Sửa Booking) ===== */
     .booking-card-inner > .mud-tabs > .mud-tabs-toolbar {
         background: #f3f6fb !important;
@@ -2311,7 +2406,7 @@
         ListTerminal_pickupat = await bksv.GetList_Terminal_Codeha(_BookingDetail.PickupAt) ?? new List<string>();
         ListTerminal_dropoff= await bksv.GetList_Terminal(_BookingDetail.DropOff) ?? new List<string>();
         ListUser = await bksv.GetList_User(UserHanding) ?? new List<string>();
-        Quotations = await QuoSV.GetListQuotation();
+        Quotations = await QuoSV.GetListQuotation() ?? new List<M_Quotation>();
         customers = await CusSV.GetList_booking();
         sales = await CusSV.GetList_sale();
         Ports = await bksv.GetList_PORT();
@@ -2319,6 +2414,8 @@
         ListPort_2char_to = await bksv.GetList_PortCode(cboto) ?? new List<string>();
         var tts = await supsv.GetListTrangThai();
         trangthais = tts.Where(x => x.Tieude == "BOOKING").OrderBy(x=>x.Noidung).Select(x=>x.Noidung).ToList();
+        if (_BookingDetail != null && _BookingDetail.quotationID != Guid.Empty)
+            await LoadQuotationDetailAsync(_BookingDetail.quotationID);
     }
     protected override void OnParametersSet()
     {
@@ -2613,9 +2710,179 @@
             return Quotations.Select(x => x.quotationID);
 
         return Quotations
-            .Where(x => x.quotationNo.Contains(value, StringComparison.InvariantCultureIgnoreCase))
+            .Where(x => ((x.quotationNo ?? "") + " " + QuoCustomer(x) + " " + x.pol + " " + x.pod).Contains(value, StringComparison.InvariantCultureIgnoreCase))
             .Select(x => x.quotationID);
     }
+
+    // ---------- From / To: chọn mã cảng từ danh sách Port ----------
+    private Task<IEnumerable<string>> SearchPortCode(string? value)
+    {
+        var q = Ports.Where(p => !string.IsNullOrWhiteSpace(p.PORT_CODE));
+        if (!string.IsNullOrWhiteSpace(value))
+            q = q.Where(p => (p.PORT_CODE + " " + p.PORT + " " + p.COUNTRY).Contains(value, StringComparison.InvariantCultureIgnoreCase));
+        return Task.FromResult<IEnumerable<string>>(q.OrderBy(p => p.PORT_CODE).Select(p => p.PORT_CODE!.Trim()).Distinct().ToList());
+    }
+
+    private string PortNameOf(string? code)
+        => string.IsNullOrWhiteSpace(code) ? string.Empty
+           : Ports.FirstOrDefault(p => string.Equals(p.PORT_CODE?.Trim(), code.Trim(), StringComparison.OrdinalIgnoreCase))?.PORT ?? string.Empty;
+
+    // ---------- Quotation: chọn từ danh sách, hiện chi tiết + phí Debit / Credit ----------
+    private M_Quotation? _quo;
+    private bool _quoLoading;
+    private List<(string Charge, double? Qty, double? Price, string? Cur, string? Party)> _quoDebits = new();
+    private List<(string Charge, double? Qty, double? Price, string? Cur, string? Party)> _quoCredits = new();
+
+    private string QuoCustomer(M_Quotation q)
+    {
+        var c = customers.FirstOrDefault(x => x.Customer_ID == q.customer_id && x.Customer_ID != Guid.Empty);
+        return c == null ? string.Empty : c.CodeName();
+    }
+
+    private async Task OnQuotationChanged(Guid id)
+    {
+        _BookingDetail.quotationID = id;
+        await LoadQuotationDetailAsync(id);
+        if (_quo != null)
+            await ApplyQuotationToBookingAsync(_quo);
+    }
+
+    // ---------- Lấy thông tin từ Quotation sang Booking (các trường cùng ý nghĩa) ----------
+    private sealed record QuoFill(string Label, string? Current, string? NewValue, Action Apply);
+
+    private string? CustomerStrKey(string? text, string sep)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var t = text.Trim();
+        var c = customers.FirstOrDefault(x => x.Customer_ID != Guid.Empty && (
+                    string.Equals(x.shortname + "_" + x.COMPANY, t, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(x.shortname + "___" + x.COMPANY, t, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(x.shortname?.Trim(), t, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(x.COMPANY?.Trim(), t, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(x.Customer_Code?.Trim(), t, StringComparison.OrdinalIgnoreCase)));
+        return c == null ? t : c.shortname + sep + c.COMPANY;
+    }
+
+    private async Task ApplyQuotationToBookingAsync(M_Quotation q)
+    {
+        var fills = new List<QuoFill>();
+        void AddStr(string label, string? cur, string? val, Action<string?> set)
+        {
+            if (string.IsNullOrWhiteSpace(val)) return;
+            if (string.Equals(cur?.Trim(), val.Trim(), StringComparison.OrdinalIgnoreCase)) return;
+            fills.Add(new QuoFill(label, cur, val.Trim(), () => set(val.Trim())));
+        }
+        string Cus(Guid? id) => id == null || id == Guid.Empty ? string.Empty : customers.FirstOrDefault(x => x.Customer_ID == id)?.CodeName() ?? string.Empty;
+        void AddGuid(string label, Guid? cur, Guid? val, Action<Guid?> set)
+        {
+            if (val == null || val == Guid.Empty || cur == val) return;
+            fills.Add(new QuoFill(label, Cus(cur), Cus(val), () => set(val)));
+        }
+        void AddDate(string label, DateTime? cur, DateTime? val, Action<DateTime?> set)
+        {
+            if (val == null || (cur.HasValue && cur.Value.Date == val.Value.Date)) return;
+            fills.Add(new QuoFill(label, cur?.ToString("dd/MM/yyyy"), val.Value.ToString("dd/MM/yyyy"), () => set(val)));
+        }
+
+        AddGuid(Localizer["Customer"], _BookingDetail.MaincusBk_Id_, q.customer_id, v => _BookingDetail.MaincusBk_Id_ = v);
+        if (_BookingDetail.CONSIGNEEID == null || _BookingDetail.CONSIGNEEID == Guid.Empty)
+            AddGuid(Localizer["toshipper"], _BookingDetail.CONSIGNEEID, q.customer_id, v => { _BookingDetail.CONSIGNEEID = v; OnCustomerSelected(); });
+        AddStr("POL", _BookingDetail.hano_POL, q.pol, v => _BookingDetail.hano_POL = v);
+        AddStr("POD", _BookingDetail.hano_POD, q.pod, v => _BookingDetail.hano_POD = v);
+        AddStr("POT", _BookingDetail.hano_POT, q.Transitport, v => { _BookingDetail.hano_POT = v; LoadPotEntries(); });
+        AddStr("Carrier", _BookingDetail.Carrier, CustomerStrKey(q.shippingline, "_"), v => _BookingDetail.Carrier = v);
+        AddStr("VIA (Coload)", _BookingDetail.hanoLCL_BookingPIC, CustomerStrKey(q.MasterColoader, "_"), v => _BookingDetail.hanoLCL_BookingPIC = v);
+        AddDate("ETD", _BookingDetail.ETD, q.ETD, v => _BookingDetail.ETD = v);
+        AddDate("ETA", _BookingDetail.ETA, q.ETA, v => _BookingDetail.ETA = v);
+        var qType = new[] { "FCL", "LCL", "Consol" }.FirstOrDefault(t => string.Equals(t, q.type?.Trim(), StringComparison.OrdinalIgnoreCase));
+        AddStr("Type", _BookingDetail.FCL_LCL_Air, qType, v => _BookingDetail.FCL_LCL_Air = v);
+        if (!string.IsNullOrWhiteSpace(q.SaleName))
+        {
+            var sale = sales.FirstOrDefault(x => new[] { x.SaleCode, x.Usr, x.Username, x.SaleName }
+                .Any(n => string.Equals(n?.Trim(), q.SaleName.Trim(), StringComparison.OrdinalIgnoreCase)));
+            if (sale != null && _BookingDetail.Sale_ID != sale.Sale_ID)
+                fills.Add(new QuoFill("Sale", sales.FirstOrDefault(x => x.Sale_ID == _BookingDetail.Sale_ID)?.SaleCode, sale.SaleCode,
+                    () => _BookingDetail.Sale_ID = sale.Sale_ID));
+        }
+
+        if (fills.Count == 0) return;
+
+        var empty = fills.Where(f => string.IsNullOrWhiteSpace(f.Current)).ToList();
+        var conflicts = fills.Where(f => !string.IsNullOrWhiteSpace(f.Current)).ToList();
+        foreach (var f in empty) f.Apply();
+
+        if (conflicts.Count > 0)
+        {
+            string H(string? x) => System.Net.WebUtility.HtmlEncode(x ?? string.Empty);
+            var msg = new MarkupString("Quotation có thông tin khác với Booking đang nhập:<br/>" +
+                      string.Join("<br/>", conflicts.Select(c => $"• <b>{H(c.Label)}</b>: {H(c.Current)} → <b>{H(c.NewValue)}</b>")) +
+                      "<br/><br/>Lấy theo Quotation?");
+            var ok = await DialogService.ShowMessageBox("Lấy thông tin từ Quotation", msg, yesText: "Lấy theo Quotation", cancelText: "Giữ nguyên");
+            if (ok == true)
+                foreach (var c in conflicts) c.Apply();
+        }
+
+        if (empty.Count > 0)
+            CallSnackBar($"Đã lấy từ Quotation: {string.Join(", ", empty.Select(f => f.Label))}", MudBlazor.Severity.Info);
+        StateHasChanged();
+    }
+
+    private async Task LoadQuotationDetailAsync(Guid id)
+    {
+        _quo = id == Guid.Empty ? null : Quotations.FirstOrDefault(x => x.quotationID == id);
+        _quoDebits = new(); _quoCredits = new();
+        if (_quo == null) { StateHasChanged(); return; }
+        try
+        {
+            _quoLoading = true;
+            StateHasChanged();
+            await using var ctx = await DbFactory.CreateDbContextAsync();
+            var debits = await ctx.Debit.AsNoTracking().Where(x => x.quotationid == id).ToListAsync();
+            var credits = await ctx.Credit.AsNoTracking().Where(x => x.quotationid == id).ToListAsync();
+            var itemIds = debits.Select(x => x.itemid).Concat(credits.Select(x => x.itemid)).Distinct().ToList();
+            var charges = await ctx.Charge.AsNoTracking().Where(x => itemIds.Contains(x.CHARGE_ID)).ToDictionaryAsync(x => x.CHARGE_ID);
+            string ChargeName(Guid cid) => charges.TryGetValue(cid, out var c)
+                ? (string.IsNullOrWhiteSpace(c.CHARGE_CODE) ? c.CHARGE ?? string.Empty : $"{c.CHARGE_CODE} - {c.CHARGE}")
+                : string.Empty;
+            string Party(Guid cusId) => customers.FirstOrDefault(x => x.Customer_ID == cusId && cusId != Guid.Empty)?.CodeName() ?? string.Empty;
+            _quoDebits = debits.Select(d => (ChargeName(d.itemid), d.soluong, d.dongia, d.tiente, Party(d.customerid))).ToList();
+            _quoCredits = credits.Select(c => (ChargeName(c.itemid), c.soluong, c.dongia, c.tiente, Party(c.customerid))).ToList();
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _quoLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private RenderFragment QuoChargeTable(List<(string Charge, double? Qty, double? Price, string? Cur, string? Party)> rows) => __builder =>
+    {
+        <table class="bk-quo-table">
+            <thead>
+                <tr>
+                    <th>@Localizer["Item"]</th>
+                    <th>Party</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (rows.Count == 0)
+                {
+                    <tr><td colspan="2" class="bk-quo-empty">—</td></tr>
+                }
+                @foreach (var r in rows)
+                {
+                    <tr>
+                        <td>@r.Charge</td>
+                        <td>@r.Party</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    };
 
     private string GetQuotationLabel(Guid id)
     {

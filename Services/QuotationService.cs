@@ -31,7 +31,8 @@ namespace NVOAMASIS.Services
             }
             catch (Exception ex)
             {
-                return null;
+                Console.WriteLine($"[Quotation] GetListQuotation: {ex.Message}");
+                return new List<M_Quotation>();
             }
 
         }
@@ -78,6 +79,72 @@ namespace NVOAMASIS.Services
 
             var Quo = await _context.Quotation.Where(_ => _.quotationID == id).FirstOrDefaultAsync();
             return Quo;
+        }
+
+        /// <summary>
+        /// Xoá báo giá cùng các dòng Debit / Credit CHỈ thuộc báo giá (chưa gắn HBL / MBL) trong một giao dịch.
+        /// Không xoá dòng Debit / Credit của lô hàng dù có mang quotationid.
+        /// </summary>
+        /// <summary>Đơn giá các dòng phí của báo giá (chưa gắn lô hàng) kèm ngày báo giá, dùng cho đồ thị so sánh giá theo tháng.</summary>
+        public async Task<List<(DateTime Date, Guid ItemId, string Cur, double Price)>> GetPriceTrendAsync(bool debit, DateTime from)
+        {
+            try
+            {
+                _context.ChangeTracker.Clear();
+                var quos = await _context.Quotation.AsNoTracking()
+                    .Select(q => new { q.quotationID, D = q.dated ?? q.ETD ?? q.validDate })
+                    .Where(q => q.D != null && q.D >= from)
+                    .ToListAsync();
+                var dates = quos.GroupBy(q => q.quotationID).ToDictionary(g => g.Key, g => g.First().D!.Value);
+                var ids = dates.Keys.ToList();
+                List<(Guid Q, Guid Item, string? Cur, double? Price)> rows;
+                if (debit)
+                    rows = (await _context.Debit.AsNoTracking()
+                        .Where(d => ids.Contains(d.quotationid) && d.hblid == Guid.Empty && d.mblid == Guid.Empty && d.dongia != null && d.dongia > 0)
+                        .Select(d => new { d.quotationid, d.itemid, d.tiente, d.dongia }).ToListAsync())
+                        .Select(d => (d.quotationid, d.itemid, d.tiente, d.dongia)).ToList();
+                else
+                    rows = (await _context.Credit.AsNoTracking()
+                        .Where(d => ids.Contains(d.quotationid) && d.hblid == Guid.Empty && d.mblid == Guid.Empty && d.dongia != null && d.dongia > 0)
+                        .Select(d => new { d.quotationid, d.itemid, d.tiente, d.dongia }).ToListAsync())
+                        .Select(d => (d.quotationid, d.itemid, d.tiente, d.dongia)).ToList();
+                return rows.Where(r => dates.ContainsKey(r.Q))
+                    .Select(r => (dates[r.Q], r.Item, (r.Cur ?? "").Trim().ToUpperInvariant(), r.Price ?? 0))
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Quotation] GetPriceTrendAsync: {ex.Message}");
+                return new();
+            }
+        }
+
+        public async Task<BoolandMessReponse> DeleteQuotationWithLinesAsync(Guid quotationId)
+        {
+            if (quotationId == Guid.Empty)
+                return new BoolandMessReponse(false, "Nothing to Delete");
+            _context.ChangeTracker.Clear();
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                var quos = await _context.Quotation.Where(x => x.quotationID == quotationId).ToListAsync();
+                if (quos.Count == 0)
+                    return new BoolandMessReponse(false, "Nothing to Delete");
+                var debits = await _context.Debit.Where(d => d.quotationid == quotationId && d.hblid == Guid.Empty && d.mblid == Guid.Empty).ToListAsync();
+                var credits = await _context.Credit.Where(c => c.quotationid == quotationId && c.hblid == Guid.Empty && c.mblid == Guid.Empty).ToListAsync();
+                _context.Debit.RemoveRange(debits);
+                _context.Credit.RemoveRange(credits);
+                _context.Quotation.RemoveRange(quos);
+                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
+                return new BoolandMessReponse(true, $"Deleted (Debit {debits.Count}, Credit {credits.Count})");
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                _context.ChangeTracker.Clear();
+                return new BoolandMessReponse(false, "Cannot delete with error code: " + (ex.InnerException?.Message ?? ex.Message));
+            }
         }
 
         public async Task<BoolandMessReponse> DeleteQuotation(Models.M_Quotation QUO)

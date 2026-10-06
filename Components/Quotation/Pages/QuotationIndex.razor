@@ -106,6 +106,79 @@
     </CascadingValue>
 </MudContainer>
 
+<MudContainer MaxWidth="MaxWidth.False" Class="mb-2">
+    <MudExpansionPanels Elevation="0" Class="qtrend">
+        <MudExpansionPanel IsExpandedChanged="OnTrendExpanded">
+            <TitleContent>
+                <div class="d-flex align-center gap-2">
+                    <MudIcon Icon="@Icons.Material.Filled.BarChart" Color="Color.Primary" />
+                    <b>So sánh giá theo loại phí theo tháng</b>
+                    <span class="qtrend-hint">(đơn giá trung bình trên các báo giá, theo ngày báo giá)</span>
+                </div>
+            </TitleContent>
+            <ChildContent>
+                <div class="qtrend-bar">
+                    <MudToggleGroup T="bool" Value="_trendDebit" ValueChanged="@(async v => { _trendDebit = v; await LoadTrendAsync(); })" Size="Size.Small" Color="Color.Primary" Outline="true" Dense="true" SelectionMode="SelectionMode.SingleSelection">
+                        <MudToggleItem Value="true" Text="Debit (giá bán)" />
+                        <MudToggleItem Value="false" Text="Credit (giá mua)" />
+                    </MudToggleGroup>
+                    <MudSelect T="int" Label="Số tháng" Value="_trendMonths" ValueChanged="@(async v => { _trendMonths = v; await LoadTrendAsync(); })" Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined" Style="max-width:120px">
+                        <MudSelectItem Value="6">6 tháng</MudSelectItem>
+                        <MudSelectItem Value="12">12 tháng</MudSelectItem>
+                        <MudSelectItem Value="24">24 tháng</MudSelectItem>
+                    </MudSelect>
+                    <MudSelect T="string" Label="Loại tiền" Value="_trendCur" ValueChanged="@(v => { _trendCur = v; BuildTrendChart(); })" Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined" Style="max-width:120px">
+                        @foreach (var cur in _trendCurrencies)
+                        {
+                            <MudSelectItem Value="@cur">@cur</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSelect T="Guid" Label="Loại phí (chọn tối đa 6)" MultiSelection="true" SelectedValues="_trendItems" SelectedValuesChanged="@(v => { _trendItems = v.Take(6).ToHashSet(); BuildTrendChart(); })"
+                               ToStringFunc="TrendChargeName" Dense="true" Margin="Margin.Dense" Variant="Variant.Outlined" Style="min-width:320px">
+                        @foreach (var id in _trendAvailableItems)
+                        {
+                            <MudSelectItem Value="@id">@TrendChargeName(id)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    @if (_trendLoading)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                    }
+                </div>
+                @if (_trendSeries.Count == 0)
+                {
+                    <div class="qtrend-hint pa-3">@(_trendLoading ? "" : "Chưa có dữ liệu cho lựa chọn này.")</div>
+                }
+                else
+                {
+                    <MudChart ChartType="ChartType.Bar" ChartSeries="@_trendSeries" XAxisLabels="@_trendLabels" Width="100%" Height="320px" ChartOptions="@_trendOptions" />
+                    <div class="qtrend-table">
+                        <table>
+                            <thead><tr><th>Loại phí (@_trendCur)</th>@foreach (var m in _trendLabels) { <th class="num">@m</th> }</tr></thead>
+                            <tbody>
+                                @foreach (var sr in _trendSeries)
+                                {
+                                    <tr><td>@sr.Name</td>@foreach (var v in sr.Data) { <td class="num">@(v > 0 ? v.ToString("#,##0.##") : "–")</td> }</tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </ChildContent>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+</MudContainer>
+<style>
+    .qtrend .mud-expand-panel { border: 1px solid #dbe3ee; border-radius: 12px !important; background: #fbfcff; }
+    .qtrend-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 6px; }
+    .qtrend-hint { font-size: 12px; color: #64748b; font-weight: 400; }
+    .qtrend-table { overflow-x: auto; margin-top: 6px; }
+    .qtrend-table table { border-collapse: collapse; font-size: 12px; }
+    .qtrend-table th, .qtrend-table td { border-bottom: 1px solid #e5e7eb; padding: 3px 8px; white-space: nowrap; text-align: left; }
+    .qtrend-table th { background: #f1f5f9; }
+    .qtrend-table .num { text-align: right; }
+</style>
+
 <MudSpacer></MudSpacer>
 <MudSpacer></MudSpacer>
 
@@ -360,8 +433,8 @@
 
         usr = asv.GetAuth().Result.User.Identity!.Name!;
         Trangthais = await supsv.GetListTrangThai();
-        // await HandleRefresh();
-        CustomerList = await Cussv.GetList();
+        CustomerList = await Cussv.GetListAll();
+        await HandleRefresh();
 
     }
 
@@ -380,8 +453,9 @@
 
     string CustomerName(Guid? customerID)
     {
+        if (customerID == null || customerID == Guid.Empty) return string.Empty;
         var rs = CustomerList.FirstOrDefault(x => x.Customer_ID == customerID);
-        return rs != null ? rs.COMPANY! : "";
+        return rs != null ? rs.CodeName() : "";
     }
 
     private string SelectedRowClassFunc(Models.M_Quotation Sis, int rowNumber)
@@ -410,15 +484,13 @@
 
             listImport.Clear();
 
-            await Task.Delay(500);
-
-            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "Booking-Request"))
+            if (!await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "View", "Quotation"))
             {
                 CallSnackBar(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
 
                 return;
             }
-            listImport = await QuoSv.GetListQuotation();
+            listImport = await QuoSv.GetListQuotation() ?? new List<M_Quotation>();
             StateHasChanged();
         }
         finally
@@ -485,8 +557,7 @@
 
                 CallSnackBar(rs[0], severity);
 
-
-                await HandleRefresh_create(data.quotationID);
+                await RefreshAndSelect(data.quotationID);
 
             }
 
@@ -517,8 +588,9 @@
         if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Edit", "Quotation"))
         {
             var OldData = JsonSerializer.Deserialize<M_Quotation>(JsonSerializer.Serialize(tr));
+            var editing = JsonSerializer.Deserialize<M_Quotation>(JsonSerializer.Serialize(tr))!;   // sửa trên bản sao: Huỷ không làm đổi dòng của lưới
             DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
-            var parameters = new DialogParameters<AddQuotation> { { x => x._QuotationDetail, tr }, { x => x.Status, "edit" } };
+            var parameters = new DialogParameters<AddQuotation> { { x => x._QuotationDetail, editing }, { x => x.Status, "edit" } };
 
             var dialog = await DialogService.ShowAsync<AddQuotation>(tr.quotationID == Guid.Empty ? "Quotation Edit" : "Quotation Edit", parameters, optionsdialog);
             var result = await dialog.Result;
@@ -539,6 +611,7 @@
                     severity = MudBlazor.Severity.Error;
 
                 CallSnackBar(rs[0], severity);
+                await RefreshAndSelect(data.quotationID);
             }
 
             return;
@@ -564,9 +637,10 @@
         if (await ssv.CheckPermission(asv.GetAuth().Result.User.Identity.Name, "Add", "Quotation"))
         {
             var OldData = JsonSerializer.Deserialize<M_Quotation>(JsonSerializer.Serialize(tr));
-            tr.quotationID = Guid.Empty;
+            var copy = JsonSerializer.Deserialize<M_Quotation>(JsonSerializer.Serialize(tr))!;   // nhân bản trên bản sao: Huỷ không làm mất ID của dòng gốc
+            copy.quotationID = Guid.Empty;
             DialogOptions closeOnEscapeKey = new DialogOptions() { CloseOnEscapeKey = true };
-            var parameters = new DialogParameters<AddQuotation> { { x => x._QuotationDetail, tr }, { x => x.Status, "Duplicate" } };
+            var parameters = new DialogParameters<AddQuotation> { { x => x._QuotationDetail, copy }, { x => x.Status, "Duplicate" } };
 
             var dialog = await DialogService.ShowAsync<AddQuotation>(tr.quotationID == Guid.Empty ? "Quotation Add" : "Quotation Add", parameters, optionsdialog);
             var result = await dialog.Result;
@@ -588,7 +662,7 @@
                     severity = MudBlazor.Severity.Error;
 
                 CallSnackBar(rs[0], severity);
-                await HandleRefresh_create(data.quotationID);
+                await RefreshAndSelect(data.quotationID);
             }
 
             return;
@@ -606,6 +680,11 @@
     {
         try
         {
+            if (Quotation_detail == null || QuotationId == null)
+            {
+                CallSnackBar(Localizer["PleaseSelectData"], MudBlazor.Severity.Warning);
+                return;
+            }
             if (Quotation_detail.Approve == true)
             {
                 CallSnackBar(Localizer["DataAlreadyApproved"], MudBlazor.Severity.Warning);
@@ -629,19 +708,15 @@
             if (resultMess.HasValue)
             {
 
-                var bkdetail = await QuoSv.GetDetailQuotationFromID(QuotationId);
-                var result = await QuoSv.DeleteQuotation(Quotation_detail);
-                var result_Debit = await QuoSv.DeleteQuotation_Debit(Quotation_detail);
-                var result_Credit = await QuoSv.DeleteQuotation_CreDit(Quotation_detail);
-                await HistoryLogService.LogAsync(usr, "Delete", "Quotation", Quotation_detail.quotationID, Quotation_detail.quotationNo, new { OldData = Quotation_detail });
-
-                if (result.Flag)
-                    CallSnackBar(result.Message, MudBlazor.Severity.Success);
-                else
+                var deleting = Quotation_detail;
+                var result = await QuoSv.DeleteQuotationWithLinesAsync(deleting.quotationID);
+                if (!result.Flag)
                 {
                     CallSnackBar(result.Message, MudBlazor.Severity.Error);
                     return;
                 }
+                await HistoryLogService.LogAsync(usr, "Delete", "Quotation", deleting.quotationID, deleting.quotationNo, new { OldData = deleting });
+                CallSnackBar(result.Message, MudBlazor.Severity.Success);
 
                 await HandleRefresh();
             }
@@ -652,6 +727,20 @@
 
         }
 
+    }
+
+    /// <summary>Tải lại toàn bộ danh sách rồi chọn lại dòng vừa thêm / sửa.</summary>
+    async Task RefreshAndSelect(Guid id)
+    {
+        await HandleRefresh();
+        var row = listImport.FirstOrDefault(x => x.quotationID == id);
+        if (row != null)
+        {
+            Quotation_detail = row;
+            QuotationId = row.quotationID;
+            try { mudTable.SelectedItem = row; } catch { }
+        }
+        StateHasChanged();
     }
 
     void CallSnackBar(string message, MudBlazor.Severity severity)
@@ -721,17 +810,43 @@
     }
 
 
+    bool _sendingEmail;
+
     async Task SendEmail()
     {
+        if (Quotation_detail == null || QuotationId == null)
+        {
+            CallSnackBar(Localizer["SelectOneQuotation"], MudBlazor.Severity.Warning);
+            return;
+        }
+        if (_sendingEmail) return;
 
-        // if (Quotation_detail.customer_id)
         string email_Cus = Cussv.GetIdcusfromID(Quotation_detail.customer_id);
 
         if (!string.IsNullOrEmpty(email_Cus))
         {
-            var (success, message, pdfFile) = await QuoSv.ExportQuotation_file(QuotationId);
-            bool result = await emsv.SendEmailAttachment_Quotation(email_Cus, "Your Quotation", "Please find attached your bill.", pdfFile, "Quotation.pdf");
-            if (result = true)
+            _sendingEmail = true;
+            bool result;
+            try
+            {
+                var (success, message, pdfFile) = await QuoSv.ExportQuotation_file(QuotationId);
+                if (!success || pdfFile == null || pdfFile.Length == 0)
+                {
+                    CallSnackBar(string.IsNullOrWhiteSpace(message) ? Localizer["EmailSentFailed"].Value : message, MudBlazor.Severity.Error);
+                    return;
+                }
+                result = await emsv.SendEmailAttachment_Quotation(email_Cus, "Your Quotation", "Please find attached your bill.", pdfFile, "Quotation.pdf");
+            }
+            catch (Exception ex)
+            {
+                CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+                return;
+            }
+            finally
+            {
+                _sendingEmail = false;
+            }
+            if (result)
             {
                 await HistoryLogService.LogAsync(usr, "SendEmail", "Quotation", Quotation_detail.quotationID, Quotation_detail.quotationNo, new { DataSend = Quotation_detail });
 
@@ -791,5 +906,74 @@
             return;
         }
 
+    }
+
+    // ---------- Đồ thị so sánh giá theo loại phí theo tháng ----------
+    bool _trendDebit = true, _trendLoading, _trendLoaded;
+    int _trendMonths = 12;
+    string? _trendCur;
+    List<string> _trendCurrencies = new();
+    HashSet<Guid> _trendItems = new();
+    List<Guid> _trendAvailableItems = new();
+    Dictionary<Guid, string> _trendCharges = new();
+    List<(DateTime Date, Guid ItemId, string Cur, double Price)> _trendRows = new();
+    List<ChartSeries> _trendSeries = new();
+    string[] _trendLabels = Array.Empty<string>();
+    ChartOptions _trendOptions = new ChartOptions { YAxisTicks = 0, LineStrokeWidth = 2 };
+
+    string TrendChargeName(Guid id) => _trendCharges.TryGetValue(id, out var n) ? n : id.ToString()[..8];
+
+    async Task OnTrendExpanded(bool expanded)
+    {
+        if (expanded && !_trendLoaded) await LoadTrendAsync();
+    }
+
+    async Task LoadTrendAsync()
+    {
+        try
+        {
+            _trendLoading = true;
+            StateHasChanged();
+            if (_trendCharges.Count == 0)
+                _trendCharges = (await QuoSv.Getcharge() ?? new()).Where(c => c != null).GroupBy(c => c.CHARGE_ID)
+                    .ToDictionary(g => g.Key, g => string.IsNullOrWhiteSpace(g.First().CHARGE_CODE) ? g.First().CHARGE ?? "" : $"{g.First().CHARGE_CODE} - {g.First().CHARGE}");
+            var from = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1).AddMonths(-(_trendMonths - 1));
+            _trendRows = await QuoSv.GetPriceTrendAsync(_trendDebit, from);
+            _trendCurrencies = _trendRows.Select(r => string.IsNullOrEmpty(r.Cur) ? "?" : r.Cur).GroupBy(c => c).OrderByDescending(g => g.Count()).Select(g => g.Key).ToList();
+            if (_trendCur == null || !_trendCurrencies.Contains(_trendCur)) _trendCur = _trendCurrencies.FirstOrDefault();
+            _trendLoaded = true;
+            BuildTrendChart(resetItems: true);
+        }
+        catch (Exception ex)
+        {
+            CallSnackBar(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _trendLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    void BuildTrendChart(bool resetItems = false)
+    {
+        var cur = _trendCur ?? "";
+        var rows = _trendRows.Where(r => (string.IsNullOrEmpty(r.Cur) ? "?" : r.Cur) == cur).ToList();
+        _trendAvailableItems = rows.GroupBy(r => r.ItemId).OrderByDescending(g => g.Count()).Select(g => g.Key).ToList();
+        if (resetItems || _trendItems.Count == 0 || !_trendItems.Any(_trendAvailableItems.Contains))
+            _trendItems = _trendAvailableItems.Take(5).ToHashSet();
+        var start = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1).AddMonths(-(_trendMonths - 1));
+        var months = Enumerable.Range(0, _trendMonths).Select(i => start.AddMonths(i)).ToList();
+        _trendLabels = months.Select(m => m.ToString("MM/yy")).ToArray();
+        _trendSeries = _trendItems.Where(_trendAvailableItems.Contains).Select(id => new ChartSeries
+        {
+            Name = TrendChargeName(id),
+            Data = months.Select(m =>
+            {
+                var v = rows.Where(r => r.ItemId == id && r.Date.Year == m.Year && r.Date.Month == m.Month).Select(r => r.Price).ToList();
+                return v.Count == 0 ? 0 : Math.Round(v.Average(), 2);
+            }).ToArray()
+        }).ToList();
+        StateHasChanged();
     }
 }

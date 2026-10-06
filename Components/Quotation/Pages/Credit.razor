@@ -11,6 +11,22 @@
 @using System.Text.Json;
 @inject tigiaVCBservices Vcbsv
 <style>
+    /* ===== Thẻ Debit / Credit ===== */
+    .qdc { border: 1px solid var(--qdc-bd); border-radius: 14px; overflow: hidden; background: #fff; margin: 4px 0 8px; box-shadow: 0 2px 8px rgba(15,23,42,.05); }
+    .qdc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 12px; background: var(--qdc-bg); border-bottom: 1px solid var(--qdc-bd); }
+    .qdc-title { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--qdc-ac); font-size: 14px; }
+    .qdc-count { font-size: 11px; background: #fff; border: 1px solid var(--qdc-bd); color: var(--qdc-ac); border-radius: 999px; padding: 0 8px; }
+    .qdc-sum { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+    .qdc-sum span { background: #fff; border: 1px solid var(--qdc-bd); border-radius: 8px; padding: 1px 8px; color: #334155; }
+    .qdc-sum b { color: var(--qdc-ac); }
+    .qdc-actions { margin-left: auto; display: flex; gap: 6px; }
+    .qdc-actions .mud-button-root { text-transform: none; border-radius: 8px; font-weight: 600; }
+    .qdc .mud-table-head th.mud-table-cell { background: var(--qdc-bg) !important; color: var(--qdc-ac) !important; font-weight: 700; }
+    .qdc .mud-table-body tr:nth-child(even) td { background: #fafbfc; }
+    .qdc .mud-table-body tr:hover td { background: var(--qdc-bg) !important; }
+    .qdc-debit  { --qdc-bg: #ecfdf3; --qdc-bd: #bbe5cc; --qdc-ac: #047857; }
+    .qdc-credit { --qdc-bg: #fff4e8; --qdc-bd: #f5d2a8; --qdc-ac: #c2410c; }
+
     .text-right-input input {
     text-align: right !important;
     }
@@ -20,10 +36,21 @@
     }
 </style>
 
-<MudStack Row="true" Justify="Justify.FlexStart" Class="pa-4">
+<div class="qdc qdc-credit">
+<div class="qdc-head">
+    <div class="qdc-title"><MudIcon Icon="@Icons.Material.Filled.TrendingDown" Size="Size.Small" /> Credit · chi nhà cung cấp <span class="qdc-count">@listImport.Count dòng</span></div>
+    <div class="qdc-sum">
+        @foreach (var g in listImport.GroupBy(x => string.IsNullOrWhiteSpace(x.tiente) ? "?" : x.tiente!.Trim().ToUpperInvariant()))
+        {
+            <span>@g.Key <b>@g.Sum(x => x.thanhtiensauthue ?? x.thanhtien ?? 0).ToString("#,##0.##")</b></span>
+        }
+    </div>
+    <div class="qdc-actions">
+        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info" StartIcon="@Icons.Material.Filled.ContentCopy"
+                   OnClick="CopyFromQuotationAsync">Copy từ báo giá khác</MudButton>
     <MudButton HtmlTag="label"
     OnClick="RefreshCreditInfo"
-    Size="Size.Small" Color="Color.Primary" Variant="   Variant.Filled"
+    Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
     StartIcon="@Icons.Material.Filled.Refresh">
         @Localizer["reload"]
     </MudButton>
@@ -33,7 +60,8 @@
     StartIcon="@Icons.Material.Filled.Add">
         @Localizer["new"]
     </MudButton>
-</MudStack>
+    </div>
+</div>
 <MudDataGrid T="M_Credit" Items="@listImport.ToList()" Filterable="true" @ref="mudCredit"
 FilterMode="@DataGridFilterMode.ColumnFilterRow" Dense="true" Virtualize="true"
 FixedHeader="true" FixedFooter="true" HeaderClass="no-wrap" FooterClass="no-wrap"
@@ -50,6 +78,7 @@ ColumnResizeMode="ResizeMode.Column">
 
                        })" />
                 <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.Delete" OnClick="@(()=>DeleteItemDebitInfo(context.Item))" />
+                <MudIconButton Size="@Size.Small" Icon="@Icons.Material.Outlined.ContentCopy" title="Nhân bản dòng này" OnClick="@(() => DuplicateLineAsync(context.Item))" />
             </CellTemplate>
         </TemplateColumn>
 
@@ -57,7 +86,7 @@ ColumnResizeMode="ResizeMode.Column">
             <EditTemplate>
                 <MudAutocomplete Class="custom-label" T="Guid" Label="@Localizer["Customer"]"
                 @bind-Value="context.Item.customerid"
-                SearchFunc="Search_Customer"
+                SearchFunc="Search_Customer" MaxItems="null"
                 ToStringFunc="GetCustomerLable" />
             </EditTemplate>
         </PropertyColumn>
@@ -67,7 +96,7 @@ ColumnResizeMode="ResizeMode.Column">
                 <MudAutocomplete T="Guid" Label="@Localizer["Item"]" Class="custom-label"
                 @bind-Value="context.Item.itemid"
                 Required="true"
-                SearchFunc="Search_Charge"
+                SearchFunc="Search_Charge" MaxItems="null"
                 ToStringFunc="GetChargeLabel" />
 
             </EditTemplate>
@@ -161,6 +190,7 @@ ColumnResizeMode="ResizeMode.Column">
 
     </Columns>
 </MudDataGrid>
+</div>
 @code {
     private MudDataGrid<Models.M_Credit> mudCredit;
     private List<Models.M_Credit> listImport = new List<Models.M_Credit>();
@@ -188,7 +218,23 @@ ColumnResizeMode="ResizeMode.Column">
     public CultureInfo _en = CultureInfo.GetCultureInfo("en-US");
     protected async override Task OnInitializedAsync()
     {
-        customers = await csv.GetList();
+        try
+        {
+            await InitCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            // Không để lỗi tải danh mục làm hỏng cả form (Blazor sẽ ngắt kết nối nếu lỗi lọt ra ngoài)
+            CallSnackBar("Lỗi tải dữ liệu: " + ex.Message, MudBlazor.Severity.Error);
+        }
+        customers = (customers ?? new List<M_Customer>()).Where(x => x != null).ToList();
+        charges = (charges ?? new List<Models.ChargeModel>()).Where(x => x != null && !string.IsNullOrWhiteSpace(x.CHARGE)).ToList();
+        currs = (currs ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+    }
+
+    private async Task InitCoreAsync()
+    {
+        customers = (await csv.GetListAll()).Where(x => x.Customer_ID != Guid.Empty).OrderBy(x => x.Customer_Code).ToList();
           charges = await QuoSV.Getcharge();
 
         if (!string.IsNullOrEmpty(_QuotationDetail.o1)){
@@ -260,7 +306,7 @@ ColumnResizeMode="ResizeMode.Column">
                 CallSnackBar("You have not access to view", MudBlazor.Severity.Warning);
                 return;
             }
-            listImport = await QuoSV.GetListCredit(_QuotationDetail.quotationID);
+            listImport = await QuoSV.GetListCredit(_QuotationDetail.quotationID) ?? new();
         }
         finally
         {
@@ -323,7 +369,7 @@ ColumnResizeMode="ResizeMode.Column">
             return customers.Select(x => (Guid)x.Customer_ID);
 
         return customers
-        .Where(x => !string.IsNullOrEmpty(x.COMPANY) && x.COMPANY.Contains(value, StringComparison.InvariantCultureIgnoreCase))
+        .Where(x => x.SearchKey().Contains(value, StringComparison.InvariantCultureIgnoreCase))
         .Select(x => (Guid)x.Customer_ID)  // Convert Customer_ID to Guid?
         .ToList();
 
@@ -332,13 +378,13 @@ ColumnResizeMode="ResizeMode.Column">
     private string GetCustomerLable(Guid id)
     {
         var customer = customers.FirstOrDefault(x => x.Customer_ID == id);
-        return customer != null ? customer.COMPANY : string.Empty;
+        return customer != null ? customer.CodeName() : string.Empty;
     }
 
     private string GetChargeLabel(Guid id)
     {
         var customer = charges.FirstOrDefault(x => x.CHARGE_ID == id);
-        return customer != null ? customer.CHARGE : string.Empty;
+        return customer?.CHARGE ?? string.Empty;
     }
 
     private async Task<IEnumerable<Guid>> Search_Charge(string value)
@@ -347,7 +393,7 @@ ColumnResizeMode="ResizeMode.Column">
             return charges.Select(x => (Guid)x.CHARGE_ID);
 
         return charges
-            .Where(x => (x.CHARGE).Contains(value, StringComparison.InvariantCultureIgnoreCase))
+            .Where(x => !string.IsNullOrEmpty(x.CHARGE) && x.CHARGE.Contains(value, StringComparison.InvariantCultureIgnoreCase))
             .Select(x => (Guid)x.CHARGE_ID);
     }
     private async Task<IEnumerable<string>> SearchCurr(string? text)
@@ -366,5 +412,42 @@ ColumnResizeMode="ResizeMode.Column">
     {
         double? tigia_ = await Vcbsv.Getexchange_cur(item.tiente);
         item.tigiahoadondauvao = tigia_;
+    }
+
+    // ---------- Copy dòng phí ----------
+    async Task DuplicateLineAsync(M_Credit src)
+    {
+        if (_QuotationDetail?.Approve == true)
+        {
+            CallSnackBar("Báo giá đã duyệt: không thêm phí được.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var copy = System.Text.Json.JsonSerializer.Deserialize<M_Credit>(System.Text.Json.JsonSerializer.Serialize(src))!;
+        copy.quotationid = _QuotationDetail.quotationID;
+        copy.approve = false;
+        copy.userupdate = asv.GetAuth().Result.User.Identity!.Name!;
+        copy.dateupdate = DateTime.Now.ToString();
+        var rs = await QuoSV.CreateQuotation_Credit(copy);
+        CallSnackBar(rs.Flag ? "Đã nhân bản dòng phí" : rs.Message, rs.Flag ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await RefreshCreditInfo();
+    }
+
+    async Task CopyFromQuotationAsync()
+    {
+        if (_QuotationDetail == null || _QuotationDetail.quotationID == Guid.Empty) return;
+        if (_QuotationDetail.Approve == true)
+        {
+            CallSnackBar("Báo giá đã duyệt: không thêm phí được.", MudBlazor.Severity.Warning);
+            return;
+        }
+        var parameters = new DialogParameters<CopyQuotationLinesDialog>
+        {
+            { x => x.Kind, "credit" },
+            { x => x.TargetQuotationId, _QuotationDetail.quotationID }
+        };
+        var dialog = await DialogService.ShowAsync<CopyQuotationLinesDialog>("Copy Credit từ báo giá khác", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+        if (!result.Canceled) await RefreshCreditInfo();
     }
 }

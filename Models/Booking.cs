@@ -127,6 +127,8 @@ namespace NVOAMASIS.Models
         public string? codedest { get; set; }
         public string? cont_type { get; set; }
         public string? agencyname_box { get; set; }
+        /// <summary>Principle: lưu giống Agency Name (chuỗi "tên tắt___tên" chọn từ danh sách khách hàng).</summary>
+        public string? principle { get; set; }
         public string? etatime { get; set; }
         public string? etdtime { get; set; }
         public string? hanoair_cutofdaytimetime { get; set; }

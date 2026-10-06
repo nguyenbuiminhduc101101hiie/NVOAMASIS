@@ -1,0 +1,207 @@
+@* Copy dòng Debit / Credit từ một báo giá khác sang báo giá đang mở. *@
+@using System.Text.Json
+@inject QuotationService QuoSV
+@inject CustomerService CusSV
+@inject AccountService asv
+@inject ISnackbar Snackbar
+
+<style>
+    .cql table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .cql th, .cql td { padding: 3px 6px; border-bottom: 1px solid #e5e7eb; text-align: left; white-space: nowrap; }
+    .cql th { background: #f1f5f9; position: sticky; top: 0; z-index: 1; }
+    .cql td.num, .cql th.num { text-align: right; }
+    .cql-scroll { max-height: 48vh; overflow: auto; border: 1px solid #e5e7eb; border-radius: 8px; margin-top: 8px; }
+    .cql-hint { font-size: 12px; color: #64748b; }
+</style>
+
+<MudDialog Class="cql">
+    <DialogContent>
+        <MudAutocomplete T="Guid?" Label="Chọn báo giá nguồn (số / khách hàng / POL / POD)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                         Value="_sourceId" ValueChanged="OnSourceChanged" SearchFunc="SearchQuotations" ToStringFunc="QuoLabel"
+                         MaxItems="null" Clearable="true" ResetValueOnEmptyText="true" />
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-2" />
+        }
+        else if (_sourceId != null)
+        {
+            <div class="d-flex align-center gap-2 mt-2">
+                <MudCheckBox T="bool" Value="@AllSelected" ValueChanged="@(v => SelectAll(v))" Dense="true" Color="Color.Primary" Label="Chọn tất cả" />
+                <span class="cql-hint">@_lines.Count(l => l.Selected) / @_lines.Count dòng @(Kind == "debit" ? "Debit" : "Credit")</span>
+            </div>
+            <div class="cql-scroll">
+                <table>
+                    <thead>
+                        <tr><th></th><th>Item</th><th>Party</th>@if (Kind == "debit") { <th>Group</th><th>POL</th><th>POD</th><th>DEL</th> }<th class="num">Qty</th><th class="num">Unit price</th><th>Cur</th><th class="num">VAT</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var l in _lines)
+                        {
+                            <tr>
+                                <td><MudCheckBox T="bool" @bind-Value="l.Selected" Dense="true" Size="Size.Small" Color="Color.Primary" /></td>
+                                <td>@ChargeName(l.ItemId)</td>
+                                <td>@CustomerName(l.CustomerId)</td>
+                                @if (Kind == "debit")
+                                {
+                                    <td>@l.Group</td><td>@l.Pol</td><td>@l.Pod</td><td>@l.Del</td>
+                                }
+                                <td class="num">@l.Qty?.ToString("#,##0.##")</td>
+                                <td class="num">@l.Price?.ToString("#,##0.##")</td>
+                                <td>@l.Cur</td>
+                                <td class="num">@l.Vat?.ToString("#,##0.##")</td>
+                            </tr>
+                        }
+                        @if (_lines.Count == 0)
+                        {
+                            <tr><td colspan="11" class="cql-hint">Báo giá này không có dòng @(Kind == "debit" ? "Debit" : "Credit").</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => MudDialog.Cancel())">Huỷ</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ContentCopy"
+                   Disabled="@(_busy || !_lines.Any(l => l.Selected))" OnClick="CopyAsync">
+            Copy @_lines.Count(l => l.Selected) dòng
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    /// <summary>"debit" hoặc "credit".</summary>
+    [Parameter] public string Kind { get; set; } = "debit";
+    [Parameter] public Guid TargetQuotationId { get; set; }
+
+    sealed class Line
+    {
+        public object Source { get; init; } = default!;
+        public Guid ItemId { get; init; }
+        public Guid CustomerId { get; init; }
+        public string? Group { get; init; }
+        public string? Pol { get; init; }
+        public string? Pod { get; init; }
+        public string? Del { get; init; }
+        public double? Qty { get; init; }
+        public double? Price { get; init; }
+        public string? Cur { get; init; }
+        public double? Vat { get; init; }
+        public bool Selected { get; set; } = true;
+    }
+
+    List<M_Quotation> _quos = new();
+    List<M_Customer> _customers = new();
+    Dictionary<Guid, string> _charges = new();
+    List<Line> _lines = new();
+    Guid? _sourceId;
+    bool _loading, _busy;
+
+    bool AllSelected => _lines.Count > 0 && _lines.All(l => l.Selected);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _quos = (await QuoSV.GetListQuotation() ?? new()).Where(q => q.quotationID != TargetQuotationId).ToList();
+            _customers = (await CusSV.GetListAll()).Where(c => c.Customer_ID != Guid.Empty).ToList();
+            _charges = (await QuoSV.Getcharge() ?? new()).Where(c => c != null)
+                .GroupBy(c => c.CHARGE_ID).ToDictionary(g => g.Key, g => string.IsNullOrWhiteSpace(g.First().CHARGE_CODE) ? g.First().CHARGE ?? "" : $"{g.First().CHARGE_CODE} - {g.First().CHARGE}");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    string CustomerName(Guid? id) => id == null || id == Guid.Empty ? "" : _customers.FirstOrDefault(c => c.Customer_ID == id)?.CodeName() ?? "";
+    string ChargeName(Guid id) => _charges.TryGetValue(id, out var n) ? n : "";
+
+    string QuoLabel(Guid? id)
+    {
+        var q = _quos.FirstOrDefault(x => x.quotationID == id);
+        return q == null ? "" : $"{q.quotationNo} · {CustomerName(q.customer_id)} · {q.pol} → {q.pod}";
+    }
+
+    Task<IEnumerable<Guid?>> SearchQuotations(string? text)
+    {
+        IEnumerable<M_Quotation> q = _quos;
+        if (!string.IsNullOrWhiteSpace(text))
+            q = q.Where(x => QuoLabel(x.quotationID).Contains(text, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult<IEnumerable<Guid?>>(q.Select(x => (Guid?)x.quotationID).ToList());
+    }
+
+    async Task OnSourceChanged(Guid? id)
+    {
+        _sourceId = id;
+        _lines = new();
+        if (id == null) return;
+        try
+        {
+            _loading = true;
+            if (Kind == "debit")
+            {
+                var rows = await QuoSV.GetListDebit(id.Value) ?? new();
+                _lines = rows.Select(d => new Line { Source = d, ItemId = d.itemid, CustomerId = d.customerid, Group = d.nhom, Pol = d.pol, Pod = d.pod, Del = d.del, Qty = d.soluong, Price = d.dongia, Cur = d.tiente, Vat = d.thue }).ToList();
+            }
+            else
+            {
+                var rows = await QuoSV.GetListCredit(id.Value) ?? new();
+                _lines = rows.Select(d => new Line { Source = d, ItemId = d.itemid, CustomerId = d.customerid, Qty = d.soluong, Price = d.dongia, Cur = d.tiente, Vat = d.thue }).ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    void SelectAll(bool on)
+    {
+        foreach (var l in _lines) l.Selected = on;
+    }
+
+    async Task CopyAsync()
+    {
+        _busy = true;
+        var usr = asv.GetAuth().Result.User.Identity!.Name!;
+        int ok = 0, fail = 0;
+        try
+        {
+            foreach (var l in _lines.Where(l => l.Selected))
+            {
+                BoolandMessReponse rs;
+                if (l.Source is M_Debit d)
+                {
+                    var c = JsonSerializer.Deserialize<M_Debit>(JsonSerializer.Serialize(d))!;
+                    c.quotationid = TargetQuotationId; c.hblid = Guid.Empty; c.mblid = Guid.Empty;
+                    c.approve = false; c.userupdate = usr; c.dateupdate = DateTime.Now.ToString();
+                    rs = await QuoSV.CreateQuotation_Debit(c);
+                }
+                else
+                {
+                    var c = JsonSerializer.Deserialize<M_Credit>(JsonSerializer.Serialize((M_Credit)l.Source))!;
+                    c.quotationid = TargetQuotationId; c.hblid = Guid.Empty; c.mblid = Guid.Empty;
+                    c.approve = false; c.userupdate = usr; c.dateupdate = DateTime.Now.ToString();
+                    rs = await QuoSV.CreateQuotation_Credit(c);
+                }
+                if (rs.Flag) ok++; else fail++;
+            }
+            Snackbar.Add($"Đã copy {ok} dòng" + (fail > 0 ? $", lỗi {fail} dòng" : ""), fail == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+            MudDialog.Close(DialogResult.Ok(ok));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

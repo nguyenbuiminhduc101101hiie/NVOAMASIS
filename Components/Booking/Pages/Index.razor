@@ -1,4 +1,5 @@
-﻿@page "/Booking_Request"
+﻿@using Microsoft.EntityFrameworkCore
+@page "/Booking_Request"
 @using System.Net
 @using System.Diagnostics
 
@@ -16,6 +17,9 @@
 
 @inject IStringLocalizer<SharedResource> Localizer
 @inject HistoryLogService HistoryLogService
+@inject QuotationService QuoSV
+@inject IJSRuntime BkJs
+@inject Microsoft.EntityFrameworkCore.IDbContextFactory<NVOAMASIS.Data.AppDbContext> BkDbFactory
 @using System.Reflection;
 @using System.Text;
 @using System.Text.Json;
@@ -38,6 +42,23 @@
                               Adornment="Adornment.Start"
                               AdornmentIcon="@Icons.Material.Filled.Search"
                               Class="booking-search" />
+
+                <MudMenu Icon="@Icons.Material.Filled.ViewColumn" Size="Size.Small" Dense="true" Color="Color.Primary"
+                         AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft" title="Chọn cột hiển thị">
+                    <div class="bk-colmenu" @onclick:stopPropagation="true">
+                        <div class="bk-colmenu-head">
+                            <b>Chọn cột hiển thị</b>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => SetAllBkColumns(true))">Hiện tất cả</MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ResetBkColumns">Mặc định</MudButton>
+                        </div>
+                        @foreach (var col in BkColumnDefs)
+                        {
+                            <MudCheckBox T="bool" Value="@(!_bkHidden.Contains(col.Key))" ValueChanged="@(v => SetBkColumnVisible(col.Key, v))"
+                                         Label="@col.Label" Dense="true" Size="Size.Small" Color="Color.Primary" />
+                        }
+                    </div>
+                </MudMenu>
+                <MudText Typo="Typo.caption" Style="white-space:nowrap;">Cột (@(BkColumnDefs.Count - _bkHidden.Count)/@BkColumnDefs.Count)</MudText>
 
                 <MudButton OnClick="HandleRefresh"
                            Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
@@ -114,11 +135,25 @@
                     <FooterTemplate>ID</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.BookingNo" Title="@(Localizer["BookingNo"])" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn Property="x => x.BookingNo" Title="@(Localizer["BookingNo"])" CellStyleFunc="_cellStyleFunc" Hideable="false">
+                    <CellTemplate>
+                        <MudTooltip Arrow="true" Placement="Placement.Right">
+                            <ChildContent>
+                                <span class="bk-hover-no">@context.Item.BookingNo</span>
+                            </ChildContent>
+                            <TooltipContent>
+                                @BookingHoverCard(context.Item)
+                            </TooltipContent>
+                        </MudTooltip>
+                    </CellTemplate>
                     <FooterTemplate>@Localizer["BookingNo"]</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => CustomerName(x.MaincusBk_Id_)" Title="@(Localizer["Customer"])" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-bkcarrier" CellClass="bkc-bkcarrier" FooterClass="bkc-bkcarrier" Property="x => x.bkcarrier" Title="@BkCarrierTitle" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>@BkCarrierTitle</FooterTemplate>
+                </PropertyColumn>
+
+                <PropertyColumn HeaderClass="bkc-customer" CellClass="bkc-customer" FooterClass="bkc-customer" Property="x => CustomerName(x.MaincusBk_Id_)" Title="@(Localizer["Customer"])" CellStyleFunc="_cellStyleFunc">
                     <EditTemplate>
                         <MudSelect @bind-Value="context.Item.MaincusBk_Id_" Label="@(Localizer["Customer"])">
                             @foreach (var item in CustomerList)
@@ -130,47 +165,133 @@
                     <FooterTemplate>@Localizer["Customer"]</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.trangthai" Title="@(Localizer["status"])" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-status" CellClass="bkc-status" FooterClass="bkc-status" Property="x => x.trangthai" Title="@(Localizer["status"])" CellStyleFunc="_cellStyleFunc">
                     <FooterTemplate>@Localizer["status"]</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.bkcarrier" Title="@(Localizer["bkcarrier"])" CellStyleFunc="_cellStyleFunc">
-                    <FooterTemplate>@Localizer["bkcarrier"]</FooterTemplate>
-                </PropertyColumn>
 
-                <PropertyColumn Property="x => x.FCL_LCL_Air" Title="@(Localizer["FCL/LCL/Air"])" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-type" CellClass="bkc-type" FooterClass="bkc-type" Property="x => x.FCL_LCL_Air" Title="@(Localizer["FCL/LCL/Air"])" CellStyleFunc="_cellStyleFunc">
                     <FooterTemplate>@Localizer["FCL_LCL_Air"]</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.hano_POL" Title="@(Localizer["POL"])" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-pol" CellClass="bkc-pol" FooterClass="bkc-pol" Property="x => x.hano_POL" Title="@(Localizer["POL"])" CellStyleFunc="_cellStyleFunc">
                     <FooterTemplate>@Localizer["POL"]</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.hano_POD" Title="@(Localizer["POD"])" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-pod" CellClass="bkc-pod" FooterClass="bkc-pod" Property="x => x.hano_POD" Title="@(Localizer["POD"])" CellStyleFunc="_cellStyleFunc">
                     <FooterTemplate>@Localizer["POD"]</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.ETA" Title="@(Localizer["ETA"])" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-eta" CellClass="bkc-eta" FooterClass="bkc-eta" Property="x => x.ETA" Title="@(Localizer["ETA"])" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
                     <FooterTemplate>@Localizer["ETA"]</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.ETD" Title="@(Localizer["ETD"])" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-etd" CellClass="bkc-etd" FooterClass="bkc-etd" Property="x => x.ETD" Title="@(Localizer["ETD"])" Format="dd/MM/yyyy" CellStyleFunc="_cellStyleFunc">
                     <FooterTemplate>@Localizer["ETD"]</FooterTemplate>
                 </PropertyColumn>
 
-                <TemplateColumn Title="@Localizer["Approve"]">
+                <TemplateColumn HeaderClass="bkc-approve" CellClass="bkc-approve" FooterClass="bkc-approve" Title="@Localizer["Approve"]">
                     <CellTemplate>
                         <MudCheckBox @bind-Checked="context.Item.Approve" @bind-Value="context.Item.Approve" @bind-Value:after="@(()=> OnApproveCheckboxWrapper(context.Item))" />
                     </CellTemplate>
                     <FooterTemplate>@Localizer["Approve"]</FooterTemplate>
                 </TemplateColumn>
 
-                <PropertyColumn Property="x => x.UserID" Title="@(Localizer["UserUpdate"])" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-user" CellClass="bkc-user" FooterClass="bkc-user" Property="x => x.UserID" Title="@(Localizer["UserUpdate"])" CellStyleFunc="_cellStyleFunc">
                     <FooterTemplate>@Localizer["UserUpdate"]</FooterTemplate>
                 </PropertyColumn>
 
-                <PropertyColumn Property="x => x.UpdateTime" Title="@(Localizer["Dateupdate"])" CellStyleFunc="_cellStyleFunc">
+                <PropertyColumn HeaderClass="bkc-updatetime" CellClass="bkc-updatetime" FooterClass="bkc-updatetime" Property="x => x.UpdateTime" Title="@(Localizer["Dateupdate"])" CellStyleFunc="_cellStyleFunc">
                     <FooterTemplate>@Localizer["Dateupdate"]</FooterTemplate>
+                </PropertyColumn>
+
+                @* ---- Cột thêm (ẩn / hiện bằng nút chọn cột) ---- *@
+                <PropertyColumn HeaderClass="bkc-quotation" CellClass="bkc-quotation" FooterClass="bkc-quotation" Property="x => QuoNoOf(x)" Title="Quotation" CellStyleFunc="_cellStyleFunc">
+                    <CellTemplate>
+                        @if (!string.IsNullOrWhiteSpace(QuoNoOf(context.Item)))
+                        {
+                            <MudTooltip Arrow="true" Placement="Placement.Right">
+                                <ChildContent><span class="bk-hover-no">@QuoNoOf(context.Item)</span></ChildContent>
+                                <TooltipContent>@QuotationHoverCard(context.Item.quotationID)</TooltipContent>
+                            </MudTooltip>
+                        }
+                    </CellTemplate>
+                    <FooterTemplate>Quotation</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-dept" CellClass="bkc-dept" FooterClass="bkc-dept" Property="x => x.iol" Title="Dept." CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Dept.</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-imex" CellClass="bkc-imex" FooterClass="bkc-imex" Property="x => x.Lo" Title="IM / EX" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>IM / EX</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-code" CellClass="bkc-code" FooterClass="bkc-code" Property="x => x.Code" Title="Code" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Code</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-sale" CellClass="bkc-sale" FooterClass="bkc-sale" Property="x => x.SaleName" Title="Sale" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Sale</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-attn" CellClass="bkc-attn" FooterClass="bkc-attn" Property="x => x.ATTN" Title="Attn" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Attn</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-agency" CellClass="bkc-agency" FooterClass="bkc-agency" Property="x => x.agencyname_box" Title="@Localizer["Agency_Name"]" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>@Localizer["Agency_Name"]</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-principle" CellClass="bkc-principle" FooterClass="bkc-principle" Property="x => x.principle" Title="Principle" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Principle</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-carrier" CellClass="bkc-carrier" FooterClass="bkc-carrier" Property="x => x.Carrier" Title="Carrier" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Carrier</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-coload" CellClass="bkc-coload" FooterClass="bkc-coload" Property="x => x.hanoLCL_BookingPIC" Title="VIA (Coload)" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>VIA (Coload)</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-vessel" CellClass="bkc-vessel" FooterClass="bkc-vessel" Property="x => x.Vessel" Title="Vessel" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Vessel</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-voy" CellClass="bkc-voy" FooterClass="bkc-voy" Property="x => x.VoyNo" Title="Voy" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Voy</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-por" CellClass="bkc-por" FooterClass="bkc-por" Property="x => x.hano_POR" Title="POR" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>POR</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-pot" CellClass="bkc-pot" FooterClass="bkc-pot" Property="x => x.hano_POT" Title="POT" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>POT</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-commodity" CellClass="bkc-commodity" FooterClass="bkc-commodity" Property="x => x.hano_Commodity" Title="Commodity" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Commodity</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-volume" CellClass="bkc-volume" FooterClass="bkc-volume" Property="x => x.hanoFCL_Quality" Title="Volume" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Volume</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-weight" CellClass="bkc-weight" FooterClass="bkc-weight" Property="x => x.hano_WeightCBMPKG" Title="Weight / CBM / PKG" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Weight / CBM / PKG</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-payment" CellClass="bkc-payment" FooterClass="bkc-payment" Property="x => x.hano_Payment" Title="Payment" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Payment</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-sicutoff" CellClass="bkc-sicutoff" FooterClass="bkc-sicutoff" Property="x => x.SICutOff" Title="SI Cut-off" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>SI Cut-off</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-vgm" CellClass="bkc-vgm" FooterClass="bkc-vgm" Property="x => x.hano_Closing" Title="VGM Closing" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>VGM Closing</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-cargoclosing" CellClass="bkc-cargoclosing" FooterClass="bkc-cargoclosing" Property="x => x.hano_Closingdelivery" Title="Cargo Closing" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Cargo Closing</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-depot" CellClass="bkc-depot" FooterClass="bkc-depot" Property="x => x.Emptydepot" Title="Empty depot" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Empty depot</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-pickup" CellClass="bkc-pickup" FooterClass="bkc-pickup" Property="x => x.PickupAt" Title="Pickup at" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Pickup at</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-dropoff" CellClass="bkc-dropoff" FooterClass="bkc-dropoff" Property="x => x.DropOff" Title="Drop off" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Drop off</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-ops" CellClass="bkc-ops" FooterClass="bkc-ops" Property="x => x.OPSCode" Title="OPS" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>OPS</FooterTemplate>
+                </PropertyColumn>
+                <PropertyColumn HeaderClass="bkc-remarks" CellClass="bkc-remarks" FooterClass="bkc-remarks" Property="x => x.remarksFCL" Title="Remarks" CellStyleFunc="_cellStyleFunc">
+                    <FooterTemplate>Remarks</FooterTemplate>
                 </PropertyColumn>
 
             </Columns>
@@ -188,6 +309,9 @@
                         </MudItem>
                         <MudItem xs="12" sm="6" md="3">
                             <div class="detail-item"><span>@Localizer["Agency_Name"]</span><b>@context.Item.agencyname_box</b></div>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <div class="detail-item"><span>Principle</span><b>@context.Item.principle</b></div>
                         </MudItem>
                         <MudItem xs="12" sm="6" md="3">
                             <div class="detail-item"><span>@Localizer["Master_Bill/Air"]</span><b>@context.Item.hanoAir_Freightrateterm</b></div>
@@ -235,7 +359,19 @@
 
 
 
+<style>@BkHiddenCss</style>
 <style>
+    .bk-colmenu { padding: 6px 12px; max-height: 70vh; overflow-y: auto; min-width: 240px; }
+    .bk-colmenu-head { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+    .bk-hover-card .bk-quo-sub { font-weight: 700; margin: 6px 0 2px; }
+    /* Rê chuột vào số Booking: thẻ chi tiết */
+    .bk-hover-no { cursor: help; border-bottom: 1px dotted currentColor; }
+    .bk-hover-card { min-width: 280px; max-width: 420px; text-align: left; padding: 2px; }
+    .bk-hover-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+    .bk-hover-card table { border-collapse: collapse; font-size: 12px; }
+    .bk-hover-card td { padding: 1px 6px 1px 0; vertical-align: top; }
+    .bk-hover-k { opacity: .75; white-space: nowrap; }
+    .bk-hover-v { font-weight: 600; }
     .booking-page {
         background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
         min-height: calc(100vh - 64px);
@@ -486,6 +622,7 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender) await LoadBkColumnsAsync();
         if (!firstRender || _initialHandled || string.IsNullOrWhiteSpace(InitialBookingNo))
             return;
         _initialHandled = true;
@@ -512,6 +649,7 @@
         Trangthais = await supsv.GetListTrangThai();
         // await HandleRefresh();
         CustomerList = await Cussv.GetListAll();
+        await LoadQuotationNumbersAsync();
     }
 
     async Task CommittedItemChanges(Models.Booking item)
@@ -555,6 +693,7 @@
                 return;
             }
             listImport = await bksv.GetListSBooking();
+            await LoadQuotationLinesAsync();
             StateHasChanged();
         }
         finally
@@ -583,6 +722,7 @@
                 return;
             }
             listImport = await bksv.GetListBooking_create(id);
+            await LoadQuotationLinesAsync();
             StateHasChanged();
         }
         finally
@@ -1105,4 +1245,178 @@
         var text = Convert.ToString(value)?.Trim() ?? string.Empty;
         return text.Length <= 80 ? text : text[..77] + "...";
     }
+
+    // ---------- Rê chuột vào số Booking: hiện chi tiết ngay trên lưới ----------
+    string BkCarrierTitle => $"{Localizer["bkcarrier"]} (Số Booking hãng tàu)";
+    Dictionary<Guid, string> _quoNoById = new();
+
+    async Task LoadQuotationNumbersAsync()
+    {
+        try
+        {
+            var quos = await QuoSV.GetListQuotation() ?? new List<M_Quotation>();
+            _quoNoById = quos.GroupBy(q => q.quotationID).ToDictionary(g => g.Key, g => g.First().quotationNo ?? string.Empty);
+        }
+        catch { }
+    }
+
+    RenderFragment BookingHoverCard(Models.Booking b) => __builder =>
+    {
+        <div class="bk-hover-card">
+            <div class="bk-hover-title">@b.BookingNo</div>
+            <table>
+                @HoverRow(Localizer["Customer"], CustomerName(b.MaincusBk_Id_))
+                @HoverRow(Localizer["status"], b.trangthai)
+                @HoverRow(BkCarrierTitle, b.bkcarrier)
+                @HoverRow("Quotation", b.quotationID != Guid.Empty && _quoNoById.TryGetValue(b.quotationID, out var qn) ? qn : null)
+                @HoverRow("Type", string.Join(" · ", new[] { b.iol, b.FCL_LCL_Air, b.Lo }.Where(x => !string.IsNullOrWhiteSpace(x))))
+                @HoverRow(Localizer["Agency_Name"], b.agencyname_box)
+                @HoverRow("Principle", b.principle)
+                @HoverRow("Carrier", b.Carrier)
+                @HoverRow("Vessel / Voy", string.Join(" / ", new[] { b.Vessel, b.VoyNo }.Where(x => !string.IsNullOrWhiteSpace(x))))
+                @HoverRow("POL → POD", string.IsNullOrWhiteSpace(b.hano_POL) && string.IsNullOrWhiteSpace(b.hano_POD) ? null : $"{b.hano_POL} → {b.hano_POD}")
+                @HoverRow("ETD / ETA", $"{b.ETD:dd/MM/yyyy} / {b.ETA:dd/MM/yyyy}".Trim(' ', '/'))
+                @HoverRow("Commodity", b.hano_Commodity)
+                @HoverRow("Volume", b.hanoFCL_Quality)
+                @HoverRow("Sale", b.SaleName)
+                @HoverRow(Localizer["UserUpdate"], b.UserID)
+            </table>
+        </div>
+    };
+
+    RenderFragment HoverRow(string label, string? value) => __builder =>
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            <tr><td class="bk-hover-k">@label</td><td class="bk-hover-v">@value</td></tr>
+        }
+    };
+
+    // ---------- Chọn cột hiển thị (lưu theo trình duyệt) ----------
+    const string BkColsStorageKey = "booking61.hiddenCols";
+    static readonly string[] BkDefaultHidden = { "dept", "imex", "code", "sale", "attn", "agency", "principle", "carrier", "coload", "vessel", "voy", "por", "pot",
+        "commodity", "volume", "weight", "payment", "sicutoff", "vgm", "cargoclosing", "depot", "pickup", "dropoff", "ops", "remarks" };
+    HashSet<string> _bkHidden = new(BkDefaultHidden);
+    bool _bkColsLoaded;
+
+    List<(string Key, string Label)> BkColumnDefs => new()
+    {
+        ("bkcarrier", BkCarrierTitle), ("customer", Localizer["Customer"]), ("status", Localizer["status"]), ("type", "FCL / LCL / Air"),
+        ("pol", "POL"), ("pod", "POD"), ("eta", "ETA"), ("etd", "ETD"), ("approve", Localizer["Approve"]), ("user", Localizer["UserUpdate"]),
+        ("updatetime", Localizer["Dateupdate"]), ("quotation", "Quotation"),
+        ("dept", "Dept."), ("imex", "IM / EX"), ("code", "Code"), ("sale", "Sale"), ("attn", "Attn"), ("agency", Localizer["Agency_Name"]), ("principle", "Principle"),
+        ("carrier", "Carrier"), ("coload", "VIA (Coload)"), ("vessel", "Vessel"), ("voy", "Voy"), ("por", "POR"), ("pot", "POT"),
+        ("commodity", "Commodity"), ("volume", "Volume"), ("weight", "Weight / CBM / PKG"), ("payment", "Payment"),
+        ("sicutoff", "SI Cut-off"), ("vgm", "VGM Closing"), ("cargoclosing", "Cargo Closing"), ("depot", "Empty depot"),
+        ("pickup", "Pickup at"), ("dropoff", "Drop off"), ("ops", "OPS"), ("remarks", "Remarks")
+    };
+
+    string BkHiddenCss => _bkHidden.Count == 0 ? string.Empty
+        : string.Join(",", _bkHidden.Select(k => $".booking-grid .bkc-{k}")) + "{display:none !important;}";
+
+    async Task SetBkColumnVisible(string key, bool visible)
+    {
+        if (visible) _bkHidden.Remove(key); else _bkHidden.Add(key);
+        await SaveBkColumnsAsync();
+    }
+
+    async Task SetAllBkColumns(bool visible)
+    {
+        _bkHidden = visible ? new() : BkColumnDefs.Select(c => c.Key).ToHashSet();
+        await SaveBkColumnsAsync();
+    }
+
+    async Task ResetBkColumns()
+    {
+        _bkHidden = new(BkDefaultHidden);
+        await SaveBkColumnsAsync();
+    }
+
+    async Task SaveBkColumnsAsync()
+    {
+        try { await BkJs.InvokeVoidAsync("localStorage.setItem", BkColsStorageKey, string.Join(",", _bkHidden)); } catch { }
+    }
+
+    async Task LoadBkColumnsAsync()
+    {
+        if (_bkColsLoaded) return;
+        _bkColsLoaded = true;
+        try
+        {
+            var saved = await BkJs.InvokeAsync<string?>("localStorage.getItem", BkColsStorageKey);
+            if (saved != null)
+            {
+                var valid = BkColumnDefs.Select(c => c.Key).ToHashSet();
+                _bkHidden = saved.Split(',', StringSplitOptions.RemoveEmptyEntries).Where(valid.Contains).ToHashSet();
+                StateHasChanged();
+            }
+        }
+        catch { }
+    }
+
+    // ---------- Rê chuột vào Quotation: chi tiết + Item / Party của Debit, Credit ----------
+    Dictionary<Guid, M_Quotation> _quoById = new();
+    Dictionary<Guid, List<(string Item, string Party)>> _quoDebitLines = new();
+    Dictionary<Guid, List<(string Item, string Party)>> _quoCreditLines = new();
+
+    string QuoNoOf(Models.Booking b) => b.quotationID != Guid.Empty && _quoNoById.TryGetValue(b.quotationID, out var n) ? n : string.Empty;
+
+    async Task LoadQuotationLinesAsync()
+    {
+        try
+        {
+            var ids = listImport.Select(x => x.quotationID).Where(x => x != Guid.Empty).Distinct().ToList();
+            if (ids.Count == 0) return;
+            await using var ctx = await BkDbFactory.CreateDbContextAsync();
+            var quos = await ctx.Quotation.AsNoTracking().Where(q => ids.Contains(q.quotationID)).ToListAsync();
+            var debits = await ctx.Debit.AsNoTracking().Where(d => ids.Contains(d.quotationid)).Select(d => new { d.quotationid, d.itemid, d.customerid }).ToListAsync();
+            var credits = await ctx.Credit.AsNoTracking().Where(c => ids.Contains(c.quotationid)).Select(c => new { c.quotationid, c.itemid, c.customerid }).ToListAsync();
+            var itemIds = debits.Select(x => x.itemid).Concat(credits.Select(x => x.itemid)).Distinct().ToList();
+            var charges = await ctx.Charge.AsNoTracking().Where(c => itemIds.Contains(c.CHARGE_ID)).ToDictionaryAsync(c => c.CHARGE_ID);
+            string Item(Guid id) => charges.TryGetValue(id, out var c) ? (string.IsNullOrWhiteSpace(c.CHARGE_CODE) ? c.CHARGE ?? "" : $"{c.CHARGE_CODE} - {c.CHARGE}") : "";
+            string Party(Guid id) => CustomerList.FirstOrDefault(x => x.Customer_ID == id && id != Guid.Empty)?.CodeName() ?? "";
+            _quoById = quos.GroupBy(q => q.quotationID).ToDictionary(g => g.Key, g => g.First());
+            _quoDebitLines = debits.GroupBy(d => d.quotationid).ToDictionary(g => g.Key, g => g.Select(d => (Item(d.itemid), Party(d.customerid))).ToList());
+            _quoCreditLines = credits.GroupBy(c => c.quotationid).ToDictionary(g => g.Key, g => g.Select(c => (Item(c.itemid), Party(c.customerid))).ToList());
+            StateHasChanged();
+        }
+        catch { }
+    }
+
+    RenderFragment QuotationHoverCard(Guid qid) => __builder =>
+    {
+        _quoById.TryGetValue(qid, out var q);
+        <div class="bk-hover-card">
+            <div class="bk-hover-title">Quotation @(q?.quotationNo ?? (_quoNoById.TryGetValue(qid, out var qn) ? qn : ""))</div>
+            @if (q != null)
+            {
+                <table>
+                    @HoverRow(Localizer["Customer"], CustomerList.FirstOrDefault(x => x.Customer_ID == q.customer_id && q.customer_id != Guid.Empty)?.CodeName())
+                    @HoverRow("Subject", q.Subject)
+                    @HoverRow("Type", q.type)
+                    @HoverRow("POL → POD", string.IsNullOrWhiteSpace(q.pol) && string.IsNullOrWhiteSpace(q.pod) ? null : $"{q.pol} → {q.pod}")
+                    @HoverRow("Transit", q.Transitport)
+                    @HoverRow("Carrier", q.shippingline)
+                    @HoverRow("Valid", q.validDate?.ToString("dd/MM/yyyy"))
+                    @HoverRow("Sale", q.SaleName)
+                </table>
+            }
+            @QuoLinesBlock("Debit", _quoDebitLines.TryGetValue(qid, out var dl) ? dl : new())
+            @QuoLinesBlock("Credit", _quoCreditLines.TryGetValue(qid, out var cl) ? cl : new())
+        </div>
+    };
+
+    RenderFragment QuoLinesBlock(string caption, List<(string Item, string Party)> lines) => __builder =>
+    {
+        <div class="bk-quo-sub">@caption (@lines.Count)</div>
+        @if (lines.Count > 0)
+        {
+            <table>
+                @foreach (var l in lines)
+                {
+                    <tr><td class="bk-hover-v">@l.Item</td><td class="bk-hover-k">@l.Party</td></tr>
+                }
+            </table>
+        }
+    };
 }

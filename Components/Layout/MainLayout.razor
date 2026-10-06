@@ -223,6 +223,8 @@
 
                         <MudIconButton Icon="@Icons.Material.Filled.Palette" Color="Color.Inherit" @onclick="OpenThemeSelector" 
                                       Title="@Localizer["ThemeSettings"]" Style="margin-right: 10px;" />
+                        <MudIconButton Icon="@Icons.Material.Filled.FormatColorText" Color="Color.Inherit" @onclick="OpenTextThemeSelector"
+                                      Title="Màu & font chữ toàn phần mềm" Style="margin-right: 10px;" />
                         <MudIconButton Icon="@Icons.Material.Filled.TableChart" Color="Color.Inherit" @onclick="OpenShipmentGridColorSelector"
                                       Title="Shipment grid colors" Style="margin-right: 10px;" />
                         <MudIconButton Icon="@Icons.Material.Filled.Translate" Color="Color.Inherit" @onclick="OpenLocalizationEditor" 
@@ -372,6 +374,7 @@
     private string _fontNoiDung = ThemeDefaults.FontNoiDung;
     private string _fontNoiDungLuoi = ThemeDefaults.FontNoiDungLuoi;
     private string _fontNavMenu = ThemeDefaults.FontNavMenu;
+    private bool _firstRenderDone;
 
     // trang/dialog bất kỳ có thể yêu cầu mở tab qua TabRequestService
     private Task OnTabRequested(string key, string title, RenderFragment content)
@@ -402,6 +405,10 @@
 
         await LoadThemePreference();
         await LoadFontPreferenceFromDb();
+        // Font của 1.10 đọc xong sau lần render đầu tiên (lúc đó đã áp font mặc định),
+        // nên áp lại ngay khi có dữ liệu để cỡ chữ đã lưu có hiệu lực từ lúc mở app.
+        if (_firstRenderDone)
+            await TryJsAsync("font size (saved)", ApplyStoredFontPreference);
         await StartHub();
         await StartChatAsync();
         // await LoadCheckInStatus();
@@ -412,6 +419,7 @@
     {
         if (!firstRender)
             return;
+        _firstRenderDone = true;
 
         // Mỗi bước một try: trước đây 1 hàm JS thiếu (nvoccLoadShipmentColorSettings) làm bỏ qua cả
         // đặt tiêu đề tab lẫn StateHasChanged → độ rộng menu đã lưu không được áp dụng.
@@ -419,6 +427,7 @@
         await TryJsAsync("font size", ApplyStoredFontPreference);
         // Apply saved Shipment grid colors globally (CSS variables + localStorage).
         await TryJsAsync("shipment colors", () => JS.InvokeVoidAsync("nvoccLoadShipmentColorSettings").AsTask());
+        await TryJsAsync("text theme", () => JS.InvokeVoidAsync("nvoccLoadTextTheme").AsTask());
         // Tên tab trình duyệt: "AMASIS - NVOCC | <màn hình>"
         await TryJsAsync("brand title", () => JS.InvokeVoidAsync("nvoccSetBrandTitle", AppBrand).AsTask());
         await TryJsAsync("drawer resize", AttachDrawerResizeAsync);
@@ -510,6 +519,15 @@
         }
     }
 
+    private async Task OpenTextThemeSelector()
+    {
+        var options = new DialogOptions() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<ThemeSelector.Pages.TextThemeSelector>("Màu & font chữ", new DialogParameters(), options);
+        var result = await dialog.Result;
+        // Huỷ / đóng: bỏ phần xem trước, áp lại thiết lập đã lưu
+        try { await JS.InvokeVoidAsync("nvoccLoadTextTheme"); } catch { }
+    }
+
     private async Task OpenShipmentGridColorSelector()
     {
         var parameters = new DialogParameters();
@@ -536,7 +554,7 @@
             return;
         }
 
-        var options = new DialogOptions() { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        var options = new DialogOptions() { CloseButton = true, MaxWidth = MaxWidth.ExtraLarge, FullWidth = true };
         await DialogService.ShowAsync<LocalizationEditor.Pages.LocalizationEditor>(Localizer["EditLanguage"], options);
     }
 
