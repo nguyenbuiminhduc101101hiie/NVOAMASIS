@@ -1,0 +1,249 @@
+@* 2.5 — Gửi tin nhắn trong phần mềm và / hoặc email cho users về các báo giá đã chọn; ghi nhật ký gửi. *@
+@using System.Text
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<NVOAMASIS.Data.AppDbContext> DbFactory
+@inject NotificationService NotiSv
+@inject EmailService EmailSv
+@inject HistoryLogService HistoryLogService
+@inject AccountService asv
+@inject ISnackbar Snackbar
+
+<style>
+    .sqm-grid { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.3fr); gap: 14px; }
+    @@media (max-width: 900px) { .sqm-grid { grid-template-columns: 1fr; } }
+    .sqm-box { border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px; background: #fbfcfe; }
+    .sqm-cap { font-weight: 700; font-size: 13px; margin-bottom: 6px; color: #334155; }
+    .sqm-users { max-height: 40vh; overflow: auto; margin-top: 6px; }
+    .sqm-user { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+    .sqm-user small { color: #64748b; }
+    .sqm-quo { font-size: 12px; color: #334155; margin: 0 0 6px; }
+    .sqm-log table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .sqm-log th, .sqm-log td { border-bottom: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; vertical-align: top; }
+    .sqm-log th { background: #f1f5f9; position: sticky; top: 0; }
+    .sqm-hint { font-size: 12px; color: #64748b; }
+</style>
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6"><MudIcon Icon="@Icons.Material.Filled.Send" Class="mr-2" />Gửi tin nhắn / email · @Quotations.Count báo giá</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTabs Elevation="0" Rounded="true" PanelClass="pt-2" @bind-ActivePanelIndex="_tab">
+            <MudTabPanel Text="Soạn & gửi" Icon="@Icons.Material.Filled.Edit">
+                <div class="sqm-grid">
+                    <div class="sqm-box">
+                        <div class="sqm-cap">Người nhận (@_selectedUsers.Count)</div>
+                        <MudTextField T="string" @bind-Value="_userSearch" Immediate="true" Placeholder="Tìm tên, user, email, phòng ban" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" />
+                        <div class="d-flex gap-2 mt-1">
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => { foreach (var u in FilteredUsers) _selectedUsers.Add(u.UsrId); })">Chọn hết (đang lọc)</MudButton>
+                            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => _selectedUsers.Clear())">Bỏ chọn</MudButton>
+                        </div>
+                        <div class="sqm-users">
+                            @foreach (var u in FilteredUsers)
+                            {
+                                var id = u.UsrId;
+                                <div class="sqm-user">
+                                    <MudCheckBox T="bool" Value="@_selectedUsers.Contains(id)" ValueChanged="@(v => { if (v) _selectedUsers.Add(id); else _selectedUsers.Remove(id); })" Dense="true" Size="Size.Small" Color="Color.Primary" />
+                                    <span>@(string.IsNullOrWhiteSpace(u.Name) ? u.Usr : u.Name) <small>@u.Usr · @u.Department @(string.IsNullOrWhiteSpace(u.Email) ? "· (chưa có email)" : "· " + u.Email)</small></span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                    <div class="sqm-box">
+                        <div class="sqm-cap">Nội dung</div>
+                        <div class="sqm-quo">
+                            @foreach (var q in Quotations.Take(5))
+                            {
+                                <div>• <b>@q.quotationNo</b> · @CustomerLabel(q.customer_id) · @q.pol → @q.pod</div>
+                            }
+                            @if (Quotations.Count > 5) { <div>… và @(Quotations.Count - 5) báo giá khác</div> }
+                        </div>
+                        <div class="d-flex gap-4">
+                            <MudCheckBox T="bool" @bind-Value="_sendApp" Color="Color.Primary" Label="Tin nhắn trong phần mềm" />
+                            <MudCheckBox T="bool" @bind-Value="_sendEmail" Color="Color.Primary" Label="Email" />
+                        </div>
+                        <MudTextField T="string" @bind-Value="_subject" Label="Tiêu đề (email)" Variant="Variant.Outlined" Margin="Margin.Dense" Disabled="!_sendEmail" />
+                        <MudTextField T="string" @bind-Value="_message" Label="Nội dung" Variant="Variant.Outlined" Lines="9" Class="mt-2" />
+                        <div class="sqm-hint mt-1">Mỗi lần gửi được ghi vào nhật ký của từng báo giá (người gửi, người nhận, kênh, thời gian, kết quả).</div>
+                    </div>
+                </div>
+            </MudTabPanel>
+            <MudTabPanel Text="@($"Nhật ký gửi ({_logs.Count})")" Icon="@Icons.Material.Filled.History">
+                <div class="sqm-log" style="max-height:52vh; overflow:auto">
+                    <table>
+                        <thead><tr><th>Thời gian</th><th>Người gửi</th><th>Báo giá</th><th>Kênh</th><th>Người nhận</th><th>Nội dung</th><th>Kết quả</th></tr></thead>
+                        <tbody>
+                            @foreach (var l in _logs)
+                            {
+                                <tr>
+                                    <td>@l.Time?.ToString("dd/MM/yyyy HH:mm")</td>
+                                    <td>@l.Sender</td>
+                                    <td>@l.No</td>
+                                    <td>@l.Channels</td>
+                                    <td>@l.To</td>
+                                    <td style="max-width:320px; white-space:pre-wrap">@l.Message</td>
+                                    <td>@l.Result</td>
+                                </tr>
+                            }
+                            @if (_logs.Count == 0)
+                            {
+                                <tr><td colspan="7" class="sqm-hint">Chưa có lần gửi nào cho các báo giá này.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </MudTabPanel>
+        </MudTabs>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => MudDialog.Close())">Đóng</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Send"
+                   Disabled="@(_busy || _selectedUsers.Count == 0 || (!_sendApp && !_sendEmail) || string.IsNullOrWhiteSpace(_message))"
+                   OnClick="SendAsync">
+            @(_busy ? "Đang gửi…" : $"Gửi cho {_selectedUsers.Count} người")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] MudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public List<M_Quotation> Quotations { get; set; } = new();
+    [Parameter] public Func<Guid?, string> CustomerLabel { get; set; } = _ => string.Empty;
+
+    public const string LogAction = "SendMessage";
+
+    sealed record LogRow(DateTime? Time, string? Sender, string? No, string Channels, string To, string Message, string Result);
+
+    List<AuthUser> _users = new();
+    HashSet<Guid> _selectedUsers = new();
+    List<LogRow> _logs = new();
+    string? _userSearch;
+    bool _sendApp = true, _sendEmail = true, _busy;
+    string _subject = string.Empty, _message = string.Empty;
+    int _tab;
+
+    IEnumerable<AuthUser> FilteredUsers => string.IsNullOrWhiteSpace(_userSearch)
+        ? _users
+        : _users.Where(u => $"{u.Name} {u.Usr} {u.Email} {u.Department}".Contains(_userSearch, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await using var ctx = await DbFactory.CreateDbContextAsync();
+            _users = await ctx.UserList.AsNoTracking().OrderBy(u => u.Department).ThenBy(u => u.Name).ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        _subject = Quotations.Count == 1 ? $"Báo giá {Quotations[0].quotationNo}" : $"Báo giá: {string.Join(", ", Quotations.Take(5).Select(q => q.quotationNo))}{(Quotations.Count > 5 ? "…" : "")}";
+        _message = BuildDefaultMessage();
+        await LoadLogsAsync();
+    }
+
+    string BuildDefaultMessage()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(Quotations.Count == 1 ? "Thông tin báo giá:" : $"Thông tin {Quotations.Count} báo giá:");
+        foreach (var q in Quotations)
+        {
+            sb.Append("- ").Append(q.quotationNo);
+            var cus = CustomerLabel(q.customer_id);
+            if (!string.IsNullOrWhiteSpace(cus)) sb.Append(" | ").Append(cus);
+            if (!string.IsNullOrWhiteSpace(q.pol) || !string.IsNullOrWhiteSpace(q.pod)) sb.Append(" | ").Append(q.pol).Append(" → ").Append(q.pod);
+            if (q.validDate.HasValue) sb.Append(" | HL ").Append(q.validDate.Value.ToString("dd/MM/yyyy"));
+            if (!string.IsNullOrWhiteSpace(q.status)) sb.Append(" | ").Append(q.status);
+            sb.AppendLine();
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    async Task LoadLogsAsync()
+    {
+        try
+        {
+            var ids = Quotations.Select(q => (Guid?)q.quotationID).ToList();
+            await using var ctx = await DbFactory.CreateDbContextAsync();
+            var raw = await ctx.HistoryLogs.AsNoTracking()
+                .Where(h => h.EntityName == "Quotation" && h.Action == LogAction && ids.Contains(h.EntityId))
+                .OrderByDescending(h => h.Timestamp).Take(500).ToListAsync();
+            _logs = raw.Select(h =>
+            {
+                string channels = "", to = "", msg = "", result = "";
+                try
+                {
+                    using var doc = JsonDocument.Parse(h.Changes ?? "{}");
+                    var r = doc.RootElement;
+                    string S(string n) => r.TryGetProperty(n, out var v) ? (v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : v.ToString()) : "";
+                    channels = S("Channels"); to = S("ToNames"); msg = S("Message"); result = S("Result");
+                }
+                catch { }
+                return new LogRow(h.Timestamp, h.UserName, h.No, channels, to, msg, result);
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Warning);
+        }
+    }
+
+    async Task SendAsync()
+    {
+        _busy = true;
+        try
+        {
+            var usr = asv.GetAuth().Result.User.Identity?.Name ?? string.Empty;
+            var recipients = _users.Where(u => _selectedUsers.Contains(u.UsrId)).ToList();
+            var toNames = string.Join(", ", recipients.Select(u => string.IsNullOrWhiteSpace(u.Name) ? u.Usr : u.Name));
+            var channels = string.Join(" + ", new[] { _sendApp ? "Tin nhắn" : null, _sendEmail ? "Email" : null }.Where(x => x != null));
+            var results = new List<string>();
+
+            if (_sendApp)
+            {
+                await NotiSv.SendNotificationAsync(recipients.Select(u => u.UsrId.ToString()).ToArray(), $"{_subject}\n{_message}");
+                results.Add($"Tin nhắn: {recipients.Count} người");
+            }
+            if (_sendEmail)
+            {
+                var emails = recipients.Select(u => u.Email).Where(e => !string.IsNullOrWhiteSpace(e) && e!.Contains('@')).Select(e => e!.Trim()).Distinct().ToList();
+                var noEmail = recipients.Count(u => string.IsNullOrWhiteSpace(u.Email) || !u.Email.Contains('@'));
+                if (emails.Count > 0)
+                {
+                    var ok = await EmailSv.SendPlainTextEmailAsync(emails, string.IsNullOrWhiteSpace(_subject) ? "Báo giá" : _subject, _message);
+                    results.Add(ok ? $"Email: {emails.Count} địa chỉ" : "Email: gửi lỗi");
+                }
+                if (noEmail > 0) results.Add($"{noEmail} người chưa có email");
+            }
+            var resultText = string.Join("; ", results);
+
+            foreach (var q in Quotations)
+            {
+                await HistoryLogService.LogAsync(usr, LogAction, "Quotation", q.quotationID, q.quotationNo, new
+                {
+                    Channels = channels,
+                    ToUserIds = recipients.Select(u => u.UsrId).ToList(),
+                    ToNames = toNames,
+                    Subject = _subject,
+                    Message = _message,
+                    Result = resultText,
+                    SentAt = DateTime.Now
+                });
+            }
+
+            Snackbar.Add($"Đã gửi ({resultText})", resultText.Contains("lỗi") ? MudBlazor.Severity.Warning : MudBlazor.Severity.Success);
+            await LoadLogsAsync();
+            _tab = 1;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

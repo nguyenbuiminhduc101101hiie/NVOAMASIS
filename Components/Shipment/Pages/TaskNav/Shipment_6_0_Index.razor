@@ -6,6 +6,7 @@
 @inject AccountService asv
 @inject ISnackbar Snackbar
 @inject ShipmentService shipsv
+@inject ShipmentFinanceStatusService FinSV
 @inject IDialogService DialogService
 @inject IJSRuntime JS
 @inject IStringLocalizer<SharedResource> Localizer
@@ -366,6 +367,10 @@
             <PropertyColumn Property="x => CountDebitHBL(x.JobID)" Title="@Localizer["Total Debit (HBL)"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => CountCreditHBL(x.JobID)" Title="@Localizer["Total Credit (HBL)"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => DebitCreditCompletedStatus(x.JobID)" Title="@Localizer["Debit/Credit Done"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" Filterable="false" ><EditTemplate></EditTemplate></PropertyColumn>
+            <TemplateColumn Title="@Localizer["Thanh toán / Hạch toán"]" Sortable="false" Filterable="false" IsEditable="false">
+                    <CellTemplate><FinanceStatusCell Loading="@_fin.Loading" Text="@(_fin.ShortMany(FinHblIds(context.Item.JobID)))" Note="@(_fin.NoteMany(FinHblIds(context.Item.JobID)))" /></CellTemplate>
+                    <EditTemplate></EditTemplate>
+                </TemplateColumn>
             <PropertyColumn Property="x => joinmbl(x.JobID)" Title="@Localizer["MBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => joinhbl(x.JobID)" Title="@Localizer["HBL"]" IsEditable="false" CellStyleFunc="_cellStyleFunc" ><EditTemplate></EditTemplate></PropertyColumn>
             <PropertyColumn Property="x => joinbooking(x.JobID)" Title="@Localizer["Booking No"]" Required="false" CellStyleFunc="_cellStyleFunc">
@@ -1186,6 +1191,22 @@
 
     bool _loading = false;
     List<M_Job> Listdata = new List<M_Job>();
+    // Tình trạng thanh toán / hạch toán tổng hợp các HBL của Job
+    ShipmentFinanceStatusService.FinanceView _fin = new();
+    IEnumerable<Guid> FinHblIds(Guid? jobId) => GetHBLsByJob(jobId).Select(x => x.hblID);
+    async Task LoadFinanceAsync()
+    {
+        try
+        {
+            _fin = new();
+            var jobIds = Listdata.Select(x => (Guid?)x.JobID).ToHashSet();
+            var mblIds = ListMBLs.Where(x => jobIds.Contains(x.Jobid)).Select(x => x.MblID).ToHashSet();
+            var hblIds = ListHBLs.Where(x => mblIds.Contains(x.mblid)).Select(x => x.hblID).ToList();
+            _fin = await FinSV.LoadForHblsAsync(hblIds);
+        }
+        catch (Exception ex) { _fin = new() { Loading = false }; Snackbar.Add("Thanh toán/Hạch toán: " + ex.Message, MudBlazor.Severity.Warning); }
+        await InvokeAsync(StateHasChanged);
+    }
     List<M_MBL> ListMBLs = new List<M_MBL>();
     List<M_HBL> ListHBLs = new List<M_HBL>();
     List<M_Container> ListConts = new List<M_Container>();
@@ -1217,7 +1238,7 @@
                 CallSnackBar(Localizer["NoPermission_View"], MudBlazor.Severity.Warning);
                 return false;
             }
-              Listdata = await shipsv.GetListJob_by_roles_Dept();
+              Listdata = await shipsv.GetListJob_by_roles_Dept(); _ = LoadFinanceAsync();
             // SALES MANAGER xem hết; sale thường chỉ lấy job của mình
             if (!string.IsNullOrEmpty(_SaleName)
                 && !(userdetail.Department?.Equals("SALES MANAGER", StringComparison.OrdinalIgnoreCase) ?? false))

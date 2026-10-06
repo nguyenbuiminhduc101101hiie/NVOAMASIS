@@ -237,6 +237,9 @@ namespace NVOAMASIS.Models
         /// <summary>Xác nhận đã hoàn thành Credit của HBL — khóa add/edit/delete Credit.</summary>
         [Display(Name = "Credit Completed")]
         public bool? creditCompleted { get; set; } = false;
+        /// <summary>Ghi chú tài chính tự tổng hợp: tick TT Debit/Credit, phiếu thu/chi, hoá đơn và tình trạng hạch toán.</summary>
+        public string? financeNote { get; set; }
+        public DateTime? financeNoteDate { get; set; }
         [Display(Name = "")]
         public string? Truck_LenhDieuXeNo { get; set; }
 

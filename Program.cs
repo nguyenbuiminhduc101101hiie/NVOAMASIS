@@ -211,6 +211,7 @@ builder.Services.AddDbContext<AppDbContext>((serviceProvider, options) =>
 
 builder.Services.AddSingleton<IDbContextFactory<AppDbContext>, TenantAwareDbContextFactory>();
 builder.Services.AddScoped<AccountService>();
+builder.Services.AddScoped<ShipmentFinanceStatusService>();
 builder.Services.AddScoped<ReportServices>();
 builder.Services.AddScoped<TrainScheduleServices>();
 builder.Services.AddScoped<IUserService, UserServicecs>();
